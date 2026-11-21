@@ -208,6 +208,9 @@ pub fn run() {
             commands::sync::whimbrel_ai_status,
             commands::sync::whimbrel_ai_refresh,
             commands::sync::whimbrel_ai_buy,
+            commands::sync::plus_ai_prompt,
+            commands::sync::plus_ai_prompt_answer,
+            commands::sync::plus_ai_prompt_displayed,
             commands::sync::sync_devices,
             commands::sync::sync_set_device_name,
             commands::sync::sync_approve_device,
@@ -296,10 +299,14 @@ pub fn run() {
             commands::meetings::meeting_marker_add,
             commands::meetings::meeting_marker_list,
             commands::meetings::meeting_marker_delete,
+            commands::meetings::meeting_marker_set_label,
             commands::meetings::meeting_recording_status,
             commands::workspace::meeting_list,
+            commands::workspace::meeting_total,
             commands::workspace::meeting_workspace,
             commands::workspace::meeting_transcript,
+            commands::workspace::meeting_transcript_lines,
+            commands::workspace::meeting_note_sources,
             commands::workspace::set_meeting_speaker,
             commands::workspace::confirm_meeting_speaker,
             commands::workspace::voice_people,
@@ -535,6 +542,10 @@ pub fn run() {
                     let _ = app.emit("launch://quit-requested", ());
                 }
             }
+        }
+        // The main window closing (to the tray) while "Use Whimbrel AI?" is up is Not now.
+        RunEvent::WindowEvent { label, event: WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed, .. } if label == MAIN_WINDOW => {
+            crate::plus_prompt::window_closed();
         }
         // Tauri ends the process with 0 whatever code was asked for, but the supervisor
         // needs `RESTART_REQUESTED` to relaunch. Tauri's own cleanup (the tray icon, …)

@@ -8,9 +8,10 @@ import { handleRunnerAuth, registerRunner } from "./runner";
 import { storeWrappedKeyForHandoff, fetchAndConsumeWrappedKey } from "./handoff";
 import { ipBucket, rateLimit, rateLimited } from "./rateLimit";
 import { deleteAccount, runInactivity } from "./inactivity";
-import { aiBalance, creditPurchase, lastPurchaseMicros, purchaseByStripeRef, refundPurchase, settleStaleHolds } from "./aiCredit";
-import { billingConfigured, isAiCreditEvent, planFromSubscription, stripeRequest, subscriptionIdOf, verifyStripeSignature } from "./stripe";
+import { aiBalance, allowanceView, creditPurchase, grantDueYearlyMonths, lastPurchaseMicros, purchaseByStripeRef, readAllowanceSetting, refundPurchase, settleStaleHolds, writeGrant, yearlyMonthAt, zeroAllowance } from "./aiCredit";
+import { billingConfigured, isAiCreditEvent, isPlusSubscription, planFromSubscription, plusLinePeriod, stripeRequest, subscriptionIdOf, verifyStripeSignature } from "./stripe";
 import { handleAiMessages, offeredAiModels } from "./aiProxy";
+import { YEARLY_GRANTS_CRON } from "./schedules";
 import { EMAIL_FROM, EMAIL_REPLY_TO, sendEmail } from "./email";
 import {
   findAccountByGoogleSub,
@@ -75,6 +76,9 @@ export interface Env {
   STRIPE_WEBHOOK_SECRET?: string;
   STRIPE_PRICE_MONTHLY?: string;
   STRIPE_PRICE_YEARLY?: string;
+  /** Whimbrel Plus prices; unset = Plus checkout answers billing_unavailable. */
+  STRIPE_PRICE_PLUS_MONTHLY?: string;
+  STRIPE_PRICE_PLUS_YEARLY?: string;
   /** Optional Billing Portal configuration (`bpc_…`) for Whimbrel; the Stripe
    * account is shared, so the default portal could offer another product. */
   STRIPE_PORTAL_CONFIGURATION?: string;
@@ -801,6 +805,25 @@ async function readBody(request: Request): Promise<AuthenticatedApprovedDeviceRe
   }
 }
 
+/** Which paid product the account is on, or null when it is not on a paid
+ * plan (gated like the plan fields, so a lapsed Plus never reports "plus").
+ * A paid account stored before tiers existed has no tier and is Cloud. */
+function paidTier(account: AccountRecord, now: number): "cloud" | "plus" | null {
+  return isCloud(account, now) ? (account.planTier ?? "cloud") : null;
+}
+
+/** True when a Plus checkout can work: billing is configured and both Plus
+ * price ids are set (non-empty). The app offers Plus only then. */
+function plusAvailable(env: Env): boolean {
+  const set = (p: string | undefined) => typeof p === "string" && p !== "";
+  return billingConfigured(env) && set(env.STRIPE_PRICE_PLUS_MONTHLY) && set(env.STRIPE_PRICE_PLUS_YEARLY);
+}
+
+/** The Plus price ids that are set. */
+function plusPriceIds(env: Env): string[] {
+  return [env.STRIPE_PRICE_PLUS_MONTHLY, env.STRIPE_PRICE_PLUS_YEARLY].filter((p): p is string => typeof p === "string" && p !== "");
+}
+
 /** The caller's plan, for the app's Cloud row. */
 export async function handleAccountPlan(
   request: Request,
@@ -820,14 +843,17 @@ export async function handleAccountPlan(
       until: cloud ? account.planUntilUnixMs : null,
       interval: cloud ? account.planInterval : null,
       renews: cloud ? account.planRenews : null,
+      plan_tier: paidTier(account, now),
       billing: billingConfigured(env),
+      plus_available: plusAvailable(env),
     });
   } catch (err) {
     return backendError("handleAccountPlan", err);
   }
 }
 
-/** Starts a Stripe Checkout session for Cloud and returns its URL. */
+/** Starts a Stripe Checkout session for Cloud or Plus (`plan`, default
+ * "cloud" for old clients) and returns its URL. */
 export async function handleBillingCheckout(
   request: Request,
   env: Env,
@@ -835,20 +861,30 @@ export async function handleBillingCheckout(
   fetcher: typeof fetch = fetch,
   now: number = Date.now(),
 ): Promise<Response> {
-  const body = (await readBody(request)) as (AuthenticatedApprovedDeviceRequestBody & { interval?: unknown }) | null;
+  const body = (await readBody(request)) as (AuthenticatedApprovedDeviceRequestBody & { interval?: unknown; plan?: unknown }) | null;
   if (!body) return Response.json({ error: "invalid JSON body" }, { status: 400 });
   const interval = body.interval;
   if (interval !== "month" && interval !== "year") return Response.json({ error: "interval_required" }, { status: 400 });
+  const plan = body.plan === undefined ? "cloud" : body.plan;
+  if (plan !== "cloud" && plan !== "plus") return Response.json({ error: "plan_invalid" }, { status: 400 });
   if (!billingConfigured(env)) return billingUnavailable();
   try {
     const auth = await billingAccount(body, env, db, now);
     if (auth instanceof Response) return auth;
     const { account, googleSub } = auth;
     if (!(await rateLimit(env.ENROLLMENT_HANDOFF, `billing:${googleSub}`, 20, 60 * 60))) return rateLimited();
+    // v1: no switching between Cloud and Plus; an account on either is refused.
     if (isCloud(account, now)) return Response.json({ error: "already_cloud" }, { status: 409 });
+    // After the 409, so a paid account always hears already_cloud, whatever is set.
+    const price =
+      plan === "plus"
+        ? interval === "year" ? env.STRIPE_PRICE_PLUS_YEARLY : env.STRIPE_PRICE_PLUS_MONTHLY
+        : interval === "year" ? env.STRIPE_PRICE_YEARLY : env.STRIPE_PRICE_MONTHLY;
+    // Never send Stripe an undefined price: an unset Plus price is unavailable.
+    if (!price) return billingUnavailable();
     const params: Record<string, string> = {
       mode: "subscription",
-      "line_items[0][price]": interval === "year" ? env.STRIPE_PRICE_YEARLY! : env.STRIPE_PRICE_MONTHLY!,
+      "line_items[0][price]": price,
       "line_items[0][quantity]": "1",
       client_reference_id: account.id,
       "subscription_data[metadata][account_id]": account.id,
@@ -857,6 +893,8 @@ export async function handleBillingCheckout(
       success_url: "https://whimbrelapp.com/cloud/thanks/",
       cancel_url: "https://whimbrelapp.com/cloud/cancelled/",
     };
+    // The tier rides on the subscription, so a renewal on a retired Plus price stays Plus.
+    if (plan === "plus") params["subscription_data[metadata][tier]"] = "plus";
     if (account.stripeCustomerId) {
       params.customer = account.stripeCustomerId;
       params["customer_update[address]"] = "auto";
@@ -928,8 +966,10 @@ export async function handleAiCheckout(
   }
 }
 
-/** The caller's AI credit balance and the size of their newest purchase,
- * both in micro-dollars. */
+/** The caller's AI credit balance (prepaid) and the size of their newest
+ * purchase, both in micro-dollars, plus the Plus allowance left (0 once
+ * expired), its expiry (null unless some allowance is left, so a client never
+ * shows a stale date after a zero) and the paid tier (null unless on a paid plan). */
 export async function handleAiBalance(
   request: Request,
   env: Env,
@@ -944,7 +984,14 @@ export async function handleAiBalance(
     // Its own bucket: the app polls this, and polling must never block checkout.
     if (!(await rateLimit(env.ENROLLMENT_HANDOFF, `ai-balance:${auth.googleSub}`, 120, 60 * 60))) return rateLimited();
     const id = auth.account.id;
-    return Response.json({ balance_micros: await aiBalance(db, id), last_purchase_micros: await lastPurchaseMicros(db, id) });
+    const allowance = allowanceView(auth.account, now);
+    return Response.json({
+      balance_micros: await aiBalance(db, id),
+      last_purchase_micros: await lastPurchaseMicros(db, id),
+      allowance_micros: allowance.allowanceMicros,
+      allowance_expires_ms: allowance.allowanceMicros > 0 ? allowance.allowanceExpiresMs : null,
+      plan_tier: paidTier(auth.account, now),
+    });
   } catch (err) {
     return backendError("handleAiBalance", err);
   }
@@ -999,7 +1046,8 @@ export async function handleBillingPortal(
 }
 
 /** The Stripe account is shared with another product: a subscription is ours
- * to act on when it is on one of Whimbrel's two prices, or when its
+ * to act on when it is on one of Whimbrel's four prices (Cloud and Plus,
+ * monthly and yearly), or when its
  * `metadata.account_id` names `accountId`, a Whimbrel account that exists (so a
  * renewal on a retired price still lands). Pass null when no account matched. */
 function isWhimbrelSubscription(sub: any, env: Env, accountId: string | null): boolean {
@@ -1007,7 +1055,7 @@ function isWhimbrelSubscription(sub: any, env: Env, accountId: string | null): b
   const items: any[] = Array.isArray(sub?.items?.data) ? sub.items.data : [];
   return items.some((i) => {
     const price = i?.price?.id;
-    return typeof price === "string" && (price === env.STRIPE_PRICE_MONTHLY || price === env.STRIPE_PRICE_YEARLY);
+    return typeof price === "string" && (price === env.STRIPE_PRICE_MONTHLY || price === env.STRIPE_PRICE_YEARLY || plusPriceIds(env).includes(price));
   });
 }
 
@@ -1175,6 +1223,164 @@ async function refundAiCharge(db: SqlExecutor, key: string, charge: any, now: nu
   return null;
 }
 
+/** Grants the Plus allowance for a paid `invoice.paid` payload of the kept
+ * Plus subscription. Only `subscription_create` and `subscription_cycle`
+ * with an amount paid grant (`subscription_update` grants nothing in v1).
+ * The invoice id is the grant key, so a redelivered event grants once; the
+ * expiry is the Plus line's period end; the row records `subId`. A paid
+ * grant that does not refill the allowance (the expiry guard refused it, or
+ * the invoice was refunded before it was paid) is logged, by ids only, so a
+ * refused refill is never silent. Errors throw, so the webhook answers a
+ * retryable error and does not record the event.
+ *
+ * When the payload's first page of lines has no Plus line and Stripe says
+ * there are more (`lines.has_more`), the invoice's lines are read once
+ * (GET invoices/{id}/lines, up to 100); still none is the "no readable Plus
+ * line" case (retry). */
+async function grantForInvoice(
+  db: SqlExecutor,
+  accountId: string,
+  subId: string,
+  invoice: any,
+  sub: any,
+  interval: "month" | "year" | null,
+  plusPrices: string[],
+  now: number,
+  stripeKey: string,
+  fetcher: typeof fetch,
+): Promise<Response | null> {
+  const reason = invoice?.billing_reason;
+  if (reason !== "subscription_create" && reason !== "subscription_cycle") return null;
+  if (!Number.isSafeInteger(invoice?.amount_paid) || invoice.amount_paid <= 0) {
+    // Say, a renewal paid from the customer's credit balance: no grant, by ruling.
+    console.log("billing: plus invoice paid with no amount, no grant", invoice?.id);
+    return null;
+  }
+  if (typeof invoice?.id !== "string") return null;
+  let period = plusLinePeriod(invoice, sub, plusPrices);
+  if (period === null && invoice?.lines?.has_more === true) {
+    const res = await stripeRequest(stripeKey, "GET", `invoices/${encodeURIComponent(invoice.id)}/lines`, { limit: "100" }, fetcher);
+    if (!res.ok || !Array.isArray(res.body?.data)) return stripeRetryLater();
+    period = plusLinePeriod({ lines: { data: res.body.data } }, sub, plusPrices);
+  }
+  if (period === "invalid") {
+    // The Plus line's period is not a range. The paid invoice's lines never
+    // change, so a retry would fail the same way for 3 days: log, no grant.
+    console.error("billing: paid plus invoice line period is not a range, no grant", invoice.id);
+    return null;
+  }
+  if (period === null) {
+    // A paid Plus invoice we cannot read a period from: retry (Stripe
+    // reports the failing endpoint) rather than drop a paid allowance.
+    console.error("billing: paid plus invoice without a plus line period", invoice.id);
+    return stripeRetryLater();
+  }
+  // A yearly line grants the month it is paid in: month 1 normally, a later
+  // month when paid late (the cron grants the months after it, keyed on this
+  // invoice). A monthly line keeps its own period end: Stripe anchors it on
+  // the billing day, so after a short month it can end later than start + 1
+  // month.
+  let periodEndUnixMs = period.endMs;
+  if (interval === "year") {
+    const month = yearlyMonthAt(period.startMs, period.endMs, now);
+    periodEndUnixMs = month ? month.endMs : period.endMs;
+    if (month && month.n > 1) console.log("billing: yearly plus invoice paid late, granting month", month.n, invoice.id);
+  }
+  // grantAllowance refuses an ended period. A late invoice.paid can be
+  // legitimate, so this is logged, not retried.
+  if (periodEndUnixMs <= now) console.error("billing: paid plus invoice for a period already ended, no grant", invoice.id);
+  const result = await writeGrant(
+    db,
+    { accountId, grantKey: invoice.id, micros: await readAllowanceSetting(db), periodEndUnixMs, lineStartUnixMs: period.startMs, lineEndUnixMs: period.endMs, subscriptionId: subId },
+    now,
+  );
+  if (result.written && !result.refilled) {
+    console.error("billing: paid plus invoice grant refused by the expiry guard, allowance not refilled", invoice.id, subId, accountId);
+  } else if (!result.written && periodEndUnixMs > now) {
+    // A repeat key: a redelivery (nothing to say) or a refund tombstone.
+    const prior = await db.execute("SELECT micros FROM ai_allowance_grant WHERE grant_key = ?", [invoice.id]);
+    if (prior.length > 0 && Number(prior[0].micros) === 0) console.error("billing: paid plus invoice was refunded before it was paid, no grant", invoice.id, subId, accountId);
+  }
+  return null;
+}
+
+/** A refunded charge of a Plus invoice zeroes the unspent allowance of the
+ * account on that subscription (Mike's ruling); only a full refund does, a
+ * partial one changes nothing. A prepaid AI credit charge
+ * is refundAiCharge's alone and never touches the allowance; a refund of a
+ * subscription the account is not on (a cancelled duplicate) or of another
+ * product's invoice is ignored. Stripe failures ask for a retry.
+ *
+ * Only a refund of the invoice behind the CURRENT window zeroes: one of its
+ * grant rows (the invoice id, or "<invoice id>:m<n>" for a yearly invoice's
+ * months) has a line end later than now (its period end when the row has no
+ * line bounds). A refund of an older invoice whose line has ended zeroes
+ * nothing and writes no marker (logged). A refund of an invoice with no
+ * grant row yet zeroes and writes a tombstone under the invoice id, so its
+ * invoice.paid, when it comes, grants nothing, unless the invoice's own Plus
+ * line (as Stripe returns it) has already ended: an older invoice that never
+ * granted (paid after its line ended) is treated like any ended line. */
+async function zeroRefundedPlusInvoice(env: Env, db: SqlExecutor, charge: any, now: number, fetcher: typeof fetch): Promise<Response | null> {
+  if (charge?.metadata?.kind === "ai_credit") return null;
+  const piField = charge?.payment_intent;
+  const pi = typeof piField === "string" ? piField : piField?.id;
+  if (piField?.metadata?.kind === "ai_credit") return null;
+  if (typeof pi === "string" && (await purchaseByStripeRef(db, pi))) return null;
+  if (!Number.isSafeInteger(charge?.amount) || charge.amount <= 0 || charge.amount_refunded !== charge.amount) return null;
+  const key = env.STRIPE_SECRET_KEY!;
+  // Older API versions put the invoice on the Charge; newer ones find it
+  // through Stripe's "List all payments for an invoice", filtered by the
+  // PaymentIntent.
+  let invoiceId: unknown = typeof charge?.invoice === "string" ? charge.invoice : charge?.invoice?.id;
+  if (typeof invoiceId !== "string") {
+    if (typeof pi !== "string") return null;
+    const res = await stripeRequest(key, "GET", "invoice_payments", { "payment[type]": "payment_intent", "payment[payment_intent]": pi, limit: "1" }, fetcher);
+    if (!res.ok) return stripeRetryLater();
+    const inv = res.body?.data?.[0]?.invoice;
+    invoiceId = typeof inv === "string" ? inv : inv?.id;
+    if (typeof invoiceId !== "string") return null;
+  }
+  const inv = await stripeRequest(key, "GET", `invoices/${encodeURIComponent(invoiceId as string)}`, {}, fetcher);
+  if (!inv.ok) return stripeRetryLater();
+  const subField = inv.body?.parent?.subscription_details?.subscription ?? inv.body?.subscription;
+  const subId = typeof subField === "string" ? subField : subField?.id;
+  if (typeof subId !== "string") return null;
+  const res = await stripeRequest(key, "GET", `subscriptions/${encodeURIComponent(subId)}`, {}, fetcher);
+  if (!res.ok) return stripeRetryLater();
+  const sub = res.body;
+  const metaId = sub?.metadata?.account_id;
+  const account = typeof metaId === "string" ? await findAccountById(db, metaId) : null;
+  if (!isWhimbrelSubscription(sub, env, account?.id ?? null) || !isPlusSubscription(sub, plusPriceIds(env))) return null;
+  if (!account || account.deletingSinceUnixMs != null || account.stripeSubscriptionId !== subId) {
+    console.log("billing: plus refund not zeroed", subId);
+    return null;
+  }
+  const invId = invoiceId as string;
+  const rows = await db.execute(
+    "SELECT micros, period_end_unix_ms, line_end_unix_ms FROM ai_allowance_grant WHERE account_id = ? AND (grant_key = ? OR substr(grant_key, 1, ?) = ?)",
+    [account.id, invId, invId.length + 2, `${invId}:m`],
+  );
+  if (rows.length === 0) {
+    // No grant row: an invoice not granted yet (zero and tombstone it), or
+    // an older one that never granted (paid after its line ended), which,
+    // like any refund of an ended line, changes nothing.
+    const line = plusLinePeriod(inv.body, sub, plusPriceIds(env));
+    if (line !== null && line !== "invalid" && line.endMs <= now) {
+      console.log("billing: plus refund of an invoice not behind the current window, allowance kept", invId, subId);
+      return null;
+    }
+    await zeroAllowance(db, account.id, now, { subscriptionId: subId, mode: "refund", tombstoneKey: invId });
+    return null;
+  }
+  const current = rows.some((r) => Number(r.micros) > 0 && Number(r.line_end_unix_ms ?? r.period_end_unix_ms) > now);
+  if (!current) {
+    console.log("billing: plus refund of an invoice not behind the current window, allowance kept", invId, subId);
+    return null;
+  }
+  await zeroAllowance(db, account.id, now, { subscriptionId: subId, mode: "refund" });
+  return null;
+}
+
 /** Stripe's webhook. Verified on the raw body; each event id is handled
  * once. The plan comes from a fresh read of the subscription, never the
  * event payload, because Stripe does not order its events. Stripe failures
@@ -1214,7 +1420,8 @@ export async function handleBillingWebhook(
       return retry ?? (await received());
     }
     if (event.type === "charge.refunded") {
-      const retry = await refundAiCharge(db, env.STRIPE_SECRET_KEY!, event.data?.object, now, fetcher);
+      const charge = event.data?.object;
+      const retry = (await refundAiCharge(db, env.STRIPE_SECRET_KEY!, charge, now, fetcher)) ?? (await zeroRefundedPlusInvoice(env, db, charge, now, fetcher));
       return retry ?? (await received());
     }
     const subId = subscriptionIdOf(event);
@@ -1234,7 +1441,13 @@ export async function handleBillingWebhook(
       console.log("billing: ignored subscription", sub?.id, sub?.status);
       return await received();
     }
-    let state = planFromSubscription(sub, now);
+    const plusPrices = plusPriceIds(env);
+    let state = planFromSubscription(sub, now, plusPrices);
+    if (event.type === "invoice.paid" && isPlusSubscription(sub, plusPrices)) {
+      // Paid Plus invoices that cannot grant, made visible in the logs.
+      if (state === null) console.log("billing: paid plus invoice, subscription status gives no plan, no grant", sub?.id, sub?.status);
+      if (typeof metaId !== "string") console.log("billing: paid plus invoice, subscription has no account_id metadata, no grant", sub?.id);
+    }
     if (!account || account.deletingSinceUnixMs != null) {
       // A Checkout completed (or renewed) after the account was deleted would
       // charge forever: cancel it (no proration, no refund) and alert. The
@@ -1258,7 +1471,7 @@ export async function handleBillingWebhook(
       const other = await stripeRequest(key, "GET", `subscriptions/${encodeURIComponent(stored)}`, {}, fetcher);
       if (!other.ok && other.status !== 404) return stripeRetryLater();
       // Only two Whimbrel subscriptions on one account are a duplicate.
-      const otherState = other.ok && isWhimbrelSubscription(other.body, env, account.id) ? planFromSubscription(other.body, now) : null;
+      const otherState = other.ok && isWhimbrelSubscription(other.body, env, account.id) ? planFromSubscription(other.body, now, plusPrices) : null;
       if (otherState?.plan === "cloud") {
         // Two live subscriptions: keep the older, cancel the newer (no proration, no refund).
         const storedIsOlder = (other.body?.created ?? 0) <= (sub?.created ?? 0);
@@ -1278,9 +1491,24 @@ export async function handleBillingWebhook(
     }
     // The customer comes from the kept subscription, so Manage never opens
     // a cancelled duplicate's portal.
-    if (state && (await applyPlan(db, account.id, applyId, state)) && state.plan === "cloud") {
+    const applied = state !== null && (await applyPlan(db, account.id, applyId, state));
+    if (applied && state!.plan === "cloud") {
       const customer = keptSub?.customer;
       if (typeof customer === "string" && customer !== account.stripeCustomerId) await setStripeCustomer(db, account.id, customer);
+      // The monthly allowance: only a paid first or renewal invoice of the
+      // kept Plus subscription grants (a duplicate being cancelled never does).
+      if (event.type === "invoice.paid" && applyId === subId && state!.tier === "plus") {
+        const retry = await grantForInvoice(db, account.id, subId, obj, keptSub, state!.interval, plusPrices, now, key, fetcher);
+        if (retry) return retry;
+      }
+    }
+    // An ended Plus subscription (cancelled now, unpaid, expired, paused)
+    // takes its unspent allowance with it. applyPlan only ends the
+    // subscription the account is on, so a stale event zeroes nothing.
+    // "cancel" mode: the expiry becomes now + 1, so a new subscription
+    // bought straight after always gets its first month.
+    if (applied && state!.plan === "free" && (account.planTier === "plus" || isPlusSubscription(keptSub, plusPrices))) {
+      await zeroAllowance(db, account.id, now, { subscriptionId: applyId, mode: "cancel" });
     }
     return await received();
   } catch (err) {
@@ -1432,7 +1660,15 @@ export async function handleDeleteAccount(
 }
 
 export default {
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  /** Two triggers (wrangler.jsonc, values in ./schedules): the hourly one
+   * runs only the yearly Plus grants; the daily one, and any other value (a
+   * manual or test trigger), runs the daily jobs and never the grants, so a
+   * stray trigger cannot run the grants twice. */
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (controller?.cron === YEARLY_GRANTS_CRON) {
+      ctx.waitUntil(grantDueYearlyMonths(tursoSqlExecutor(env), Date.now()).then((n) => console.log("plus yearly grants", n)));
+      return;
+    }
     ctx.waitUntil(
       runInactivity(tursoSqlExecutor(env), env, Date.now(), fetch).then((r) => console.log("inactivity", JSON.stringify(r))),
     );

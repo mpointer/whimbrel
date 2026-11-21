@@ -709,6 +709,48 @@ mod tests {
         }
     }
 
+    /// Review C1: an episode filed under nothing whose captures hold an excluded client's contact's
+    /// address (never its name) is never sent to a cloud model; one holding another sender's is.
+    #[test]
+    fn an_episode_holding_a_client_contacts_address_is_never_sent_to_a_cloud_model() {
+        for (sender, sent) in [("Wile@Coyote.example", false), ("carol@example.com", true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let store = memory::Store::open(&dir.path().join("m.db"), dir.path()).unwrap();
+            for (ts, app, text) in [
+                (1_000, "com.apple.mail", format!("From: Wile E <{sender}>\nkiwicanary pricing")),
+                (61_000, "com.apple.mail", "kiwicanary pricing totals".to_string()),
+                (121_000, "com.apple.Notes", "groceries".to_string()),
+            ] {
+                store
+                    .insert_capture_item(&memory::NewCaptureItem {
+                        device_id: "d".into(),
+                        ts_unix_ms: ts,
+                        app_bundle_id: app.into(),
+                        window_title: "Inbox".into(),
+                        url: None,
+                        text,
+                        hash: ts,
+                        source: "ax".into(),
+                    })
+                    .unwrap();
+            }
+            store.run_jobs_batch(10, 121_000 + 600_001).unwrap();
+            let c = rusqlite::Connection::open(dir.path().join("m.db")).unwrap();
+            // Acme, excluded, met Wile only in its own material.
+            let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+            c.execute("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, indexed_at_unix_ms) VALUES ('meeting', 4242, 1, 1)", []).unwrap();
+            let sid = c.last_insert_rowid();
+            c.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')", [acme.topic_id, sid]).unwrap();
+            c.execute("INSERT INTO entity (kind, key, display, updated_at_unix_ms) VALUES ('person', 'email:wile@coyote.example', 'Wile', 1)", [])
+                .unwrap();
+            c.execute("INSERT INTO entity_mention (entity_id, source_id) VALUES (?1, ?2)", [c.last_insert_rowid(), sid]).unwrap();
+            exclude(&store, &acme.key);
+            let client = HookedClient { prompts: RefCell::new(Vec::new()), hook: RefCell::new(None) };
+            run_episode_summarize_batch_with(&store, &client, true, 5, "", "").unwrap();
+            assert_eq!(client.prompts.borrow().len(), sent as usize, "{sender}");
+        }
+    }
+
     /// Fix round 4, M1: a thread summary batch on an Ollama cloud model reads the setting for each
     /// thread. Control: the first thread, summarised before the exclusion, was sent.
     #[test]

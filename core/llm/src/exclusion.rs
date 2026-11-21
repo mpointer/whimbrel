@@ -3,8 +3,11 @@
 //! [`ContextFilter`] decides, for each retrieved item, whether it may go into a prompt that can
 //! reach a hosted model. An item is left out when it is filed under an excluded client (its
 //! meeting, episode, email, thread, slide or capture is a member, following merges; an item in two
-//! topics is out when either is excluded) or when its text or label names an excluded client as
-//! whole words (unlinked material, fail closed). When the setting cannot be read, everything is
+//! topics is out when either is excluded) or when its text, label, window title or URL names an
+//! excluded client as whole words or holds a known contact's address (unlinked material, fail
+//! closed). A name in an unfiled meeting excludes the whole meeting (the material itself, from
+//! `memory`); an address keeps out only the items holding it (a transcript segment, a capture, a
+//! message), not the rest of the meeting. When the setting cannot be read, everything is
 //! left out. Both `gather_and_assemble_context*` take a filter, so no retrieval can skip the
 //! decision: a caller whose prompt stays on this computer passes [`ContextFilter::none`].
 //!
@@ -38,6 +41,38 @@ pub fn is_hosted(provider: Provider, model: &str) -> bool {
     }
 }
 
+/// The words every hosted path matches, read from `store` now: each excluded client's name and
+/// aliases, then the addresses of its known contacts (`ExcludedMaterial::attendee_emails`: people
+/// met only in excluded clients' material, never the user's own addresses nor someone also met in
+/// another client's). One list for the hosted gate (`api::exclusion::current_gate`), retrieval
+/// ([`ContextFilter::keeps`]), the request check and classify first, so no path matches less than
+/// another. As text, the addresses only match where they are written: the material itself (whole
+/// meetings, threads) is found by names and aliases, and by the contacts' addresses only in stored
+/// attendee and actor fields (a meeting's attendees, an email's or event's senders and recipients:
+/// `memory` `contact_hits`), which exclude the whole meeting, thread or item. Empty when nothing
+/// is excluded; `None` when the setting cannot be read.
+pub fn hosted_terms(store: &memory::Store) -> Option<Vec<String>> {
+    read(store).map(|(terms, _)| terms)
+}
+
+/// [`hosted_terms`] and the material they were read with. The material is found by names and
+/// aliases (`memory::Store::excluded_material_with`), its contacts' addresses added after.
+fn read(store: &memory::Store) -> Option<(Vec<String>, memory::topics::exclusion::ExcludedMaterial)> {
+    if store.exclusion_unreadable() {
+        return None;
+    }
+    let mut terms = store.excluded_terms().ok()?;
+    if terms.is_empty() {
+        return Some((terms, Default::default()));
+    }
+    let names = ExclusionSet::new(terms.clone());
+    let material = store.excluded_material_with(&|t| names.find_in(t)).ok()?;
+    let mut contacts: Vec<String> = material.attendee_emails.iter().cloned().collect();
+    contacts.sort();
+    terms.extend(contacts);
+    Some((terms, material))
+}
+
 /// Decides which retrieved items may go into a hosted prompt; counts the ones it leaves out.
 pub struct ContextFilter {
     mode: Mode,
@@ -68,19 +103,14 @@ impl ContextFilter {
     /// client contacts' addresses, meetings recorded from the client's events, clean routine
     /// runs). Cached on the store until anything it reads changes.
     pub fn load(store: &memory::Store) -> Self {
-        let terms = match store.excluded_terms() {
-            Ok(t) => t,
-            Err(_) => return Self::closed(),
-        };
-        let set = ExclusionSet::new(terms);
-        let material = match store.excluded_material_with(&|t| set.find_in(t)) {
-            Ok(m) => m,
-            Err(_) => return Self::closed(),
-        };
-        if material.is_empty() {
-            return Self::none();
+        match read(store) {
+            Some((terms, material)) if !material.is_empty() => {
+                let set = ExclusionSet::new(terms);
+                Self { mode: Mode::Excluding { set, material }, left_out: RefCell::default() }
+            }
+            Some(_) => Self::none(),
+            None => Self::closed(),
         }
-        Self { mode: Mode::Excluding { set, material }, left_out: RefCell::default() }
     }
 
     /// A fingerprint of the exclusion state this filter was read under: `Some("open")` when

@@ -7,20 +7,26 @@ struct TopicsView: View {
     @StateObject private var model = TopicsModel()
 
     var body: some View {
-        List {
-            ForEach(model.topics) { topic in
-                NavigationLink(value: TopicRoute(key: topic.topicKey)) { TopicRow(topic: topic) }
-                    .listRowBackground(Color.theme(.backgroundPage))
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: WTokens.Space.md) {
+                if model.topics.isEmpty {
+                    if model.loaded {
+                        WStateView(kind: .empty, title: String(localized: "Topics appear here once Whimbrel on your computer has built them."))
+                    } else {
+                        WStateView(kind: .loading, title: String(localized: "Loading…"))
+                    }
+                }
+                ForEach(model.topics) { topic in
+                    NavigationLink(value: TopicRoute(key: topic.topicKey)) { TopicRow(topic: topic) }
+                        .buttonStyle(.plain)
+                }
             }
-            if model.topics.isEmpty {
-                Text(model.loaded ? String(localized: "Topics appear here once Whimbrel on your computer has built them.") : String(localized: "Loading…"))
-                    .foregroundStyle(Color.theme(.textSecondary))
-                    .listRowBackground(Color.theme(.backgroundPage))
-            }
+            .padding(.horizontal, WTokens.Space.lg)
+            .padding(.vertical, WTokens.Space.md)
+            .frame(maxWidth: WTokens.Size.contentMax, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .themed()
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(Color.theme(.backgroundPage).ignoresSafeArea())
         .navigationTitle("Topics")
         .navigationDestination(for: TopicRoute.self) { TopicPageView(key: $0.key, sync: sync) }
@@ -30,29 +36,38 @@ struct TopicsView: View {
     }
 }
 
-/// One topic in the list: its name, then its lead and when the next meeting is.
+/// One topic in the list: a card with its name, its lead and when the next meeting is.
 private struct TopicRow: View {
     let topic: PhoneTopicSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(topic.name)
-                .font(.body)
-                .foregroundStyle(Color.theme(.textPrimary))
-                .multilineTextAlignment(.leading)
-            if let lead = topic.lead {
-                Text(TopicText.lead(lead))
-                    .font(.subheadline)
-                    .foregroundStyle(Color.theme(.textSecondary))
-                    .lineLimit(2)
+        HStack(alignment: .center, spacing: WTokens.Space.sm) {
+            VStack(alignment: .leading, spacing: WTokens.Space.xs) {
+                Text(topic.name)
+                    .wType(WTokens.TypeScale.subtitle)
+                    .foregroundStyle(Color.theme(.textPrimary))
+                    .multilineTextAlignment(.leading)
+                if let lead = topic.lead {
+                    Text(TopicText.lead(lead))
+                        .wType(WTokens.TypeScale.secondary)
+                        .foregroundStyle(Color.theme(.textSecondary))
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(3)
+                }
+                if let next = topic.upcomingMeeting() {
+                    Label(TopicText.dayTime(ms: next.startUnixMs), systemImage: "calendar")
+                        .wType(WTokens.TypeScale.time)
+                        .foregroundStyle(Color.theme(.accentPrimary))
+                }
             }
-            if let next = topic.upcomingMeeting() {
-                Label(TopicText.dayTime(ms: next.startUnixMs), systemImage: "calendar")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.theme(.accentPrimary))
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.theme(.textSecondary)).accessibilityHidden(true)
         }
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .padding(WTokens.Space.lg)
+        .frame(maxWidth: .infinity, minHeight: WTokens.Size.target, alignment: .leading)
+        .wCard()
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }

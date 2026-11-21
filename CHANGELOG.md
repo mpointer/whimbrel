@@ -2,6 +2,53 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.81] - 2026-11-20
+
+### All devices
+- Exclude from hosted models now treats a client's known contact addresses like the client's name. Before, an address in the text itself was checked only in the hotkey window. Now it is also checked when Whimbrel builds these requests for a hosted model: Ask, the material Ask finds, meeting summaries, titles, live questions and topic names. A known contact address is one met only in that client's material, never the address of an account you connected. It is matched as whole words, in any case, percent- or HTML-encoded, with hidden characters, or spoken ("jane at example dot com"). A question that holds the address is not sent to a hosted model: a model you run yourself answers it, or it is not answered.
+  - Unlike a name, an address keeps out only the lines that hold it, not the whole meeting. In a recording that is not filed under the client, the other lines can still go to a hosted model.
+  - An address spoken with extra words between its parts, or encoded another way (for example base64), is not matched.
+  - If you have an excluded client, an Ask follow-up to an answer written by 0.9.80 or earlier is answered on your computer. It goes back to your usual provider after you ask that question again and Whimbrel records the new answer.
+- Opening Whimbrel's library no longer fails with "database is locked" while another part of Whimbrel is writing; it waits up to 30 seconds.
+- Most new strings are English only for now.
+
+### Mac and Windows
+- Whimbrel Plus: $15 a month or $144 a year, with a monthly Whimbrel AI allowance that is spent before any prepaid credit. The allowance does not roll over; a yearly plan gets it each month. Settings shows how much of this month's allowance is left and has the Plus checkout.
+- A Plus account is asked once on each computer whether to use its Whimbrel AI allowance for AI features. The question shows the same data note as Settings. "Use Whimbrel AI" makes Whimbrel AI your provider (this syncs to your other devices), "Keep my current setup" changes nothing, and "Not now" asks again later. It isn't asked in Local-only mode, while a meeting records, or when Whimbrel AI is already your provider.
+- The Meetings list no longer stops at the newest 200 meetings. Scrolling to the end (or Show older meetings) loads more, and the list says how many it is showing. On Windows, search looks through every meeting, not just the ones already loaded.
+
+### Mac
+- A second copy of Whimbrel (for example one in an iCloud Drive folder beside the one in Applications) no longer starts while one is running. It says "Whimbrel is already running." and Show Whimbrel brings the running copy forward. Two copies had recorded each calendar meeting twice.
+- Sync now: Settings → Devices has a Sync now button, and so does the sidebar's "Sync hasn't worked" warning. The warning clears as soon as a sync works.
+- A meeting with no summary (none yet, failed, refused, or kept local for an excluded client) shows Regenerate on the meeting page without opening edit mode.
+- In a narrow window, Ask's provider picker becomes a menu instead of pushing the page under the sidebar.
+
+### Phones
+- The phone apps have a new look, shared with the Mac and Windows redesign. Your day is one thread: the next meeting, a Now marker, then briefs, routine runs and what already happened, each at its time.
+- A meeting note shows who wrote each line. Whimbrel's lines are in their own color with a rule beside them, and "Written by Whimbrel" is said once at the top.
+- Every screen was rebuilt: Today, Meetings, a meeting's summary and transcript, Ask, Topics, Routines, Settings, sign-in and the prep brief. Each was checked at the largest text size and on a small phone.
+- The phones still read what your computers record. They don't record meetings.
+
+### iPhone
+- The device approval and device limit screens are easier to read, and each one says what went wrong when a step fails.
+- At the largest text size, the Ask question box, the Settings pickers and a topic's step titles no longer cut off or overlap.
+- "Written by Whimbrel" is machine-translated (Spanish, French, Canadian French, German, Portuguese) and still needs review.
+
+### Android
+- Ask is now on Android. Ask a question about your meetings and get an answer with its sources listed under it. A source that isn't on this phone says so. Each answer shows the model that wrote it and whose key was used. Dictation and read aloud aren't on Android yet.
+- Topics is now on Android: one page per customer or project with your role, the next meeting, what you owe, what you're owed and recent items.
+- The app has the same five tabs as the iPhone: Today, Ask, Meetings, Topics, Routines.
+- Signing out, or having this phone removed from your account, clears every question and answer from Ask.
+- A time on Today no longer breaks in the middle ("10:00 P" over "M"). At large text sizes the time sits above its card.
+- Tab names stay on one line at large text sizes.
+- The app no longer asks you to sign in to Google again every few minutes. The fix is on the sync service, so it did not need an app update.
+- Settings shows when Whimbrel last checked for a new version and what it found.
+- New Android text is in English only.
+
+### Website
+- The client controls page says that a question holding a known contact's address is not sent to a hosted model: a model you run yourself answers it, or it is not answered, and its FAQ states the limits of address matching.
+- A new page explains encrypting the memory database, and the client controls page is linked from the homepage. The Spanish and French homepage and Windows download page are up to date.
+
 ## [0.9.80] - 2026-11-19
 
 ### All devices
@@ -17,7 +64,7 @@ Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 - Sync no longer fails every round when the sync service answers slowly. Updates that cannot go out in one round go in the next, and the round still counts as working.
 
 ### Mac and Windows
-- The memory database can now be encrypted on your computer. A copy of the file (a backup, a synced folder, another account on the same computer) can't be read without its key, which Whimbrel keeps in the Keychain on the Mac and in Credential Manager on Windows. New installs are encrypted from the first launch. An existing install stays as it is until you choose Settings → Capture & Privacy → "Encrypt the database", which offers Export everything first and encrypts at the next launch.
+- The memory database can now be encrypted on your computer. A copy of the database file (one in a backup, a synced folder, or another account on the same computer) can't be read without its key, which Whimbrel keeps in the Keychain on the Mac and in Credential Manager on Windows. New installs are encrypted from the first launch. An existing install stays as it is until you choose Settings → Capture & Privacy → "Encrypt the database", which encrypts at the next launch (on the Mac it offers Export everything first).
   - Encrypting asks you to create a recovery key: a recovery file with a passphrase, plus 24 words. Keep them somewhere other than this computer. If the key is lost (a new computer or a reset Keychain), a recovery screen opens the database with either one. Whimbrel never deletes or replaces a database it can't open.
   - Only the memory database is encrypted. Audio and other files are not. Phones are unchanged.
   - "Faster search (uses more memory)" gives search up to 1 GB more memory on a computer with at least 16 GB. "Check encryption speed" times search on your own data and keeps the report on your computer.

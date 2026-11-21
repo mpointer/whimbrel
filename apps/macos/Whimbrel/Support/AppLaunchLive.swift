@@ -120,3 +120,98 @@ final class AppTerminationGuard: NSObject, NSApplicationDelegate {
         }
     }
 }
+
+/// One Whimbrel per Mac. Two copies (one from an iCloud Drive folder, one from /Applications,
+/// same bundle id) both opened the database and both auto-recorded every calendar meeting,
+/// so each meeting came out 2-3 times (Nov 19). The check runs first in `WhimbrelMain.main`,
+/// before anything deletes, migrates or opens data. An exclusive lock file in the data
+/// container is the authority (it settles two copies launching in the same instant); the
+/// running-apps check only gives the message a copy to bring to the front.
+enum SingleInstance {
+    static let message = String(localized: "Whimbrel is already running.")
+    static let buttonTitle = String(localized: "Show Whimbrel")
+
+    struct Running: Equatable {
+        let pid: Int32
+        let bundleID: String?
+        var isTerminated = false
+    }
+
+    enum Decision: Equatable {
+        case proceed
+        /// `otherPID` is nil when only the lock revealed the other copy (it is still starting).
+        case alreadyRunning(otherPID: Int32?)
+    }
+
+    enum LockResult: Equatable {
+        case acquired
+        /// Another process holds it (EWOULDBLOCK): another copy is running.
+        case heldByOther
+        /// The lock file could not be opened or locked for another reason: fail open, so a
+        /// broken folder never stops Whimbrel from starting (the bundle-id check still runs).
+        case unavailable
+    }
+
+    static func decide(ownPID: Int32, bundleID: String?, running: [Running], lock: LockResult) -> Decision {
+        if let bundleID,
+           let other = running.first(where: { $0.pid != ownPID && $0.bundleID == bundleID && !$0.isTerminated }) {
+            return .alreadyRunning(otherPID: other.pid)
+        }
+        return lock == .heldByOther ? .alreadyRunning(otherPID: nil) : .proceed
+    }
+
+    /// An exclusive `flock` on a file, held until the object goes away or the process exits
+    /// (the kernel drops it on a crash, so a stale lock cannot lock the user out).
+    final class Lock {
+        private let fd: Int32
+        private init(fd: Int32) { self.fd = fd }
+
+        static func take(url: URL) -> (lock: Lock?, result: LockResult) {
+            let fd = open(url.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { return (nil, .unavailable) }
+            guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+                let busy = errno == EWOULDBLOCK
+                close(fd)
+                return (nil, busy ? .heldByOther : .unavailable)
+            }
+            return (Lock(fd: fd), .acquired)
+        }
+        deinit { close(fd) }
+    }
+
+    /// Held for the life of the process once taken.
+    private static var held: Lock?
+
+    /// True when this copy may start. Otherwise tells the user, brings the running copy to
+    /// the front on the button, and the caller exits. Never called by the test host.
+    static func mayStart() -> Bool {
+        let dir = SpikePaths.appSupportDirectory
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let taken = Lock.take(url: dir.appendingPathComponent("Whimbrel.lock"))
+        let bundleID = Bundle.main.bundleIdentifier
+        let apps = bundleID.map { NSRunningApplication.runningApplications(withBundleIdentifier: $0) } ?? []
+        let running = apps.map { Running(pid: $0.processIdentifier, bundleID: $0.bundleIdentifier, isTerminated: $0.isTerminated) }
+        let decision = decide(ownPID: ProcessInfo.processInfo.processIdentifier, bundleID: bundleID,
+                              running: running, lock: taken.result)
+        switch decision {
+        case .proceed:
+            held = taken.lock
+            return true
+        case .alreadyRunning(let otherPID):
+            showAlreadyRunning(other: apps.first { $0.processIdentifier == otherPID })
+            return false
+        }
+    }
+
+    private static func showAlreadyRunning(other: NSRunningApplication?) {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = message
+        alert.addButton(withTitle: buttonTitle)
+        app.activate(ignoringOtherApps: true)
+        alert.runModal()
+        other?.activate(options: [.activateAllWindows])
+    }
+}

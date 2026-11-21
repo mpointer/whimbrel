@@ -80,9 +80,85 @@ extension DemoSyncStore: PhoneReadStore {
         return [PhoneCalendarEvent(externalId: "demo-next", source: "google_calendar", title: "Customer call: Acme pricing", startUnixMs: start, attendees: ["Priya Nair", "Sam Rivera", "Ann Lee"])]
     }
 
-    // No demo topic pages yet: the Topics tab shows its empty state.
-    func topicSnapshots() -> [PhoneTopicSnapshot] { [] }
-    func topicSnapshot(key: String) -> PhoneTopicSnapshot? { nil }
-    func meetingId(deviceId: String, sourceMeetingId: Int64) -> Int64? { nil }
+    private static func isoDay(_ offsetDays: Int) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date().addingTimeInterval(Double(offsetDays) * 86_400))
+    }
+
+    /// Three topic pages: a full one, a short one and one with only a name. The resolvable
+    /// meeting ref sits on a step, not in `recent`, so Today and Meetings show no topic chips.
+    private static func topics() -> [PhoneTopicSnapshot] {
+        let day: Int64 = 86_400_000
+        let call = PhoneMeetingRef(deviceId: "demo-mac-a", sourceMeetingId: 1)
+        return [
+            PhoneTopicSnapshot(
+                topicKey: "acme", name: "Acme renewal", kind: "customer",
+                lead: .date(label: "Quote due", date: isoDay(3)),
+                role: .init(text: "You own the quote and the discount decision.", edited: true),
+                nextMeeting: .init(title: "Customer call: Acme pricing", startUnixMs: now + 2 * day,
+                                   attendeesByOrg: [.init(domain: "acme.com", count: 3)], me: 1),
+                youOwe: [
+                    .init(text: "Send the revised tier table to Priya", sourceKind: "meeting", sourceTitle: "Customer call: Acme pricing",
+                          askedAtUnixMs: now - 2 * day, dueDate: isoDay(-1), meeting: call),
+                    .init(text: "Confirm whether existing customers keep their price", sourceKind: "email", sourceTitle: "Re: renewal terms",
+                          askedAtUnixMs: now - day, dueDate: isoDay(3)),
+                ],
+                owedToYou: [.init(text: "Priya to send the signed order form", sourceKind: "email", sourceTitle: "Order form", askedAtUnixMs: now - 3 * day)],
+                done: [.init(text: "Share the pricing deck", sourceKind: "meeting", sourceTitle: "Design review")],
+                recent: [
+                    .init(kind: "email", title: "Re: renewal terms", sender: "Priya Nair", tsUnixMs: now - day),
+                    .init(kind: "meeting", title: "Customer call: Acme pricing", tsUnixMs: now - 2 * day),
+                    .init(kind: "document", title: "Pricing v3.xlsx", tsUnixMs: now - 4 * day),
+                ],
+                recentTotal: 9, truncated: true, builtAtUnixMs: now - 5 * minute, builtBy: "Demo MacBook"),
+            PhoneTopicSnapshot(
+                topicKey: "hiring", name: "Hiring: senior designer", kind: "project",
+                lead: .step(text: "Send feedback on the two finalists", dueDate: isoDay(1)),
+                youOwe: [.init(text: "Send feedback on the two finalists", sourceKind: "meeting", sourceTitle: "Hiring panel", dueDate: isoDay(1))],
+                recent: [.init(kind: "meeting", title: "Hiring panel", tsUnixMs: now - 3 * day)],
+                recentTotal: 1, builtAtUnixMs: now - 2 * 3_600_000, builtBy: "Demo MacBook"),
+            PhoneTopicSnapshot(topicKey: "offsite", name: "Team offsite", builtAtUnixMs: now - day, builtBy: "Demo MacBook"),
+        ]
+    }
+
+    /// `-WhimbrelDemoEmpty`: no topics and no hosted key, so the first-run states can be shown.
+    static var isEmptyDemo: Bool { ProcessInfo.processInfo.arguments.contains("-WhimbrelDemoEmpty") }
+
+    func topicSnapshots() -> [PhoneTopicSnapshot] { Self.isEmptyDemo ? [] : Self.topics() }
+    func topicSnapshot(key: String) -> PhoneTopicSnapshot? { topicSnapshots().first { $0.topicKey == key } }
+    func meetingId(deviceId: String, sourceMeetingId: Int64) -> Int64? { deviceId == "demo-mac-a" && sourceMeetingId == 1 ? 1 : nil }
+}
+
+/// `-WhimbrelDemoSynced` Ask: nothing here reaches a provider. A typed question fails at
+/// `prepare`, so no prompt is built and no stream starts.
+struct DemoAskBackend: AskBackend {
+    func prepare(query: String, historyJSON: String, routingJSON: String) async -> PrepareResult { .failed }
+    func finalize(prepareId: String, text: String, model: String, inputTokens: Int64, outputTokens: Int64) async -> [CitationCard]? { nil }
+    func discard(prepareId: String) {}
+    func resolve(refs: [CitationRef]) async -> [CitationCard] { [] }
+    func stream(prompt: String, model: String, provider: AskProvider, key: String) -> AsyncStream<InferenceEvent> { AsyncStream { $0.finish() } }
+
+    @MainActor static func model() -> AskModel {
+        let model = AskModel(backend: DemoAskBackend(), prefs: PhoneRoutingPrefs(defaults: UserDefaults(suiteName: "WhimbrelDemoAsk") ?? .standard),
+                             keys: { $0 == .anthropic && !DemoSyncStore.isEmptyDemo ? "demo" : nil })
+        if DemoSyncStore.isEmptyDemo { return model }
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let line = "claude-sonnet · your key"
+        model.seedDemo([
+            AskTurn(question: "What did we decide about Acme pricing?",
+                    answer: "You agreed to ship the pricing change on Friday and keep the annual discount at 15%.\n\nOne thing is still open: whether existing customers keep their current price. Sam owes the updated pricing page, and Ann is briefing support.",
+                    state: .done,
+                    citations: [
+                        CitationCard(kind: "transcript", id: 1, title: "Customer call: Acme pricing", subtitle: "Meeting", tsUnixMs: now - 3_600_000, meetingId: 1, deviceId: "demo-mac-a", found: true),
+                        CitationCard(kind: "capture", id: 7, title: "Pricing v3.xlsx", subtitle: "Screen", tsUnixMs: now - 2 * 86_400_000, meetingId: nil, deviceId: "demo-mac-a", found: true),
+                        CitationCard(kind: "capture", id: 8, title: "", subtitle: "Screen", tsUnixMs: nil, meetingId: nil, deviceId: nil, found: false),
+                    ], modelLine: line),
+            AskTurn(question: "Who is briefing support?", answer: "Ann is briefing support before", state: .stopped, modelLine: line),
+            AskTurn(question: "And the hiring panel?", state: .failed, modelLine: line),
+        ])
+        return model
+    }
 }
 #endif

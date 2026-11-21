@@ -322,7 +322,7 @@ fn build(
     let found = if set.is_empty() {
         memory::topics::inventory::NameHits { hits: Vec::new(), truncated: false }
     } else {
-        let confirm = |t: &str| set.find_in(t);
+        let confirm = |t: &str| set.names_in(t);
         match limit {
             Some(l) => store.name_hits_limited(&terms, &confirm, l),
             None => store.name_hits(&terms, &confirm),
@@ -604,6 +604,36 @@ mod tests {
         assert_eq!(inv.possible[0].excerpt.as_deref(), Some("so ACME wants a quote by Friday"));
     }
 
+    /// A meeting whose only mention of the client is in a note line's source (the owner or due date of an
+    /// action item, or the normalized copy of the spoken line) is a possible match, counted in the inventory.
+    #[test]
+    fn a_meeting_whose_line_source_names_the_client_is_a_possible_match() {
+        use memory::line_source::{anchor_of, base_fingerprint, LineKind, NewLineSource, SourceLocator};
+        let e = env();
+        let acme = e.store.create_seed_topic("Acme", &[], None).unwrap();
+        let row = |owner: Option<&str>, due: Option<&str>, spoken: Option<&str>| NewLineSource {
+            kind: LineKind::ActionItem,
+            line_text: "Send the deck".into(),
+            owner: owner.map(Into::into),
+            due: due.map(Into::into),
+            locator: spoken.map(|s| SourceLocator { offset_secs: 0, base: base_fingerprint("x"), anchor: anchor_of(s) }),
+        };
+        let by_owner = meeting(&e, "Weekly", 100);
+        let by_due = meeting(&e, "Weekly", 200);
+        let by_anchor = meeting(&e, "Weekly", 300);
+        let quiet = meeting(&e, "Weekly", 400);
+        e.store.replace_meeting_line_sources(by_owner, &[row(Some("Acme"), None, None)], 1).unwrap();
+        e.store.replace_meeting_line_sources(by_due, &[row(Some("Ana"), Some("after the Acme call"), None)], 1).unwrap();
+        e.store.replace_meeting_line_sources(by_anchor, &[row(None, None, Some("So, ACME wants it!"))], 1).unwrap();
+        e.store.replace_meeting_line_sources(quiet, &[row(Some("Ana"), Some("Friday"), Some("send the deck"))], 1).unwrap();
+        let inv = inventory(&e.store, &acme.key).unwrap();
+        let mut found: Vec<String> = ids(&inv.possible, ItemKind::Meeting);
+        found.sort();
+        let mut want = vec![by_owner.to_string(), by_due.to_string(), by_anchor.to_string()];
+        want.sort();
+        assert_eq!(found, want, "the owner, the due date and the anchor each name the client; the quiet one does not");
+    }
+
     #[test]
     fn an_item_with_no_text_that_names_the_client_has_no_excerpt() {
         let e = env();
@@ -676,6 +706,22 @@ mod tests {
         assert_eq!(ids(&inv.possible, ItemKind::Conversation), vec![conv.to_string()]);
         assert_eq!(inv.possible.len(), 3);
         assert_eq!(inv.possible[0].kind, ItemKind::Conversation, "newest first");
+    }
+
+    /// Review 5, M2: the delete inventory lists what really names the client, decoded (an
+    /// entity-encoded name), and never a row whose text merely cannot be decoded.
+    #[test]
+    fn possible_lists_encoded_names_and_never_merely_undecodable_text() {
+        let e = env();
+        let acme = e.store.create_seed_topic("Acme", &[], None).unwrap();
+        let deep = format!("Newsletter R&{}D (unrelated)", "amp;".repeat(memory::words::MAX_DECODE_PASSES + 1));
+        assert!(memory::words::readings(&deep).undecidable);
+        let undecodable = e.store.insert_conversation("u", 1).unwrap();
+        e.store.append_conversation_exchange(undecodable, "what is new?", &deep, "[]", None, 400).unwrap();
+        let encoded = e.store.insert_conversation("e", 2).unwrap();
+        e.store.append_conversation_exchange(encoded, "what did Ac&#109;e say?", "ok", "[]", None, 500).unwrap();
+        let inv = inventory(&e.store, &acme.key).unwrap();
+        assert_eq!(ids(&inv.possible, ItemKind::Conversation), vec![encoded.to_string()]);
     }
 
     #[test]

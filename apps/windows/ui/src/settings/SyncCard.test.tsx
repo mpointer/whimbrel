@@ -11,7 +11,7 @@ const view = (over: Partial<SyncView> = {}): SyncView => ({
   deviceId: "k",
   deviceLimit: false,
   planUnknown: false,
-  plan: { plan: "free", untilUnixMs: null, interval: null, billing: true },
+  plan: { plan: "free", untilUnixMs: null, interval: null, billing: true, plusAvailable: false },
   ...over,
 });
 const noop = () => {};
@@ -27,9 +27,32 @@ describe("Upgrade and Manage errors sit under their buttons (Mac PR 673)", () =>
   });
 
   it("under Manage subscription on Cloud", () => {
-    const cloud = view({ plan: { plan: "cloud", untilUnixMs: Date.UTC(2027, 10, 9, 12), interval: "year", billing: true } });
+    const cloud = view({ plan: { plan: "cloud", untilUnixMs: Date.UTC(2027, 10, 9, 12), interval: "year", billing: true, plusAvailable: false } });
     const html = renderToStaticMarkup(<Plan view={cloud} busy={false} act={noop} error={stripe} />);
     expect(html.indexOf("&#x27;t reach Stripe")).toBeGreaterThan(html.indexOf("Manage subscription"));
+  });
+
+  it("shows only the Plus buttons when the server sells Plus, and only Cloud's otherwise", () => {
+    const plusView = view({ plan: { plan: "free", untilUnixMs: null, interval: null, billing: true, plusAvailable: true } });
+    const html = renderToStaticMarkup(<Plan view={plusView} busy={false} act={noop} error={null} />);
+    expect(html).toContain("Get Plus: $15 a month");
+    expect(html).toContain("Get Plus: $144 a year");
+    expect(html).not.toContain("Upgrade to Cloud");
+    const limit = renderToStaticMarkup(<LimitUpgrade view={{ ...plusView, deviceLimit: true }} busy={false} act={noop} error={null} />);
+    expect(limit).toContain("Upgrade to Plus for unlimited devices.");
+    expect(limit).not.toContain("Upgrade to Cloud");
+    const cloudHtml = renderToStaticMarkup(<Plan view={view()} busy={false} act={noop} error={null} />);
+    expect(cloudHtml).toContain("Upgrade to Cloud: $5 a month");
+    expect(cloudHtml).not.toContain("Get Plus");
+  });
+
+  it("shows no purchase buttons on a paid plan, Cloud or Plus", () => {
+    for (const planTier of ["cloud", "plus"]) {
+      const paid = view({ plan: { plan: "cloud", untilUnixMs: null, interval: "month", billing: true, plusAvailable: true, planTier } });
+      const html = renderToStaticMarkup(<Plan view={paid} busy={false} act={noop} error={null} />);
+      expect(html).not.toContain("Get Plus");
+      expect(html).not.toContain("Upgrade to Cloud");
+    }
   });
 
   it("on the device-limit screen too", () => {

@@ -24,6 +24,7 @@ mod accounts_ffi;
 mod enrollment_ffi;
 mod inference_ffi;
 mod mcp_ffi;
+mod line_source_ffi;
 mod meeting_marker_ffi;
 mod meeting_parts_ffi;
 mod speaker_names_ffi;
@@ -1069,7 +1070,7 @@ pub extern "C" fn whimbrel_skin_image_generate(
 }
 
 /// `text` may leave the device: `Err` (a provider failure, never naming the client) when it
-/// names a client excluded from hosted models.
+/// involves a client excluded from hosted models (its name, an alias or a known contact's address).
 fn hosted_gate_check(store: &Store, text: &str) -> api::ApiResult<()> {
     api::exclusion::current_gate(store)
         .check(text)
@@ -2526,7 +2527,91 @@ pub extern "C" fn whimbrel_llm_summarize_meeting_preferred(
     }
 }
 
-/// Whether a summary of the meeting would be refused right now: it names a client excluded
+/// [`whimbrel_llm_summarize_meeting`] with a "want sources" choice. With `want_sources` false it
+/// is that function: the same request to the model, the same stored summary and the same
+/// envelope. With it true the model is also asked, for each decision, open question and action
+/// item, which transcript line supports it, and once the summary is stored this device's line
+/// sources for the meeting are replaced (see [`whimbrel_meeting_note_sources`]; a reference is
+/// kept only if it points at a real line of `transcript`). The envelope's summary object is the
+/// same either way. `transcript` should be the `[HH:mm:ss] Speaker: text` text the shell already
+/// sends. Same arguments, same NULL cases as [`whimbrel_llm_summarize_meeting`].
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_llm_summarize_meeting_sourced(
+    handle: *mut StoreHandle,
+    meeting_id: i64,
+    notes: *const c_char,
+    transcript: *const c_char,
+    slides: *const c_char,
+    model: *const c_char,
+    routing_config_json: *const c_char,
+    custom_instructions: *const c_char,
+    want_sources: bool,
+) -> *mut c_char {
+    summarize_meeting_with_choices(handle, meeting_id, notes, transcript, slides, model, routing_config_json, custom_instructions, false, want_sources)
+}
+
+/// The forced "Re-summarize with Whimbrel" call with a "want sources" choice: the same as
+/// [`whimbrel_llm_summarize_meeting_sourced`] with the chain cut to the one provider the routing
+/// config prefers, and the same failure envelope (with `fallback_reason`) as the forced call it
+/// extends. With `want_sources` false it is that call.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_llm_summarize_meeting_preferred_sourced(
+    handle: *mut StoreHandle,
+    meeting_id: i64,
+    notes: *const c_char,
+    transcript: *const c_char,
+    slides: *const c_char,
+    model: *const c_char,
+    routing_config_json: *const c_char,
+    custom_instructions: *const c_char,
+    want_sources: bool,
+) -> *mut c_char {
+    summarize_meeting_with_choices(handle, meeting_id, notes, transcript, slides, model, routing_config_json, custom_instructions, true, want_sources)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn summarize_meeting_with_choices(
+    handle: *mut StoreHandle,
+    meeting_id: i64,
+    notes: *const c_char,
+    transcript: *const c_char,
+    slides: *const c_char,
+    model: *const c_char,
+    routing_config_json: *const c_char,
+    custom_instructions: *const c_char,
+    forced: bool,
+    want_sources: bool,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(notes), Some(transcript), Some(model)) = (cstr_to_string(notes), cstr_to_string(transcript), cstr_to_string(model)) else {
+        return ptr::null_mut();
+    };
+    let slides = cstr_to_string(slides).unwrap_or_default();
+    let custom_instructions = cstr_to_string(custom_instructions).unwrap_or_default();
+    let routing = parse_routing_config(routing_config_json);
+    let store = unsafe { &(*handle).0 };
+    let result = api::summary::summarize_meeting_options(
+        store,
+        meeting_id,
+        &notes,
+        &transcript,
+        &slides,
+        &model,
+        &routing,
+        &custom_instructions,
+        forced,
+        api::summary::SourceMode::from_wanted(want_sources),
+    );
+    let reason = if forced && result.is_err() { api::summary::take_last_summary_failure_reason() } else { None };
+    match envelope_json(&result).map(|json| with_fallback_reason(json, reason)) {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
+    }
+}
+
+/// Whether a summary of the meeting would be refused right now: it involves a client excluded
 /// from hosted models and no on-device model is available (Ollama off or a cloud model, and no
 /// bundled model installed), so [`whimbrel_llm_summarize_meeting`] sends nothing. Takes the
 /// summary call's `model` and `routing_config_json`. Returns 1 when refused, else 0 (also on a
@@ -3036,8 +3121,9 @@ pub extern "C" fn whimbrel_import_markdown_folder(
 /// FR-CHAT-1 follow-on: inserts a batch of transcript segments for one meeting, called
 /// once after transcription completes (see `TranscriptionService.transcribeAndSummarize`
 /// on the Swift side). `segments_json` is a JSON array of
-/// `{"start_cs": ..., "speaker_label": ..., "text": ...}` (no `meeting_id` per element —
-/// it's the same for the whole batch, passed once). Returns `true` on success, `false`
+/// `{"start_cs": ..., "speaker_label": ..., "text": ...}` and optionally `"end_cs"` (the line's
+/// end in centiseconds on the same clock; kept on this device only, never synced). There is no
+/// `meeting_id` per element: it is the same for the whole batch and passed once. Returns `true` on success, `false`
 /// on a null/invalid handle, malformed JSON, or a DB error.
 ///
 /// Parsed via `serde_json::Value` field access rather than `#[derive(Deserialize)]` —
@@ -3059,6 +3145,7 @@ pub extern "C" fn whimbrel_memory_insert_transcript_segments(
         return false;
     };
     let mut segments = Vec::with_capacity(raw.len());
+    let mut ends = Vec::with_capacity(raw.len());
     for v in &raw {
         let (Some(start_cs), Some(speaker_label), Some(text)) = (
             v.get("start_cs").and_then(|x| x.as_i64()),
@@ -3073,9 +3160,11 @@ pub extern "C" fn whimbrel_memory_insert_transcript_segments(
             speaker_label: speaker_label.to_string(),
             text: text.to_string(),
         });
+        // Optional: when the line ended, on the same clock as `start_cs`. Kept on this device only.
+        ends.push(v.get("end_cs").and_then(|x| x.as_i64()));
     }
     let store = unsafe { &(*handle).0 };
-    store.insert_transcript_segments(&segments).is_ok()
+    store.insert_transcript_segments_with_ends(&segments, &ends).is_ok()
 }
 
 /// Upserts calendar-event items (docs/superpowers/specs/2026-08-07-items-schema-migration-design.md)
@@ -4501,7 +4590,9 @@ pub extern "C" fn whimbrel_memory_replace_meeting_action_items_from_generated(
 /// independently of the meeting row's own `transcript_path` (a local file path that
 /// never transfers between devices), so this is the source of truth for cross-device
 /// transcript display, not `meeting.transcript_path`. Returns a JSON object
-/// `{"segments": [MeetingTranscriptSegment...], "total": N}`, or null on a null/invalid
+/// `{"segments": [MeetingTranscriptSegment...], "total": N}` (each segment may also carry
+/// `"end_cs"`, its end in centiseconds on the same clock as `start_cs`, when it was stored with
+/// one; `"id"` is the id `whimbrel_meeting_note_sources` calls `segment_id`), or null on a null/invalid
 /// handle or a DB error (this file's existing convention).
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_memory_get_transcript_segments_page(
@@ -4514,7 +4605,9 @@ pub extern "C" fn whimbrel_memory_get_transcript_segments_page(
         return ptr::null_mut();
     }
     let store = unsafe { &(*handle).0 };
-    let Ok((segments, total)) = store.get_transcript_segments_page(meeting_id, offset, limit)
+    // The same lines, ids and order as `get_transcript_segments_page`, plus `end_cs` on a line
+    // that was stored with one (absent otherwise, so an older line's JSON is what it was).
+    let Ok((segments, total)) = store.get_transcript_lines_page(meeting_id, offset, limit)
     else {
         return ptr::null_mut();
     };

@@ -9,15 +9,25 @@
 #   python3 website/scripts/capture-app-shots.py                         # today, meeting, topic, ask, status
 #   FX=fixtures-live.json python3 website/scripts/capture-app-shots.py   # live (recording)
 #
+# The 0.9.80 "What's new" shots (client controls, encryption) use their own fixtures, which sit on top of
+# fixtures.json ("$base"), and their own step lists, given as JSON in argv[1] (see whats-new-steps.json):
+#   OUT=/some/dir FX=fixtures-whatsnew-client.json python3 website/scripts/capture-app-shots.py "$(cat website/scripts/whats-new-steps.json | jq -c .client)"
+# OUT (a folder) and PORT only change where shots go and which local port is read; defaults are unchanged.
+# A fixture value {"$seq": [a, b, ...]} answers its calls in turn (the last one repeats), for a setting that
+# changes as it is used. Step {"scroll": "<css>"} brings an element into view (with "block": "start", to the top); {"select": "<css>", "value": "12"} picks a <select> option.
+#
 # Needs Python Playwright and Google Chrome. Sidebar icons are hidden because they are
 # drawn with Segoe Fluent Icons, a Windows font; on Windows they show. The last shot is
 # Settings → Status, answered by the settings fixtures in fixtures.json.
 import sys, json, pathlib, time
 from playwright.sync_api import sync_playwright
 S = pathlib.Path(__file__).parent.parent / "demo" / "capture"
-OUT = pathlib.Path(__file__).parent.parent / "demo" / "shots"
 import os
+OUT = pathlib.Path(os.environ["OUT"]) if os.environ.get("OUT") else pathlib.Path(__file__).parent.parent / "demo" / "shots"
+PORT = os.environ.get("PORT", "8792")
 fx = json.loads((S/os.environ.get("FX","fixtures.json")).read_text())
+if "$base" in fx:
+    base = json.loads((S/fx.pop("$base")).read_text()); base.update(fx); fx = base
 ALL = [{"shot":"today"},{"tab":"Meetings"},{"wait":1500},{"shot":"meeting"},{"tab":"Topics"},{"wait":1500},{"shot":"topic"},
        {"tab":"Library"},{"wait":900},{"click":"Ask"},{"wait":1200},{"click":"Acme pricing and what I owe"},{"wait":1500},{"shot":"ask"},
        {"tab":"Settings"},{"wait":600},{"css":"#settings-status"},{"wait":1500},{"shot":"status"}]
@@ -34,7 +44,12 @@ INIT = """
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main', windowLabel: 'main' } },
     transformCallback: () => 0,
-    invoke: async (cmd, args) => { window.__calls.push(cmd + (cmd in data ? '' : ' !MISSING ' + JSON.stringify(args||{}).slice(0,120))); return cmd in data ? fix(data[cmd]) : null; },
+    invoke: async (cmd, args) => {
+      window.__calls.push(cmd + (cmd in data ? '' : ' !MISSING ' + JSON.stringify(args||{}).slice(0,120)));
+      let v = data[cmd];
+      if (v && typeof v === 'object' && Array.isArray(v.$seq)) v = v.$seq.length > 1 ? v.$seq.shift() : v.$seq[0];
+      return cmd in data ? fix(v) : null;
+    },
     convertFileSrc: (s) => s,
   };
 })();
@@ -46,7 +61,7 @@ with sync_playwright() as p:
     errs=[]
     pg.on("pageerror", lambda e: errs.append(str(e)[:300]))
     pg.add_init_script(INIT.replace("__DATA__", json.dumps(fx)))
-    pg.goto("http://localhost:8792/"); pg.wait_for_timeout(1500)
+    pg.goto(f"http://localhost:{PORT}/"); pg.wait_for_timeout(1500)
     pg.add_style_tag(content=".skin-icon{display:none!important}")
     for st in steps:
         if "tab" in st:
@@ -58,6 +73,13 @@ with sync_playwright() as p:
         if "css" in st:
             try: pg.locator(st["css"]).first.click(timeout=4000)
             except Exception as e: print("CSSFAIL", st["css"], str(e)[:120])
+        if "scroll" in st:
+            try:
+                if "block" in st: pg.locator(st["scroll"]).first.evaluate("(el, b) => el.scrollIntoView({block: b})", st["block"])
+                else: pg.locator(st["scroll"]).first.scroll_into_view_if_needed(timeout=4000)
+            except Exception as e: print("SCROLLFAIL", st["scroll"], str(e)[:120])
+        if "select" in st:
+            pg.locator(st["select"]).first.select_option(st["value"])
         if "fill" in st:
             pg.locator(st["sel"]).first.fill(st["fill"])
         if "press" in st: pg.keyboard.press(st["press"])

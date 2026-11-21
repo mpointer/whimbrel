@@ -3,7 +3,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:
 import * as googleAuth from "../src/googleAuth";
 import * as accounts from "../src/accounts";
 import { AI_MODELS, AI_MODELS_CACHE_KEY, AI_PRICES, costMicros, handleAiMessages, holdEstimate, offeredAiModels } from "../src/aiProxy";
-import { aiBalance, creditPurchase, placeHold } from "../src/aiCredit";
+import { aiBalance, creditPurchase, grantAllowance, placeHold } from "../src/aiCredit";
 import type { Env } from "../src/index";
 import { FakeSqlExecutor } from "./testHelpers/fakeSqlExecutor";
 
@@ -650,4 +650,143 @@ it("the_worker_routes_ai_messages_with_its_context", async () => {
   const res = await worker.fetch(messages(), makeEnv({ ANTHROPIC_API_KEY: undefined }), createExecutionContext());
   expect(res.status).toBe(503);
   expect(await res.json()).toEqual({ error: "ai_unavailable" });
+});
+
+// The proxy decides on spendable money (allowance + prepaid); only the
+// x-whimbrel-credit header stays prepaid-only.
+const dbHolds = (db: FakeSqlExecutor) => db.rawAiHolds().length;
+const ALLOWANCE_END = NOW + 30 * 24 * 60 * 60 * 1000;
+async function withAllowance(prepaid: number, allowance: number, end = ALLOWANCE_END) {
+  const s = await seeded("approved", prepaid);
+  if (allowance > 0) {
+    expect(await grantAllowance(s.db, { accountId: s.id, grantKey: `in_${crypto.randomUUID()}`, micros: allowance, periodEndUnixMs: end }, NOW)).toBe(true);
+  }
+  return s;
+}
+
+it("a_plus_user_with_zero_prepaid_and_allowance_left_is_served", async () => {
+  const { db, id } = await withAllowance(0, 6_000_000);
+  const { fetcher, calls } = sseFetcher();
+  const ctx = createExecutionContext();
+  const res = await handleAiMessages(messages(), makeEnv(), ctx, db, fetcher, NOW);
+  expect(res.status).toBe(200);
+  expect(calls).toHaveLength(1);
+  expect(await res.text()).toBe(SSE.join(""));
+  await waitOnExecutionContext(ctx);
+  expect(await aiBalance(db, id)).toBe(0);
+  expect(db.rawAccount(id)).toMatchObject({ aiCreditMicros: 0, aiAllowanceMicros: 6_000_000 - costMicros(MODEL, USAGE), aiOpenHolds: 0 });
+});
+
+it("at_the_four_hold_cap_a_plus_user_gets_429_not_402", async () => {
+  const { db, id } = await withAllowance(0, 6_000_000);
+  for (let i = 0; i < 4; i++) expect(await placeHold(db, id, 100, NOW)).not.toBeNull();
+  const realBatch = db.batch.bind(db);
+  let batches = 0;
+  db.batch = ((stmts: Parameters<typeof db.batch>[0]) => (batches++, realBatch(stmts))) as typeof db.batch;
+  const { fetcher, calls } = sseFetcher();
+  const res = await handleAiMessages(messages(), makeEnv(), createExecutionContext(), db, fetcher, NOW);
+  expect(res.status).toBe(429);
+  expect(await res.json()).toEqual({ error: "too_many_in_flight" });
+  expect(calls).toHaveLength(0);
+  // Refused at once: one hold attempt, no shrink and second attempt.
+  expect(batches).toBe(1);
+});
+
+it("allowance_and_prepaid_both_zero_answers_402_credit_exhausted", async () => {
+  const ended = ALLOWANCE_END + 1_000;
+  for (const [s, at] of [[await withAllowance(0, 0), NOW], [await withAllowance(0, 6_000_000), ended]] as const) {
+    // The second account's allowance has ended by `at`, so it counts as zero.
+    const { fetcher, calls } = sseFetcher();
+    const res = await handleAiMessages(messages(), makeEnv(), createExecutionContext(), s.db, fetcher, at);
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ error: "credit_exhausted" });
+    expect(calls).toHaveLength(0);
+    expect(dbHolds(s.db)).toBe(0);
+  }
+});
+
+it("the_shrink_uses_allowance_plus_prepaid", async () => {
+  // Enough in total for about 2000 output tokens, but the prepaid part alone is below the 512-token floor.
+  const total = heldFor(MODEL, bodyBytes(8192), 2000);
+  const prepaid = 1_000;
+  expect(prepaid).toBeLessThan(heldFor(MODEL, bodyBytes(512), 512));
+  const { db, id } = await withAllowance(prepaid, total - prepaid);
+  const { fetcher, calls } = sseFetcher();
+  const ctx = createExecutionContext();
+  const res = await handleAiMessages(messages({ max_tokens: 8192 }), makeEnv(), ctx, db, fetcher, NOW);
+  expect(res.status).toBe(200);
+  const sentBody = String(calls[0].init.body);
+  const forwarded = JSON.parse(sentBody).max_tokens;
+  expect(forwarded).toBeGreaterThanOrEqual(2000);
+  expect(forwarded).toBeLessThan(2100);
+  const holds = db.rawAiHolds();
+  expect(holds).toHaveLength(1);
+  expect(holds[0].micros).toBe(heldFor(MODEL, new TextEncoder().encode(sentBody).byteLength, forwarded));
+  expect(holds[0].micros).toBeLessThanOrEqual(total);
+  // The hold drew on both buckets.
+  expect(holds[0].from_allowance_micros).toBe(total - prepaid);
+  await res.text();
+  await waitOnExecutionContext(ctx);
+  expect(db.rawAiHolds()).toHaveLength(0);
+  expect(await aiBalance(db, id)).toBeLessThanOrEqual(prepaid);
+});
+
+it("the_credit_header_stays_prepaid_only", async () => {
+  const { db } = await withAllowance(250_000, 6_000_000);
+  const { fetcher } = sseFetcher();
+  const ctx = createExecutionContext();
+  const res = await handleAiMessages(messages(), makeEnv(), ctx, db, fetcher, NOW);
+  expect(res.status).toBe(200);
+  // The hold came out of the allowance, so prepaid is untouched and the header is exactly it.
+  expect(res.headers.get("x-whimbrel-credit")).toBe("250000");
+  await res.text();
+  await waitOnExecutionContext(ctx);
+});
+
+it("a_race_that_takes_the_last_slot_after_the_shrink_is_429_for_an_allowance_only_user", async () => {
+  // Short for the full hold, so the proxy shrinks; then another request takes the 4th slot before the second hold.
+  const total = heldFor(MODEL, bodyBytes(8192), 2000);
+  const { db, id } = await withAllowance(0, total);
+  for (let i = 0; i < 3; i++) expect(await placeHold(db, id, 100, NOW)).not.toBeNull();
+  // The 3 holds above took 300 micros. The race below takes the 4th slot (100 micros) and credit arrives
+  // (5_000 micros), so the shrunk hold still fits and only the cap is in the way.
+  const real = db.execute.bind(db);
+  let raced = false;
+  db.execute = (async (sql: string, params: unknown[]) => {
+    const rows = await real(sql, params);
+    if (!raced && sql.includes("AS spendable")) {
+      raced = true;
+      expect(await placeHold(db, id, 100, NOW)).not.toBeNull();
+      await creditPurchase(db, id, 5_000, `pi_${crypto.randomUUID()}`, NOW);
+    }
+    return rows;
+  }) as typeof db.execute;
+  const { fetcher, calls } = sseFetcher();
+  const res = await handleAiMessages(messages({ max_tokens: 8192 }), makeEnv(), createExecutionContext(), db, fetcher, NOW);
+  expect(raced).toBe(true);
+  expect(res.status).toBe(429);
+  expect(await res.json()).toEqual({ error: "too_many_in_flight" });
+  expect(calls).toHaveLength(0);
+});
+
+it("a_race_that_drains_the_money_after_the_shrink_is_402_credit_exhausted", async () => {
+  const total = heldFor(MODEL, bodyBytes(8192), 2000);
+  const { db, id } = await withAllowance(0, total);
+  // Right after the proxy's spendable read, a competing request holds everything that was left.
+  const real = db.execute.bind(db);
+  let raced = false;
+  db.execute = (async (sql: string, params: unknown[]) => {
+    const rows = await real(sql, params);
+    if (!raced && sql.includes("AS spendable")) {
+      raced = true;
+      expect(await placeHold(db, id, total, NOW)).not.toBeNull();
+    }
+    return rows;
+  }) as typeof db.execute;
+  const { fetcher, calls } = sseFetcher();
+  const res = await handleAiMessages(messages({ max_tokens: 8192 }), makeEnv(), createExecutionContext(), db, fetcher, NOW);
+  expect(raced).toBe(true);
+  expect(res.status).toBe(402);
+  expect(await res.json()).toEqual({ error: "credit_exhausted" });
+  expect(calls).toHaveLength(0);
 });

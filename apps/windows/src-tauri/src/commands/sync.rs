@@ -78,7 +78,7 @@ pub async fn sync_manage_subscription(state: State<'_, AppState>) -> Result<Sync
 pub fn whimbrel_ai_status(state: State<'_, AppState>) -> WhimbrelAiView {
     match &state.sync {
         Some(c) => c.whimbrel_ai_view(),
-        None => WhimbrelAiView::new(false, None),
+        None => WhimbrelAiView::new(false, None, None),
     }
 }
 
@@ -96,6 +96,56 @@ pub async fn whimbrel_ai_refresh(state: State<'_, AppState>) -> Result<WhimbrelA
     })
     .await;
     Ok(c.whimbrel_ai_view())
+}
+
+/// Where each of the question's inputs is read (`plus_prompt::Sources`), with `note` borrowed from core.
+fn plus_prompt_sources<'a>(state: &AppState, routing: &crate::settings::RoutingSettings, note: Option<&'a str>) -> crate::plus_prompt::Sources<'a> {
+    crate::plus_prompt::Sources {
+        plan_plus: state.sync.as_ref().and_then(|c| c.plan_is_plus()),
+        signed_in: state.sync.as_ref().is_some_and(|c| c.whimbrel_ai_view().signed_in),
+        token_cached: crate::whimbrel_ai::cached().is_some(),
+        prefers_whimbrel: routing.preferred_provider == crate::settings::Provider::Whimbrel,
+        local_only: routing.local_only,
+        answered: crate::plus_prompt::AnsweredFlag::under(&state.paths.root).is_set(),
+        recording: state.meetings.as_ref().is_some_and(|m| m.is_starting_or_recording()),
+        data_note: note,
+    }
+}
+
+/// Core's Whimbrel AI data note (`whimbrel_ai_passthrough`), the one source the question shows.
+fn whimbrel_data_note() -> Option<&'static str> {
+    api::providers::info("whimbrel").and_then(|p| p.data_terms.as_ref()).map(|t| t.text)
+}
+
+/// Whether to ask a Plus account "Use Whimbrel AI?" now (`plus_prompt::check`): show, wait, not
+/// Plus, or done. A Plus account already on Whimbrel AI is recorded as answered instead.
+#[tauri::command]
+pub fn plus_ai_prompt(state: State<'_, AppState>) -> crate::plus_prompt::PlusAiPromptView {
+    let routing = state.settings.lock().unwrap().routing();
+    let sources = plus_prompt_sources(&state, &routing, whimbrel_data_note());
+    crate::plus_prompt::check(&sources, &crate::plus_prompt::AnsweredFlag::under(&state.paths.root))
+}
+
+/// The window displayed "Use Whimbrel AI?": from now until it is answered, closing the window is Not now.
+#[tauri::command]
+pub fn plus_ai_prompt_displayed() {
+    crate::plus_prompt::displayed();
+}
+
+/// The answer to "Use Whimbrel AI?". Use Whimbrel AI prefers it, saved as Settings → AI saves it and
+/// read and written under one settings lock; Keep my current setup changes nothing; both are
+/// remembered on this PC. Not now records nothing. Use and Keep check the conditions again first:
+/// `false` means the question no longer applied and nothing was written.
+#[tauri::command]
+pub fn plus_ai_prompt_answer(state: State<'_, AppState>, answer: crate::plus_prompt::PlusAiPromptAnswer) -> Result<bool, CommandError> {
+    let routing = state.settings.lock().unwrap().routing();
+    let sources = plus_prompt_sources(&state, &routing, whimbrel_data_note());
+    let flag = crate::plus_prompt::AnsweredFlag::under(&state.paths.root);
+    let applied = crate::plus_prompt::answer(answer, &sources, &flag, || {
+        crate::commands::edit_routing(&state, |r| r.preferred_provider = crate::settings::Provider::Whimbrel)
+    })?;
+    tracing::info!(?answer, applied, "Plus: Use Whimbrel AI answered");
+    Ok(applied)
 }
 
 /// Add $10 or Add $25 (`pack` "10" or "25"): opens Stripe Checkout in the browser.

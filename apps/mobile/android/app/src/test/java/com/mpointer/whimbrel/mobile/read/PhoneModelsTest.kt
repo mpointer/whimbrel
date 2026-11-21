@@ -126,13 +126,81 @@ class PhoneModelsTest {
         ).single()
         assertEquals("acme", s.topicKey)
         assertEquals("Acme", s.name)
-        assertEquals(PhoneTopicSnapshot.NextMeeting("Acme call", 1000L), s.nextMeeting)
-        assertEquals(
-            listOf(PhoneTopicSnapshot.Step("Send quote", "2026-11-12"), PhoneTopicSnapshot.Step("Call back", null)),
-            s.youOwe,
-        )
+        assertEquals("Acme call" to 1000L, s.nextMeeting?.let { it.title to it.startUnixMs })
+        assertEquals(listOf("Send quote" to "2026-11-12", "Call back" to null), s.youOwe.map { it.text to it.dueDate })
+        assertEquals(listOf("meeting", "email"), s.youOwe.map { it.sourceKind })
         val bare = readJson.decodeFromString<PhoneTopicSnapshot>("""{"topic_key":"k","name":"N"}""")
         assertNull(bare.nextMeeting)
         assertEquals(emptyList<PhoneTopicSnapshot.Step>(), bare.youOwe)
+    }
+
+    private val fullTopic = """
+        {"topic_key":"acme","name":"Acme","kind":"customer","lead":{"kind":"date","label":"Quote due","date":"2026-11-14"},
+         "role":{"text":"You own the quote.","edited":true},
+         "next_meeting":{"title":"Acme call","start_unix_ms":1000,"attendees_by_org":[["acme.com",3],["bad"],["x.org",1]],"me":1},
+         "you_owe":[{"text":"Send quote","source_kind":"meeting","source_title":"Acme call","asked_at_unix_ms":5,"due_date":"2026-11-12",
+                     "meeting":{"device_id":"mac-a","source_meeting_id":7}}],
+         "owed_to_you":[{"text":"Order form","source_kind":"email"}],"done":[{"text":"Deck","source_kind":"meeting"}],
+         "recent":[{"kind":"email","title":"Re: terms","sender":"Priya","ts_unix_ms":9,"meeting":null}],
+         "recent_total":4,"truncated":true,"built_at_unix_ms":7,"built_by":"Mac"}
+    """
+
+    @Test
+    fun decodesTheWholeTopicPage() {
+        val s = readJson.decodeFromString<PhoneTopicSnapshot>(fullTopic)
+        assertEquals(PhoneTopicSnapshot.Lead.Dated("Quote due", "2026-11-14"), s.lead)
+        assertEquals(PhoneTopicSnapshot.Role("You own the quote.", true), s.role)
+        assertEquals("a pair that is not [domain, count] is left out", listOf(PhoneTopicSnapshot.OrgCount("acme.com", 3), PhoneTopicSnapshot.OrgCount("x.org", 1)), s.nextMeeting?.attendeesByOrg)
+        assertEquals(1L, s.nextMeeting?.me)
+        val step = s.youOwe.single()
+        assertEquals("meeting", step.sourceKind)
+        assertEquals("Acme call", step.sourceTitle)
+        assertEquals(5L, step.askedAtUnixMs)
+        assertEquals(PhoneMeetingRef("mac-a", 7), step.meeting)
+        assertEquals("Order form", s.owedToYou.single().text)
+        assertEquals("Deck", s.done.single().text)
+        assertEquals(PhoneTopicSnapshot.Recent("email", "Re: terms", "Priya", 9), s.recent.single())
+        assertEquals(4L, s.recentTotal)
+        assertEquals(true, s.truncated)
+        assertEquals("Mac", s.builtBy)
+        assertNull("a meeting that has started is no next meeting", s.upcomingMeeting(1000))
+        assertEquals("Acme call", s.upcomingMeeting(999)?.title)
+    }
+
+    @Test
+    fun aLeadKindThisBuildDoesNotKnowLosesTheLeadNotThePage() {
+        val s = readJson.decodeFromString<PhoneTopicSnapshot>("""{"topic_key":"k","name":"N","lead":{"kind":"mood","emoji":"x"},"you_owe":[{"text":"A"}]}""")
+        assertNull(s.lead)
+        assertEquals("A", s.youOwe.single().text)
+        assertEquals(
+            PhoneTopicSnapshot.Lead.NextStep("Send", null),
+            readJson.decodeFromString<PhoneTopicSnapshot>("""{"topic_key":"k","name":"N","lead":{"kind":"step","text":"Send"}}""").lead,
+        )
+    }
+
+    @Test
+    fun aPageThatNoLongerParsesInFullStillReminds() {
+        // `role` and `recent` have shapes this build cannot read; reminders only need the name, next meeting and steps.
+        val list = PhoneTopicSnapshot.decodeList(
+            """
+            [{"topic_key":"new","name":"Newer core","role":"owner","recent":"none",
+              "next_meeting":{"title":"Call","start_unix_ms":5},"you_owe":[{"text":"Pay","due_date":"2026-11-12"}]},
+             {"name":"no key"}, 7,
+             $fullTopic]
+            """,
+        )!!
+        assertEquals(listOf("new", "acme"), list.map { it.topicKey })
+        assertEquals(PhoneTopicSnapshot.NextMeeting("Call", 5), list[0].nextMeeting)
+        assertEquals(listOf(PhoneTopicSnapshot.Step("Pay", "2026-11-12")), list[0].youOwe)
+        assertEquals("the page that parses is whole", "Mac", list[1].builtBy)
+        assertNull(PhoneTopicSnapshot.decodeList("""{"not":"a list"}"""))
+        assertNull(PhoneTopicSnapshot.decodeList(null))
+    }
+
+    @Test
+    fun decodesCaptureItem() {
+        val c = readJson.decodeFromString<PhoneCaptureItem>("""{"window_title":"","app_bundle_id":"com.app","url":null,"text":"Hello","extra":1}""")
+        assertEquals("the app stands in for an empty window title", "com.app", c.title)
+        assertEquals("Hello", c.text)
     }
 }

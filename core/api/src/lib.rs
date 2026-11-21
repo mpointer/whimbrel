@@ -47,6 +47,7 @@ mod exclusion_sweep;
 pub mod hosted_models;
 pub mod inference;
 pub mod jobs;
+pub mod line_sources;
 pub mod live_question;
 pub use memory::l10n;
 pub use memory::background_gate;

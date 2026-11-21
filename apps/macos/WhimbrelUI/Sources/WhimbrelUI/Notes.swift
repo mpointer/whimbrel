@@ -4,6 +4,33 @@ import SwiftUI
 
 public enum WNoteKind: Sendable { case heading, paragraph, bullet, check }
 
+/// A checkbox the package draws itself, so its edge shows in every theme, high contrast included, and in a window that
+/// is not the key window (the system checkbox draws pale there). A screen reader still gets a checkbox.
+struct WCheckboxToggleStyle: ToggleStyle {
+    @Environment(\.wTheme) private var theme
+    @Environment(\.wTextScale) private var k
+
+    func makeBody(configuration: Configuration) -> some View {
+        let side = 16 * k
+        let shape = RoundedRectangle(cornerRadius: 4, style: .continuous)
+        return Button { configuration.isOn.toggle() } label: {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space(8)) {
+                shape.fill(configuration.isOn ? theme.accentPrimary : theme.backgroundCard)
+                    .overlay(shape.strokeBorder(configuration.isOn ? theme.accentPrimary : (theme.isHighContrast ? theme.textPrimary : theme.textSecondary), lineWidth: theme.isHighContrast ? 2 : 1.25))
+                    .overlay {
+                        if configuration.isOn { Image(systemName: "checkmark").font(.system(size: 10 * k, weight: .bold)).foregroundStyle(theme.textOnAccent) }
+                    }
+                    .frame(width: side, height: side)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 * k }
+                configuration.label
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityRepresentation { Toggle(isOn: configuration.$isOn) { configuration.label }.toggleStyle(.checkbox) }
+    }
+}
+
 public enum WNoteAuthor: Equatable, Sendable {
     case you
     /// A line Whimbrel wrote, with the number of the source it came from.
@@ -23,8 +50,20 @@ public struct WNoteBlock: View {
     let isSelected: Bool
     let onToggle: ((Bool) -> Void)?
     let onSelectSource: (() -> Void)?
+    let sourceDetail: [String]
+    let sourceQuote: String?
+    let sourceOpenTitle: String?
+    let onOpenSource: (() -> Void)?
 
-    public init(kind: WNoteKind = .paragraph, author: WNoteAuthor = .you, text: String, isChecked: Bool = false, isSelected: Bool = false, onToggle: ((Bool) -> Void)? = nil, onSelectSource: (() -> Void)? = nil) {
+    public init(
+        kind: WNoteKind = .paragraph, author: WNoteAuthor = .you, text: String, isChecked: Bool = false, isSelected: Bool = false,
+        sourceDetail: [String] = [], sourceQuote: String? = nil, sourceOpenTitle: String? = nil, onOpenSource: (() -> Void)? = nil,
+        onToggle: ((Bool) -> Void)? = nil, onSelectSource: (() -> Void)? = nil
+    ) {
+        self.sourceDetail = sourceDetail
+        self.sourceQuote = sourceQuote
+        self.sourceOpenTitle = sourceOpenTitle
+        self.onOpenSource = onOpenSource
         self.kind = kind
         self.author = author
         self.text = text
@@ -36,6 +75,8 @@ public struct WNoteBlock: View {
 
     private var isAI: Bool { if case .whimbrel = author { return true } else { return false } }
     private var ink: Color { isAI ? theme.aiInk : theme.textPrimary }
+    /// A heading is only coloured; the left rule belongs to Whimbrel's lines.
+    private var ruled: Bool { isAI && kind != .heading }
 
     public var body: some View {
         let shape = RoundedRectangle(cornerRadius: theme.shape.controlRadius, style: .continuous)
@@ -55,23 +96,25 @@ public struct WNoteBlock: View {
                         Toggle(isOn: Binding(get: { isChecked }, set: { onToggle?($0) })) {
                             lineText
                         }
-                        .toggleStyle(.checkbox)
+                        .toggleStyle(WCheckboxToggleStyle())
                     } else {
                         lineText
                     }
                     if case .whimbrel(let source?) = author {
-                        WSourceMark(number: source, isSelected: isSelected) { onSelectSource?() }
+                        WSourceMark(
+                            number: source, isSelected: isSelected, spokenDetail: sourceDetail, spokenQuote: sourceQuote,
+                            openTitle: sourceOpenTitle, onOpen: onOpenSource) { onSelectSource?() }
                     }
                 }
             }
         }
-        .padding(.vertical, isAI ? theme.space(4) : 0)
-        .padding(.leading, isAI ? theme.space(12) : 0)
-        .padding(.trailing, isAI ? theme.space(8) : 0)
+        .padding(.vertical, ruled ? theme.space(4) : 0)
+        .padding(.leading, ruled ? theme.space(12) : 0)
+        .padding(.trailing, ruled ? theme.space(8) : 0)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(shape.fill(isSelected ? theme.aiTint : .clear))
         .overlay(alignment: .leading) {
-            if isAI {
+            if ruled {
                 Rectangle().fill(theme.aiInk).frame(width: theme.isHighContrast ? 3 : 2)
             }
         }
@@ -118,10 +161,16 @@ public struct WSourceCard: View {
     let quote: String
     let openTitle: String?
     let isSelected: Bool
+    /// Lines of the quote while the card is not selected; the selected card shows it whole. Nil shows it whole.
+    let quoteLineLimit: Int?
+    /// False where the mark on the line already speaks the source: the card then exposes only its Open button.
+    let speaksContent: Bool
     let onSelect: () -> Void
     let onOpen: () -> Void
 
-    public init(number: Int, size: WSourceCardSize = .margin, appGlyph: String = "waveform", appName: String? = nil, kind: WSourceKind = .transcriptMoment, title: String, time: String, quote: String, openTitle: String? = nil, isSelected: Bool = false, onSelect: @escaping () -> Void, onOpen: @escaping () -> Void) {
+    public init(number: Int, size: WSourceCardSize = .margin, appGlyph: String = "waveform", appName: String? = nil, kind: WSourceKind = .transcriptMoment, title: String, time: String, quote: String, openTitle: String? = nil, isSelected: Bool = false, quoteLineLimit: Int? = nil, speaksContent: Bool = true, onSelect: @escaping () -> Void, onOpen: @escaping () -> Void) {
+        self.quoteLineLimit = quoteLineLimit
+        self.speaksContent = speaksContent
         self.number = number
         self.size = size
         self.appGlyph = appGlyph
@@ -150,7 +199,7 @@ public struct WSourceCard: View {
         let shape = RoundedRectangle(cornerRadius: size == .card ? theme.shape.cardRadius : theme.shape.controlRadius, style: .continuous)
         HStack(alignment: .top, spacing: theme.space(8)) {
             numberMark
-            VStack(alignment: .leading, spacing: theme.space(4)) {
+            VStack(alignment: .leading, spacing: theme.space(size == .card || isSelected ? 4 : 1)) {
                 if size == .card {
                     HStack(spacing: theme.space(6)) {
                         WGlyph(name: appGlyph, size: 12).foregroundStyle(theme.textSecondary)
@@ -164,7 +213,11 @@ public struct WSourceCard: View {
                     Text(title).wFont(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Text(time).wFont(.time).fontWeight(.regular).foregroundStyle(theme.textSecondary)
                 }
-                Text(strings.quoted(quote)).wFont(.secondary).foregroundStyle(theme.textPrimary.opacity(0.92)).fixedSize(horizontal: false, vertical: true)
+                .accessibilityHidden(!speaksContent)
+                Text(strings.quoted(quote)).wFont(.secondary).foregroundStyle(theme.textPrimary.opacity(0.92))
+                    .lineLimit(isSelected ? nil : quoteLineLimit)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityHidden(!speaksContent)
                 if size == .card || isSelected {
                     let openLabel = openTitle ?? strings.open
                     Button(action: onOpen) {
@@ -183,7 +236,7 @@ public struct WSourceCard: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, theme.space(size == .card ? 12 : 10))
-        .padding(.vertical, theme.space(size == .card ? 10 : 6))
+        .padding(.vertical, theme.space(size == .card ? 10 : (isSelected ? 6 : 3)))
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(shape.fill(isSelected ? theme.aiTint : (size == .card ? theme.backgroundCard : .clear)))
         .overlay(alignment: .leading) {
@@ -195,73 +248,114 @@ public struct WSourceCard: View {
         .contentShape(shape)
         .onTapGesture(perform: onSelect)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(strings.joinDetails([strings.sourceNumber(number), title, time]))
+        .accessibilityLabel(speaksContent ? strings.joinDetails([strings.sourceNumber(number), title, time]) : "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
 // MARK: Action item
 
+/// A checkbox and its text, then the owner, the due date and a source only when there are any. On the finished
+/// note the source is a numbered mark and the line is Whimbrel's (AI ink, left rule) until the person edits it.
 public struct WActionItemRow: View {
     @Environment(\.wTheme) private var theme
     @Environment(\.wTextScale) private var k
     @Environment(\.wStrings) private var strings
     let text: String
     let isDone: Bool
-    let owner: WPerson
-    let due: String
-    let sourceTime: String
+    let owner: WPerson?
+    let due: String?
+    let sourceTime: String?
+    let isAI: Bool
+    let mark: Int?
+    let markDetail: [String]
+    let isMarkSelected: Bool
+    let markQuote: String?
+    let markOpenTitle: String?
+    let onOpenSource: (() -> Void)?
     let onToggle: (Bool) -> Void
     let onSourceTap: () -> Void
 
-    public init(text: String, isDone: Bool = false, owner: WPerson, due: String, sourceTime: String, onToggle: @escaping (Bool) -> Void, onSourceTap: @escaping () -> Void) {
+    public init(
+        text: String, isDone: Bool = false, owner: WPerson? = nil, due: String? = nil, sourceTime: String? = nil, isAI: Bool = false,
+        mark: Int? = nil, markDetail: [String] = [], isMarkSelected: Bool = false,
+        markQuote: String? = nil, markOpenTitle: String? = nil, onOpenSource: (() -> Void)? = nil,
+        onToggle: @escaping (Bool) -> Void, onSourceTap: @escaping () -> Void = {}
+    ) {
+        self.markQuote = markQuote
+        self.markOpenTitle = markOpenTitle
+        self.onOpenSource = onOpenSource
         self.text = text
         self.isDone = isDone
         self.owner = owner
         self.due = due
         self.sourceTime = sourceTime
+        self.isAI = isAI
+        self.mark = mark
+        self.markDetail = markDetail
+        self.isMarkSelected = isMarkSelected
         self.onToggle = onToggle
         self.onSourceTap = onSourceTap
     }
 
+    private var ink: Color { isDone ? theme.textSecondary : (isAI ? theme.aiInk : theme.textPrimary) }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: theme.space(6)) {
-            Toggle(isOn: Binding(get: { isDone }, set: onToggle)) {
-                Text(text)
-                    .wFont(.body).fontWeight(.medium)
-                    .foregroundStyle(isDone ? theme.textSecondary : theme.textPrimary)
-                    .strikethrough(isDone, color: theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .toggleStyle(.checkbox)
-            .accessibilityLabel(text)
-            .accessibilityValue(isDone ? strings.done : strings.notDone)
-            HStack(spacing: theme.space(10)) {
-                WSpeakerChip(owner, size: .small)
-                HStack(spacing: theme.space(4)) {
-                    WGlyph(name: "calendar", size: 11)
-                    Text(due).wFont(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: theme.space(8)) {
+                Toggle(isOn: Binding(get: { isDone }, set: onToggle)) {
+                    Text(text)
+                        .wFont(isAI ? .reading : .body).fontWeight(isAI ? .regular : .medium)
+                        .foregroundStyle(ink)
+                        .strikethrough(isDone, color: theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundStyle(theme.textSecondary)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(due)
-                Button(action: onSourceTap) {
-                    HStack(spacing: theme.space(4)) {
-                        WGlyph(name: "waveform", size: 10)
-                        Text(sourceTime).wFont(.time).fontWeight(.regular)
+                .toggleStyle(WCheckboxToggleStyle())
+                .accessibilityLabel(isAI ? strings.whimbrelWrote(text) : text)
+                .accessibilityValue(isDone ? strings.done : strings.notDone)
+                if let mark {
+                    WSourceMark(
+                        number: mark, isSelected: isMarkSelected, spokenDetail: markDetail, spokenQuote: markQuote,
+                        openTitle: markOpenTitle, onOpen: onOpenSource, action: onSourceTap)
+                }
+            }
+            if owner != nil || due != nil || sourceTime != nil {
+                WFlowLayout(spacing: theme.space(10), lineSpacing: theme.space(4)) {
+                    if let owner { WSpeakerChip(owner, size: .small) }
+                    if let due {
+                        HStack(spacing: theme.space(4)) {
+                            WGlyph(name: "calendar", size: 11)
+                            Text(due).wFont(.secondary)
+                        }
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(due)
                     }
-                    .foregroundStyle(theme.accentPrimary)
-                    .padding(.horizontal, theme.space(8))
-                    .padding(.vertical, theme.space(2))
-                    .background(RoundedRectangle(cornerRadius: WTokens.Radius.pill, style: .continuous).wBorder(theme.accentPrimary.opacity(0.6), style: theme.borderStroke.widened(1)))
-                    .contentShape(Capsule())
+                    if let sourceTime {
+                        Button(action: onSourceTap) {
+                            HStack(spacing: theme.space(4)) {
+                                WGlyph(name: "waveform", size: 10)
+                                Text(sourceTime).wFont(.time).fontWeight(.regular)
+                            }
+                            .foregroundStyle(theme.accentPrimary)
+                            .padding(.horizontal, theme.space(8))
+                            .padding(.vertical, theme.space(2))
+                            .background(RoundedRectangle(cornerRadius: WTokens.Radius.pill, style: .continuous).wBorder(theme.accentPrimary.opacity(0.6), style: theme.borderStroke.widened(1)))
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(strings.sourceAt(sourceTime))
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(strings.sourceAt(sourceTime))
+                .padding(.leading, theme.space(22))
             }
-            .padding(.leading, theme.space(22))
         }
+        .padding(.vertical, isAI ? theme.space(4) : 0)
+        .padding(.leading, isAI ? theme.space(12) : 0)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            if isAI { Rectangle().fill(theme.aiInk).frame(width: theme.isHighContrast ? 3 : 2) }
+        }
         .accessibilityElement(children: .contain)
     }
 }

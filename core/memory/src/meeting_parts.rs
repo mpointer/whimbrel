@@ -239,6 +239,20 @@ impl Store {
         part_index: i64,
         segments: &[NewTranscriptSegment],
     ) -> rusqlite::Result<usize> {
+        self.replace_part_transcript_segments_with_ends(meeting_id, part_index, segments, &[])
+    }
+
+    /// [`Store::replace_part_transcript_segments`] that also records how long each line ran.
+    /// `ends[i]` is `segments[i]`'s end time in centiseconds, part-relative like its `start_cs`
+    /// (`None`, or a list shorter than `segments`, stores none). The replaced lines' ends go with
+    /// them. Ends are device-local, never synced.
+    pub fn replace_part_transcript_segments_with_ends(
+        &self,
+        meeting_id: i64,
+        part_index: i64,
+        segments: &[NewTranscriptSegment],
+        ends: &[Option<i64>],
+    ) -> rusqlite::Result<usize> {
         let owner: Option<String> = self
             .conn
             .query_row(
@@ -268,10 +282,13 @@ impl Store {
             .iter()
             .map(|s| NewTranscriptSegment {
                 meeting_id,
-                start_cs: s.start_cs + offset,
+                start_cs: s.start_cs.saturating_add(offset),
                 ..s.clone()
             })
             .collect();
+        // An end that would overflow once shifted is dropped (the line is kept without one); the
+        // insert then drops any that is not after its start or is absurdly long.
+        let shifted_ends: Vec<Option<i64>> = ends.iter().map(|e| e.and_then(|e| e.checked_add(offset))).collect();
         let embeddings = self.embed_segments(&shifted);
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
@@ -283,7 +300,11 @@ impl Store {
             "DELETE FROM transcript_segment WHERE meeting_id = ?1 AND start_cs >= ?2 AND start_cs < ?3",
             params![meeting_id, offset, end],
         )?;
-        self.insert_transcript_segments_tx(&tx, &shifted, &embeddings)?;
+        self.insert_transcript_segments_tx(&tx, &shifted, &embeddings, &shifted_ends)?;
+        // The rows are new: a source whose line is not among them goes now, so the old words
+        // do not outlive the lines (a summary written before the rows, as the Windows pipeline
+        // does, fits the new ones here and stays).
+        Self::prune_unresolved_line_sources_tx(&tx, meeting_id)?;
         tx.commit()?;
         Ok(shifted.len())
     }
@@ -474,6 +495,8 @@ impl Store {
         Self::split_markers_tx(&tx, meeting_id, new_id, offset)?;
 
         for id in [meeting_id, new_id] {
+            // Both summaries are cleared, so their line sources have nothing to attach to.
+            Self::delete_line_sources_tx(&tx, id)?;
             let seq = Self::next_local_seq_tx(&tx)?;
             tx.execute(
                 "UPDATE meeting SET summary_tldr = NULL, summary_decisions_json = NULL, \
@@ -631,6 +654,8 @@ impl Store {
         )?;
         // `from`'s marks follow its recording into `into`; the delete below would drop them.
         Self::carry_markers_tx(&tx, from, into)?;
+        // `into`'s summary was just cleared; `from`'s rows go with `from` below.
+        Self::delete_line_sources_tx(&tx, into)?;
         Self::delete_meeting_rows_tx(&tx, from)?;
         crate::forget::prune_pushed_rows(&tx, from)?;
         self.enqueue_meeting_outbox(&tx, into, seq)?;

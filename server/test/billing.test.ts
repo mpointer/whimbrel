@@ -28,6 +28,8 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     STRIPE_WEBHOOK_SECRET: "whsec_test_secret",
     STRIPE_PRICE_MONTHLY: "price_monthly",
     STRIPE_PRICE_YEARLY: "price_yearly",
+    STRIPE_PRICE_PLUS_MONTHLY: "price_plus_monthly",
+    STRIPE_PRICE_PLUS_YEARLY: "price_plus_yearly",
     ENROLLMENT_HANDOFF: env.ENROLLMENT_HANDOFF,
     ...overrides,
   };
@@ -68,28 +70,28 @@ it("plan_reports_free_with_billing_flag", async () => {
   const { db } = await seeded();
   const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(), db, NOW);
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ plan: "free", until: null, interval: null, renews: null, billing: true });
+  expect(await res.json()).toEqual({ plan: "free", until: null, interval: null, renews: null, plan_tier: null, billing: true, plus_available: true });
 });
 
 it("plan_reports_cloud_until_and_interval", async () => {
   const { db, account } = await seeded();
   db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, planInterval: "year" });
   const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(), db, NOW);
-  expect(await res.json()).toEqual({ plan: "cloud", until: NOW + 1000, interval: "year", renews: true, billing: true });
+  expect(await res.json()).toEqual({ plan: "cloud", until: NOW + 1000, interval: "year", renews: true, plan_tier: "cloud", billing: true, plus_available: true });
 });
 
 it("plan_reports_a_cancelled_cloud_plan_as_not_renewing", async () => {
   const { db, account } = await seeded();
   db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, planInterval: "month", planRenews: false });
   const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(), db, NOW);
-  expect(await res.json()).toEqual({ plan: "cloud", until: NOW + 1000, interval: "month", renews: false, billing: true });
+  expect(await res.json()).toEqual({ plan: "cloud", until: NOW + 1000, interval: "month", renews: false, plan_tier: "cloud", billing: true, plus_available: true });
 });
 
 it("plan_reports_free_once_the_period_has_ended", async () => {
   const { db, account } = await seeded();
   db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW - 1, planInterval: "year" });
   const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(), db, NOW);
-  expect(await res.json()).toEqual({ plan: "free", until: null, interval: null, renews: null, billing: true });
+  expect(await res.json()).toEqual({ plan: "free", until: null, interval: null, renews: null, plan_tier: null, billing: true, plus_available: true });
 });
 
 it("plan_billing_false_when_a_stripe_setting_is_missing", async () => {
@@ -97,6 +99,37 @@ it("plan_billing_false_when_a_stripe_setting_is_missing", async () => {
   const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv({ STRIPE_PRICE_YEARLY: undefined }), db, NOW);
   expect(res.status).toBe(200);
   expect((await res.json() as any).billing).toBe(false);
+});
+
+it("account_plan_reports_plus_available_when_both_plus_prices_are_set", async () => {
+  const { db } = await seeded();
+  const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(), db, NOW);
+  expect(res.status).toBe(200);
+  expect((await res.json() as any).plus_available).toBe(true);
+});
+
+it("account_plan_reports_plus_unavailable_when_a_plus_price_is_missing_or_empty", async () => {
+  const { db } = await seeded();
+  for (const over of [
+    { STRIPE_PRICE_PLUS_MONTHLY: undefined },
+    { STRIPE_PRICE_PLUS_MONTHLY: "" },
+    { STRIPE_PRICE_PLUS_YEARLY: undefined },
+    { STRIPE_PRICE_PLUS_YEARLY: "" },
+    { STRIPE_PRICE_PLUS_MONTHLY: undefined, STRIPE_PRICE_PLUS_YEARLY: undefined },
+  ]) {
+    const body = (await (await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(over), db, NOW)).json()) as any;
+    expect(body.plus_available).toBe(false);
+    // Cloud billing itself is still on.
+    expect(body.billing).toBe(true);
+  }
+});
+
+it("account_plan_reports_plus_unavailable_when_billing_is_unconfigured", async () => {
+  const { db } = await seeded();
+  for (const key of ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_MONTHLY", "STRIPE_PRICE_YEARLY"] as const) {
+    const body = (await (await handleAccountPlan(post("/v1/account/plan", creds), makeEnv({ [key]: undefined }), db, NOW)).json()) as any;
+    expect(body).toMatchObject({ billing: false, plus_available: false });
+  }
 });
 
 it("plan_without_an_account_is_403", async () => {
@@ -176,6 +209,107 @@ it("checkout_bad_interval_is_400", async () => {
     expect(await res.json()).toEqual({ error: "interval_required" });
   }
   expect(calls).toHaveLength(0);
+});
+
+it("plus_checkout_uses_the_plus_price_and_marks_tier_metadata", async () => {
+  const { db, account } = await seeded();
+  for (const [interval, price] of [["month", "price_plus_monthly"], ["year", "price_plus_yearly"]]) {
+    const { fetcher, calls } = fakeFetch();
+    const res = await checkout(db, fetcher, { plan: "plus", interval });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ url: "https://checkout.stripe.com/c/test" });
+    expect(calls).toHaveLength(1);
+    const f = calls[0].form;
+    expect(f.get("mode")).toBe("subscription");
+    expect(f.get("line_items[0][price]")).toBe(price);
+    expect(f.get("subscription_data[metadata][tier]")).toBe("plus");
+    expect(f.get("subscription_data[metadata][account_id]")).toBe(account.id);
+    expect(f.get("client_reference_id")).toBe(account.id);
+    expect(f.get("automatic_tax[enabled]")).toBe("true");
+    expect(f.get("billing_address_collection")).toBe("required");
+    expect(f.get("customer_email")).toBe("owner@example.com");
+    expect(f.get("success_url")).toBe(SUCCESS);
+    expect(f.get("cancel_url")).toBe(CANCEL);
+  }
+});
+
+it("a_cloud_checkout_without_a_plan_field_still_works", async () => {
+  const { db } = await seeded();
+  for (const body of [{}, { plan: "cloud" }]) {
+    for (const [interval, price] of [["month", "price_monthly"], ["year", "price_yearly"]]) {
+      const { fetcher, calls } = fakeFetch();
+      const res = await checkout(db, fetcher, { ...body, interval });
+      expect(res.status).toBe(200);
+      expect(calls[0].form.get("line_items[0][price]")).toBe(price);
+      expect(calls[0].form.has("subscription_data[metadata][tier]")).toBe(false);
+    }
+  }
+});
+
+it("an_invalid_plan_value_is_rejected_400", async () => {
+  const { db } = await seeded();
+  const { fetcher, calls } = fakeFetch();
+  for (const plan of ["Plus", "pro", "", null, 1, true, ["plus"], { tier: "plus" }]) {
+    const res = await checkout(db, fetcher, { plan });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "plan_invalid" });
+  }
+  expect(calls).toHaveLength(0);
+});
+
+it("plus_checkout_without_a_plus_price_id_is_billing_unavailable", async () => {
+  const { db } = await seeded();
+  const cases: [Partial<Env>, string][] = [
+    [{ STRIPE_PRICE_PLUS_MONTHLY: undefined }, "month"],
+    [{ STRIPE_PRICE_PLUS_MONTHLY: "" }, "month"],
+    [{ STRIPE_PRICE_PLUS_YEARLY: undefined }, "year"],
+    [{ STRIPE_PRICE_PLUS_YEARLY: "" }, "year"],
+  ];
+  for (const [over, interval] of cases) {
+    const { fetcher, calls } = fakeFetch();
+    const res = await checkout(db, fetcher, { plan: "plus", interval }, makeEnv(over));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "billing_unavailable" });
+    expect(calls).toHaveLength(0);
+  }
+  // The other interval's Plus price, and Cloud, still check out.
+  const { fetcher, calls } = fakeFetch();
+  expect((await checkout(db, fetcher, { plan: "plus", interval: "year" }, makeEnv({ STRIPE_PRICE_PLUS_MONTHLY: undefined }))).status).toBe(200);
+  expect(calls[0].form.get("line_items[0][price]")).toBe("price_plus_yearly");
+  expect((await checkout(db, fetcher, {}, makeEnv({ STRIPE_PRICE_PLUS_MONTHLY: undefined, STRIPE_PRICE_PLUS_YEARLY: undefined }))).status).toBe(200);
+  expect(calls[1].form.get("line_items[0][price]")).toBe("price_monthly");
+});
+
+it("a_paid_account_asking_for_plus_without_a_plus_price_is_409", async () => {
+  const { db, account } = await seeded();
+  for (const planTier of ["cloud", "plus"] as const) {
+    db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, planTier });
+    for (const key of ["STRIPE_PRICE_PLUS_MONTHLY", "STRIPE_PRICE_PLUS_YEARLY"] as const) {
+      for (const value of [undefined, ""]) {
+        for (const interval of ["month", "year"]) {
+          const { fetcher, calls } = fakeFetch();
+          const res = await checkout(db, fetcher, { plan: "plus", interval }, makeEnv({ [key]: value }));
+          expect(res.status).toBe(409);
+          expect(await res.json()).toEqual({ error: "already_cloud" });
+          expect(calls).toHaveLength(0);
+        }
+      }
+    }
+  }
+});
+
+it("a_cloud_subscriber_cannot_start_plus_in_v1", async () => {
+  const { db, account } = await seeded();
+  for (const planTier of ["cloud", "plus", null] as const) {
+    db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, planTier });
+    for (const plan of ["plus", "cloud"]) {
+      const { fetcher, calls } = fakeFetch();
+      const res = await checkout(db, fetcher, { plan });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: "already_cloud" });
+      expect(calls).toHaveLength(0);
+    }
+  }
 });
 
 it("billing_routes_503_without_settings", async () => {
@@ -591,9 +725,9 @@ it("events_without_a_subscription_are_recorded_and_ignored", async () => {
 it("applyPlan_free_only_ends_the_stored_subscription", async () => {
   const { db, account } = await seeded();
   db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, stripeSubscriptionId: "sub_2" });
-  expect(await accounts.applyPlan(db, account.id, "sub_1", { plan: "free", untilUnixMs: NOW, interval: null, renews: false })).toBe(false);
+  expect(await accounts.applyPlan(db, account.id, "sub_1", { plan: "free", tier: null, untilUnixMs: NOW, interval: null, renews: false })).toBe(false);
   expect(db.rawAccount(account.id)?.plan).toBe("cloud");
-  expect(await accounts.applyPlan(db, account.id, "sub_2", { plan: "free", untilUnixMs: NOW, interval: null, renews: false })).toBe(true);
+  expect(await accounts.applyPlan(db, account.id, "sub_2", { plan: "free", tier: null, untilUnixMs: NOW, interval: null, renews: false })).toBe(true);
   expect(db.rawAccount(account.id)?.plan).toBe("free");
 });
 
@@ -636,6 +770,96 @@ it("a_renewal_on_a_retired_price_with_our_metadata_still_applies", async () => {
   expect((await deliver(db, fetcher, invoice, makeEnv({ STRIPE_PRICE_MONTHLY: "price_monthly_v2" }))).status).toBe(200);
   expect(db.rawAccount(account.id)?.plan).toBe("cloud");
   expect(db.rawAccount(account.id)?.planUntilUnixMs).toBe(PERIOD_END * 1000);
+});
+
+it("a_plus_subscription_lands_as_plus_and_a_cloud_one_as_cloud", async () => {
+  for (const [price, metadata, tier] of [
+    ["price_plus_monthly", {}, "plus"],
+    ["price_plus_yearly", {}, "plus"],
+    ["price_monthly", {}, "cloud"],
+  ] as const) {
+    const { db, account } = await seeded();
+    const s = subscription(account.id, { metadata: { account_id: account.id, ...metadata }, items: { data: [{ current_period_end: PERIOD_END, price: { id: price, recurring: { interval: "month" } } }] } });
+    expect((await deliver(db, stripeFake({ sub_1: s }).fetcher, completed(account.id))).status).toBe(200);
+    expect(db.rawAccount(account.id)?.plan).toBe("cloud");
+    expect(db.rawAccount(account.id)?.planTier).toBe(tier);
+  }
+});
+
+it("a_plus_renewal_on_a_retired_price_with_tier_metadata_stays_plus", async () => {
+  const { db, account } = await seeded();
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, planInterval: "month", stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1", planTier: "plus" });
+  const retired = subscription(account.id, {
+    metadata: { account_id: account.id, tier: "plus" },
+    items: { data: [{ current_period_end: PERIOD_END, price: { id: "price_plus_monthly_2025", recurring: { interval: "month" } } }] },
+  });
+  const invoice = event("invoice.paid", { id: "in_1", object: "invoice", parent: { subscription_details: { subscription: "sub_1" } } });
+  expect((await deliver(db, stripeFake({ sub_1: retired }).fetcher, invoice)).status).toBe(200);
+  expect(db.rawAccount(account.id)?.planTier).toBe("plus");
+  expect(db.rawAccount(account.id)?.planUntilUnixMs).toBe(PERIOD_END * 1000);
+});
+
+it("a_plus_subscription_on_a_plus_price_is_ours_without_matching_metadata", async () => {
+  // Checkout completed with only client_reference_id: the Plus price alone marks it Whimbrel's.
+  const { db, account } = await seeded();
+  const s = subscription(account.id, { metadata: {}, items: { data: [{ current_period_end: PERIOD_END, price: { id: "price_plus_yearly", recurring: { interval: "year" } } }] } });
+  expect((await deliver(db, stripeFake({ sub_1: s }).fetcher, completed(account.id))).status).toBe(200);
+  expect(db.rawAccount(account.id)?.plan).toBe("cloud");
+  expect(db.rawAccount(account.id)?.planTier).toBe("plus");
+});
+
+it("another_products_subscription_with_tier_plus_metadata_is_ignored", async () => {
+  // The Stripe account is shared: tier metadata alone never makes a subscription Whimbrel's.
+  const other = (metadata: object) => ({
+    items: { data: [{ current_period_end: PERIOD_END, price: { id: "price_other_product", recurring: { interval: "month" } } }] },
+    metadata,
+  });
+  for (const metadata of [{ tier: "plus" }, { tier: "plus", account_id: "fma_account_1" }]) {
+    const { db, account } = await seeded();
+    const before = { ...db.rawAccount(account.id) };
+    const { fetcher, calls } = stripeFake({ sub_1: subscription(account.id, other(metadata)) });
+    const execute = vi.spyOn(db, "execute");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await deliver(db, fetcher, completed(account.id), makeEnv({ RESEND_API_KEY: "re_test" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true });
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["GET https://api.stripe.com/v1/subscriptions/sub_1"]);
+    const writes = execute.mock.calls.map(([q]) => q).filter((q) => !q.startsWith("SELECT") && !q.startsWith("INSERT OR IGNORE INTO stripe_event"));
+    expect(writes).toEqual([]);
+    expect(db.rawAccount(account.id)).toEqual(before);
+    vi.restoreAllMocks();
+    vi.spyOn(googleAuth, "verifyGoogleIdToken").mockResolvedValue({ email: "owner@example.com", googleSub: sub, audience: "test-client-id" });
+  }
+});
+
+it("a_kept_older_plus_subscription_by_price_only_is_recorded_as_plus", async () => {
+  // The stored, older subscription is Plus by its price alone (no tier
+  // metadata); a newer Cloud one arrives and is cancelled as a duplicate.
+  const { db, account } = await seeded();
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: PERIOD_END * 1000, planInterval: "month", stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1", planTier: "cloud" });
+  const older = subscription(account.id, {
+    created: NOW / 1000 - 1000,
+    items: { data: [{ current_period_end: PERIOD_END, price: { id: "price_plus_monthly", recurring: { interval: "month" } } }] },
+  });
+  const newer = subscription(account.id, { id: "sub_2", created: NOW / 1000 - 10 });
+  const { fetcher, calls } = stripeFake({ sub_1: older, sub_2: newer });
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  expect((await deliver(db, fetcher, subEvent("customer.subscription.created", "sub_2"))).status).toBe(200);
+  expect(calls.filter((c) => c.method === "DELETE").map((c) => c.url)).toEqual(["https://api.stripe.com/v1/subscriptions/sub_2"]);
+  const a = db.rawAccount(account.id)!;
+  expect(a.stripeSubscriptionId).toBe("sub_1");
+  expect(a.plan).toBe("cloud");
+  expect(a.planTier).toBe("plus");
+});
+
+it("a_cancelled_plus_subscription_clears_the_tier", async () => {
+  const { db, account } = await seeded();
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1", planTier: "plus" });
+  const s = subscription(account.id, { status: "canceled", ended_at: NOW / 1000, metadata: { account_id: account.id, tier: "plus" } });
+  expect((await deliver(db, stripeFake({ sub_1: s }).fetcher, subEvent("customer.subscription.deleted"))).status).toBe(200);
+  expect(db.rawAccount(account.id)?.plan).toBe("free");
+  expect(db.rawAccount(account.id)?.planTier).toBeNull();
 });
 
 // The other product never writes Whimbrel account ids, so its own
@@ -992,10 +1216,10 @@ it("ai_balance_reports_balance_and_last_purchase", async () => {
   const { db, account } = await seeded();
   const empty = await aiBalanceRoute(db);
   expect(empty.status).toBe(200);
-  expect(await empty.json()).toEqual({ balance_micros: 0, last_purchase_micros: 0 });
+  expect(await empty.json()).toEqual({ balance_micros: 0, last_purchase_micros: 0, allowance_micros: 0, allowance_expires_ms: null, plan_tier: null });
   await creditPurchase(db, account.id, 25_000_000, "cs_a", NOW - 10);
   await creditPurchase(db, account.id, 10_000_000, "cs_b", NOW);
-  expect(await (await aiBalanceRoute(db)).json()).toEqual({ balance_micros: 35_000_000, last_purchase_micros: 10_000_000 });
+  expect(await (await aiBalanceRoute(db)).json()).toEqual({ balance_micros: 35_000_000, last_purchase_micros: 10_000_000, allowance_micros: 0, allowance_expires_ms: null, plan_tier: null });
 });
 
 it("ai_balance_without_an_account_is_403", async () => {
@@ -1067,6 +1291,8 @@ function aiStripeFake(intents: Record<string, object> = {}, refunds: Record<stri
     if (pi && intents[pi]) return new Response(JSON.stringify(intents[pi]), { status: 200 });
     const charge = url.pathname === "/v1/refunds" ? url.searchParams.get("charge") : null;
     if (charge && refunds[charge]) return new Response(JSON.stringify({ object: "list", data: refunds[charge], has_more: false }), { status: 200 });
+    // No invoice paid with this payment (it is not a subscription charge).
+    if (url.pathname === "/v1/invoice_payments") return new Response(JSON.stringify({ object: "list", data: [], has_more: false }), { status: 200 });
     return new Response('{"error":{"code":"resource_missing"}}', { status: 404 });
   }) as unknown as typeof fetch;
   return { fetcher, calls, emails };
@@ -1168,7 +1394,7 @@ it("an_account_deleted_between_lookup_and_credit_alerts_and_credits_nothing", as
   const { db, account } = await seeded();
   const err = vi.spyOn(console, "error").mockImplementation(() => {});
   // The account is read as live, then deleted before the credit lands.
-  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE id = ?", async () => {
+  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews, plan_tier, ai_allowance_micros, ai_allowance_expires_ms FROM account WHERE id = ?", async () => {
     expect(await accounts.claimForDeletion(db, account.id, NOW)).toBe(true);
     await accounts.deleteAccountRows(db, account.id);
   });
@@ -1189,7 +1415,7 @@ it("an_account_deleted_between_lookup_and_credit_alerts_and_credits_nothing", as
 it("an_account_claimed_for_deletion_between_lookup_and_credit_is_not_credited", async () => {
   const { db, account } = await seeded();
   vi.spyOn(console, "error").mockImplementation(() => {});
-  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE id = ?", async () => {
+  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews, plan_tier, ai_allowance_micros, ai_allowance_expires_ms FROM account WHERE id = ?", async () => {
     expect(await accounts.claimForDeletion(db, account.id, NOW)).toBe(true);
   });
   const s = aiStripeFake();
@@ -1349,9 +1575,13 @@ it("refund_of_another_products_charge_is_ignored", async () => {
   await creditPurchase(db, account.id, 10_000_000, "pi_other", NOW);
   const err = vi.spyOn(console, "error").mockImplementation(() => {});
   const s = aiStripeFake({ pi_1: { id: "pi_1", metadata: {} } }, { ch_1: [refundOf("re_1", 1080)] });
-  expect((await deliver(db, s.fetcher, chargeRefunded({}))).status).toBe(200);
+  expect((await deliver(db, s.fetcher, chargeRefunded({ amount_refunded: 1080 }))).status).toBe(200);
   expect(await aiBalance(db, account.id)).toBe(10_000_000);
-  expect(s.calls).toEqual(["GET https://api.stripe.com/v1/payment_intents/pi_1"]);
+  // Not an AI credit charge, and no invoice was paid with it: nothing to zero either.
+  expect(s.calls).toEqual([
+    "GET https://api.stripe.com/v1/payment_intents/pi_1",
+    "GET https://api.stripe.com/v1/invoice_payments?payment%5Btype%5D=payment_intent&payment%5Bpayment_intent%5D=pi_1&limit=1",
+  ]);
   expect(err).not.toHaveBeenCalled();
 });
 

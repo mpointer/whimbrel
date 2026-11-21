@@ -252,7 +252,8 @@ pub fn delete_client(
 
     if !terms.is_empty() {
         let set = llm::guard::ExclusionSet::new(terms.clone());
-        if store.purge_client_text(Some(&run), &|t: &str| set.find_in(t)).is_err() {
+        // Only text that really names the client (review 4, I2): never a row merely undecodable.
+        if store.purge_client_text(Some(&run), &|t: &str| set.names_in(t)).is_err() {
             stages.push(DeleteStage::DerivedText);
         }
         // Kept word fingerprints of questions and windows that named the client (fix round 5, N1).
@@ -881,6 +882,29 @@ mod tests {
             params![m_a, format!("Send {NAME} the notes")],
         )
         .unwrap();
+        // Device-local text of the redesigned meeting screens, which a fixture that never filled it cannot
+        // catch a missing delete for: a note line's source (line, owner, due date, a normalized copy of the
+        // spoken line) and a marker label.
+        for m in [m_a, m_shared] {
+            e.store
+                .replace_meeting_line_sources(
+                    m,
+                    &[memory::line_source::NewLineSource {
+                        kind: memory::line_source::LineKind::ActionItem,
+                        line_text: format!("{NAME}: send the deck (Friday)"),
+                        owner: Some(format!("{ALIAS} team")),
+                        due: Some(format!("before the {NAME} call")),
+                        locator: Some(memory::line_source::SourceLocator {
+                            offset_secs: 0,
+                            base: memory::line_source::base_fingerprint("hello"),
+                            anchor: memory::line_source::anchor_of(&format!("so {NAME} wants the deck by Friday")),
+                        }),
+                    }],
+                    1,
+                )
+                .unwrap();
+            e.store.add_meeting_marker(m, 100, Some(&format!("{NAME} pricing")), 1).unwrap();
+        }
 
         let e_a = email(e, "g-a", &format!("{NAME} contract"), "see attached", "t-a");
         let e_b = email(e, "g-b", "Globex invoice", "due friday", "t-b");
@@ -1223,6 +1247,38 @@ mod tests {
         // B's email and its own meeting's transcript; the shared meeting's went.
         assert_eq!(count(&e, "SELECT COUNT(*) FROM items_fts WHERE items_fts MATCH 'globex'"), 2);
         assert!(!w.audio_in.exists() && !w.media.join("mic-audio-1.m4a").exists(), "audio inside the media folder goes");
+    }
+
+    /// Review 4, I2: deleting a client purges derived text that really names it, as written or
+    /// encoded, and never a row whose text merely cannot be decoded within the pass cap.
+    #[test]
+    fn the_purge_keeps_undecodable_unrelated_text_and_drops_encoded_names() {
+        let e = env(Some("dev-a"));
+        let w = world(&e);
+        let deep = format!("Newsletter R&{}D digest (unrelated)", "amp;".repeat(memory::words::MAX_DECODE_PASSES + 1));
+        assert!(memory::words::readings(&deep).undecidable, "the fixture is past the pass cap");
+        let named = [
+            format!("{NAME} signed"),
+            "Zorbl&#97;x signed (entity)".to_string(),
+            "Zorbl%2561x signed (double percent)".to_string(),
+            "Zorbl%252561x signed (triple percent)".to_string(),
+            "Zorbl&amp;amp;#97;x signed (triple reference)".to_string(),
+            "Zo\u{200E}rblax signed (direction mark)".to_string(),
+        ];
+        for (i, t) in std::iter::once(&deep).chain(named.iter()).enumerate() {
+            e.c.execute(
+                "INSERT INTO routine_run (routine_id, ran_at_unix_ms, status, output_summary, output_json) VALUES (1, ?1, 'ok', ?2, '{}')",
+                rusqlite::params![100 + i as i64, t],
+            )
+            .unwrap();
+        }
+        let r = run(&e, &select_all(&e, &w), &[w.media.clone()]).unwrap();
+        assert!(r.complete(), "{r:?}");
+        let left = |t: &str| count(&e, &format!("SELECT COUNT(*) FROM routine_run WHERE output_summary = '{}'", t.replace('\'', "''")));
+        assert_eq!(left(&deep), 1, "an unrelated row that cannot be decoded is kept");
+        for t in &named {
+            assert_eq!(left(t), 0, "{t:?} named the client");
+        }
     }
 
     #[test]

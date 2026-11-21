@@ -218,7 +218,7 @@ import Testing
     /// Exempt files: WStrings.swift (the home of the English), WGallery.swift (developer-only labels and
     /// sample data) and Tokens.generated.swift (generated, no UI). Exempt literals: the keyboard hint.
     static let exemptFiles: Set<String> = ["WStrings.swift", "WGallery.swift", "Tokens.generated.swift"]
-    static let exemptLiterals: Set<String> = ["\\u{2318}K", "\\u{21E7}\\u{2318}M"]  // the command-K keycap: notation, not a word
+    static let exemptLiterals: Set<String> = ["\\u{2318}K", "\\u{21E7}\\u{2318}M", "\\u{2318}T"]  // the command-K keycap: notation, not a word
 
     static func withoutComments(_ source: String) -> String {
         var out = ""

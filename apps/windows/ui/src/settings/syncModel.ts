@@ -115,10 +115,18 @@ export function deviceTitle(device: DeviceView): string {
  *  2027. It won't renew." A server that doesn't send `renews` is read as renewing. */
 export function planLine(plan: PlanView, locale: string): string {
   if (plan.plan !== "cloud") return t("Free: 1 computer + 1 phone");
-  if (plan.untilUnixMs == null) return t("Cloud");
+  const plus = isPlus(plan);
+  if (plan.untilUnixMs == null) return plus ? t("Plus") : t("Cloud");
   const date = new Date(plan.untilUnixMs).toLocaleDateString(locale, { month: "long", day: "numeric", year: "numeric" });
+  if (plus) return plan.renews === false ? t("Plus ends {date}. It won't renew.", { date }) : t("Plus until {date}", { date });
   return plan.renews === false ? t("Cloud ends {date}. It won't renew.", { date }) : t("Cloud until {date}", { date });
 }
+
+/** A paid plan on the Plus tier (the server calls Cloud and Plus both `cloud`). */
+export const isPlus = (plan: PlanView): boolean => plan.plan === "cloud" && plan.planTier === "plus";
+
+/** The server sells Plus: a free account sees only the Plus buttons, in place of Cloud's. */
+export const sellsPlus = (view: SyncView): boolean => !!view.plan && view.plan.plusAvailable === true;
 
 /** Upgrade shows only on the free plan with billing open. */
 export const offersUpgrade = (view: SyncView): boolean => !!view.plan && view.plan.billing && view.plan.plan !== "cloud";

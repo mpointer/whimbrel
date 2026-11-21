@@ -127,9 +127,18 @@ android {
         // The debug demo build installs beside the release build on the same phone.
         debug {
             applicationIdSuffix = ".debug"
+            buildConfigField("boolean", "DEVICE_APPROVAL_ENABLED", "true")
             externalNativeBuild { cmake { arguments += "-DWHIMBREL_CORE_A=${coreStaticLib("debug")}" } }
         }
         release {
+            // OFF in release builds: approving a waiting device wraps and hands over the ACCOUNT KEY, and
+            // that (PR #914) has only been tried on an emulator, never as a real two-device approval.
+            // Mike removes this gate (and DeviceApproval) after a real two-device test. A one-off release
+            // build to test it: ./gradlew -PdeviceApprovalEnabled=true :app:assembleRelease
+            // Only a -P on the command line counts, not ~/.gradle/gradle.properties or ORG_GRADLE_PROJECT_*.
+            val approvalOn = gradle.startParameter.projectProperties["deviceApprovalEnabled"] == "true"
+            if (approvalOn) logger.warn("WARNING: DEVICE_APPROVAL_ENABLED is ON in this release build (-PdeviceApprovalEnabled=true). Never ship it.")
+            buildConfigField("boolean", "DEVICE_APPROVAL_ENABLED", approvalOn.toString())
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

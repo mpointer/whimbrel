@@ -219,5 +219,45 @@ export const onRampOnceKnown = (
 /** "$7.42" from micro-dollars (1,000,000 = $1), rounded down to the cent (the Mac's `dollars(micros:)`). */
 export const formatMicros = (micros: number): string => formatDollars(Math.floor(Math.max(0, micros) / 10_000));
 
+/** A window event: routing changed outside Settings → AI's form (the Plus "Use Whimbrel AI" answer). */
+export const ROUTING_CHANGED_EVENT = "whimbrel:routing-changed";
+
 /** The Whimbrel AI card's balance line, once a read has succeeded. */
 export const whimbrelBalanceLine = (micros: number): string => t("{amount} left", { amount: formatMicros(micros) });
+
+/** What the Plus lines of the Whimbrel AI card read (WhimbrelAiView's Plus fields). */
+export interface PlusBalance {
+  plus: boolean;
+  balanceMicros?: number | null;
+  allowanceMicros: number;
+  allowanceResetsUnixMs?: number | null;
+  renews?: boolean | null;
+}
+
+/**
+ * The Plus allowance line, or null off Plus (the Mac's PlusCopy.allowanceLine). The reset date shows
+ * only while allowance is left; the view drops a date that has passed.
+ */
+export function whimbrelAllowanceLine(view: PlusBalance, locale: string, nowMs: number = Date.now()): string | null {
+  if (!view.plus || view.balanceMicros == null) return null;
+  if (view.allowanceMicros > 0) {
+    const amount = formatMicros(view.allowanceMicros);
+    // The shell drops a past date already; a view read before midnight and drawn after it is checked here.
+    if (view.allowanceResetsUnixMs != null && view.allowanceResetsUnixMs > nowMs) {
+      const date = new Date(view.allowanceResetsUnixMs).toLocaleDateString(locale, { month: "long", day: "numeric", year: "numeric" });
+      return t("Plus: {amount} of this month's AI allowance left, resets {date}", { amount, date });
+    }
+    return t("Plus: {amount} of this month's AI allowance left", { amount });
+  }
+  if (view.balanceMicros <= 0) return t("This month's AI allowance is used up. Add credit or choose another model in Settings.");
+  // Prepaid credit still works. The allowance comes back only while the plan renews.
+  if (view.renews === false) return t("This month's AI allowance is used up.");
+  return t("This month's AI allowance is used up. Your allowance renews with your plan.");
+}
+
+/** The prepaid line: labelled on Plus, so it isn't read as the allowance; none on Plus without prepaid credit. */
+export function whimbrelPrepaidLine(view: PlusBalance): string | null {
+  if (view.balanceMicros == null) return null;
+  if (!view.plus) return whimbrelBalanceLine(view.balanceMicros);
+  return view.balanceMicros > 0 ? t("Prepaid credit: {amount} left", { amount: formatMicros(view.balanceMicros) }) : null;
+}

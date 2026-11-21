@@ -21,8 +21,9 @@ pub trait WorkerApi: Send + Sync {
     fn set_device_name(&self, id_token: &str, device_public_key: &str, name: &str) -> Result<(), WorkerError>;
     /// Cloud v1: the account's plan. The device needn't be approved (a PC at the device limit asks too).
     fn account_plan(&self, id_token: &str, device_public_key: &str) -> Result<AccountPlan, WorkerError>;
-    /// Stripe Checkout for `interval` (`month` or `year`): the URL to open.
-    fn billing_checkout(&self, id_token: &str, device_public_key: &str, interval: &str) -> Result<String, WorkerError>;
+    /// Stripe Checkout for `interval` (`month` or `year`): the URL to open. `plan` is `Some("plus")`
+    /// for Plus; None for Cloud, which leaves the key out of the request.
+    fn billing_checkout(&self, id_token: &str, device_public_key: &str, interval: &str, plan: Option<&str>) -> Result<String, WorkerError>;
     /// Stripe's customer portal: the URL to open.
     fn billing_portal(&self, id_token: &str, device_public_key: &str) -> Result<String, WorkerError>;
     /// Whimbrel AI: the credit left.
@@ -66,8 +67,8 @@ impl WorkerApi for en::WorkerClient {
     fn account_plan(&self, id_token: &str, pk: &str) -> Result<AccountPlan, WorkerError> {
         en::WorkerClient::account_plan(self, id_token, pk)
     }
-    fn billing_checkout(&self, id_token: &str, pk: &str, interval: &str) -> Result<String, WorkerError> {
-        en::WorkerClient::billing_checkout(self, id_token, pk, interval)
+    fn billing_checkout(&self, id_token: &str, pk: &str, interval: &str, plan: Option<&str>) -> Result<String, WorkerError> {
+        en::WorkerClient::billing_checkout(self, id_token, pk, interval, plan)
     }
     fn billing_portal(&self, id_token: &str, pk: &str) -> Result<String, WorkerError> {
         en::WorkerClient::billing_portal(self, id_token, pk)
@@ -206,10 +207,10 @@ pub(crate) mod tests {
                 list_calls: Arc::new(Mutex::new(0)),
                 approvals: Arc::new(Mutex::new(Vec::new())),
                 names: Arc::new(Mutex::new(Vec::new())),
-                plan: Arc::new(Mutex::new(Ok(AccountPlan { plan: "free".into(), until: None, interval: None, billing: true, renews: None }))),
+                plan: Arc::new(Mutex::new(Ok(AccountPlan { plan: "free".into(), until: None, interval: None, billing: true, renews: None, plan_tier: None, plus_available: false }))),
                 checkout: Arc::new(Mutex::new(Ok("https://checkout.stripe.test/s".into()))),
                 checkouts: Arc::new(Mutex::new(Vec::new())),
-                ai_balance: Arc::new(Mutex::new(Ok(AiBalance { balance_micros: 0, last_purchase_micros: None }))),
+                ai_balance: Arc::new(Mutex::new(Ok(AiBalance::default()))),
                 ai_packs: Arc::new(Mutex::new(Vec::new())),
                 ai_models: Arc::new(Mutex::new(Err(WorkerError::Http { status: 404, body: String::new() }))),
                 delete: Arc::new(Mutex::new(Ok(()))),
@@ -252,8 +253,9 @@ pub(crate) mod tests {
         fn account_plan(&self, _: &str, _: &str) -> Result<AccountPlan, WorkerError> {
             self.plan.lock().unwrap().clone()
         }
-        fn billing_checkout(&self, _: &str, _: &str, interval: &str) -> Result<String, WorkerError> {
-            self.checkouts.lock().unwrap().push(interval.into());
+        /// Records `interval`, or `interval plan` for Plus ("month plus").
+        fn billing_checkout(&self, _: &str, _: &str, interval: &str, plan: Option<&str>) -> Result<String, WorkerError> {
+            self.checkouts.lock().unwrap().push(plan.map_or_else(|| interval.to_string(), |p| format!("{interval} {p}")));
             self.checkout.lock().unwrap().clone()
         }
         fn billing_portal(&self, _: &str, _: &str) -> Result<String, WorkerError> {

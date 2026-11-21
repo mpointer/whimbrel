@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The phone's first screen: a greeting, the day's brief, the next meeting with its prep,
-/// recent meetings and when the replica last synced.
+/// The phone's first screen, as one line of time: the next meeting with its prep above the now
+/// marker; the day's brief and recent meetings behind it; then when the replica last synced.
 struct TodayView: View {
     @ObservedObject var sync: SyncModel
     let labels: DeviceLabels
@@ -12,21 +12,27 @@ struct TodayView: View {
     let openTopic: (TopicRoute) -> Void
     @StateObject private var model = TodayModel()
     @State private var briefExpanded = false
-    @State private var showPrep = false
+    @State private var showPrep = TodayView.demoShowsPrep
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: WTokens.Space.md) {
                 header
                 if pendingDevices > 0 { approvalBanner }
-                briefCard
-                upNextCard
-                recentSection
+                upNextStop
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    WNowMarker(time: ReadLogic.timeText(context.date))
+                }
+                briefStop
+                recentStops
                 syncLine
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 24)
+            .padding(.horizontal, WTokens.Space.lg)
+            .padding(.bottom, WTokens.Space.xl)
+            .frame(maxWidth: WTokens.Size.contentMax)
+            .frame(maxWidth: .infinity)
         }
+        .environment(\.wStrings, .app)
         .themed()
         .background(Color.theme(.backgroundPage).ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -43,95 +49,103 @@ struct TodayView: View {
         .sheet(isPresented: $showPrep) { PrepSheet(prep: model.prep) }
     }
 
+    private func time(_ unixMs: Int64) -> String {
+        ReadLogic.timeText(Date(timeIntervalSince1970: Double(unixMs) / 1000))
+    }
+
     private var header: some View {
-        let now = Date()
-        return VStack(alignment: .leading, spacing: 4) {
-            Text(now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                .font(.subheadline)
-                .foregroundStyle(Color.theme(.textSecondary))
-            Text("Good \(ReadLogic.daypart(now: now, calendar: .current))")
-                .font(.system(.largeTitle, design: .serif))
+        VStack(alignment: .leading, spacing: WTokens.Space.xxs) {
+            Text("Today")
+                .wType(WTokens.TypeScale.pageTitle)
                 .foregroundStyle(Color.theme(.textPrimary))
+                .accessibilityAddTraits(.isHeader)
+            Text(Date().formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                .wType(WTokens.TypeScale.secondary)
+                .foregroundStyle(Color.theme(.textSecondary))
         }
-        .accessibilityElement(children: .combine)
     }
 
     private var approvalBanner: some View {
         Button { openSettings() } label: {
-            card {
-                Label(pendingDevices == 1 ? "A new device is waiting for your approval" : "\(pendingDevices) new devices are waiting for your approval", systemImage: "iphone.badge.plus")
-                    .foregroundStyle(Color.theme(.textPrimary))
-            }
+            Label(pendingDevices == 1 ? "A new device is waiting for your approval" : "\(pendingDevices) new devices are waiting for your approval", systemImage: "iphone.badge.plus")
+                .wType(WTokens.TypeScale.body)
+                .foregroundStyle(Color.theme(.textPrimary))
+                .padding(WTokens.Space.md)
+                .frame(maxWidth: .infinity, minHeight: WTokens.Size.target, alignment: .leading)
+                .wCard(tint: Color.theme(.highlight))
         }
         .buttonStyle(.plain)
     }
 
-    private var briefCard: some View {
-        card {
-            VStack(alignment: .leading, spacing: 8) {
-                sectionLabel("Daily brief")
+    /// What is coming: the next meeting, above the now marker.
+    @ViewBuilder private var upNextStop: some View {
+        if let event = model.upNext {
+            WSpineStop(time: time(event.startUnixMs), node: .upcoming) {
+                WMeetingCard(variant: .next, title: event.title, status: String(localized: "Up next"),
+                             detail: event.attendees.isEmpty ? nil : ReadLogic.attendeeSummary(event.attendees)) {
+                    if model.prep?.brief != nil {
+                        Button { showPrep = true } label: { Label("Prep ready", systemImage: "doc.text") }
+                            .buttonStyle(.w(.secondary))
+                    }
+                }
+            }
+        } else {
+            WSpineStop(time: "", node: .upcoming, showsNode: false) {
+                Text(model.loaded ? "Nothing else today" : "Loading…")
+                    .wType(WTokens.TypeScale.body)
+                    .foregroundStyle(Color.theme(.textSecondary))
+                    .padding(WTokens.Space.md)
+                    .frame(maxWidth: .infinity, minHeight: WTokens.Size.target, alignment: .leading)
+            }
+        }
+    }
+
+    /// The day's brief, on the thread at the time it ran.
+    private var briefStop: some View {
+        WSpineStop(time: model.brief.map { time($0.ranAtUnixMs) } ?? "", node: .past, showsNode: model.brief != nil) {
+            VStack(alignment: .leading, spacing: WTokens.Space.sm) {
+                Text("Daily brief")
+                    .wType(WTokens.TypeScale.subtitle)
+                    .foregroundStyle(Color.theme(.textPrimary))
+                    .accessibilityAddTraits(.isHeader)
                 if let brief = model.brief {
                     Text(brief.outputSummary)
+                        .wType(WTokens.TypeScale.body)
                         .foregroundStyle(Color.theme(.textPrimary))
                         .lineLimit(briefExpanded ? nil : 4)
                     if brief.outputSummary.count > 60 {
                         Button(briefExpanded ? "Show less" : "Show more") { briefExpanded.toggle() }
-                            .font(.subheadline)
-                            .frame(minHeight: 44, alignment: .leading)
+                            .buttonStyle(.w(.quiet))
                     }
                 } else {
                     Text(model.loaded ? "No brief yet today" : "Loading…")
+                        .wType(WTokens.TypeScale.body)
                         .foregroundStyle(Color.theme(.textSecondary))
                 }
             }
+            .padding(WTokens.Space.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .wCard()
         }
     }
 
-    private var upNextCard: some View {
-        card {
-            VStack(alignment: .leading, spacing: 8) {
-                sectionLabel("Up next")
-                if let event = model.upNext {
-                    Text(ReadLogic.timeText(Date(timeIntervalSince1970: Double(event.startUnixMs) / 1000)))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.theme(.accentPrimary))
-                    Text(event.title)
-                        .font(.headline)
-                        .foregroundStyle(Color.theme(.textPrimary))
-                    if !event.attendees.isEmpty {
-                        Text(ReadLogic.attendeeSummary(event.attendees))
-                            .font(.subheadline)
-                            .foregroundStyle(Color.theme(.textSecondary))
-                    }
-                    if model.prep?.brief != nil {
-                        Button { showPrep = true } label: {
-                            Label("Prep ready", systemImage: "doc.text")
-                                .font(.subheadline.weight(.medium))
-                                .padding(.horizontal, 12)
-                                .frame(minHeight: 44)
-                                .background(Color.theme(.accentSecondary).opacity(0.12), in: Capsule())
-                        }
-                        .foregroundStyle(Color.theme(.accentSecondary))
-                    }
-                } else {
-                    Text(model.loaded ? "Nothing else today" : "Loading…")
-                        .foregroundStyle(Color.theme(.textSecondary))
-                }
+    /// Meetings that have happened, newest first, each a stop behind the now marker.
+    @ViewBuilder private var recentStops: some View {
+        if model.recent.isEmpty {
+            WSpineStop(time: "", node: .past, showsNode: false) {
+                Text(model.loaded ? "No meetings yet" : "Loading…")
+                    .wType(WTokens.TypeScale.body)
+                    .foregroundStyle(Color.theme(.textSecondary))
+                    .padding(WTokens.Space.md)
+                    .frame(maxWidth: .infinity, minHeight: WTokens.Size.target, alignment: .leading)
             }
         }
-    }
-
-    private var recentSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("Recent meetings")
-            if model.recent.isEmpty {
-                Text(model.loaded ? "No meetings yet" : "Loading…").foregroundStyle(Color.theme(.textSecondary))
-            }
-            ForEach(model.recent) { meeting in
-                // The chip sits below the row's link, not inside it, so a tap reaches one of them.
-                VStack(alignment: .leading, spacing: 0) {
+        ForEach(model.recent) { meeting in
+            WSpineStop(time: ThreadTime.pastLabel(meeting.startUnixMs), node: .past) {
+                // The chip sits below the card's link, not inside it, so a tap reaches one of them.
+                VStack(alignment: .leading, spacing: WTokens.Space.xs) {
                     NavigationLink(value: meeting.id) {
-                        MeetingRow(meeting: meeting, labels: labels)
+                        WMeetingCard(variant: .past, title: meeting.title, detail: recentDetail(meeting))
                     }
                     .buttonStyle(.plain)
                     if let topic = TopicsModel.chip(for: meeting, in: model.topicChips) {
@@ -142,68 +156,25 @@ struct TodayView: View {
         }
     }
 
+    /// Where a meeting was recorded and how many copies exist.
+    private func recentDetail(_ meeting: PhoneMeeting) -> String {
+        var parts = [labels.label(for: meeting.deviceId)]
+        if let copies = meeting.alsoRecorded, !copies.isEmpty { parts.append("+\(copies.count) \(copies.count == 1 ? "copy" : "copies")") }
+        return parts.joined(separator: " · ")
+    }
+
     private var syncLine: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            VStack(spacing: 4) {
+            VStack(spacing: WTokens.Space.xs) {
                 Text(ReadLogic.syncLine(lastSyncedAt: sync.lastSyncedAt, now: context.date, isSyncing: sync.isSyncing, error: sync.lastError))
                 if sync.olderHistoryLoading { Text("Older history is still loading.") }
                 if sync.updateNeeded { Text("Update needed on another of your devices before it applies deletes.") }
             }
-            .font(.footnote)
+            .wType(WTokens.TypeScale.secondary)
             .foregroundStyle(Color.theme(.textSecondary))
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
         }
-    }
-
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.caption.weight(.semibold))
-            .tracking(0.6)
-            .foregroundStyle(Color.theme(.textSecondary))
-    }
-
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(Color.theme(.backgroundCard), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.theme(.border), lineWidth: 1))
-    }
-}
-
-/// One meeting in a list: title, then time, where it was recorded and how many copies exist,
-/// and the topic it belongs to as a chip that opens the topic page.
-struct MeetingRow: View {
-    let meeting: PhoneMeeting
-    let labels: DeviceLabels
-    var topic: PhoneTopicChip? = nil
-    var openTopic: (TopicRoute) -> Void = { _ in }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(meeting.title)
-                .font(.body)
-                .foregroundStyle(Color.theme(.textPrimary))
-                .multilineTextAlignment(.leading)
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(Color.theme(.textSecondary))
-            if let topic {
-                TopicChipButton(topic: topic) { openTopic(TopicRoute(key: topic.key)) }
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        .contentShape(Rectangle())
-    }
-
-    private var subtitle: String {
-        var parts = [
-            ReadLogic.timeText(Date(timeIntervalSince1970: Double(meeting.startUnixMs) / 1000)),
-            labels.label(for: meeting.deviceId),
-        ]
-        if let copies = meeting.alsoRecorded, !copies.isEmpty { parts.append("+\(copies.count) \(copies.count == 1 ? "copy" : "copies")") }
-        return parts.joined(separator: " · ")
     }
 }
 
@@ -228,17 +199,51 @@ struct TopicChipButton: View {
     }
 }
 
-/// The synced prep for the next meeting: its summary, attendee notes and open items.
+extension TodayView {
+    /// Demo screenshots only: `-WhimbrelDemoPrep` opens the prep sheet at launch.
+    static var demoShowsPrep: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("-WhimbrelDemoPrep")
+        #else
+        return false
+        #endif
+    }
+}
+
+/// The synced prep for the next meeting: its summary, attendee notes and open items. Whimbrel
+/// wrote all of it, so the page says so once and every line carries Whimbrel's ink and rule.
 struct PrepSheet: View {
     let prep: PhoneMeetingPrep?
     @Environment(\.dismiss) private var dismiss
 
+    /// The legend says who wrote the lines, so a screen reader is not told before each one.
+    private var noteStrings: WStrings {
+        var s = WStrings.app
+        s.whimbrelWrote = { $0 }
+        return s
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let brief = prep?.brief {
-                        Text(brief.summary.text).foregroundStyle(Color.theme(.textPrimary))
+                VStack(alignment: .leading, spacing: WTokens.Space.lg) {
+                    if let prep, let brief = prep.brief {
+                        VStack(alignment: .leading, spacing: WTokens.Space.xs) {
+                            Text(prep.title)
+                                .wReading(WTokens.TypeScale.readingTitle)
+                                .foregroundStyle(Color.theme(.textPrimary))
+                            Text(Date(timeIntervalSince1970: Double(prep.startUnixMs) / 1000).formatted(.dateTime.weekday(.wide).month(.abbreviated).day().hour().minute()))
+                                .wType(WTokens.TypeScale.secondary)
+                                .foregroundStyle(Color.theme(.textSecondary))
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isHeader)
+                        HStack(spacing: WTokens.Space.sm) {
+                            Rectangle().fill(WFixed.aiInk.color).frame(width: 2).accessibilityHidden(true)
+                            Text("Written by Whimbrel").wType(WTokens.TypeScale.caption).fontWeight(.semibold).foregroundStyle(WFixed.aiInk.color)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        WNoteBlock(kind: .paragraph, author: .whimbrel, text: brief.summary.text)
                         if !brief.attendees.isEmpty {
                             group(String(localized: "Attendees"), brief.attendees.map { "\($0.who): \($0.note)" })
                         }
@@ -246,19 +251,34 @@ struct PrepSheet: View {
                         if !brief.openQuestions.isEmpty { group(String(localized: "Open questions"), brief.openQuestions.map(\.text)) }
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, WTokens.Space.lg)
+                .padding(.vertical, WTokens.Space.md)
+                .frame(maxWidth: WTokens.Size.contentMax, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
+            .environment(\.wStrings, noteStrings)
+            .themed()
             .background(Color.theme(.backgroundPage).ignoresSafeArea())
-            .navigationTitle(prep?.title ?? String(localized: "Prep"))
+            .navigationTitle(String(localized: "Prep"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
     }
 
     private func group(_ title: String, _ lines: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased()).font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(Color.theme(.textSecondary))
-            ForEach(lines, id: \.self) { Text("• \($0)").foregroundStyle(Color.theme(.textPrimary)) }
+        VStack(alignment: .leading, spacing: WTokens.Space.xxs) {
+            WNoteBlock(kind: .heading, author: .you, text: title)
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in WNoteBlock(kind: .bullet, author: .whimbrel, text: line) }
         }
+    }
+}
+
+enum ThreadTime {
+    /// A past stop's label: the time, with the day above it when it was not today, so the times
+    /// down the thread never read as out of order.
+    static func pastLabel(_ unixMs: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(unixMs) / 1000)
+        if Calendar.current.isDateInToday(date) { return ReadLogic.timeText(date) }
+        return date.formatted(.dateTime.month(.abbreviated).day()) + "\n" + ReadLogic.timeText(date)
     }
 }

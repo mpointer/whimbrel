@@ -4160,6 +4160,10 @@
         }
       }
     },
+    "A sync is already running." : {
+      "comment" : "Shown next to Sync now when a round is already running, so no second one starts.",
+      "shouldTranslate" : false
+    },
     "A sync bug (fixed 2026-08-05) could duplicate a peer's meeting once per lifecycle update — this finds and removes any leftover duplicates from before the fix. Never affects this device's own meetings." : {
       "localizations" : {
         "de" : {
@@ -6174,12 +6178,12 @@
         }
       }
     },
-    "Answered locally: a client named here is excluded from hosted models." : {
-      "comment" : "Ask answer note: the question named a client excluded from hosted models, so a model on this Mac answered it. Never names the client.",
+    "Answered locally: this question involves a client excluded from hosted models." : {
+      "comment" : "Ask answer note: the question involves a client (its name, an alias or a known contact's address) excluded from hosted models, so a model on this Mac answered it. Never names the client.",
       "shouldTranslate" : false
     },
-    "Answering on this Mac: this question names a client excluded from hosted models…" : {
-      "comment" : "Ask spinner text while a question that names a client excluded from hosted models is answered by a model on this Mac. Never names the client.",
+    "Answering on this Mac: this question involves a client excluded from hosted models…" : {
+      "comment" : "Ask spinner text while a question that involves a client (its name, an alias or a known contact's address) excluded from hosted models is answered by a model on this Mac. Never names the client.",
       "shouldTranslate" : false
     },
     "Anthropic API Key" : {
@@ -11483,6 +11487,41 @@
         }
       }
     },
+    "Copy transcript" : {
+      "comment" : "Button in the header of a finished meeting's transcript view. It copies the whole transcript. In the note view the Copy button copies the summary instead.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transkript kopieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiar transcripción"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copier la transcription"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copier la transcription"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiar transcrição"
+          }
+        }
+      }
+    },
     "Copy what Whimbrel holds about this client into a folder you choose." : {
       "comment" : "Client controls (X6, Task 10).",
       "localizations" : {
@@ -16685,6 +16724,41 @@
         }
       }
     },
+    "Due %@" : {
+      "comment" : "Due date under an action item. The placeholder is a date, for example Thu, Nov 19.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fällig am %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vence el %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Échéance : %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Échéance : %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vence em %@"
+          }
+        }
+      }
+    },
     "Due date" : {
       "localizations" : {
         "de" : {
@@ -19906,6 +19980,14 @@
         }
       }
     },
+    "Get Plus: $144 a year" : {
+      "comment" : "Button on the Devices pane that opens Stripe Checkout for Plus, yearly.",
+      "shouldTranslate" : false
+    },
+    "Get Plus: $15 a month" : {
+      "comment" : "Button on the Devices pane that opens Stripe Checkout for Plus, monthly.",
+      "shouldTranslate" : false
+    },
     "Get Started" : {
       "localizations" : {
         "de" : {
@@ -22779,6 +22861,10 @@
           }
         }
       }
+    },
+    "Keep my current setup" : {
+      "comment" : "Secondary button of the one-time Plus sheet: leaves the provider as it is.",
+      "shouldTranslate" : false
     },
     "Keep my edits" : {
       "localizations" : {
@@ -27005,6 +27091,41 @@
         }
       }
     },
+    "More copy formats" : {
+      "comment" : "Spoken name of the small arrow beside the Copy button on a finished meeting note. It opens a menu with Copy as Markdown and Copy as Slack.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Weitere Kopierformate"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Más formatos de copia"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autres formats de copie"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autres formats de copie"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mais formatos de cópia"
+          }
+        }
+      }
+    },
     "More items name this client than are listed here. The ones not listed are not deleted and stay in Whimbrel; delete them where they are if you need to." : {
       "comment" : "Client controls (X6, Task 10).",
       "localizations" : {
@@ -29536,6 +29657,40 @@
         }
       }
     },
+    "No transcript yet. The meeting hasn't ended." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Noch kein Transkript. Das Meeting ist noch nicht beendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aún no hay transcripción. La reunión no ha terminado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pas encore de transcription. La réunion n’est pas terminée."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune transcription pour le moment. La réunion n'est pas terminée."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ainda não há transcrição. A reunião não terminou."
+          }
+        }
+      }
+    },
     "No transcript. The recording is still here: choose Meeting options › Transcribe again." : {
       "localizations" : {
         "de" : {
@@ -30188,6 +30343,10 @@
         }
       }
     },
+    "Not now" : {
+      "comment" : "Button of the one-time Plus sheet: closes it without answering; asked again next launch.",
+      "shouldTranslate" : false
+    },
     "Not picked" : {
       "localizations" : {
         "de" : {
@@ -30466,8 +30625,8 @@
         }
       }
     },
-    "Not summarised: this meeting names a client excluded from hosted models, and no local model is set up. In Settings > AI & Routing, turn on Use local model or download a small local model, then choose Regenerate." : {
-      "comment" : "Empty summary box when core refused the summary: the meeting names an excluded client and no local model is available. Never names the client.",
+    "Not summarised: this meeting involves a client excluded from hosted models, and no local model is set up. In Settings > AI & Routing, turn on Use local model or download a small local model, then choose Regenerate." : {
+      "comment" : "Empty summary box when core refused the summary: the meeting involves an excluded client (its name, an alias or a known contact's address) and no local model is available. Never names the client.",
       "shouldTranslate" : false
     },
     "Not synced yet" : {
@@ -32862,6 +33021,41 @@
         }
       }
     },
+    "Open in transcript at %@" : {
+      "comment" : "Link on a source card, and the spoken name of a marked moment: opens the transcript at a time. The placeholder is a time in the meeting, for example 18:25.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Im Transkript bei %@ öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir en la transcripción en %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir dans la transcription à %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir dans la transcription à %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir na transcrição em %@"
+          }
+        }
+      }
+    },
     "Open loops" : {
       "localizations" : {
         "de" : {
@@ -34311,6 +34505,26 @@
         }
       }
     },
+    "Plus" : {
+      "comment" : "Plan row for a Plus plan with no end date known.",
+      "shouldTranslate" : false
+    },
+    "Plus ends %@. It won't renew." : {
+      "comment" : "Plan row on a cancelled Plus plan; %@ is a date.",
+      "shouldTranslate" : false
+    },
+    "Plus includes a monthly Whimbrel AI allowance. Use it for your AI features?" : {
+      "comment" : "Title of the one-time sheet asking a Plus account whether to use Whimbrel AI.",
+      "shouldTranslate" : false
+    },
+    "Plus includes hosted sync on all your devices and a monthly Whimbrel AI allowance. Tax is added at checkout where it applies." : {
+      "comment" : "Caption under the Plus buttons on the Devices pane.",
+      "shouldTranslate" : false
+    },
+    "Plus isn't available yet. Try again later." : {
+      "comment" : "Shown when the Plus checkout is not open yet.",
+      "shouldTranslate" : false
+    },
     "Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server." : {
       "localizations" : {
         "de" : {
@@ -34344,6 +34558,26 @@
           }
         }
       }
+    },
+    "Plus until %@" : {
+      "comment" : "Plan row on a Plus plan; %@ is a date.",
+      "shouldTranslate" : false
+    },
+    "Plus: %@ of this month's AI allowance left" : {
+      "comment" : "Whimbrel AI card on Plus when the reset date is not known; %@ is a dollar amount.",
+      "shouldTranslate" : false
+    },
+    "Plus: %@ of this month's AI allowance left, resets %@" : {
+      "comment" : "Whimbrel AI card on Plus; first %@ is a dollar amount, second a date.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Plus: %1$@ of this month's AI allowance left, resets %2$@"
+          }
+        }
+      },
+      "shouldTranslate" : false
     },
     "Possible matches" : {
       "comment" : "Client controls (X6, Task 10).",
@@ -34515,6 +34749,10 @@
           }
         }
       }
+    },
+    "Prepaid credit: %@ left" : {
+      "comment" : "Whimbrel AI card on Plus: the prepaid credit left; %@ is a dollar amount.",
+      "shouldTranslate" : false
     },
     "Prepare a brief %lld minutes before each meeting" : {
       "localizations" : {
@@ -36721,6 +36959,41 @@
         }
       }
     },
+    "Regenerate the summary to add sources." : {
+      "comment" : "Line in the margin of an older finished meeting note whose lines have no sources yet.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erstelle die Zusammenfassung neu, um Quellen hinzuzufügen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vuelve a generar el resumen para añadir fuentes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Régénérez le résumé pour ajouter des sources."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Régénérez le résumé pour ajouter des sources."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gere o resumo novamente para adicionar fontes."
+          }
+        }
+      }
+    },
     "Regenerating…" : {
       "localizations" : {
         "de" : {
@@ -36785,6 +37058,76 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Rejeitar"
+          }
+        }
+      }
+    },
+    "Rejoined" : {
+      "comment" : "Divider above the part of a transcript recorded after the person rejoined the meeting.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wieder beigetreten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se reincorporó"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De retour"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De retour"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voltou"
+          }
+        }
+      }
+    },
+    "Rejoined at %@" : {
+      "comment" : "Divider above the part of a transcript recorded after the person rejoined the meeting. %@ is the time of day.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wieder beigetreten um %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se reincorporó a las %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De retour à %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De retour à %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voltou às %@"
           }
         }
       }
@@ -41751,6 +42094,10 @@
       "comment" : "Client review: opens the list of items filed under the client.",
       "shouldTranslate" : false
     },
+    "Show older meetings" : {
+      "comment" : "Button at the bottom of the Meetings list that loads the next page of older meetings.",
+      "shouldTranslate" : false
+    },
     "Show screen captures in Library" : {
       "localizations" : {
         "de" : {
@@ -41815,6 +42162,49 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mostrar o resto da semana"
+          }
+        }
+      }
+    },
+    "Showing %lld of %lld meetings" : {
+      "comment" : "Under the Meetings list while older meetings are not loaded yet: how many show, of all meetings.",
+      "shouldTranslate" : false
+    },
+    "Showing all %lld meetings" : {
+      "comment" : "Under the Meetings list once every meeting is loaded.",
+      "shouldTranslate" : false
+    },
+    "Showing the line at %@" : {
+      "comment" : "Spoken once when a transcript line is highlighted. The placeholder is a time in the meeting, for example 18:25.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zeile bei %@ wird angezeigt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrando la línea de las %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage de la ligne à %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage de la ligne à %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrando a linha de %@"
           }
         }
       }
@@ -42995,6 +43385,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Diarização de falantes"
+          }
+        }
+      }
+    },
+    "Speaker lanes" : {
+      "comment" : "Spoken name of the picture above a transcript that shows when each person spoke, one lane per person.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sprecherspuren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Carriles de hablantes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pistes des intervenants"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pistes des intervenants"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Faixas de falantes"
           }
         }
       }
@@ -45524,6 +45949,14 @@
           }
         }
       }
+    },
+    "Sync now" : {
+      "comment" : "Button that runs one content sync round now (Settings, Devices, and the sidebar's sync warning).",
+      "shouldTranslate" : false
+    },
+    "Syncing…" : {
+      "comment" : "Shown in place of the Sync now button while its round runs.",
+      "shouldTranslate" : false
     },
     "Sync off" : {
       "localizations" : {
@@ -49189,6 +49622,18 @@
         }
       }
     },
+    "This month's AI allowance is used up." : {
+      "comment" : "Whimbrel AI card on Plus: allowance used up, prepaid credit left, plan will not renew.",
+      "shouldTranslate" : false
+    },
+    "This month's AI allowance is used up. Add credit or choose another model in Settings." : {
+      "comment" : "Whimbrel AI card on Plus with no allowance and no prepaid credit left.",
+      "shouldTranslate" : false
+    },
+    "This month's AI allowance is used up. Your allowance renews with your plan." : {
+      "comment" : "Whimbrel AI card on Plus: allowance used up, prepaid credit left, plan renews.",
+      "shouldTranslate" : false
+    },
     "This Whimbrel Cloud is already on your account. To add it again, remove it from the list, run its setup again and paste the new key." : {
       "localizations" : {
         "de" : {
@@ -51780,6 +52225,41 @@
         }
       }
     },
+    "Transcribing in the background. Check back shortly." : {
+      "comment" : "Shown in place of the transcript while it is still being made in the background.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transkription läuft im Hintergrund. Schauen Sie gleich noch einmal vorbei."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcribiendo en segundo plano. Vuelve en un momento."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcription en arrière-plan. Revenez dans un instant."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcription en arrière-plan. Revenez dans un instant."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcrevendo em segundo plano. Volte em instantes."
+          }
+        }
+      }
+    },
     "Transcribing meeting audio — summary will follow." : {
       "localizations" : {
         "de" : {
@@ -51810,6 +52290,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Transcrevendo o áudio da reunião — o resumo virá em seguida."
+          }
+        }
+      }
+    },
+    "Transcribing meeting audio. The summary will follow." : {
+      "comment" : "Placeholder in the empty summary while the meeting audio is still being transcribed.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meeting-Audio wird transkribiert. Die Zusammenfassung folgt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcribiendo el audio de la reunión. El resumen llegará después."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcription de l'audio de la réunion en cours. Le résumé suivra."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcription de l’audio de la réunion en cours. Le résumé suivra."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcrevendo o áudio da reunião. O resumo virá em seguida."
           }
         }
       }
@@ -54029,6 +54544,10 @@
         }
       }
     },
+    "Upgrade to Plus for unlimited devices." : {
+      "comment" : "Device-limit screen when Plus is for sale.",
+      "shouldTranslate" : false
+    },
     "Use Delete everything again, or quit Whimbrel and remove them by hand." : {
       "localizations" : {
         "de" : {
@@ -54165,6 +54684,41 @@
         }
       }
     },
+    "Use the arrow keys to move between spans, and Return to open the line." : {
+      "comment" : "Spoken hint of the speaker lanes above a transcript.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit den Pfeiltasten wechselst du zwischen Abschnitten, mit der Eingabetaste öffnest du die Zeile."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usa las flechas para moverte entre tramos y Intro para abrir la línea."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utilisez les flèches pour passer d'un segment à l'autre et Retour pour ouvrir la ligne."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utilisez les flèches pour passer d'un segment à l'autre et Entrée pour ouvrir la ligne."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Use as setas para se mover entre os trechos e Return para abrir a linha."
+          }
+        }
+      }
+    },
     "Use the cheapest model for small tasks" : {
       "localizations" : {
         "de" : {
@@ -54232,6 +54786,10 @@
           }
         }
       }
+    },
+    "Use Whimbrel AI" : {
+      "comment" : "Primary button of the one-time Plus sheet: makes Whimbrel AI the default provider.",
+      "shouldTranslate" : false
     },
     "Use your own Google Cloud project" : {
       "localizations" : {
@@ -54367,6 +54925,41 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "A versão %@ está pronta. Reinicie para instalá-la."
+          }
+        }
+      }
+    },
+    "View" : {
+      "comment" : "Spoken name of the switch between the Note and the Transcript on a finished meeting page.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ansicht"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vista"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Visualização"
           }
         }
       }
@@ -56639,6 +57232,10 @@
         }
       }
     },
+    "Whimbrel is already running." : {
+      "comment" : "Second-copy launch alert (Mac): another Whimbrel with the same bundle id is running. Plain message.",
+      "shouldTranslate" : false
+    },
     "Whimbrel is running without the memory database, so nothing new is saved. Restart Whimbrel to try again." : {
       "localizations" : {
         "de" : {
@@ -57764,6 +58361,41 @@
         }
       }
     },
+    "Whimbrel wrote the marked lines. Each number points to the moment in the transcript it came from." : {
+      "comment" : "Line at the top of the margin of a finished meeting note. The lines Whimbrel wrote are marked with a colored rule and a number; each number points to a moment in the transcript.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel hat die markierten Zeilen geschrieben. Jede Nummer verweist auf die Stelle im Transkript, aus der sie stammt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel escribió las líneas marcadas. Cada número señala el momento de la transcripción de donde salió."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel a écrit les lignes marquées. Chaque numéro renvoie au moment de la transcription d'où elle vient."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel a écrit les lignes marquées. Chaque numéro renvoie au moment de la transcription d'où elle vient."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel escreveu as linhas marcadas. Cada número aponta para o momento da transcrição de onde ela veio."
+          }
+        }
+      }
+    },
     "Whimbrel wrote: %@" : {
       "comment" : "Accessibility label of a note line that Whimbrel wrote. The placeholder is the line.",
       "localizations" : {
@@ -58285,6 +58917,10 @@
         }
       }
     },
+    "You already have a paid plan." : {
+      "comment" : "Shown when checkout is refused because the account is already on a paid plan.",
+      "shouldTranslate" : false
+    },
     "You are recording. Tell the others before you go on." : {
       "comment" : "Recording notice. An instruction to the user. It must not say or suggest that anyone was told, was notified, agreed or consented.",
       "localizations" : {
@@ -58354,6 +58990,10 @@
           }
         }
       }
+    },
+    "You can change this any time in Settings → AI. To keep a particular client's material away from hosted models, use Exclude from hosted models on that client's page." : {
+      "comment" : "Footer of the one-time Plus 'Use Whimbrel AI?' sheet. 'Exclude from hosted models' is the toggle in a client's Client section.",
+      "shouldTranslate" : false
     },
     "You only need the recovery key if this Mac loses its own key. If that happens and you have neither the 24 words nor the recovery file and its passphrase, nobody can unlock the memory database, including Whimbrel. If you use sync, your other devices keep their own copies of what they synced, but not the key." : {
       "localizations" : {
@@ -59348,6 +59988,10 @@
           }
         }
       }
+    },
+    "Your Whimbrel AI credit or monthly allowance is used up. Add credit in Settings, or choose another model in Settings → AI Providers." : {
+      "comment" : "Ask and summary error for a Plus account whose credit or allowance is used up.",
+      "shouldTranslate" : false
     },
     "Your wording. Return saves; empty it to let Whimbrel suggest one." : {
       "localizations" : {

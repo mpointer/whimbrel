@@ -1,0 +1,275 @@
+{
+ "$base": "fixtures.json",
+ "launch_state": {
+  "busy": false,
+  "generation": 1,
+  "stage": {
+   "kind": "opened"
+  },
+  "waitingForUser": false
+ },
+ "redesign_enabled": false,
+ "skins_revision": 0,
+ "client_control_get": {
+  "ok": true,
+  "data": {
+   "exclude_hosted": false,
+   "keep_months": null
+  }
+ },
+ "client_control_update": {
+  "$seq": [
+   {
+    "ok": true,
+    "data": {
+     "before": {
+      "exclude_hosted": false,
+      "keep_months": null
+     },
+     "after": {
+      "exclude_hosted": false,
+      "keep_months": 12
+     }
+    }
+   },
+   {
+    "ok": true,
+    "data": {
+     "before": {
+      "exclude_hosted": false,
+      "keep_months": 12
+     },
+     "after": {
+      "exclude_hosted": true,
+      "keep_months": 12
+     }
+    }
+   }
+  ]
+ },
+ "client_resummary_offer": {
+  "ok": true,
+  "data": {
+   "meetings": [],
+   "already_left_note": ""
+  }
+ },
+ "client_pending_devices": {
+  "pending_devices": 0,
+  "topic_rows_held_devices": 0
+ },
+ "client_jobs_running": 0,
+ "client_review_flag": {
+  "ok": true,
+  "data": null
+ },
+ "client_inventory": {
+  "ok": true,
+  "data": {
+   "linked": [
+    {
+     "kind": "meeting",
+     "id": "7",
+     "also_client": null,
+     "date_unix_ms": "@now-4300",
+     "removed": false,
+     "label": "Client discovery: Acme"
+    },
+    {
+     "kind": "meeting",
+     "id": "8",
+     "also_client": null,
+     "date_unix_ms": "@now-2900",
+     "removed": false,
+     "label": "Acme rollout check-in"
+    },
+    {
+     "kind": "email",
+     "id": "e1",
+     "also_client": null,
+     "date_unix_ms": "@now-2000",
+     "removed": false,
+     "label": "Re: Acme rollout plan"
+    },
+    {
+     "kind": "calendar_event",
+     "id": "c1",
+     "also_client": null,
+     "date_unix_ms": "@now-900",
+     "removed": false,
+     "label": "Acme: pricing review"
+    },
+    {
+     "kind": "step",
+     "id": "s1",
+     "also_client": null,
+     "date_unix_ms": "@now-300",
+     "removed": false,
+     "label": "Send Acme a rollout plan this week"
+    }
+   ],
+   "possible": [
+    {
+     "kind": "email",
+     "id": "e9",
+     "also_client": null,
+     "date_unix_ms": "@now-5000",
+     "removed": false,
+     "label": "Quarterly planning notes",
+     "excerpt": "Acme asked about the rollout window"
+    },
+    {
+     "kind": "conversation",
+     "id": "k1",
+     "also_client": null,
+     "date_unix_ms": "@now-1500",
+     "removed": false,
+     "label": "Pricing questions",
+     "excerpt": "What did Acme say about pricing?"
+    }
+   ],
+   "possible_truncated": false,
+   "counts": [
+    [
+     "meeting",
+     2
+    ],
+    [
+     "email",
+     14
+    ],
+    [
+     "calendar_event",
+     3
+    ],
+    [
+     "step",
+     2
+    ],
+    [
+     "conversation",
+     1
+    ]
+   ],
+   "left_for_you": [
+    "mailbox_originals",
+    "backups_and_cloud",
+    "copies_on_other_devices"
+   ]
+  }
+ },
+ "client_delete": {
+  "ok": true,
+  "data": {
+   "date_unix_ms": "@now0",
+   "counts": [
+    [
+     "meeting",
+     2
+    ],
+    [
+     "email",
+     14
+    ],
+    [
+     "calendar_event",
+     3
+    ],
+    [
+     "step",
+     2
+    ],
+    [
+     "conversation",
+     1
+    ]
+   ],
+   "not_sent": [],
+   "local_only": [],
+   "client": "removed",
+   "left_for_you": [
+    "mailbox_originals",
+    "backups_and_cloud",
+    "copies_on_other_devices"
+   ],
+   "pending_devices": 0,
+   "failed": [],
+   "failed_stages": [],
+   "complete": true,
+   "retry_helps": false
+  }
+ },
+ "client_export": {
+  "ok": true,
+  "data": null
+ },
+ "encryption_card": {
+  "badge": "notEncrypted",
+  "cleanupRunning": false,
+  "fastSearch": {
+   "available": false,
+   "enabled": false
+  },
+  "notes": [],
+  "pendingNextLaunch": false,
+  "plainBackupPresent": false,
+  "showsStoreTools": false
+ },
+ "encryption_precheck_for_setup": null,
+ "setup_reuses_key": false,
+ "setup_continue": true,
+ "setup_saved_to": null,
+ "setup_start_over": true,
+ "setup_verify": true,
+ "setup_save_file": {
+  "kind": "saved",
+  "path": "E:\\Backup drive\\Whimbrel recovery key.txt",
+  "sameDiskAsDatabase": false
+ },
+ "setup_begin": {
+  "kind": "made",
+  "words": [
+   "willow",
+   "canyon",
+   "pepper",
+   "lantern",
+   "orbit",
+   "meadow",
+   "copper",
+   "ribbon",
+   "summit",
+   "velvet",
+   "anchor",
+   "harvest",
+   "thistle",
+   "marble",
+   "cobalt",
+   "river",
+   "timber",
+   "garnet",
+   "falcon",
+   "pebble",
+   "sparrow",
+   "lagoon",
+   "ember",
+   "quartz"
+  ]
+ },
+ "storage_overview": {
+  "days": [
+   30,
+   60,
+   90
+  ],
+  "dbFreeBytes": 0,
+  "defaultDays": 90,
+  "footprint": {
+   "database": 180000000,
+   "models": 1200000000,
+   "other": 24000000,
+   "recordings": 412000000,
+   "total": 1816000000
+  },
+  "lowDisks": []
+ }
+}

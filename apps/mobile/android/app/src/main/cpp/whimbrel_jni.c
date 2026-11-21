@@ -305,3 +305,103 @@ JNIEXPORT jbyteArray JNICALL JNI(nTopicSnapshotsJson)(JNIEnv *env, jobject self,
     (void)self;
     return take(env, whimbrel_topic_snapshots_json(H(handle)));
 }
+
+// ---- Topic links and Ask. The inference calls take no store handle: never run them on the store's thread. ----
+
+JNIEXPORT jlong JNICALL JNI(nMeetingIdForSource)(JNIEnv *env, jobject self, jlong handle, jbyteArray deviceId, jlong sourceMeetingId) {
+    (void)self;
+    char *a = cstr(env, deviceId);
+    int64_t id = a ? whimbrel_meeting_id_for_source(H(handle), a, (int64_t)sourceMeetingId) : -1;
+    free(a);
+    return (jlong)id;
+}
+
+JNIEXPORT jbyteArray JNICALL JNI(nLlmPrepareAsk)(JNIEnv *env, jobject self, jlong handle, jbyteArray query, jlong contextLimit, jbyteArray history, jbyteArray routing) {
+    (void)self;
+    char *a = cstr(env, query), *b = cstr(env, history), *c = cstr(env, routing);
+    char *r = (a && b && c) ? whimbrel_llm_prepare_ask(H(handle), a, (size_t)contextLimit, b, c) : NULL;
+    free(a); free(b); free(c);
+    return take(env, r);
+}
+
+JNIEXPORT jbyteArray JNICALL JNI(nLlmFinalizeAsk)(JNIEnv *env, jobject self, jlong handle, jbyteArray prepareId, jbyteArray text, jbyteArray model, jlong inputTokens, jlong outputTokens) {
+    (void)self;
+    char *a = cstr(env, prepareId), *b = cstr(env, text), *c = cstr(env, model);
+    char *r = (a && b && c) ? whimbrel_llm_finalize_ask(H(handle), a, b, c, (int64_t)inputTokens, (int64_t)outputTokens) : NULL;
+    free(a); free(b); free(c);
+    return take(env, r);
+}
+
+JNIEXPORT void JNICALL JNI(nLlmDiscardAsk)(JNIEnv *env, jobject self, jbyteArray prepareId) {
+    (void)self;
+    char *a = cstr(env, prepareId);
+    if (a) whimbrel_llm_discard_ask(a);
+    free(a);
+}
+
+// apiKey and baseUrl may be null arrays (the core then gets NULL).
+JNIEXPORT jbyteArray JNICALL JNI(nInferenceStart)(JNIEnv *env, jobject self, jbyteArray prompt, jbyteArray model, jbyteArray provider, jbyteArray apiKey, jbyteArray baseUrl) {
+    (void)self;
+    char *a = cstr(env, prompt), *b = cstr(env, model), *c = cstr(env, provider), *d = cstr(env, apiKey), *e = cstr(env, baseUrl);
+    char *r = (a && b && c) ? whimbrel_inference_start(a, b, c, d, e) : NULL;
+    free(a); free(b); free(c); free(d); free(e);
+    return take(env, r);
+}
+
+JNIEXPORT jbyteArray JNICALL JNI(nInferencePoll)(JNIEnv *env, jobject self, jbyteArray runId) {
+    (void)self;
+    char *a = cstr(env, runId);
+    char *r = a ? whimbrel_inference_poll(a) : NULL;
+    free(a);
+    return take(env, r);
+}
+
+JNIEXPORT jboolean JNICALL JNI(nInferenceCancel)(JNIEnv *env, jobject self, jbyteArray runId) {
+    (void)self;
+    char *a = cstr(env, runId);
+    bool ok = a && whimbrel_inference_cancel(a);
+    free(a);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL JNI(nInferenceRelease)(JNIEnv *env, jobject self, jbyteArray runId) {
+    (void)self;
+    char *a = cstr(env, runId);
+    if (a) whimbrel_inference_release(a);
+    free(a);
+}
+
+// stored may be a null array (never chosen).
+JNIEXPORT jbyteArray JNICALL JNI(nModelResolve)(JNIEnv *env, jobject self, jbyteArray provider, jbyteArray stored) {
+    (void)self;
+    char *a = cstr(env, provider), *b = cstr(env, stored);
+    char *r = a ? whimbrel_model_resolve(a, b) : NULL;
+    free(a); free(b);
+    return take(env, r);
+}
+
+JNIEXPORT jboolean JNICALL JNI(nModelNoteAnswer)(JNIEnv *env, jobject self, jlong handle, jbyteArray provider, jbyteArray requested, jbyteArray answered, jlong nowUnixMs) {
+    (void)self;
+    char *a = cstr(env, provider), *b = cstr(env, requested), *c = cstr(env, answered);
+    bool ok = (a && b) && whimbrel_model_note_answer(H(handle), a, b, c, (int64_t)nowUnixMs);
+    free(a); free(b); free(c);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+// ---- Approving another device. The wrap hands this phone's group key to the recipient's public key. ----
+
+JNIEXPORT jbyteArray JNICALL JNI(nSyncWrapGroupKey)(JNIEnv *env, jobject self, jbyteArray senderSecret, jbyteArray recipientPublic, jbyteArray groupKey) {
+    (void)self;
+    char *a = cstr(env, senderSecret), *b = cstr(env, recipientPublic), *c = cstr(env, groupKey);
+    char *r = (a && b && c) ? whimbrel_sync_wrap_group_key(a, b, c) : NULL;
+    free(a); free(b); free(c);
+    return take(env, r);
+}
+
+JNIEXPORT jbyteArray JNICALL JNI(nSyncWorkerApproveDevice)(JNIEnv *env, jobject self, jbyteArray baseUrl, jbyteArray idToken, jbyteArray publicKey, jbyteArray targetDeviceId, jbyteArray wrappedGroupKey) {
+    (void)self;
+    char *a = cstr(env, baseUrl), *b = cstr(env, idToken), *c = cstr(env, publicKey), *d = cstr(env, targetDeviceId), *e = cstr(env, wrappedGroupKey);
+    char *r = (a && b && c && d && e) ? whimbrel_sync_worker_approve_device(a, b, c, d, e) : NULL;
+    free(a); free(b); free(c); free(d); free(e);
+    return take(env, r);
+}

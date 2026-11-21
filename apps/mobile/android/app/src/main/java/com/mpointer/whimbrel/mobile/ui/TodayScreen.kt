@@ -1,5 +1,14 @@
 package com.mpointer.whimbrel.mobile.ui
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import com.mpointer.whimbrel.mobile.design.LocalWStrings
+import com.mpointer.whimbrel.mobile.design.WAuthor
+import com.mpointer.whimbrel.mobile.design.WNoteBlock
+import com.mpointer.whimbrel.mobile.design.WNoteKind
+import com.mpointer.whimbrel.mobile.design.reading
 import android.text.format.DateUtils
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -53,6 +62,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mpointer.whimbrel.mobile.R
+import androidx.compose.ui.semantics.Role
+import com.mpointer.whimbrel.mobile.design.WButton
+import com.mpointer.whimbrel.mobile.design.WButtonKind
+import com.mpointer.whimbrel.mobile.design.WCard
+import com.mpointer.whimbrel.mobile.design.WMeetingCard
+import com.mpointer.whimbrel.mobile.design.WMeetingVariant
+import com.mpointer.whimbrel.mobile.design.WNowMarker
+import com.mpointer.whimbrel.mobile.design.WSpineNode
+import com.mpointer.whimbrel.mobile.design.WSpineStop
+import com.mpointer.whimbrel.mobile.design.WTokens
+import com.mpointer.whimbrel.mobile.design.style
+import com.mpointer.whimbrel.mobile.theme.LocalThemePalette
 import com.mpointer.whimbrel.mobile.read.PhoneMeeting
 import com.mpointer.whimbrel.mobile.read.PhoneMeetingPrep
 import com.mpointer.whimbrel.mobile.read.ReadLogic
@@ -84,9 +105,16 @@ internal fun rememberSyncLine(sync: SyncModel): String {
 private fun timeText(context: android.content.Context, ms: Long, withDate: Boolean) =
     DateUtils.formatDateTime(context, ms, DateUtils.FORMAT_SHOW_TIME or if (withDate) DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH else 0)
 
+/** A past stop's label: the time, with the day above it when the meeting was not today, so the times down the thread never read as out of order. */
+internal fun stopTime(context: android.content.Context, ms: Long): String {
+    val time = timeText(context, ms, withDate = false)
+    if (DateUtils.isToday(ms)) return time
+    return DateUtils.formatDateTime(context, ms, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR) + "\n" + time
+}
+
 /**
- * The phone's first screen: greeting, the day's brief, the next meeting with its prep, recent meetings and
- * when the replica last synced. Pull down to sync. Ported from `TodayView.swift`.
+ * The phone's first screen, as one line of time: the next meeting with its prep above the now marker; the
+ * day's brief and recent meetings behind it; then when the replica last synced. Pull down to sync. Ported from `TodayView.swift`.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,6 +124,10 @@ fun TodayScreen(
     labels: StateFlow<DeviceLabels>,
     onOpenSettings: () -> Unit,
     onOpenMeeting: (Long) -> Unit,
+    /** Devices waiting for approval: an in-app banner that opens Settings (no push yet). */
+    pendingDevices: Int = 0,
+    /** Demo screenshots only: opens the prep sheet at launch. */
+    startWithPrep: Boolean = false,
     update: com.mpointer.whimbrel.mobile.update.AvailableUpdate? = null,
     onDismissUpdate: () -> Unit = {},
 ) {
@@ -116,7 +148,7 @@ fun TodayScreen(
     val updateNeeded by sync.updateNeeded.collectAsState()
     var refreshing by remember { mutableStateOf(false) }
     var briefExpanded by rememberSaveable { mutableStateOf(false) }
-    var showPrep by rememberSaveable { mutableStateOf(false) }
+    var showPrep by rememberSaveable { mutableStateOf(startWithPrep) }
     val now = System.currentTimeMillis()
     val hour = java.time.Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).hour
     val greeting = when (ReadLogic.daypart(hour)) {
@@ -144,58 +176,71 @@ fun TodayScreen(
         ) {
             // The inner screen would stretch a phone column; center it at a reading width.
             Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
-                Column(Modifier.widthIn(max = ContentMaxWidth).fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(DateUtils.formatDateTime(context, now, DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_NO_YEAR), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(stringResource(greeting), style = MaterialTheme.typography.headlineLarge, fontFamily = FontFamily.Serif, modifier = Modifier.semantics { heading() })
+                Column(Modifier.widthIn(max = WTokens.Size.contentMax).fillMaxWidth().padding(horizontal = WTokens.Space.lg).padding(bottom = WTokens.Space.xl), verticalArrangement = Arrangement.spacedBy(WTokens.Space.sm)) {
+                    Column(Modifier.padding(bottom = WTokens.Space.sm), verticalArrangement = Arrangement.spacedBy(WTokens.Space.xxs)) {
+                        Text(stringResource(R.string.tab_today), style = WTokens.TypeScale.pageTitle.style(), modifier = Modifier.semantics { heading() })
+                        Text(DateUtils.formatDateTime(context, now, DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_NO_YEAR), style = WTokens.TypeScale.secondary.style(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (update != null) {
-                        InfoCard {
-                            Text(stringResource(R.string.update_available, update.version), style = MaterialTheme.typography.titleMedium)
+                        WCard(tint = LocalThemePalette.current.highlight) {
+                            Text(stringResource(R.string.update_available, update.version), style = WTokens.TypeScale.subtitle.style())
                             Muted(stringResource(R.string.update_available_detail))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(WTokens.Space.sm)) {
+                                WButton(stringResource(R.string.update_download), {
                                     runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(update.apkUrl))) }
-                                }) { Text(stringResource(R.string.update_download)) }
-                                TextButton(onClick = onDismissUpdate) { Text(stringResource(R.string.update_not_now)) }
+                                }, kind = WButtonKind.Quiet)
+                                WButton(stringResource(R.string.update_not_now), onDismissUpdate, kind = WButtonKind.Quiet)
                             }
                         }
                     }
-                    InfoCard {
-                        SectionLabel(stringResource(R.string.today_daily_brief))
-                        val text = brief?.outputSummary
-                        if (text != null) {
-                            Text(text, maxLines = if (briefExpanded) Int.MAX_VALUE else BRIEF_COLLAPSED_LINES, overflow = TextOverflow.Ellipsis)
-                            if (text.length > BRIEF_LONG_CHARS) {
-                                TextButton(onClick = { briefExpanded = !briefExpanded }) {
-                                    Text(stringResource(if (briefExpanded) R.string.today_show_less else R.string.today_show_more))
-                                }
-                            }
-                        } else {
-                            Muted(if (loaded) stringResource(R.string.today_no_brief) else loading)
+                    if (pendingDevices > 0) {
+                        WCard(Modifier.clip(RoundedCornerShape(WTokens.Radius.card)).clickable(role = Role.Button, onClick = onOpenSettings), tint = LocalThemePalette.current.highlight) {
+                            Text(pluralStringResource(R.plurals.devices_waiting, pendingDevices, pendingDevices), style = WTokens.TypeScale.body.style())
                         }
                     }
-                    InfoCard {
-                        SectionLabel(stringResource(R.string.today_up_next))
-                        val event = upNext
-                        if (event != null) {
-                            Text(
-                                timeText(context, event.startUnixMs, withDate = false),
-                                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary,
+                    // What is coming: the next meeting, above the now marker.
+                    val event = upNext
+                    if (event != null) {
+                        WSpineStop(timeText(context, event.startUnixMs, withDate = false), node = WSpineNode.Upcoming) {
+                            WMeetingCard(
+                                WMeetingVariant.Next, event.title,
+                                status = listOfNotNull(stringResource(R.string.today_up_next), ReadLogic.relativeStart(event.startUnixMs, null, now, strings)).joinToString(" · "),
+                                detail = if (event.attendees.isNotEmpty()) ReadLogic.attendeeSummary(event.attendees) else null,
+                                actions = if (prep?.brief != null) { { WButton(stringResource(R.string.today_prep_ready), { showPrep = true }, kind = WButtonKind.Secondary) } } else null,
                             )
-                            Text(event.title, style = MaterialTheme.typography.titleMedium)
-                            if (event.attendees.isNotEmpty()) Muted(ReadLogic.attendeeSummary(event.attendees))
-                            if (prep?.brief != null) {
-                                AssistChip(onClick = { showPrep = true }, label = { Text(stringResource(R.string.today_prep_ready)) })
+                        }
+                    } else {
+                        WSpineStop("", showsNode = false) { Muted(if (loaded) stringResource(R.string.today_nothing_else) else loading, Modifier.padding(WTokens.Space.md)) }
+                    }
+                    WNowMarker(timeText(context, now, withDate = false), Modifier.padding(vertical = WTokens.Space.xs))
+                    // The day's brief, on the thread at the time it ran.
+                    val run = brief
+                    WSpineStop(run?.let { timeText(context, it.ranAtUnixMs, withDate = false) } ?: "", node = WSpineNode.Past, showsNode = run != null) {
+                        WCard {
+                            Text(stringResource(R.string.today_daily_brief), style = WTokens.TypeScale.subtitle.style(), modifier = Modifier.semantics { heading() })
+                            val text = run?.outputSummary
+                            if (text != null) {
+                                Text(text, style = WTokens.TypeScale.body.style(), maxLines = if (briefExpanded) Int.MAX_VALUE else BRIEF_COLLAPSED_LINES, overflow = TextOverflow.Ellipsis)
+                                if (text.length > BRIEF_LONG_CHARS) {
+                                    WButton(stringResource(if (briefExpanded) R.string.today_show_less else R.string.today_show_more), { briefExpanded = !briefExpanded }, kind = WButtonKind.Quiet)
+                                }
+                            } else {
+                                Muted(if (loaded) stringResource(R.string.today_no_brief) else loading)
                             }
-                        } else {
-                            Muted(if (loaded) stringResource(R.string.today_nothing_else) else loading)
                         }
                     }
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SectionLabel(stringResource(R.string.today_recent_meetings))
-                        if (recent.isEmpty()) Muted(if (loaded) stringResource(R.string.today_no_meetings) else loading)
-                        recent.forEach { MeetingListRow(it, deviceLabels, strings, Modifier.clickable { onOpenMeeting(it.id) }, withDate = true) }
+                    // Meetings that have happened, newest first, each a stop behind the now marker.
+                    if (recent.isEmpty()) {
+                        WSpineStop("", node = WSpineNode.Past, showsNode = false) { Muted(if (loaded) stringResource(R.string.today_no_meetings) else loading, Modifier.padding(WTokens.Space.md)) }
+                    }
+                    recent.forEach { meeting ->
+                        val row = meetingRowText(meeting, deviceLabels, strings, ZoneId.systemDefault(), withDate = false)
+                        WSpineStop(stopTime(context, meeting.startUnixMs), node = WSpineNode.Past) {
+                            WMeetingCard(
+                                WMeetingVariant.Past, row.title, Modifier.clickable(role = Role.Button) { onOpenMeeting(meeting.id) },
+                                detail = listOfNotNull(row.device, row.alsoRecorded, row.attendees.ifEmpty { null }).joinToString(" · "),
+                            )
+                        }
                     }
                     Text(syncLine, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                     if (olderLoading) {
@@ -216,7 +261,7 @@ private fun SectionLabel(text: String) =
     Text(text.uppercase(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.semantics { heading() })
 
 @Composable
-private fun Muted(text: String) = Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun Muted(text: String, modifier: Modifier = Modifier) = Text(text, modifier, style = WTokens.TypeScale.body.style(), color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 @Composable
 private fun InfoCard(content: @Composable () -> Unit) {
@@ -228,29 +273,46 @@ private fun InfoCard(content: @Composable () -> Unit) {
     }
 }
 
-/** The synced prep for the next meeting: its summary, attendee notes and open items. */
+/**
+ * The synced prep for the next meeting: its summary, attendee notes and open items. Whimbrel wrote all of it, so
+ * the sheet says so once and every line carries Whimbrel's ink and rule.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PrepSheet(prep: PhoneMeetingPrep?, onDismiss: () -> Unit) {
     val brief = prep?.brief
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(prep?.title ?: stringResource(R.string.prep_title_fallback), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-            if (brief != null) {
-                Text(brief.summary.text)
-                if (brief.attendees.isNotEmpty()) PrepGroup(stringResource(R.string.prep_attendees), brief.attendees.map { stringResource(R.string.prep_attendee_note, it.who, it.note) })
-                if (brief.openItems.isNotEmpty()) PrepGroup(stringResource(R.string.prep_open_items), brief.openItems.map { it.text })
-                if (brief.openQuestions.isNotEmpty()) PrepGroup(stringResource(R.string.prep_open_questions), brief.openQuestions.map { it.text })
+    val context = LocalContext.current
+    // The legend says who wrote the lines, so TalkBack is not told before each one.
+    val base = LocalWStrings.current
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.background) {
+        CompositionLocalProvider(LocalWStrings provides remember(base) { base.copy(whimbrelWrote = { it }) }) {
+            Column(
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = WTokens.Space.lg).padding(bottom = WTokens.Space.xl),
+                verticalArrangement = Arrangement.spacedBy(WTokens.Space.sm),
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(WTokens.Space.sm)) {
+                    Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }, verticalArrangement = Arrangement.spacedBy(WTokens.Space.xs)) {
+                        Text(prep?.title ?: stringResource(R.string.prep_title_fallback), style = WTokens.TypeScale.readingTitle.reading())
+                        prep?.let { Text(timeText(context, it.startUnixMs, withDate = true), style = WTokens.TypeScale.secondary.style(), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                    WButton(stringResource(R.string.done), onDismiss, kind = WButtonKind.Quiet)
+                }
+                if (brief != null) {
+                    WrittenByLegend()
+                    WNoteBlock(WNoteKind.Paragraph, WAuthor.Whimbrel, brief.summary.text)
+                    if (brief.attendees.isNotEmpty()) PrepGroup(stringResource(R.string.prep_attendees), brief.attendees.map { stringResource(R.string.prep_attendee_note, it.who, it.note) })
+                    if (brief.openItems.isNotEmpty()) PrepGroup(stringResource(R.string.prep_open_items), brief.openItems.map { it.text })
+                    if (brief.openQuestions.isNotEmpty()) PrepGroup(stringResource(R.string.prep_open_questions), brief.openQuestions.map { it.text })
+                }
             }
-            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.done)) }
         }
     }
 }
 
 @Composable
 private fun PrepGroup(title: String, lines: List<String>) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        SectionLabel(title)
-        lines.forEach { Text("• $it") }
+    Column(Modifier.padding(top = WTokens.Space.sm), verticalArrangement = Arrangement.spacedBy(WTokens.Space.xxs)) {
+        WNoteBlock(WNoteKind.Heading, WAuthor.You, title)
+        lines.forEach { WNoteBlock(WNoteKind.Bullet, WAuthor.Whimbrel, it) }
     }
 }

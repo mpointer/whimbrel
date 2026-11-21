@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { importMarkdownFolder, importTranscripts, meetingList } from "../api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { importMarkdownFolder, importTranscripts, meetingList, meetingTotal } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { ImportView, MeetingRow } from "../generated/types";
 import { t, useL10n } from "../l10n";
@@ -10,6 +10,7 @@ import { importSummary } from "./importSummary";
 import { MeetingListRow } from "./MeetingCard";
 import { forRecorded, groupByDay, type MeetingCardTarget } from "./meetingCardModel";
 import { RecordingCard } from "./RecordingCard";
+import { footer as pagingFooter, hasMore as pagingHasMore, nextLimit, PAGE_SIZE } from "./meetingsPaging";
 import { meetingTitleLabel } from "./sentinels";
 import { useMeetingChips } from "./useMeetingChips";
 import { Workspace } from "./Workspace";
@@ -48,23 +49,97 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
   const chips = useMeetingChips(rows);
   // The hidden redesign switch: with it off nothing below differs from before.
   const redesign = useRedesign();
+  // Redesign: a finished note wants the whole width, so the list and the record card give way to it until Back is pressed.
+  const [noteFull, setNoteFull] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const solo = redesign && noteFull && !listOpen;
+  const meetingsRef = useRef<HTMLDivElement>(null);
+  const focusRow = useRef(false);
+  // Back from a full-width note shows the list again and puts focus on the selected meeting's row, so the keyboard is not left on a button that went.
+  const showList = useCallback(() => {
+    focusRow.current = true;
+    setListOpen(true);
+  }, []);
+  useEffect(() => {
+    if (!listOpen || !focusRow.current) return;
+    focusRow.current = false;
+    const root = meetingsRef.current;
+    (root?.querySelector<HTMLElement>('.meeting-list .meeting-item__hit[aria-current="true"]') ?? root?.querySelector<HTMLElement>(".meeting-list input"))?.focus();
+  }, [listOpen]);
+  // Another meeting starts from the list as it is: the last one's full-width state (and a list opened by Back) says nothing about it,
+  // so a meeting still recording, or one not read yet, never makes the list flicker away.
+  useEffect(() => {
+    if (!redesign) return;
+    setNoteFull(false);
+    setListOpen(false);
+  }, [selected, redesign]);
 
-  const load = useCallback(
-    (search: string) =>
-      meetingList(search)
-        .then((list) => {
-          setRows(list);
-          setSelected((current) => (current != null && list.some((r) => r.id === current) ? current : (list[0]?.id ?? null)));
-        })
-        .catch((e: unknown) => setError(message(e))),
-    [],
-  );
+  // Pages (PR 924 on the Mac): the newest 200, then 200 more each time the end of the list is reached.
+  // A search reads every meeting, so it finds the older ones too.
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const limitRef = useRef(PAGE_SIZE);
+  // Every meeting in the store; null until counted, or when the count failed.
+  const [total, setTotal] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // A bigger page that brought nothing new: a count that never matches can't keep "Show older meetings" up.
+  const [exhausted, setExhausted] = useState(false);
+  const loadedRef = useRef(0);
+  // The next load is the one Show older meetings asked for.
+  const growingRef = useRef(false);
+
+  const load = useCallback((search: string) => {
+    const asked = limitRef.current;
+    return meetingList(search, asked)
+      .then(async (list) => {
+        if (asked !== limitRef.current) return;
+        if (!search) {
+          // A short page is everything; a full one asks how many there are.
+          const counted = list.length < asked ? list.length : await meetingTotal().catch(() => null);
+          if (asked !== limitRef.current) return;
+          if (growingRef.current && list.length <= loadedRef.current) setExhausted(true);
+          growingRef.current = false;
+          loadedRef.current = list.length;
+          setTotal(counted);
+        }
+        setLoadingMore(false);
+        setRows(list);
+        setSelected((current) => (current != null && list.some((r) => r.id === current) ? current : (list[0]?.id ?? null)));
+      })
+      .catch((e: unknown) => {
+        setLoadingMore(false);
+        setError(message(e));
+      });
+  }, []);
+
+  const more = filter === "" && !exhausted && pagingHasMore(rows.length, limit, total);
+  const loadMore = useCallback(() => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    growingRef.current = true;
+    limitRef.current = nextLimit(limitRef.current);
+    setLimit(limitRef.current);
+    void load("");
+  }, [load, loadingMore]);
+  // The end of the list in view loads the next page on its own; the button covers a window tall enough that it never scrolls.
+  const footerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = footerRef.current;
+    if (!more || loadingMore || !el || typeof IntersectionObserver === "undefined") return;
+    const seen = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMore();
+    });
+    seen.observe(el);
+    return () => seen.disconnect();
+  }, [more, loadingMore, loadMore]);
+  const footerText = filter === "" ? pagingFooter(rows.length, total, more) : null;
 
   // A question alert's Open meeting: select it, clearing a search that would hide it.
   useEffect(() => {
     if (open?.meetingId == null) return;
     setFilter("");
     setSelected(open.meetingId);
+    // The deep link opens its meeting as a fresh pick, even when it is the one already selected.
+    setListOpen(false);
   }, [open?.seq, open?.meetingId]);
 
   useEffect(() => {
@@ -88,16 +163,19 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
 
   // A row (or its Summary or action-items chip) selects the meeting beside the list; Prep and Topic open their own.
   const openTarget = (target: MeetingCardTarget) => {
-    if (target.kind === "meeting") setSelected(target.id);
+    if (target.kind === "meeting") {
+      setSelected(target.id);
+      setListOpen(false);
+    }
     else if (target.kind === "brief") setPrepKey(target.key);
     else if (target.kind === "topic") openTopic(target.id);
   };
 
   return (
     <div className="stack">
-      <RecordingCard onChanged={() => load(filter)} hideNotice={redesign} />
+      {!solo && <RecordingCard onChanged={() => load(filter)} hideNotice={redesign} />}
       {error && <p role="alert">{error}</p>}
-      <div className="meetings">
+      <div ref={meetingsRef} className={solo ? "meetings th-fin-solo" : "meetings"}>
         <section className="card meeting-list" aria-label={t("Meetings")}>
           <input
             className="input"
@@ -162,6 +240,16 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
                   </ul>
                 </section>
               ))}
+              {(footerText || more) && (
+                <div ref={footerRef} className="meeting-list-footer stack">
+                  {footerText && <p className="muted small">{footerText}</p>}
+                  {more && (
+                    <button className="mode" disabled={loadingMore} onClick={loadMore}>
+                      {t("Show older meetings")}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -174,7 +262,13 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
               const workspace = <Workspace meetingId={selected} onChanged={() => load(filter)} onOpenSettings={onOpenSettings} />;
               // A meeting in progress is the live screen (redesign only).
               return redesign ? (
-                <MeetingPane meetingId={selected} onOpenSettings={onOpenSettings}>
+                <MeetingPane
+                  meetingId={selected}
+                  onOpenSettings={onOpenSettings}
+                  onChanged={() => load(filter)}
+                  onFullWidth={setNoteFull}
+                  onBack={solo ? showList : undefined}
+                >
                   {workspace}
                 </MeetingPane>
               ) : (

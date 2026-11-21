@@ -65,6 +65,26 @@ internal object Native : CoreNative {
         nMemoryUpcomingCalendarEvents(handle, fromUnixMs, untilUnixMs, limit).fromCOutput()
     override fun topicSnapshotsJson(handle: Long): String? = nTopicSnapshotsJson(handle).fromCOutput()
 
+    override fun syncWrapGroupKey(senderSecretKeyBase64: String, recipientPublicKeyBase64: String, groupKeyBase64: String): String? =
+        nSyncWrapGroupKey(senderSecretKeyBase64.toCString(), recipientPublicKeyBase64.toCString(), groupKeyBase64.toCString()).fromCOutput()
+    override fun syncWorkerApproveDevice(baseUrl: String, idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String): String? =
+        nSyncWorkerApproveDevice(baseUrl.toCString(), idToken.toCString(), devicePublicKey.toCString(), targetDeviceId.toCString(), wrappedGroupKey.toCString()).fromCOutput()
+    override fun meetingIdForSource(handle: Long, deviceId: String, sourceMeetingId: Long): Long =
+        nMeetingIdForSource(handle, deviceId.toCString(), sourceMeetingId)
+    override fun llmPrepareAsk(handle: Long, query: String, contextLimit: Long, historyJson: String, routingJson: String): String? =
+        nLlmPrepareAsk(handle, query.toCString(), contextLimit, historyJson.toCString(), routingJson.toCString()).fromCOutput()
+    override fun llmFinalizeAsk(handle: Long, prepareId: String, text: String, model: String, inputTokens: Long, outputTokens: Long): String? =
+        nLlmFinalizeAsk(handle, prepareId.toCString(), text.toCString(), model.toCString(), inputTokens, outputTokens).fromCOutput()
+    override fun llmDiscardAsk(prepareId: String) = nLlmDiscardAsk(prepareId.toCString())
+    override fun inferenceStart(prompt: String, model: String, provider: String, apiKey: String?, baseUrlOverride: String?): String? =
+        nInferenceStart(prompt.toCString(), model.toCString(), provider.toCString(), apiKey?.toCString(), baseUrlOverride?.toCString()).fromCOutput()
+    override fun inferencePoll(runId: String): String? = nInferencePoll(runId.toCString()).fromCOutput()
+    override fun inferenceCancel(runId: String): Boolean = nInferenceCancel(runId.toCString())
+    override fun inferenceRelease(runId: String) = nInferenceRelease(runId.toCString())
+    override fun modelResolve(provider: String, stored: String?): String? = nModelResolve(provider.toCString(), stored?.toCString()).fromCOutput()
+    override fun modelNoteAnswer(handle: Long, provider: String, requested: String, answered: String?, nowUnixMs: Long): Boolean =
+        nModelNoteAnswer(handle, provider.toCString(), requested.toCString(), answered?.toCString(), nowUnixMs)
+
     private external fun nCoreVersion(): ByteArray?
     private external fun nMemoryOpen(path: ByteArray): Long
     private external fun nMemoryClose(handle: Long)
@@ -104,4 +124,16 @@ internal object Native : CoreNative {
     private external fun nMeetingPrepGet(handle: Long, eventId: ByteArray): ByteArray?
     private external fun nMemoryUpcomingCalendarEvents(handle: Long, from: Long, until: Long, limit: Long): ByteArray?
     private external fun nTopicSnapshotsJson(handle: Long): ByteArray?
+    private external fun nSyncWrapGroupKey(senderSecret: ByteArray, recipientPublic: ByteArray, groupKey: ByteArray): ByteArray?
+    private external fun nSyncWorkerApproveDevice(baseUrl: ByteArray, idToken: ByteArray, devicePublicKey: ByteArray, targetDeviceId: ByteArray, wrappedGroupKey: ByteArray): ByteArray?
+    private external fun nMeetingIdForSource(handle: Long, deviceId: ByteArray, sourceMeetingId: Long): Long
+    private external fun nLlmPrepareAsk(handle: Long, query: ByteArray, contextLimit: Long, history: ByteArray, routing: ByteArray): ByteArray?
+    private external fun nLlmFinalizeAsk(handle: Long, prepareId: ByteArray, text: ByteArray, model: ByteArray, inputTokens: Long, outputTokens: Long): ByteArray?
+    private external fun nLlmDiscardAsk(prepareId: ByteArray)
+    private external fun nInferenceStart(prompt: ByteArray, model: ByteArray, provider: ByteArray, apiKey: ByteArray?, baseUrl: ByteArray?): ByteArray?
+    private external fun nInferencePoll(runId: ByteArray): ByteArray?
+    private external fun nInferenceCancel(runId: ByteArray): Boolean
+    private external fun nInferenceRelease(runId: ByteArray)
+    private external fun nModelResolve(provider: ByteArray, stored: ByteArray?): ByteArray?
+    private external fun nModelNoteAnswer(handle: Long, provider: ByteArray, requested: ByteArray, answered: ByteArray?, nowUnixMs: Long): Boolean
 }

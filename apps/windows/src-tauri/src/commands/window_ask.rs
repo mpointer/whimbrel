@@ -197,7 +197,7 @@ fn stream(app: &AppHandle, request_id: u64, store: &StoreHandle, route: StreamRo
         }
         TerminalAction::CreditExhausted => {
             api::ask::discard_ask(&prepared.prepare_id);
-            fail(send, CommandError::ProviderFailure { reason: Some(ProviderFailureReason::CreditExhausted) }, false);
+            fail(send, CommandError::ProviderFailure { reason: Some(ProviderFailureReason::credit_exhausted()) }, false);
         }
     }
 }

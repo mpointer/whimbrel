@@ -14,16 +14,19 @@ struct TopicPageView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: WTokens.Space.lg) {
                 if let snap = model.snapshot {
                     page(snap)
+                } else if model.loaded {
+                    WStateView(kind: .empty, title: String(localized: "This topic isn't on this iPhone."))
                 } else {
-                    Text(model.loaded ? "This topic isn't on this iPhone." : "Loading…")
-                        .foregroundStyle(Color.theme(.textSecondary))
+                    WStateView(kind: .loading, title: String(localized: "Loading…"))
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 24)
+            .padding(.horizontal, WTokens.Space.lg)
+            .padding(.vertical, WTokens.Space.md)
+            .frame(maxWidth: WTokens.Size.contentMax, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .themed()
         .background(Color.theme(.backgroundPage).ignoresSafeArea())
@@ -35,18 +38,19 @@ struct TopicPageView: View {
 
     @ViewBuilder
     private func page(_ snap: PhoneTopicSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: WTokens.Space.xs) {
             Text(snap.name)
-                .font(.system(.title, design: .serif))
+                .wReading(WTokens.TypeScale.readingTitle)
                 .foregroundStyle(Color.theme(.textPrimary))
+                .accessibilityAddTraits(.isHeader)
             if let lead = snap.lead {
                 Text(TopicText.lead(lead))
-                    .font(.subheadline)
+                    .wType(WTokens.TypeScale.secondary)
                     .foregroundStyle(Color.theme(.textSecondary))
             }
         }
         if let role = snap.role, !role.text.isEmpty {
-            section("Your role") { Text(role.text).foregroundStyle(Color.theme(.textPrimary)) }
+            section("Your role") { Text(role.text).wType(WTokens.TypeScale.body).foregroundStyle(Color.theme(.textPrimary)) }
         }
         if let next = snap.upcomingMeeting() {
             section("Next meeting") { nextMeeting(next) }
@@ -59,12 +63,13 @@ struct TopicPageView: View {
         section("Recent") { recent(snap) }
         if snap.truncated {
             Text("Showing the latest items. See the rest on your computer.")
-                .font(.footnote)
+                .wType(WTokens.TypeScale.secondary)
                 .foregroundStyle(Color.theme(.textSecondary))
         }
         TimelineView(.periodic(from: .now, by: 60)) { context in
             Text(TopicText.footer(snap, now: context.date))
-                .font(.footnote)
+                .wType(WTokens.TypeScale.secondary)
+                .multilineTextAlignment(.center)
                 .foregroundStyle(Color.theme(.textSecondary))
                 .frame(maxWidth: .infinity)
         }
@@ -73,18 +78,19 @@ struct TopicPageView: View {
     // MARK: Next meeting
 
     private func nextMeeting(_ next: PhoneTopicSnapshot.NextMeeting) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: WTokens.Space.xs) {
             Text(next.title)
-                .font(.headline)
+                .wType(WTokens.TypeScale.subtitle)
                 .foregroundStyle(Color.theme(.textPrimary))
             Text(TopicText.dayTime(ms: next.startUnixMs))
-                .font(.subheadline.weight(.semibold))
+                .wType(WTokens.TypeScale.time)
                 .foregroundStyle(Color.theme(.accentPrimary))
             let orgs = TopicText.attendees(next)
             if !orgs.isEmpty {
-                Text(orgs).font(.subheadline).foregroundStyle(Color.theme(.textSecondary))
+                Text(orgs).wType(WTokens.TypeScale.secondary).foregroundStyle(Color.theme(.textSecondary))
             }
         }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Steps
@@ -92,9 +98,9 @@ struct TopicPageView: View {
     @ViewBuilder
     private func steps(_ list: [PhoneTopicSnapshot.Step], empty: LocalizedStringKey?, done: Bool = false) -> some View {
         if list.isEmpty {
-            if let empty { Text(empty).font(.subheadline).foregroundStyle(Color.theme(.textSecondary)) }
+            if let empty { Text(empty).wType(WTokens.TypeScale.secondary).foregroundStyle(Color.theme(.textSecondary)) }
         } else {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: WTokens.Space.md) {
                 ForEach(Array(list.enumerated()), id: \.offset) { _, step in
                     linked(step.meeting) { stepRow(step, done: done) }
                 }
@@ -102,28 +108,47 @@ struct TopicPageView: View {
         }
     }
 
+    /// A step and where it came from. A done step has a check as well as the strike, and says
+    /// so to a screen reader. The details sit side by side, or stacked when the text is large.
     private func stepRow(_ step: PhoneTopicSnapshot.Step, done: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(step.text)
-                .foregroundStyle(Color.theme(.textPrimary))
-                .strikethrough(done)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-                if let title = step.sourceTitle, !title.isEmpty {
-                    Label(title, systemImage: Self.icon(step.sourceKind)).lineLimit(1)
-                }
-                if let asked = step.askedAtUnixMs { Text("asked \(TopicText.monthDay(ms: asked))") }
-                if let due = step.dueDate {
-                    Text(TopicText.dueText(due))
-                        .foregroundStyle(TopicText.isOverdue(due) && !done ? Color.theme(.error) : Color.theme(.textSecondary))
-                }
+        HStack(alignment: .top, spacing: WTokens.Space.sm) {
+            if done {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.theme(.success))
+                    .padding(.top, 2).accessibilityHidden(true)
             }
-            .font(.caption)
-            .foregroundStyle(Color.theme(.textSecondary))
+            VStack(alignment: .leading, spacing: WTokens.Space.xxs) {
+                Text(step.text)
+                    .wType(WTokens.TypeScale.body)
+                    .foregroundStyle(Color.theme(.textPrimary))
+                    .strikethrough(done)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(done ? String(localized: "Done: \(step.text)") : step.text)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: WTokens.Space.sm) { stepDetails(step, done: done, stacked: false) }
+                    VStack(alignment: .leading, spacing: WTokens.Space.xxs) { stepDetails(step, done: done, stacked: true) }
+                }
+                .wType(WTokens.TypeScale.caption)
+                .foregroundStyle(Color.theme(.textSecondary))
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func stepDetails(_ step: PhoneTopicSnapshot.Step, done: Bool, stacked: Bool) -> some View {
+        if let title = step.sourceTitle, !title.isEmpty {
+            // Side by side the title keeps to one line; stacked (large text) it may wrap rather than be cut off.
+            Label(title, systemImage: Self.icon(step.sourceKind)).lineLimit(stacked ? 3 : 1)
+                .multilineTextAlignment(.leading)
+        }
+        if let asked = step.askedAtUnixMs { Text("asked \(TopicText.monthDay(ms: asked))") }
+        if let due = step.dueDate {
+            Text(TopicText.dueText(due))
+                .fontWeight(TopicText.isOverdue(due) && !done ? .semibold : .regular)
+                .foregroundStyle(TopicText.isOverdue(due) && !done ? Color.theme(.error) : Color.theme(.textSecondary))
+        }
     }
 
     // MARK: Recent
@@ -131,15 +156,15 @@ struct TopicPageView: View {
     @ViewBuilder
     private func recent(_ snap: PhoneTopicSnapshot) -> some View {
         if snap.recent.isEmpty {
-            Text("Nothing yet.").font(.subheadline).foregroundStyle(Color.theme(.textSecondary))
+            Text("Nothing yet.").wType(WTokens.TypeScale.secondary).foregroundStyle(Color.theme(.textSecondary))
         } else {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: WTokens.Space.md) {
                 ForEach(Array(snap.recent.enumerated()), id: \.offset) { _, item in
                     linked(item.meeting) { recentRow(item) }
                 }
                 if snap.recentTotal > Int64(snap.recent.count) {
                     Text("\(snap.recentTotal - Int64(snap.recent.count)) older items not shown")
-                        .font(.caption)
+                        .wType(WTokens.TypeScale.caption)
                         .foregroundStyle(Color.theme(.textSecondary))
                 }
             }
@@ -147,21 +172,23 @@ struct TopicPageView: View {
     }
 
     private func recentRow(_ item: PhoneTopicSnapshot.Recent) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: Self.icon(item.kind)).foregroundStyle(Color.theme(.textSecondary))
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .firstTextBaseline, spacing: WTokens.Space.md) {
+            Image(systemName: Self.icon(item.kind)).foregroundStyle(Color.theme(.textSecondary)).frame(width: 24).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: WTokens.Space.xxs) {
                 Text(item.title.isEmpty ? item.kind.capitalized : item.title)
+                    .wType(WTokens.TypeScale.body)
                     .foregroundStyle(Color.theme(.textPrimary))
                     .multilineTextAlignment(.leading)
                 Text(([item.sender].compactMap { $0 } + [TopicText.monthDay(ms: item.tsUnixMs)]).joined(separator: " · "))
-                    .font(.subheadline)
+                    .wType(WTokens.TypeScale.secondary)
                     .foregroundStyle(Color.theme(.textSecondary))
                 if item.kind == "email" {
-                    Text("Open on your computer").font(.caption).foregroundStyle(Color.theme(.textSecondary))
+                    Text("Open on your computer").wType(WTokens.TypeScale.caption).foregroundStyle(Color.theme(.textSecondary))
                 }
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: WTokens.Size.target, alignment: .leading)
+        .accessibilityElement(children: .combine)
         .contentShape(Rectangle())
     }
 
@@ -171,7 +198,17 @@ struct TopicPageView: View {
     @ViewBuilder
     private func linked<Content: View>(_ ref: PhoneMeetingRef?, @ViewBuilder _ content: () -> Content) -> some View {
         if let ref, let id = model.meetingIds[ref] {
-            NavigationLink(value: id) { content() }.buttonStyle(.plain)
+            NavigationLink(value: id) {
+                HStack(alignment: .center, spacing: WTokens.Space.sm) {
+                    content()
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.theme(.textSecondary)).accessibilityHidden(true)
+                }
+                .frame(minHeight: WTokens.Size.target)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the source")
         } else {
             content()
         }
@@ -186,17 +223,18 @@ struct TopicPageView: View {
     }
 
     private func section<Content: View>(_ title: LocalizedStringKey, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: WTokens.Space.sm) {
             Text(title)
                 .textCase(.uppercase)
-                .font(.caption.weight(.semibold))
+                .wType(WTokens.TypeScale.caption)
+                .fontWeight(.bold)
                 .tracking(0.6)
                 .foregroundStyle(Color.theme(.textSecondary))
+                .accessibilityAddTraits(.isHeader)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(Color.theme(.backgroundCard), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.theme(.border), lineWidth: 1))
+        .padding(WTokens.Space.lg)
+        .wCard()
     }
 }

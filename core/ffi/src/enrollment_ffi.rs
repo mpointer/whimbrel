@@ -203,7 +203,7 @@ pub extern "C" fn whimbrel_sync_worker_billing_checkout(
     else {
         return ptr::null_mut();
     };
-    outcome(client.billing_checkout(&id_token, &pk, &interval).map(|url| serde_json::json!({ "url": url })))
+    outcome(client.billing_checkout(&id_token, &pk, &interval, None).map(|url| serde_json::json!({ "url": url })))
 }
 
 #[unsafe(no_mangle)]

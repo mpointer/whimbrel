@@ -363,3 +363,68 @@ final class AppLaunchTests: XCTestCase {
         XCTAssertTrue(live.contains("SpikePaths.root"))
     }
 }
+
+/// A second copy of Whimbrel must not open the database or start capture while one runs
+/// (#873, and two copies that both auto-recorded every calendar meeting). Pure decision plus
+/// the exclusive lock that settles two copies launching at the same moment.
+final class SingleInstanceGuardTests: XCTestCase {
+    private let own = SingleInstance.Running(pid: 100, bundleID: "com.example.whimbrel")
+
+    func testProceedsWhenNoOtherCopyAndLockHeld() {
+        XCTAssertEqual(SingleInstance.decide(ownPID: 100, bundleID: "com.example.whimbrel", running: [own], lock: .acquired), .proceed)
+        XCTAssertEqual(SingleInstance.decide(ownPID: 100, bundleID: "com.example.whimbrel", running: [], lock: .acquired), .proceed)
+    }
+
+    func testIgnoresOtherBundlesAndTerminatedCopies() {
+        let other = SingleInstance.Running(pid: 200, bundleID: "com.apple.finder")
+        let dying = SingleInstance.Running(pid: 300, bundleID: "com.example.whimbrel", isTerminated: true)
+        XCTAssertEqual(SingleInstance.decide(ownPID: 100, bundleID: "com.example.whimbrel", running: [own, other, dying], lock: .acquired), .proceed)
+    }
+
+    func testAnotherCopyWithTheSameBundleIdMeansAlreadyRunning() {
+        let twin = SingleInstance.Running(pid: 200, bundleID: "com.example.whimbrel")
+        XCTAssertEqual(SingleInstance.decide(ownPID: 100, bundleID: "com.example.whimbrel", running: [own, twin], lock: .acquired),
+                       .alreadyRunning(otherPID: 200))
+    }
+
+    func testLostLockMeansAlreadyRunningEvenWhenNoCopyIsVisibleYet() {
+        XCTAssertEqual(SingleInstance.decide(ownPID: 100, bundleID: "com.example.whimbrel", running: [own], lock: .heldByOther),
+                       .alreadyRunning(otherPID: nil))
+    }
+
+    func testUnavailableLockFailsOpenUnlessAnotherCopyIsVisible() {
+        let twin = SingleInstance.Running(pid: 200, bundleID: "com.example.whimbrel")
+        XCTAssertEqual(SingleInstance.decide(ownPID: 100, bundleID: "com.example.whimbrel", running: [own], lock: .unavailable), .proceed)
+        XCTAssertEqual(SingleInstance.decide(ownPID: 100, bundleID: "com.example.whimbrel", running: [own, twin], lock: .unavailable),
+                       .alreadyRunning(otherPID: 200))
+    }
+
+    func testHeldByOtherIsAlreadyRunning() {
+        XCTAssertEqual(SingleInstance.decide(ownPID: 100, bundleID: "com.example.whimbrel", running: [], lock: .heldByOther),
+                       .alreadyRunning(otherPID: nil))
+    }
+
+    func testLockIsExclusiveAndReleasedWhenDropped() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("single-instance-\(UUID().uuidString).lock")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var first: SingleInstance.Lock? = SingleInstance.Lock.take(url: url).lock
+        XCTAssertNotNil(first)
+        let second = SingleInstance.Lock.take(url: url)
+        XCTAssertNil(second.lock)
+        XCTAssertEqual(second.result, .heldByOther, "a second holder is refused while the first lives")
+        first = nil
+        XCTAssertEqual(SingleInstance.Lock.take(url: url).result, .acquired, "released when the first holder goes away")
+    }
+
+    func testLockThatCannotBeCreatedIsUnavailableNotHeld() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("no-such-dir-\(UUID().uuidString)/x.lock")
+        let taken = SingleInstance.Lock.take(url: url)
+        XCTAssertNil(taken.lock)
+        XCTAssertEqual(taken.result, .unavailable)
+    }
+
+    func testTheAlertCopyIsPlain() {
+        XCTAssertEqual(SingleInstance.message, "Whimbrel is already running.")
+        XCTAssertFalse(SingleInstance.message.contains("\u{2014}"))
+    }
+}

@@ -169,6 +169,8 @@ final class SyncState: ObservableObject {
     private let signIn: SyncSignIn?
     private let syncClient: SyncWorker?
     private let billing: SyncBilling?
+    /// True once the plan was read for this sign-in on reaching `.ready` (see `setStatus`).
+    private var planReadAtReady = false
     private let keys: SyncKeyStore
     private let defaults: UserDefaults
     private let configError: String?
@@ -749,6 +751,7 @@ final class SyncState: ObservableObject {
         planPollTask?.cancel()
         planPollTask = nil
         plan = nil
+        PlusCopy.isPlusAccount.isOn = false
         planReadFailed = false
         if !keepSignIn { setStatus(.notSignedIn) }
         onSyncReset?()
@@ -798,6 +801,7 @@ final class SyncState: ObservableObject {
             let idToken = try await signIn.validIdToken()
             let fetched = try await billing.accountPlan(idToken: idToken, devicePublicKey: devicePublicKeyBase64)
             if plan != fetched { plan = fetched }
+            PlusCopy.isPlusAccount.isOn = fetched.isPlus
             planReadRetries = 0
             if planReadFailed { planReadFailed = false }
             // Cloud lifts the device limit, even when it lands after the plan poll ended.
@@ -822,10 +826,11 @@ final class SyncState: ObservableObject {
         await refreshPlan()
     }
 
-    /// Opens Stripe Checkout for `interval` ("month" or "year") in the browser.
-    func upgrade(interval: String) async {
-        await openBilling { billing, idToken, key in
-            try await billing.checkoutURL(idToken: idToken, devicePublicKey: key, interval: interval)
+    /// Opens Stripe Checkout for `interval` ("month" or "year") in the browser. `plan` is "plus"
+    /// for Plus and nil for Cloud.
+    func upgrade(interval: String, plan: String? = nil) async {
+        await openBilling(plus: plan == "plus") { billing, idToken, key in
+            try await billing.checkoutURL(idToken: idToken, devicePublicKey: key, interval: interval, plan: plan)
         }
     }
 
@@ -836,7 +841,7 @@ final class SyncState: ObservableObject {
         }
     }
 
-    private func openBilling(_ fetchURL: (SyncBilling, String, String) async throws -> URL) async {
+    private func openBilling(plus: Bool = false, _ fetchURL: (SyncBilling, String, String) async throws -> URL) async {
         guard let signIn, let billing else { return }
         billingError = nil
         do {
@@ -846,7 +851,16 @@ final class SyncState: ObservableObject {
             NSWorkspace.shared.open(url)
             startPlanPoll()
         } catch let SyncAPIError.httpError(status, body)
-            where (status == 409 && (body.contains("already_cloud") || body.contains("no_subscription")))
+            where status == 409 && body.contains("already_cloud") {
+            // The error code keeps its old name; it means any paid plan, Cloud or Plus.
+            billingError = String(localized: "You already have a paid plan.")
+            await refreshPlan()
+        } catch let SyncAPIError.httpError(status, body)
+            where plus && status == 503 && body.contains("billing_unavailable") {
+            billingError = String(localized: "Plus isn't available yet. Try again later.")
+            await refreshPlan()  // a stale plus_available hides the Plus buttons
+        } catch let SyncAPIError.httpError(status, body)
+            where (status == 409 && body.contains("no_subscription"))
             || (status == 503 && body.contains("billing_unavailable")) {
             // The plan here was stale (already Cloud, no longer Cloud, or billing off): show the
             // server's, which moves or hides the buttons.
@@ -953,8 +967,19 @@ final class SyncState: ObservableObject {
         default: break
         }
         guard status != newValue else { return }
+        if case .notSignedIn = newValue {
+            PlusCopy.isPlusAccount.isOn = false
+            planReadAtReady = false
+        }
         status = newValue
         updateWhimbrelCredentialsRefresh()
+        // Once per sign-in, as soon as sync is ready: a Plus plan bought elsewhere (website,
+        // Windows, another Mac) reaches the one-time "Use Whimbrel AI?" prompt without a
+        // visit to Settings. Not polled, and later status changes do not read again.
+        if case .ready = newValue, !planReadAtReady {
+            planReadAtReady = true
+            Task { [weak self] in await self?.refreshPlan() }
+        }
     }
 
     // MARK: - Whimbrel AI: credentials and credit
@@ -1047,6 +1072,7 @@ final class SyncState: ObservableObject {
             let fetched = try await billing.aiBalance(idToken: idToken, devicePublicKey: devicePublicKeyBase64)
             guard case .ready = status else { return }
             if aiBalance != fetched { aiBalance = fetched }
+            if fetched.planTier != nil { PlusCopy.isPlusAccount.isOn = fetched.isPlus }
         } catch {
             // Keep the last balance; the next open or poll tick tries again.
         }

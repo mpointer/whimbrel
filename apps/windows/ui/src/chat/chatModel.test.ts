@@ -17,7 +17,7 @@ describe("applyEvent", () => {
     const local = applyEvent(applyEvent(waiting, { kind: "started", provider: "anthropic", model: "hosted-pick", context: [] }), {
       kind: "routed_locally",
     });
-    expect(statusLine(local)).toBe("Answering on this PC: this question names a client excluded from hosted models…");
+    expect(statusLine(local)).toBe("Answering on this PC: this question involves a client excluded from hosted models…");
     expect(statusLine(local)).not.toContain("hosted-pick");
     const answered = run(
       [

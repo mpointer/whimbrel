@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test, type Page } from "@playwright/test";
 import { BUILT_IN, installBridge, type SkinDto } from "../fakeBridge";
-import { answers, dynamic, helpers, livePatch, recordingPatch, type LiveKind } from "./fixtures";
+import { answers, dynamic, helpers, livePatch, notePatch, recordingPatch, type LiveKind, type NoteKind } from "./fixtures";
 
 const SET = process.env.AUDIT_SET || "before";
 /** The after set draws the redesigned launch screens: the hidden flag is on for them. */
@@ -648,6 +648,101 @@ for (const mode of ["light", "dark"] as const) {
       await page.setViewportSize({ width: 380, height: 200 });
       await open(page, mode, "still-here", live("paused"));
       await page.screenshot({ path: `${OUT}window-still-paused-${mode}.png` });
+    });
+
+    // ===== The finished note (screen 4): the Northwind renewal call, made up. The flag is on; the Meetings tab opens it. ====
+    const note = (kind: NoteKind = "withSources", more: Record<string, unknown> = {}) => ({ ...ON, ...notePatch(NOW, kind), ...more });
+    const openNote = async (page: Page, kind: NoteKind = "withSources", size = LARGE, skin: Skin = THREAD, more: Record<string, unknown> = {}) => {
+      await page.setViewportSize(size);
+      await open(page, mode, "main", note(kind, more), 1200, skin);
+      await tab(page, "meetings");
+      await settle(page, 1400);
+    };
+    const zoom200 = async (page: Page) => {
+      await page.evaluate(() => (document.documentElement.style.fontSize = "200%"));
+      await page.waitForTimeout(400);
+    };
+    for (const size of SIZES)
+      test(`note sources ${mode} ${size.name}`, async ({ page }) => {
+        await openNote(page, "withSources", size);
+        // Source 3 selected: its card is lit in the margin, or under its line when the margin is folded.
+        await page.getByRole("button", { name: /^Source 3,/ }).click();
+        await settle(page, 300);
+        await shot(page, `note-sources-${mode}-${size.name}`, size === LARGE);
+      });
+    test(`note no sources ${mode}`, async ({ page }) => {
+      await openNote(page, "noSources");
+      await shot(page, `note-no-sources-${mode}-large`, true);
+    });
+    test(`note zoom 200 ${mode}`, async ({ page }) => {
+      await openNote(page, "withSources", SMALL);
+      await page.getByRole("button", { name: /^Source 3,/ }).click();
+      await zoom200(page);
+      await shot(page, `note-zoom200-${mode}-small`, true);
+    });
+    for (const [name, kind] of [["processing", "processing"], ["read-only", "readOnly"], ["no-summary", "noSummary"], ["failed", "failed"]] as [string, NoteKind][])
+      test(`note ${name} ${mode}`, async ({ page }) => {
+        await openNote(page, kind);
+        await shot(page, `note-${name}-${mode}-large`, true);
+      });
+    test(`note edit ${mode}`, async ({ page }) => {
+      await openNote(page);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await settle(page, 400);
+      await shot(page, `note-edit-${mode}-large`, true);
+    });
+    test(`note edit failed ${mode}`, async ({ page }) => {
+      // No summary was written: Edit still opens the editor, and typing the first words keeps focus in it.
+      await openNote(page, "failed");
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      const box = page.getByRole("textbox", { name: "Summary", exact: true });
+      await box.click();
+      await page.keyboard.type("Northwind will renew for two years.");
+      await settle(page, 400);
+      if (!(await box.evaluate((el) => el === document.activeElement))) throw new Error("the summary editor lost focus while typing");
+      await shot(page, `note-edit-failed-${mode}-large`, true);
+    });
+    test(`note transcript processing ${mode}`, async ({ page }) => {
+      // A run in progress shows its stage above the transcript view too.
+      await openNote(page, "processing");
+      await page.getByRole("button", { name: /^Transcript/ }).click();
+      await settle(page, 700);
+      await shot(page, `note-transcript-processing-${mode}-large`, true);
+    });
+    test(`note menus ${mode}`, async ({ page }) => {
+      await openNote(page);
+      await page.getByRole("button", { name: "More", exact: true }).click();
+      await settle(page, 300);
+      await shot(page, `note-more-menu-${mode}-large`);
+    });
+    for (const size of SIZES)
+      test(`note transcript ${mode} ${size.name}`, async ({ page }) => {
+        await openNote(page, "withSources", size);
+        // Opened from source 3: the line at 18:25 is highlighted and the lanes show the speakers.
+        await page.getByRole("button", { name: /^Source 3,/ }).click();
+        await page.getByRole("button", { name: "Open in transcript at 18:25" }).first().click({ force: true });
+        await settle(page, 900);
+        await shot(page, `note-transcript-${mode}-${size.name}`, size === LARGE);
+      });
+    test(`note transcript old meeting ${mode}`, async ({ page }) => {
+      await openNote(page, "noSources");
+      await page.getByRole("button", { name: /^Transcript/ }).click();
+      await settle(page, 700);
+      await shot(page, `note-transcript-no-ends-${mode}-large`, true);
+    });
+    test(`note from library ${mode}`, async ({ page }) => {
+      await page.setViewportSize(LARGE);
+      await open(page, mode, "main", note(), 1200, THREAD);
+      await tab(page, "library");
+      await settle(page, 700);
+      await page.getByText("Northwind renewal check-in").first().click();
+      await settle(page, 1400);
+      await shot(page, `note-from-library-${mode}-large`, true);
+    });
+    test(`note skin whimbrel ${mode}`, async ({ page }) => {
+      await openNote(page, "withSources", LARGE, WHIMBREL);
+      await page.getByRole("button", { name: /^Source 3,/ }).click();
+      await shot(page, `note-skin-whimbrel-${mode}-large`, true);
     });
   }
 }

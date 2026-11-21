@@ -43,6 +43,32 @@ pub fn summarize_meeting_governed(
     slides: &str,
     custom_instructions: &str,
 ) -> Result<llm::MeetingSummary, GovernedSummaryError> {
+    summarize_meeting_governed_sourced(store, cap_config, client, provider, model, notes, transcript, slides, custom_instructions, false)
+        .map(|(summary, _)| summary)
+}
+
+/// [`summarize_meeting_governed`] that, when `want_sources` is true, also asks the model where each
+/// decision, open question and action item came from and returns those references with the
+/// summary. With it false the requests, the spend-cap checks and the usage logging are exactly
+/// those of [`summarize_meeting_governed`], and no references come back.
+///
+/// A long transcript is summarized in parts. Each part is asked for references; the reduce request
+/// is left as it is (it is told to keep every line word for word), and a line keeps its reference
+/// only when the reduce step returned it unchanged (see [`llm::carry_sources_through_reduce`]).
+/// Every reference is checked against the whole transcript later, in [`crate::line_sources`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn summarize_meeting_governed_sourced(
+    store: &memory::Store,
+    cap_config: &llm::SpendCapConfig,
+    client: &dyn llm::LlmClient,
+    provider: llm::Provider,
+    model: &str,
+    notes: &str,
+    transcript: &str,
+    slides: &str,
+    custom_instructions: &str,
+    want_sources: bool,
+) -> Result<(llm::MeetingSummary, llm::SourcedLines), GovernedSummaryError> {
     // Sized from the model's context window: one call when the transcript fits it.
     let max_chars = llm::summary_chunk_chars(provider);
     let chunks = llm::chunk_transcript(transcript, max_chars);
@@ -57,15 +83,16 @@ pub fn summarize_meeting_governed(
         ) {
             return Err(GovernedSummaryError::SpendCap(cap_err));
         }
-        let summary =
-            llm::summarize_whole_transcript(client, notes, &chunks[0], slides, custom_instructions)
+        let (summary, sourced) =
+            llm::summarize_whole_transcript_sourced(client, notes, &chunks[0], slides, custom_instructions, want_sources)
                 .map_err(GovernedSummaryError::Llm)?;
         log_usage_for(store, provider, &answered(client, model), "meeting_summary", summary.token_usage);
         crate::model_defaults::note_answer(store, provider, model, client.substituted_model().as_deref(), now_unix_ms());
-        return Ok(summary);
+        return Ok((summary, sourced));
     }
 
     let mut partials = Vec::with_capacity(chunks.len());
+    let mut part_sources = Vec::with_capacity(chunks.len());
     let mut total_usage = llm::TokenUsage::default();
     for (i, chunk) in chunks.iter().enumerate() {
         if let Err(cap_err) = llm::check_spend_cap(
@@ -79,7 +106,7 @@ pub fn summarize_meeting_governed(
         }
         // Each part after the first is told how the one before it ended.
         let previous = partials.last().map(|p: &llm::MeetingSummary| p.tldr.as_str());
-        let (summary, usage) = llm::summarize_chunk_with_context(
+        let (summary, sourced, usage) = llm::summarize_chunk_with_context_sourced(
             client,
             i,
             chunks.len(),
@@ -87,11 +114,13 @@ pub fn summarize_meeting_governed(
             chunk,
             custom_instructions,
             previous,
+            want_sources,
         )
         .map_err(GovernedSummaryError::Llm)?;
         log_usage_for(store, provider, &answered(client, model), "meeting_summary", usage);
         total_usage = llm::add_token_usage(total_usage, usage);
         partials.push(summary);
+        part_sources.push(sourced);
     }
 
     if let Err(cap_err) = llm::check_spend_cap(
@@ -110,7 +139,8 @@ pub fn summarize_meeting_governed(
     crate::model_defaults::note_answer(store, provider, model, client.substituted_model().as_deref(), now_unix_ms());
     total_usage = llm::add_token_usage(total_usage, reduce_usage);
     summary.token_usage = total_usage;
-    Ok(summary)
+    let sourced = if want_sources { llm::carry_sources_through_reduce(&part_sources, &summary) } else { llm::SourcedLines::default() };
+    Ok((summary, sourced))
 }
 
 /// The chain loop's per-error decision in [`summarize_meeting`], a pure function so the
@@ -328,7 +358,7 @@ pub fn summarize_meeting(
     routing: &RoutingConfig,
     custom_instructions: &str,
 ) -> ApiResult<MeetingSummaryData> {
-    summarize_meeting_inner(store, meeting_id, notes, transcript, slides, ollama_model, routing, custom_instructions, false)
+    summarize_meeting_inner(store, meeting_id, notes, transcript, slides, ollama_model, routing, custom_instructions, false, SourceMode::Off)
 }
 
 /// [`summarize_meeting`] for "Re-summarize with Whimbrel": the chain is only the preferred
@@ -350,7 +380,61 @@ pub fn summarize_meeting_preferred(
     routing: &RoutingConfig,
     custom_instructions: &str,
 ) -> ApiResult<MeetingSummaryData> {
-    summarize_meeting_inner(store, meeting_id, notes, transcript, slides, ollama_model, routing, custom_instructions, true)
+    summarize_meeting_inner(store, meeting_id, notes, transcript, slides, ollama_model, routing, custom_instructions, true, SourceMode::Off)
+}
+
+/// Whether the model is asked where each line of a summary came from, and what the stored
+/// references are checked against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceMode {
+    /// No sources: exactly the plain summary call.
+    Off,
+    /// Ask for sources. A reference must fit the meeting's stored transcript rows when it has
+    /// any (the usual case: the rows are the transcript `summarize_meeting_options` is given).
+    Validate,
+    /// Ask for sources, but the meeting's stored rows are about to be replaced by the ones the
+    /// given transcript was made from (a re-transcribe that summarizes first), so the old rows
+    /// must not reject a reference. It is checked against the transcript text alone; the rows are
+    /// pruned against the new ones when they are written.
+    RowsPending,
+}
+
+impl SourceMode {
+    /// `true` for [`SourceMode::Validate`], `false` for [`SourceMode::Off`]: what a caller that
+    /// only has a "want sources" choice means.
+    pub fn from_wanted(want: bool) -> Self {
+        if want { SourceMode::Validate } else { SourceMode::Off }
+    }
+
+    /// Whether sources are asked for at all.
+    pub fn asked(self) -> bool {
+        self != SourceMode::Off
+    }
+}
+
+/// [`summarize_meeting`] (`forced` false) or [`summarize_meeting_preferred`] (`forced` true), and
+/// when `sources` asks for them the model is also asked where each decision, open question and
+/// action item came from. With [`SourceMode::Off`] this is exactly the call it stands for: the
+/// same requests, the same stored summary, and the meeting's line sources are left alone.
+///
+/// With it true, once the summary is stored the meeting's line sources are replaced as one set
+/// (see [`crate::line_sources`]): a reference is kept only when it points at a real line of
+/// `transcript`, and an action item's owner and due are kept. The summary's own lines and the
+/// JSON it returns are unchanged either way.
+#[allow(clippy::too_many_arguments)]
+pub fn summarize_meeting_options(
+    store: &memory::Store,
+    meeting_id: i64,
+    notes: &str,
+    transcript: &str,
+    slides: &str,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    custom_instructions: &str,
+    forced: bool,
+    sources: SourceMode,
+) -> ApiResult<MeetingSummaryData> {
+    summarize_meeting_inner(store, meeting_id, notes, transcript, slides, ollama_model, routing, custom_instructions, forced, sources)
 }
 
 /// The chain for a forced call: the first link, when it is the preferred provider's.
@@ -384,6 +468,7 @@ fn summarize_meeting_inner(
     routing: &RoutingConfig,
     custom_instructions: &str,
     forced: bool,
+    sources: SourceMode,
 ) -> ApiResult<MeetingSummaryData> {
     set_last_failure_reason(None);
     // No words, notes or slides: there is nothing to summarize, and a model asked anyway
@@ -422,6 +507,7 @@ fn summarize_meeting_inner(
         routing,
         custom_instructions,
         forced,
+        sources,
         || build_chain_for(llm::TaskKind::MeetingSummary, ollama_model, routing, &crate::exclusion::current_gate(store)),
         || crate::routing::build_local_chain(ollama_model, routing),
     )
@@ -442,13 +528,14 @@ pub(crate) fn summarize_meeting_routed(
     chain: impl FnOnce() -> Vec<llm::ChainLink>,
     local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
 ) -> ApiResult<MeetingSummaryData> {
-    summarize_meeting_routed_as(store, meeting_id, notes, transcript, slides, routing, custom_instructions, false, chain, local_chain)
+    summarize_meeting_routed_as(store, meeting_id, notes, transcript, slides, routing, custom_instructions, false, SourceMode::Off, chain, local_chain)
 }
 
 /// [`summarize_meeting_routed`]; `forced`: a "Re-summarize with Whimbrel" call, pinned to the
 /// preferred provider's link ([`forced_chain`]) after the exclusion decision. An excluded
 /// client's meeting is never forced onto a hosted link: when the preferred provider is not
 /// on this computer the call is refused as an exclusion refusal and nothing is sent.
+/// `sources`: also ask where each line came from (see [`summarize_meeting_options`]).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn summarize_meeting_routed_as(
     store: &memory::Store,
@@ -459,6 +546,7 @@ pub(crate) fn summarize_meeting_routed_as(
     routing: &RoutingConfig,
     custom_instructions: &str,
     forced: bool,
+    sources: SourceMode,
     chain: impl FnOnce() -> Vec<llm::ChainLink>,
     local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
 ) -> ApiResult<MeetingSummaryData> {
@@ -475,7 +563,7 @@ pub(crate) fn summarize_meeting_routed_as(
             Err(e) => return Err(e),
         };
     }
-    summarize_meeting_pinned(store, meeting_id, notes, transcript, slides, routing, custom_instructions, chain, local_only, forced)
+    summarize_meeting_pinned(store, meeting_id, notes, transcript, slides, routing, custom_instructions, chain, local_only, forced, sources)
 }
 
 /// Whether meeting `meeting_id` with this material belongs to an excluded client (or the setting
@@ -540,7 +628,7 @@ pub(crate) fn summarize_meeting_with(
     chain: Vec<llm::ChainLink>,
     local_only: bool,
 ) -> ApiResult<MeetingSummaryData> {
-    summarize_meeting_pinned(store, meeting_id, notes, transcript, slides, routing, custom_instructions, chain, local_only, false)
+    summarize_meeting_pinned(store, meeting_id, notes, transcript, slides, routing, custom_instructions, chain, local_only, false, SourceMode::Off)
 }
 
 /// [`summarize_meeting_with`]; `forced`: the chain is the preferred link alone and is pinned,
@@ -557,6 +645,7 @@ fn summarize_meeting_pinned(
     chain: Vec<llm::ChainLink>,
     local_only: bool,
     forced: bool,
+    sources: SourceMode,
 ) -> ApiResult<MeetingSummaryData> {
     // A withheld note from an earlier call never describes this one.
     crate::envelope::take_google_data_withheld();
@@ -574,7 +663,7 @@ fn summarize_meeting_pinned(
             return Err(spent.into());
         }
     };
-    summarize_over_chain(store, &chain, &cap_config, meeting_id, notes, transcript, slides, custom_instructions, routing, local_only)
+    summarize_over_chain(store, &chain, &cap_config, meeting_id, notes, transcript, slides, custom_instructions, routing, local_only, sources)
 }
 
 /// The chain walk: per link first Limited Use (a link that may not receive the meeting's Google
@@ -591,6 +680,7 @@ fn summarize_over_chain(
     custom_instructions: &str,
     routing: &RoutingConfig,
     local_only: bool,
+    sources: SourceMode,
 ) -> ApiResult<MeetingSummaryData> {
     crate::envelope::take_google_data_withheld();
     // A hosted link gets the meeting whole or not at all: the gate sees every word first.
@@ -602,7 +692,7 @@ fn summarize_over_chain(
     // failure and [`crate::envelope::take_google_data_withheld`] says why.
     let calendar_text_policy = store.meeting_may_hold_google_calendar_data(meeting_id).then(|| routing.google_data_policy());
     let mut withheld_any = false;
-    let mut result: Option<(llm::MeetingSummary, llm::Provider, String)> = None;
+    let mut result: Option<(llm::MeetingSummary, llm::SourcedLines, llm::Provider, String)> = None;
     let mut last_cap_error: Option<llm::SpendCapError> = None;
     let mut failures = Vec::new();
     if chain.is_empty() {
@@ -632,7 +722,7 @@ fn summarize_over_chain(
                 continue;
             }
         }
-        let outcome = summarize_meeting_governed(
+        let outcome = summarize_meeting_governed_sourced(
             store,
             cap_config,
             entry.client.as_ref(),
@@ -642,10 +732,11 @@ fn summarize_over_chain(
             transcript,
             slides,
             custom_instructions,
+            sources.asked(),
         );
         let err = match outcome {
-            Ok(summary) => {
-                result = Some((summary, entry.provider, entry.model.clone()));
+            Ok((summary, sourced)) => {
+                result = Some((summary, sourced, entry.provider, entry.model.clone()));
                 break;
             }
             Err(err) => err,
@@ -690,7 +781,7 @@ fn summarize_over_chain(
             }
         }
     }
-    let Some((summary, provider, model)) = result else {
+    let Some((summary, sourced, provider, model)) = result else {
         return Err(match last_cap_error {
             Some(cap_err) => ApiError::SpendCap(cap_err),
             None => {
@@ -711,6 +802,12 @@ fn summarize_over_chain(
         provider.as_str(),
         &model,
     );
+    // Device-local, so it never touches the summary row above or what sync carries. Replaced as a
+    // set only when sources were asked for; a summary stored without them leaves the old rows to
+    // stop matching on their own.
+    if sources.asked() {
+        crate::line_sources::store_line_sources(store, meeting_id, transcript, &sourced, sources == SourceMode::Validate);
+    }
     let fallback = (notice_applies && provider != llm::Provider::Whimbrel).then(|| {
         let (reason, http_status) = preferred_reason.unwrap_or((fallback_reason::UNAVAILABLE, None));
         // The code and providers only: nothing of the meeting or the provider's error text.
@@ -1093,7 +1190,7 @@ mod tests {
     }
 
     fn walk(store: &memory::Store, id: i64, chain: &[llm::ChainLink], routing: &RoutingConfig) -> ApiResult<MeetingSummaryData> {
-        summarize_over_chain(store, chain, &llm::SpendCapConfig::default(), id, "notes", "transcript", "", "", routing, false)
+        summarize_over_chain(store, chain, &llm::SpendCapConfig::default(), id, "notes", "transcript", "", "", routing, false, SourceMode::Off)
     }
 
     fn failing_link(provider: llm::Provider, make: fn() -> llm::LlmError) -> llm::ChainLink {
@@ -1245,5 +1342,194 @@ mod tests {
         assert_eq!(take_last_summary_failure_reason(), Some(("not_signed_in", None)));
         assert_eq!(store.count_usage_log_rows().unwrap(), 0);
         assert!(stored_summary_fallback(&store, id).is_none());
+    }
+
+    /// A model that answers from a script and keeps the requests it was sent.
+    struct Scripted {
+        replies: std::cell::RefCell<Vec<String>>,
+        prompts: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    }
+
+    impl llm::LlmClient for Scripted {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            self.prompts.borrow_mut().push(prompt.to_string());
+            let text = self.replies.borrow_mut().remove(0);
+            Ok(llm::Completion { text, token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    type Prompts = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
+
+    fn scripted(replies: &[&str]) -> (Scripted, Prompts) {
+        let prompts: Prompts = Default::default();
+        (Scripted { replies: std::cell::RefCell::new(replies.iter().map(|r| r.to_string()).collect()), prompts: prompts.clone() }, prompts)
+    }
+
+    const START: i64 = 1_700_000_000_000;
+
+    /// A meeting with two stored lines and the transcript text the summarizer is given for it.
+    fn meeting_with_lines(store: &memory::Store, insert_rows: bool) -> (i64, String) {
+        let id = store
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: START,
+                end_unix_ms: Some(START + 600_000),
+                title: "Standup".into(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Manual,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap();
+        store.begin_meeting_part(id, START, None).unwrap();
+        store.complete_meeting_part(id, 1, START + 600_000, None).unwrap();
+        let seg = |start_cs, speaker: &str, text: &str| memory::NewTranscriptSegment { meeting_id: id, start_cs, speaker_label: speaker.into(), text: text.into() };
+        let lines = [seg(0, "Speaker 1", "We ship on Friday, no matter what."), seg(900, "Speaker 2", "Fine, I'll send the deck on Monday.")];
+        // The transcript text is what the model sees; the rows may only come later.
+        store.insert_transcript_segments(&lines).unwrap();
+        let text = store.meeting_transcript_text(id).unwrap();
+        if !insert_rows {
+            store.replace_part_transcript_segments(id, 1, &[]).unwrap();
+        }
+        (id, text)
+    }
+
+    fn tag(transcript: &str, n: usize) -> String {
+        transcript.lines().filter(|l| l.starts_with('[')).nth(n).unwrap()[1..9].to_string()
+    }
+
+    fn reply_for(transcript: &str) -> String {
+        serde_json::json!({
+            "title": "T", "tldr": "t",
+            "decisions": ["Ship on Friday", "Invented decision"],
+            "action_items": [{"owner": "Bo", "task": "send the deck", "due": "Monday", "quote": "send the deck"}],
+            "open_questions": [],
+            "line_sources": [
+                {"kind": "decision", "line": "Ship on Friday", "at": tag(transcript, 0), "quote": "we ship on friday"},
+                {"kind": "decision", "line": "Invented decision", "at": tag(transcript, 1), "quote": "we are cancelling the whole project"},
+                {"kind": "action_item", "line": "send the deck", "at": tag(transcript, 1), "quote": "send the deck on Monday"}
+            ]
+        })
+        .to_string()
+    }
+
+    fn link(client: Scripted) -> llm::ChainLink {
+        llm::ChainLink { provider: llm::Provider::Ollama, model: "m".into(), client: Box::new(client) }
+    }
+
+    #[test]
+    fn a_summary_asked_for_sources_stores_the_ones_that_hold_and_the_owner_and_due() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let (id, transcript) = meeting_with_lines(&store, true);
+        let (client, prompts) = scripted(&[&reply_for(&transcript)]);
+        let out = summarize_meeting_routed_as(&store, id, "", &transcript, "", &RoutingConfig::default(), "", false, SourceMode::Validate, || vec![link(client)], Vec::new).unwrap();
+        // The summary the caller gets is the same as ever: plain lines, no references.
+        assert_eq!(out.summary.decisions, vec!["Ship on Friday", "Invented decision"]);
+        assert_eq!(out.summary.action_items, vec!["Bo: send the deck (Monday)"]);
+        assert!(!serde_json::to_string(&out).unwrap().contains("line_sources"));
+        assert!(prompts.borrow()[0].contains("\"line_sources\""));
+        let notes = store.meeting_note_sources(id).unwrap().unwrap();
+        let src = notes.decisions[0].source.clone().unwrap();
+        assert_eq!(src.text, "We ship on Friday, no matter what.", "the line's own words");
+        assert!(notes.decisions[1].source.is_none(), "a quote that is not in the transcript gives no source");
+        assert_eq!(notes.action_items[0].owner.as_deref(), Some("Bo"));
+        assert_eq!(notes.action_items[0].due.as_deref(), Some("Monday"));
+        assert_eq!(notes.action_items[0].source.clone().unwrap().start_cs, 900);
+    }
+
+    #[test]
+    fn rows_pending_stores_a_reference_the_old_rows_would_reject() {
+        // A re-transcribe that summarizes first: the stored rows are the old pass, the transcript the new one.
+        let store = memory::Store::open_in_memory().unwrap();
+        let (id, _) = meeting_with_lines(&store, true);
+        let transcript = "[10:00:00] Speaker 1: Hello and welcome to this meeting.\n[10:00:09] Speaker 2: Shipping happens on Friday for sure.";
+        let reply = serde_json::json!({
+            "title": "T", "tldr": "t", "decisions": ["Ship on Friday"], "action_items": [], "open_questions": [],
+            "line_sources": [{"kind": "decision", "line": "Ship on Friday", "at": "10:00:09", "quote": "shipping happens on friday"}]
+        })
+        .to_string();
+        let held = |store: &memory::Store| store.meeting_line_source_rows(id).unwrap().len();
+        let (client, _) = scripted(&[&reply]);
+        summarize_meeting_routed_as(&store, id, "", transcript, "", &RoutingConfig::default(), "", false, SourceMode::Validate, || vec![link(client)], Vec::new).unwrap();
+        assert_eq!(held(&store), 0, "validated against the old rows, the new wording is rejected");
+        let (client, _) = scripted(&[&reply]);
+        summarize_meeting_routed_as(&store, id, "", transcript, "", &RoutingConfig::default(), "", false, SourceMode::RowsPending, || vec![link(client)], Vec::new).unwrap();
+        assert_eq!(held(&store), 1);
+        let seg = |start_cs, text: &str| memory::NewTranscriptSegment { meeting_id: id, start_cs, speaker_label: "Me".into(), text: text.into() };
+        store.replace_part_transcript_segments(id, 1, &[seg(0, "Hello and welcome to this meeting."), seg(900, "Shipping happens on Friday for sure.")]).unwrap();
+        assert_eq!(store.meeting_note_sources(id).unwrap().unwrap().decisions[0].source.clone().unwrap().start_cs, 900);
+    }
+
+    #[test]
+    fn a_summary_written_before_the_rows_exist_resolves_once_they_do() {
+        // The Windows order: summary first, transcript rows after.
+        let store = memory::Store::open_in_memory().unwrap();
+        let (id, transcript) = meeting_with_lines(&store, false);
+        let (client, _) = scripted(&[&reply_for(&transcript)]);
+        summarize_meeting_routed_as(&store, id, "", &transcript, "", &RoutingConfig::default(), "", false, SourceMode::Validate, || vec![link(client)], Vec::new).unwrap();
+        assert!(store.meeting_note_sources(id).unwrap().unwrap().decisions[0].source.is_none(), "no rows yet");
+        let seg = |start_cs, speaker: &str, text: &str| memory::NewTranscriptSegment { meeting_id: id, start_cs, speaker_label: speaker.into(), text: text.into() };
+        store.replace_part_transcript_segments(id, 1, &[seg(0, "Me", "We ship on Friday, no matter what."), seg(900, "Them", "Fine, I'll send the deck on Monday.")]).unwrap();
+        let notes = store.meeting_note_sources(id).unwrap().unwrap();
+        assert_eq!(notes.decisions[0].source.clone().unwrap().speaker_label, "Me", "the label diarization gave later");
+        assert!(notes.decisions[1].source.is_none());
+    }
+
+    #[test]
+    fn not_asking_for_sources_sends_no_ask_and_leaves_stored_rows_alone() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let (id, transcript) = meeting_with_lines(&store, true);
+        let (first, _) = scripted(&[&reply_for(&transcript)]);
+        summarize_meeting_routed_as(&store, id, "", &transcript, "", &RoutingConfig::default(), "", false, SourceMode::Validate, || vec![link(first)], Vec::new).unwrap();
+        // Regenerated without sources: the same lines come back, nothing about sources is asked, and the
+        // rows already stored are not touched (they still match, the text being the same).
+        let (second, prompts) = scripted(&[&reply_for(&transcript)]);
+        summarize_meeting_routed_as(&store, id, "", &transcript, "", &RoutingConfig::default(), "", false, SourceMode::Off, || vec![link(second)], Vec::new).unwrap();
+        assert!(!prompts.borrow()[0].contains("line_sources"));
+        assert!(store.meeting_note_sources(id).unwrap().unwrap().decisions[0].source.is_some());
+        // A summary whose line text changed no longer matches its old row.
+        let changed = r#"{"title":"T","tldr":"t","decisions":["Ship on Saturday"],"action_items":[],"open_questions":[]}"#;
+        let (third, _) = scripted(&[changed]);
+        summarize_meeting_routed_as(&store, id, "", &transcript, "", &RoutingConfig::default(), "", false, SourceMode::Off, || vec![link(third)], Vec::new).unwrap();
+        assert!(store.meeting_note_sources(id).unwrap().unwrap().decisions[0].source.is_none());
+        // Asked for again, the set is replaced: an answer with no references clears the old rows.
+        let (fourth, _) = scripted(&[changed]);
+        summarize_meeting_routed_as(&store, id, "", &transcript, "", &RoutingConfig::default(), "", false, SourceMode::Validate, || vec![link(fourth)], Vec::new).unwrap();
+        let rows: i64 = store.meeting_note_sources(id).unwrap().map_or(-1, |n| n.decisions.iter().filter(|d| d.source.is_some()).count() as i64);
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn a_long_meeting_keeps_a_source_only_where_the_reduce_step_returns_the_line_unchanged() {
+        let store = memory::Store::open_in_memory().unwrap();
+        // Many lines, so the transcript splits into several parts for the on-device model.
+        let mut transcript = String::new();
+        for i in 0..900 {
+            transcript.push_str(&format!("[10:{:02}:{:02}] Ana: Line number {i} says something fairly ordinary about the plan.\n", i / 60, i % 60));
+        }
+        let chunks = llm::chunk_transcript(&transcript, llm::summary_chunk_chars(llm::Provider::Local));
+        assert!(chunks.len() >= 2, "the transcript must split ({} chunk)", chunks.len());
+        let part = r#"{"tldr":"p","decisions":["Ship on Friday","Hire two"],"action_items":[],"open_questions":[],
+            "line_sources":[{"kind":"decision","line":"Ship on Friday","at":"10:00:05","quote":"Line number 5 says something"},
+                            {"kind":"decision","line":"Hire two","at":"10:00:06","quote":"Line number 6 says something"}]}"#;
+        let reduced = r#"{"title":"T","tldr":"t","decisions":["Ship on friday","Hire 2 people"],"action_items":[],"open_questions":[]}"#;
+        let mut replies = vec![part; chunks.len()];
+        replies.push(reduced);
+        let (client, prompts) = scripted(&replies);
+        let cap = llm::SpendCapConfig::default();
+        let (summary, sourced) =
+            summarize_meeting_governed_sourced(&store, &cap, &client, llm::Provider::Local, "m", "", &transcript, "", "", true).unwrap();
+        assert_eq!(summary.decisions, vec!["Ship on friday", "Hire 2 people"]);
+        assert!(sourced.decisions[0].reference.is_some(), "returned as the part had it");
+        assert!(sourced.decisions[1].reference.is_none(), "reworded by the reduce step");
+        // The reduce request carries no ask for sources; each part's does.
+        let prompts = prompts.borrow();
+        assert_eq!(prompts.len(), chunks.len() + 1);
+        assert!(prompts[..chunks.len()].iter().all(|p| p.contains("\"line_sources\"")));
+        assert!(!prompts[chunks.len()].contains("line_sources"));
+        // The reference is then checked against the whole transcript.
+        let rows = crate::line_sources::rows_for(&sourced, &transcript, &|_| None);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].line_text, "Ship on friday");
     }
 }

@@ -36,7 +36,19 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import com.mpointer.whimbrel.mobile.R
+import com.mpointer.whimbrel.mobile.design.WCard
+import com.mpointer.whimbrel.mobile.design.WSpineNode
+import com.mpointer.whimbrel.mobile.design.WSpineStop
+import com.mpointer.whimbrel.mobile.design.WStateKind
+import com.mpointer.whimbrel.mobile.design.WStateView
+import com.mpointer.whimbrel.mobile.design.WTokens
+import com.mpointer.whimbrel.mobile.design.style
 import com.mpointer.whimbrel.mobile.read.PhoneRoutineRun
 import com.mpointer.whimbrel.mobile.read.ReadStrings
 import com.mpointer.whimbrel.mobile.read.ResourceReadStrings
@@ -68,35 +80,46 @@ fun RoutinesScreen(sync: SyncModel, model: RoutinesModel, labels: StateFlow<Devi
         onRefresh = { scope.launch { refreshing = true; sync.syncNow(manual = true); refreshing = false } },
         modifier = Modifier.fillMaxSize().statusBarsPadding(),
     ) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(runs, key = { it.id }) { RoutineRunRow(it, deviceLabels, strings) }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = WTokens.Space.lg, vertical = WTokens.Space.md), verticalArrangement = Arrangement.spacedBy(WTokens.Space.sm)) {
+            item(key = "title") {
+                Text(stringResource(R.string.tab_routines), Modifier.padding(top = WTokens.Space.xl, bottom = WTokens.Space.sm).semantics { heading() }, style = WTokens.TypeScale.pageTitle.style())
+            }
+            items(runs, key = { it.id }) { run ->
+                WSpineStop(stopTime(context, run.ranAtUnixMs), node = WSpineNode.Past) { RoutineRunCard(run, deviceLabels, strings) }
+            }
             if (runs.isEmpty()) item {
-                Text(stringResource(if (loaded) R.string.routines_none else R.string.today_loading), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                WStateView(if (loaded) WStateKind.Empty else WStateKind.Loading, stringResource(if (loaded) R.string.routines_none else R.string.today_loading))
             }
         }
     }
 }
 
+/**
+ * One run on the thread: whether it worked (a mark, and the word when it failed), the routine, the first lines of
+ * what it produced, and the device it ran on. Tap for the whole summary.
+ */
 @Composable
-private fun RoutineRunRow(run: PhoneRoutineRun, labels: DeviceLabels, strings: ReadStrings) {
+private fun RoutineRunCard(run: PhoneRoutineRun, labels: DeviceLabels, strings: ReadStrings) {
     var expanded by remember { mutableStateOf(false) }
-    val caption = listOfNotNull(
-        DateUtils.getRelativeTimeSpanString(run.ranAtUnixMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString(),
-        run.originDeviceId?.let { strings.device(labels.label(it)) },
-    ).joinToString(" · ")
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { expanded = !expanded }, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-        if (run.succeeded) {
-            Icon(Icons.Filled.CheckCircle, stringResource(R.string.routines_succeeded), tint = LocalThemePalette.current.success)
-        } else {
-            Icon(Icons.Filled.Warning, stringResource(R.string.routines_failed), tint = MaterialTheme.colorScheme.error)
+    val shape = RoundedCornerShape(WTokens.Radius.card)
+    WCard(Modifier.clip(shape).clickable(role = Role.Button) { expanded = !expanded }) {
+        Row(horizontalArrangement = Arrangement.spacedBy(WTokens.Space.sm), verticalAlignment = Alignment.CenterVertically) {
+            if (run.succeeded) {
+                Icon(Icons.Filled.CheckCircle, stringResource(R.string.routines_succeeded), tint = LocalThemePalette.current.success)
+            } else {
+                Icon(Icons.Filled.Warning, null, tint = MaterialTheme.colorScheme.error)
+            }
+            Text(run.routineName, style = WTokens.TypeScale.subtitle.style())
         }
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(run.routineName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                run.outputSummary, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = if (expanded) Int.MAX_VALUE else SUMMARY_LINES, overflow = TextOverflow.Ellipsis,
-            )
-            Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!run.succeeded) {
+            Text(stringResource(R.string.routines_failed), style = WTokens.TypeScale.caption.style().copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.error)
+        }
+        Text(
+            run.outputSummary, style = WTokens.TypeScale.secondary.style(), color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = if (expanded) Int.MAX_VALUE else SUMMARY_LINES, overflow = TextOverflow.Ellipsis,
+        )
+        run.originDeviceId?.let {
+            Text(strings.device(labels.label(it)), style = WTokens.TypeScale.caption.style(), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

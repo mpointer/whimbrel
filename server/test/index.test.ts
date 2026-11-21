@@ -17,6 +17,9 @@ import type { Env } from "../src/index";
 import { FakeSqlExecutor } from "./testHelpers/fakeSqlExecutor";
 import { deleteAccount, runInactivity } from "../src/inactivity";
 import * as handoff from "../src/handoff";
+import * as inactivity from "../src/inactivity";
+import * as aiCredit from "../src/aiCredit";
+import { DAILY_CRON, YEARLY_GRANTS_CRON } from "../src/schedules";
 import { fetchAndConsumeWrappedKey } from "../src/handoff";
 import { createExecutionContext, env } from "cloudflare:test";
 
@@ -1409,7 +1412,7 @@ it("truncates an over-long device name to 100 characters", async () => {
 });
 
 const IOS = "test-ios-client-id";
-const FREE_PLAN = { plan: "free", planUntilUnixMs: null, planInterval: null, stripeCustomerId: null, stripeSubscriptionId: null, planRenews: true } as const;
+const FREE_PLAN = { plan: "free", planUntilUnixMs: null, planInterval: null, stripeCustomerId: null, stripeSubscriptionId: null, planRenews: true, planTier: null, aiAllowanceMicros: 0, aiAllowanceExpiresMs: null } as const;
 
 function mockAud(audience: string) {
   vi.spyOn(googleAuth, "verifyGoogleIdToken").mockResolvedValue({
@@ -2506,4 +2509,47 @@ it("after_cloud_ends_approved_devices_keep_tokens_and_a_fourth_is_refused", asyn
   const fourth = await handleGoogleAuth(authBody({ platform: "windows" }), hostedEnv(), db);
   expect(fourth.status).toBe(409);
   expect(await fourth.json()).toMatchObject({ error: "device_limit" });
+});
+
+/** Runs `scheduled` with a fake controller whose `cron` is `cron` (or
+ * none), stubbing the three jobs; returns which ran. */
+async function runScheduled(controller: object) {
+  const inact = vi.spyOn(inactivity, "runInactivity").mockResolvedValue({} as never);
+  const settle = vi.spyOn(aiCredit, "settleStaleHolds").mockResolvedValue(2);
+  const yearly = vi.spyOn(aiCredit, "grantDueYearlyMonths").mockResolvedValue(3);
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const waits: Promise<unknown>[] = [];
+  const ctx = { waitUntil: (p: Promise<unknown>) => void waits.push(p), passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
+  const before = Date.now();
+  await worker.scheduled(controller as never, makeEnv(), ctx as never);
+  await Promise.all(waits);
+  const ran = { inactivity: inact.mock.calls.length, settle: settle.mock.calls.length, yearly: yearly.mock.calls.length, waits: waits.length };
+  const out = { ran, yearly, log, before };
+  vi.restoreAllMocks();
+  return out;
+}
+
+it("scheduled_hourly_trigger_runs_only_the_yearly_plus_grants", async () => {
+  expect(YEARLY_GRANTS_CRON).toBe("30 * * * *");
+  const { ran, yearly, log, before } = await runScheduled({ cron: YEARLY_GRANTS_CRON, scheduledTime: Date.now() });
+  expect(ran).toEqual({ inactivity: 0, settle: 0, yearly: 1, waits: 1 });
+  const [db, now] = yearly.mock.calls[0];
+  expect(typeof db.execute).toBe("function");
+  expect(now).toBeGreaterThanOrEqual(before);
+  expect(now).toBeLessThanOrEqual(Date.now());
+  expect(log).toHaveBeenCalledWith("plus yearly grants", 3);
+});
+
+it("scheduled_daily_trigger_runs_inactivity_and_the_stale_hold_settle_only", async () => {
+  expect(DAILY_CRON).toBe("0 9 * * *");
+  const { ran, log } = await runScheduled({ cron: DAILY_CRON, scheduledTime: Date.now() });
+  expect(ran).toEqual({ inactivity: 1, settle: 1, yearly: 0, waits: 2 });
+  expect(log).toHaveBeenCalledWith("ai stale holds settled", 2);
+});
+
+it("scheduled_unknown_trigger_runs_the_daily_jobs_never_the_grants", async () => {
+  for (const controller of [{ cron: "*/5 * * * *" }, { cron: "" }, {}, { cron: undefined }, { cron: " 30 * * * *" }]) {
+    const { ran } = await runScheduled(controller);
+    expect(ran).toEqual({ inactivity: 1, settle: 1, yearly: 0, waits: 2 });
+  }
 });

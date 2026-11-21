@@ -200,4 +200,27 @@ final class MeetingCardModelTests: XCTestCase {
                       "a processed meeting gains its topic with the same ids")
         XCTAssertTrue(MeetingsListView.needsChipBatch(ids: [1], lastBatched: nil, trigger: .meetingsChanged))
     }
+
+    // MARK: Meetings list paging (Nov 20: 273 meetings, the list stopped at the newest 200)
+
+    func test_paging_offers_older_meetings_until_every_meeting_is_loaded() {
+        XCTAssertEqual(MeetingsListPaging.pageSize, 200)
+        XCTAssertEqual(MeetingsListPaging.nextLimit(current: 200), 400)
+        XCTAssertTrue(MeetingsListPaging.hasMore(loaded: 198, limit: 200, total: 265),
+                      "copies collapse, so a full page can come back short of the limit")
+        XCTAssertFalse(MeetingsListPaging.hasMore(loaded: 265, limit: 400, total: 265))
+        XCTAssertFalse(MeetingsListPaging.hasMore(loaded: 40, limit: 200, total: 40))
+    }
+
+    func test_paging_without_a_count_asks_for_more_only_after_a_full_page() {
+        XCTAssertTrue(MeetingsListPaging.hasMore(loaded: 200, limit: 200, total: nil))
+        XCTAssertFalse(MeetingsListPaging.hasMore(loaded: 120, limit: 200, total: nil))
+    }
+
+    func test_paging_footer_says_how_many_are_showing() {
+        XCTAssertEqual(MeetingsListPaging.footer(loaded: 198, total: 265, hasMore: true), "Showing 198 of 265 meetings")
+        XCTAssertEqual(MeetingsListPaging.footer(loaded: 265, total: 265, hasMore: false), "Showing all 265 meetings")
+        XCTAssertNil(MeetingsListPaging.footer(loaded: 40, total: 40, hasMore: false), "a short list needs no footer")
+        XCTAssertNil(MeetingsListPaging.footer(loaded: 200, total: nil, hasMore: true), "no count, no made-up total")
+    }
 }

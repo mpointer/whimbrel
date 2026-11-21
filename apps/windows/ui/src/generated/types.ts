@@ -232,6 +232,7 @@ export type ProviderFailureReason =
     }
   | {
       kind: "credit_exhausted";
+      plus: boolean;
     }
   | {
       kind: "other";
@@ -625,6 +626,20 @@ export type RecordingState = "idle" | "starting" | "recording";
  * via the `definition` "NoteActionResult".
  */
 export type NoteActionResult = ("done" | "failed") | "partlyDone" | "refused";
+/**
+ * The three ways out of the question.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "PlusAiPromptAnswer".
+ */
+export type PlusAiPromptAnswer = "use_whimbrel" | "keep" | "not_now";
+/**
+ * What the window does next.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "PlusAiPromptState".
+ */
+export type PlusAiPromptState = "show" | "wait" | "not_plus" | "done";
 /**
  * The Quality picker, as the UI sees it (core's `transcribe::engine::Quality`).
  *
@@ -2621,6 +2636,67 @@ export interface PrepSourceView {
   title: string;
 }
 /**
+ * The transcript line a note line came from, as the meeting holds it now.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "NoteSourceView".
+ */
+export interface NoteSourceView {
+  /**
+   * The id `meeting_transcript_lines` gives that line.
+   */
+  segmentId: number;
+  /**
+   * The speaker as shown (a name when one is assigned).
+   */
+  speaker: string;
+  /**
+   * Centiseconds from the start of the recording.
+   */
+  startCs: number;
+  /**
+   * The line's own stored words, never the model's wording.
+   */
+  text: string;
+}
+/**
+ * The note's lines with the sources that still hold (redesign only); device-local, never synced.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "NoteSourcesView".
+ */
+export interface NoteSourcesView {
+  actionItems: SourcedActionItemView[];
+  decisions: SourcedLineView[];
+  openQuestions: SourcedLineView[];
+}
+/**
+ * An action item with the owner and due the model gave and its source, each only when stored and still valid.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SourcedActionItemView".
+ */
+export interface SourcedActionItemView {
+  due?: string | null;
+  /**
+   * The `ActionItemView` id; null before the items are seeded from the summary.
+   */
+  itemId?: number | null;
+  owner?: string | null;
+  source?: NoteSourceView | null;
+  text: string;
+}
+/**
+ * A decision or open question, with its source when one still holds.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SourcedLineView".
+ */
+export interface SourcedLineView {
+  source?: NoteSourceView | null;
+  text: string;
+}
+/**
  * A meeting the main window should open: `meeting_id` null opens Meetings with nothing
  * selected (the other device's meeting hasn't synced here yet).
  *
@@ -2657,9 +2733,17 @@ export interface PlanView {
    */
   interval?: string | null;
   /**
-   * `free` or `cloud`.
+   * `free` or `cloud` (a Plus plan is `cloud` with `plan_tier` `plus`).
    */
   plan: string;
+  /**
+   * `cloud` or `plus` on a paid plan; None on free and from an older server.
+   */
+  planTier?: string | null;
+  /**
+   * The server sells Plus: the free plan's buttons are the Plus ones, in place of Cloud's.
+   */
+  plusAvailable: boolean;
   /**
    * False once a Cloud subscription is cancelled ("Cloud ends …"); None on free, or from an older
    * server, which the UI reads as renewing.
@@ -2669,6 +2753,19 @@ export interface PlanView {
    * When a Cloud plan runs to (it renews unless cancelled).
    */
   untilUnixMs?: number | null;
+}
+/**
+ * The question's state and, while it shows, core's data note.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "PlusAiPromptView".
+ */
+export interface PlusAiPromptView {
+  /**
+   * Core's `whimbrel_ai_passthrough` text, while `state` is `show`.
+   */
+  note?: string | null;
+  state: PlusAiPromptState;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -3572,6 +3669,65 @@ export interface TopicSuggestionView {
   topicId: number;
 }
 /**
+ * One line of a meeting's transcript with its id and numeric times, for the redesigned note (redesign only).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TranscriptLineView".
+ */
+export interface TranscriptLineView {
+  /**
+   * Centiseconds from the start of the recording, when this device stored the line's end.
+   */
+  endCs?: number | null;
+  /**
+   * The name is a guess, shown as "Name?".
+   */
+  guess: boolean;
+  /**
+   * The stored line's id: what a note source and the speaker lanes point at.
+   */
+  id: number;
+  /**
+   * What to show: the speaker's name when one is assigned, else `speaker`.
+   */
+  label: string;
+  /**
+   * The named person, for "Yes, that's {name}".
+   */
+  personKey?: string | null;
+  /**
+   * The label as stored: "Me", "Others", "Speaker 2".
+   */
+  speaker: string;
+  /**
+   * The diarized speaker ("Speaker 2" is 1), the ones the speaker menu can name.
+   */
+  speakerId?: number | null;
+  /**
+   * Centiseconds from the start of the recording.
+   */
+  startCs: number;
+  text: string;
+}
+/**
+ * A page of a meeting's transcript lines, none merged, in order.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TranscriptLinesView".
+ */
+export interface TranscriptLinesView {
+  /**
+   * The speaker menu is offered: see [`can_name_speakers`].
+   */
+  canName: boolean;
+  invitees: InviteeView[];
+  lines: TranscriptLineView[];
+  /**
+   * How many lines the meeting has in all.
+   */
+  total: number;
+}
+/**
  * A meeting's transcript for display: turns from the file when it's on this device,
  * else from the stored segments.
  *
@@ -3766,13 +3922,30 @@ export interface VoicePersonView {
  */
 export interface WhimbrelAiView {
   /**
-   * The credit left, in micro-dollars (1,000,000 = $1); None until a read succeeds.
+   * The Plus allowance left this month, in micro-dollars; 0 when none or expired.
+   */
+  allowanceMicros: number;
+  /**
+   * When the allowance resets, only while some is left and the date is still ahead.
+   */
+  allowanceResetsUnixMs?: number | null;
+  /**
+   * The prepaid credit left, in micro-dollars (1,000,000 = $1); None until a read succeeds.
    */
   balanceMicros?: number | null;
   /**
-   * Under 10% of the newest purchase is left: "Credit is running low."
+   * Under 10% of the newest purchase is left and no Plus allowance is: "Credit is running low."
    */
   low: boolean;
+  /**
+   * The balance read says this is a Plus account: the allowance lines show.
+   */
+  plus: boolean;
+  /**
+   * The plan renews (None on free and from an older server, read as renewing): a used-up
+   * allowance "renews with your plan" only then.
+   */
+  renews?: boolean | null;
   /**
    * Sync is ready: the balance and the Add buttons show. Otherwise "Sign in to sync to use Whimbrel AI".
    */

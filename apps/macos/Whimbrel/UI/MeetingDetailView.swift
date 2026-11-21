@@ -83,7 +83,7 @@ struct MeetingDetailView: View {
     var body: some View {
         Group {
             if let loadedMeeting {
-                MeetingDetailContentView(meeting: loadedMeeting, initialDraft: loadedDraft, initialActionItems: loadedActionItems, topic: loadedTopic)
+                MeetingDetailContentView(meeting: loadedMeeting, initialDraft: loadedDraft, initialActionItems: loadedActionItems, topic: loadedTopic, onForgotten: { dismiss() })
             } else if loadFailed {
                 Text("This meeting is no longer available.")
                     .font(.whimbrelBody(.callout))
@@ -98,21 +98,24 @@ struct MeetingDetailView: View {
         .navigationTitle(loadedMeeting?.title ?? "Meeting")
         .background(Color.whimbrelBackgroundPage)
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: Spacing.sm) {
-                if let loadedMeeting {
-                    MeetingOptionsMenu(meeting: loadedMeeting, appState: appState, onForgotten: { dismiss() })
+            // The redesigned page has the options menu in its own header, and the window has its close button.
+            if !appState.redesignEnabled {
+                HStack(spacing: Spacing.sm) {
+                    if let loadedMeeting {
+                        MeetingOptionsMenu(meeting: loadedMeeting, appState: appState, onForgotten: { dismiss() })
+                    }
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color.whimbrelTextSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close")
                 }
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(Color.whimbrelTextSecondary)
-                }
-                .buttonStyle(.plain)
-                .help("Close")
+                .padding(Spacing.md)
             }
-            .padding(Spacing.md)
         }
         .onAppear { loadMeetingIfNeeded() }
         .onChange(of: appState.processingMeetingId) { old, new in
@@ -185,35 +188,38 @@ struct MeetingDetailContentView: View {
     let meeting: CoreMeeting
     /// The topic this meeting belongs to, shown as a chip above the title.
     let topic: TopicRef?
+    /// The redesigned page's own header carries these; both are nil where the page has no back or no list to return to.
+    var onBack: (() -> Void)? = nil
+    var onForgotten: (() -> Void)? = nil
     /// This page visit's Ask, torn down when the bar leaves.
-    @StateObject private var askSession = MeetingAskSession()
-    @StateObject private var snapshotsModel: MeetingSnapshotsModel
+    @StateObject var askSession = MeetingAskSession()
+    @StateObject var snapshotsModel: MeetingSnapshotsModel
 
-    @State private var transcriptText: String?
-    @State private var transcriptLoadFailed = false
+    @State var transcriptText: String?
+    @State var transcriptLoadFailed = false
 
-    @State private var regeneratedSummary: CoreMeetingSummary?
-    @State private var selectedProvider: RoutingSettings.Provider = .ollama
-    @State private var ollamaModel: String = "gemma4:12b"
-    @State private var selectedHostedModel: String = HostedModelDefaults.resolve(provider: "anthropic", stored: nil)
-    @State private var isRegenerating = false
-    @State private var regenerateError: String?
+    @State var regeneratedSummary: CoreMeetingSummary?
+    @State var selectedProvider: RoutingSettings.Provider = .ollama
+    @State var ollamaModel: String = "gemma4:12b"
+    @State var selectedHostedModel: String = HostedModelDefaults.resolve(provider: "anthropic", stored: nil)
+    @State var isRegenerating = false
+    @State var regenerateError: String?
     /// The stored notice that Whimbrel AI was meant to write this summary (loaded from core).
-    @State private var storedSummaryFallback: CoreSummaryFallback?
+    @State var storedSummaryFallback: CoreSummaryFallback?
     /// A summary would be refused now: the meeting names an excluded client and no local model is on.
-    @State private var summaryRefusedForExclusion = false
-    @State private var showRecapSheet = false
-    @State private var recapSent: CoreRecapSent?
-    @State private var resummarizeError: String?
+    @State var summaryRefusedForExclusion = false
+    @State var showRecapSheet = false
+    @State var recapSent: CoreRecapSent?
+    @State var resummarizeError: String?
 
     // Task 2's editable-overlay draft + action items (FR-MTG editable-note work), loaded
     // by `MeetingDetailView` alongside the meeting fetch and handed in here as the
     // starting point for this view's own mutable copies below.
-    @State private var draft: CoreMeetingNoteDraft?
-    @State private var actionItems: [CoreMeetingActionItem]
-    @State private var summaryDraftText: String
-    @State private var decisionsDraftItems: [String]
-    @State private var openQuestionsDraftItems: [String]
+    @State var draft: CoreMeetingNoteDraft?
+    @State var actionItems: [CoreMeetingActionItem]
+    @State var summaryDraftText: String
+    @State var decisionsDraftItems: [String]
+    @State var openQuestionsDraftItems: [String]
 
     // Debounced-autosave bookkeeping. Not `ActiveNoteAutosaveController` (Task 6) --
     // that class's `onSave: (String, Int64) -> Bool` closure has to return synchronously
@@ -226,10 +232,10 @@ struct MeetingDetailContentView: View {
     // `saveNoteOverrides` as if they'd also just been edited (see that function's "nil
     // means untouched" contract) -- passing all three every time would wrongly flip
     // sections the user never touched into "edited" state.
-    @State private var summarySaveTask: Task<Void, Never>?
-    @State private var decisionsSaveTask: Task<Void, Never>?
-    @State private var openQuestionsSaveTask: Task<Void, Never>?
-    @State private var actionItemTextSaveTasks: [Int64: Task<Void, Never>] = [:]
+    @State var summarySaveTask: Task<Void, Never>?
+    @State var decisionsSaveTask: Task<Void, Never>?
+    @State var openQuestionsSaveTask: Task<Void, Never>?
+    @State var actionItemTextSaveTasks: [Int64: Task<Void, Never>] = [:]
 
     // Guards `summaryDraftText`'s `.onChange` from re-scheduling a save when THIS view
     // (not the user's keyboard) is the one assigning the value -- e.g. applying a
@@ -243,48 +249,57 @@ struct MeetingDetailContentView: View {
     // per-row `Binding.set`, which a bulk `decisionsDraftItems = ...` reassignment never
     // goes through. See `setSummaryDraftTextProgrammatically(_:)` below, the only
     // sanctioned way to assign `summaryDraftText` from code rather than the TextEditor.
-    @State private var suppressSummaryAutosave = false
+    @State var suppressSummaryAutosave = false
 
-    @State private var pendingConflict: PendingRegenerationConflict?
+    @State var pendingConflict: PendingRegenerationConflict?
 
-    @State private var tab: MeetingPageTab = .notes
-    @State private var isEditing = false
-    @State private var segments: [CoreMeetingTranscriptSegment] = []
+    @State var tab: MeetingPageTab = .notes
+    // The redesigned note page (flag on): this device's line sources, the marked moments and the selected source.
+    @State var noteSources: CoreNoteSources?
+    @State var markers: [CoreMeetingMarker] = []
+    /// The `id` of the selected source, which stays put when the numbers shift after an edit or a Regenerate.
+    @State var noteSelectedSource: String?
+    /// What the redesigned page keeps between passes of its body (see `NoteTranscriptCache`).
+    @State var noteCache = NoteTranscriptCache()
+    @State var isEditing = false
+    @State var segments: [CoreMeetingTranscriptSegment] = []
     /// Raw speaker label ("Speaker 1") -> how it shows (a name, maybe a guess), per loaded page.
-    @State private var speakerNames: [String: CoreDisplayLabel] = [:]
-    @State private var invitees: [CoreAttendee] = []
-    @State private var namesChanged = false
-    @State private var parts: [CoreMeetingPart] = []
+    @State var speakerNames: [String: CoreDisplayLabel] = [:]
+    @State var invitees: [CoreAttendee] = []
+    @State var namesChanged = false
+    @State var parts: [CoreMeetingPart] = []
     /// Until the parts load, a continued meeting can't be told apart: no speaker menu yet.
-    @State private var partsLoaded = false
-    @State private var highlightedSegmentId: Int64?
-    @State private var liveAlerts: [LiveAlertsSection.Row] = []
-    @State private var liveStatus: LiveTranscriptionService.Status = .idle
+    @State var partsLoaded = false
+    @State var highlightedSegmentId: Int64?
+    @State var liveAlerts: [LiveAlertsSection.Row] = []
+    @State var liveStatus: LiveTranscriptionService.Status = .idle
 
     /// Key of the Decisions/Open-questions/Action-item row currently under the mouse --
     /// its reorder/delete buttons fade in only for that row (macOS Mail/Notes-style
     /// row-hover), rather than every row permanently showing three bare icon buttons.
-    @State private var hoveredRowKey: String?
+    @State var hoveredRowKey: String?
 
     /// Setting `hoveredRowKey` directly from `.onHover`'s closure can re-enter AppKit's
     /// active layout pass (this view sits in a `NavigationSplitView` detail pane) and
     /// crash with `_postWindowNeedsUpdateConstraints`. Deferring to the next runloop
     /// tick breaks the reentrancy.
-    private func setHoveredRow(_ hovering: Bool, key: String) {
+    func setHoveredRow(_ hovering: Bool, key: String) {
         DispatchQueue.main.async {
             hoveredRowKey = hovering ? key : (hoveredRowKey == key ? nil : hoveredRowKey)
         }
     }
 
-    private struct PendingRegenerationConflict: Identifiable {
+    struct PendingRegenerationConflict: Identifiable {
         let id = UUID()
         let summary: CoreMeetingSummary
         let newGenerationUnixMs: Int64
     }
 
-    init(meeting: CoreMeeting, initialDraft: CoreMeetingNoteDraft?, initialActionItems: [CoreMeetingActionItem], topic: TopicRef? = nil) {
+    init(meeting: CoreMeeting, initialDraft: CoreMeetingNoteDraft?, initialActionItems: [CoreMeetingActionItem], topic: TopicRef? = nil, onBack: (() -> Void)? = nil, onForgotten: (() -> Void)? = nil) {
         self.meeting = meeting
         self.topic = topic
+        self.onBack = onBack
+        self.onForgotten = onForgotten
         _snapshotsModel = StateObject(wrappedValue: MeetingSnapshotsModel(meetingId: meeting.id, store: nil))
         _draft = State(initialValue: initialDraft)
         _actionItems = State(initialValue: initialActionItems)
@@ -293,7 +308,7 @@ struct MeetingDetailContentView: View {
         _openQuestionsDraftItems = State(initialValue: initialDraft?.openQuestionsEdited ?? meeting.summaryOpenQuestions)
     }
 
-    private var currentModelLabel: String {
+    var currentModelLabel: String {
         selectedProvider == .ollama ? ollamaModel : selectedHostedModel
     }
 
@@ -301,7 +316,7 @@ struct MeetingDetailContentView: View {
     /// pattern `transcriptText` already uses for the transcript. Exists so `noteModel`
     /// (which needs a `CoreMeeting`) sees the latest generated content even though
     /// `meeting` itself is a `let` snapshot from whenever this view was constructed.
-    private var effectiveMeeting: CoreMeeting {
+    var effectiveMeeting: CoreMeeting {
         guard let regeneratedSummary else { return meeting }
         return CoreMeeting(
             id: meeting.id, deviceId: meeting.deviceId, startUnixMs: meeting.startUnixMs, endUnixMs: meeting.endUnixMs,
@@ -316,14 +331,14 @@ struct MeetingDetailContentView: View {
 
     /// Task 4's convenience model -- the one place "does the user's edit win over the
     /// generated content" is decided (`displaySummary`/`summaryIsUserEdited`/etc.).
-    private var noteModel: EditableMeetingNoteModel {
+    var noteModel: EditableMeetingNoteModel {
         EditableMeetingNoteModel(meeting: effectiveMeeting, draft: draft, actionItems: actionItems, isProcessing: false, processingStage: nil)
     }
 
     /// `draft` folded together with any local edit that hasn't autosaved yet -- what
     /// `regenerate()`'s conflict check must evaluate against, not `draft` alone (see
     /// `mergeUnsavedEditsIntoDraft`'s doc comment for the race this closes).
-    private var draftReflectingUnsavedEdits: CoreMeetingNoteDraft? {
+    var draftReflectingUnsavedEdits: CoreMeetingNoteDraft? {
         let baseline = effectiveMeeting
         return mergeUnsavedEditsIntoDraft(
             persisted: draft, meetingId: meeting.id,
@@ -333,12 +348,12 @@ struct MeetingDetailContentView: View {
         )
     }
 
-    private var currentProvider: String? { regeneratedSummary?.provider ?? meeting.summaryProvider }
-    private var currentModel: String? { regeneratedSummary?.model ?? meeting.summaryModel }
+    var currentProvider: String? { regeneratedSummary?.provider ?? meeting.summaryProvider }
+    var currentModel: String? { regeneratedSummary?.model ?? meeting.summaryModel }
 
     /// The notice for the summary on screen: a fresh result's own, else the stored one, and only
     /// while a summary exists and a local or other model wrote it (not Whimbrel itself).
-    private var shownSummaryFallback: CoreSummaryFallback? {
+    var shownSummaryFallback: CoreSummaryFallback? {
         guard meeting.summaryTldr != nil || regeneratedSummary != nil else { return nil }
         let fallback = regeneratedSummary != nil ? regeneratedSummary?.fallback : storedSummaryFallback
         return fallback?.used == currentProvider ? fallback : nil
@@ -346,7 +361,7 @@ struct MeetingDetailContentView: View {
 
     /// Core's check, run again whenever the page loads or the local-model setting changes, so the
     /// note clears itself once a local model is on.
-    private func loadSummaryRefusal() {
+    func loadSummaryRefusal() {
         // On the slow lane: the check reads the whole transcript, and the screens' queue must stay free (#850).
         guard let store = appState.slowStore else { return }
         let meetingId = meeting.id
@@ -358,7 +373,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func loadStoredSummaryFallback() {
+    func loadStoredSummaryFallback() {
         guard let store = appState.coreStore else { return }
         let meetingId = meeting.id
         CoreMemoryStore.accessQueue.async {
@@ -369,7 +384,7 @@ struct MeetingDetailContentView: View {
 
     /// The notice's button: "Re-summarize with Whimbrel" through Whimbrel alone (no fallback), with the
     /// user's own Whimbrel model pick. Success replaces the summary like Regenerate does; a failure says why.
-    private func resummarizeWithWhimbrel() {
+    func resummarizeWithWhimbrel() {
         guard let transcriptText, !isRegenerating else { return }
         isRegenerating = true
         regenerateError = nil
@@ -395,7 +410,7 @@ struct MeetingDetailContentView: View {
     /// Plain-text rendering of the summary for the "Copy" button — mirrors the editable
     /// section's own structure (TL;DR, then each non-empty bullet list with its heading)
     /// so what gets copied matches what's on screen, including any user edits.
-    private var summaryPlainText: String {
+    var summaryPlainText: String {
         var parts: [String] = []
         if let summary = noteModel.displaySummary, !summary.isEmpty {
             parts.append(summary)
@@ -411,7 +426,7 @@ struct MeetingDetailContentView: View {
     }
 
     /// The summary as shown, for the recap and the Copy as formats.
-    private var recapSummary: CoreRecapSummary {
+    var recapSummary: CoreRecapSummary {
         CoreRecapSummary(
             title: meeting.title,
             tldr: noteModel.displaySummary ?? "",
@@ -423,7 +438,7 @@ struct MeetingDetailContentView: View {
 
     /// Copy (plain text, as before) with Markdown and Slack in its menu, and Send recap.
     @ViewBuilder
-    private var summaryShareButtons: some View {
+    var summaryShareButtons: some View {
         HStack(spacing: Spacing.sm) {
             if let recapSent {
                 Text(recapSentText(recapSent)).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
@@ -447,19 +462,19 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func copyRecap(format: String) {
+    func copyRecap(format: String) {
         if let text = CoreMemoryStore.recapRender(recapSummary, labels: .localized, format: format), !text.isEmpty {
             copyToClipboard(text)
         }
     }
 
-    private func recapSentText(_ sent: CoreRecapSent) -> String {
+    func recapSentText(_ sent: CoreRecapSent) -> String {
         sent.recipientCount == 1
             ? String(localized: "Sent the recap to 1 person")
             : String(localized: "Sent the recap to \(sent.recipientCount) people")
     }
 
-    private func loadRecapSent() {
+    func loadRecapSent() {
         guard let store = appState.coreStore else { return }
         let meetingId = meeting.id
         CoreMemoryStore.accessQueue.async {
@@ -470,7 +485,7 @@ struct MeetingDetailContentView: View {
 
     /// Replaces the clipboard's entire contents with `text` — matches the existing
     /// copy-to-clipboard pattern already used for MCP tokens (SettingsView.swift).
-    private func copyToClipboard(_ text: String) {
+    func copyToClipboard(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
@@ -481,69 +496,17 @@ struct MeetingDetailContentView: View {
     /// turn rather than synchronously, since SwiftUI's `.onChange` fires during the view
     /// update pass triggered by this assignment, not necessarily before the next line of
     /// this function runs.
-    private func setSummaryDraftTextProgrammatically(_ text: String) {
+    func setSummaryDraftTextProgrammatically(_ text: String) {
         suppressSummaryAutosave = true
         summaryDraftText = text
         DispatchQueue.main.async { suppressSummaryAutosave = false }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: Spacing.lg) {
-                    if let topic { TopicChip(topic: topic) }
-                    Text(verbatim: MeetingDetailLogic.displayTitle(meeting.title))
-                        .font(.whimbrelDisplay(.largeTitle))
-                        .foregroundStyle(Color.whimbrelTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let outcome = meeting.effectiveAwayOutcome {
-                        Text(AwayOutcomeLabel.text(outcome, at: meeting.awayOutcomeAt))
-                            .font(.whimbrelBody(.callout))
-                            .foregroundStyle(Color.whimbrelTextSecondary)
-                    }
-                    metadataChips
-                    MeetingSnapshotsStrip(model: snapshotsModel)
-                        .onReceive(NotificationCenter.default.publisher(for: MeetingSnapshotService.didChange)) { note in
-                            guard note.userInfo?["meetingId"] as? Int64 == meeting.id else { return }
-                            Task { await snapshotsModel.reload() }
-                        }
-                    LiveAlertsSection(
-                        rows: liveAlerts,
-                        paused: meeting.id == appState.activeMeetingId
-                            ? LiveAlertsSection.pausedLabel(
-                                status: liveStatus,
-                                alertsOn: LiveQuestionWatcher.shouldRun(settings: appState.liveQuestionSettings, names: appState.profile.liveQuestionNames))
-                            : nil,
-                        onJump: segments.isEmpty ? nil : { seekTranscript(to: $0) }
-                    )
-                    MeetingPrepSection(meetingId: meeting.id)
-                    if namesChanged {
-                        NamesChangedBanner(updating: isRegenerating, canUpdate: transcriptText != nil, error: regenerateError) { regenerate() }
-                    }
-                    Picker("", selection: $tab) {
-                        ForEach(MeetingPageTab.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(maxWidth: 260)
-
-                    switch tab {
-                    case .notes:
-                        notesTab
-                    case .transcript:
-                        transcriptTab(proxy: proxy)
-                    }
-                }
-                .frame(maxWidth: 760, alignment: .leading)
-                .padding(Spacing.xl)
-                .frame(maxWidth: .infinity)
-            }
-        }
-        MeetingAskBar(session: askSession, meeting: meeting, segmentCount: segments.count) { segmentId in
-            highlightSegment(segmentId)
-        }
-        .onDisappear { askSession.teardown() }
+        RedesignSwitch(enabled: appState.redesignEnabled) {
+            noteRedesignPage
+        } old: {
+            classicPage
         }
         .onAppear {
             snapshotsModel.store = appState.coreStore
@@ -614,28 +577,90 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func loadLiveAlerts() {
+    /// The page as it is with the redesign flag off.
+    @ViewBuilder
+    var classicPage: some View {
+        VStack(spacing: 0) {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.lg) {
+                    if let topic { TopicChip(topic: topic) }
+                    Text(verbatim: MeetingDetailLogic.displayTitle(meeting.title))
+                        .font(.whimbrelDisplay(.largeTitle))
+                        .foregroundStyle(Color.whimbrelTextPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let outcome = meeting.effectiveAwayOutcome {
+                        Text(AwayOutcomeLabel.text(outcome, at: meeting.awayOutcomeAt))
+                            .font(.whimbrelBody(.callout))
+                            .foregroundStyle(Color.whimbrelTextSecondary)
+                    }
+                    metadataChips
+                    MeetingSnapshotsStrip(model: snapshotsModel)
+                        .onReceive(NotificationCenter.default.publisher(for: MeetingSnapshotService.didChange)) { note in
+                            guard note.userInfo?["meetingId"] as? Int64 == meeting.id else { return }
+                            Task { await snapshotsModel.reload() }
+                        }
+                    LiveAlertsSection(
+                        rows: liveAlerts,
+                        paused: meeting.id == appState.activeMeetingId
+                            ? LiveAlertsSection.pausedLabel(
+                                status: liveStatus,
+                                alertsOn: LiveQuestionWatcher.shouldRun(settings: appState.liveQuestionSettings, names: appState.profile.liveQuestionNames))
+                            : nil,
+                        onJump: segments.isEmpty ? nil : { seekTranscript(to: $0) }
+                    )
+                    MeetingPrepSection(meetingId: meeting.id)
+                    if namesChanged {
+                        NamesChangedBanner(updating: isRegenerating, canUpdate: transcriptText != nil, error: regenerateError) { regenerate() }
+                    }
+                    Picker("", selection: $tab) {
+                        ForEach(MeetingPageTab.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 260)
+
+                    switch tab {
+                    case .notes:
+                        notesTab
+                    case .transcript:
+                        transcriptTab(proxy: proxy)
+                    }
+                }
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(Spacing.xl)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        MeetingAskBar(session: askSession, meeting: meeting, segmentCount: segments.count) { segmentId in
+            highlightSegment(segmentId)
+        }
+        .onDisappear { askSession.teardown() }
+        }
+    }
+
+    func loadLiveAlerts() {
         LiveAlertsSection.load(store: appState.coreStore, meetingId: meeting.id) { if liveAlerts != $0 { liveAlerts = $0 } }
     }
 
-    private func highlightSegment(_ segmentId: Int64) {
+    func highlightSegment(_ segmentId: Int64) {
         highlightedSegmentId = nil
         tab = .transcript
         DispatchQueue.main.async { highlightedSegmentId = segmentId }
     }
 
-    private func seekTranscript(to atCs: Int64) {
+    func seekTranscript(to atCs: Int64) {
         if let id = LiveAlertsSection.nearest(segments.map { ($0.id, $0.startCs) }, to: atCs) { highlightSegment(id) }
     }
 
     /// Consumes `pendingMeetingSeek` for this meeting once there are segments to scroll to.
-    private func consumeSeek(_ request: (meetingId: Int64, atCs: Int64)?) {
+    func consumeSeek(_ request: (meetingId: Int64, atCs: Int64)?) {
         guard let request, request.meetingId == meeting.id, !segments.isEmpty else { return }
         seekTranscript(to: request.atCs)
         DispatchQueue.main.async { appState.pendingMeetingSeek = nil }
     }
 
-    private func loadSegments() {
+    func loadSegments() {
         guard let store = appState.coreStore else { return }
         let meetingId = meeting.id
         CoreMemoryStore.accessQueue.async {
@@ -651,7 +676,7 @@ struct MeetingDetailContentView: View {
     }
 
     /// Each distinct raw label resolved once. Call on `accessQueue`.
-    private static func speakerNames(store: CoreMemoryStore, meetingId: Int64, segments: [CoreMeetingTranscriptSegment]) -> [String: CoreDisplayLabel] {
+    static func speakerNames(store: CoreMemoryStore, meetingId: Int64, segments: [CoreMeetingTranscriptSegment]) -> [String: CoreDisplayLabel] {
         let raw = Array(Set(segments.map(\.speakerLabel)))
         guard !raw.isEmpty, let shown = store.displayLabels(meetingId: meetingId, labels: raw), shown.count == raw.count else { return [:] }
         return Dictionary(uniqueKeysWithValues: zip(raw, shown))
@@ -659,7 +684,7 @@ struct MeetingDetailContentView: View {
 
     /// Mike's pick from a speaker's menu (`write` stores it: store, meeting id, speaker id):
     /// confirm it, re-resolve the page's names, offer a new summary.
-    private func nameSpeaker(rawLabel: String, write: @escaping (CoreMemoryStore, Int64, Int) -> [CoreMeetingSpeaker]?) {
+    func nameSpeaker(rawLabel: String, write: @escaping (CoreMemoryStore, Int64, Int) -> [CoreMeetingSpeaker]?) {
         guard let store = appState.coreStore, let speakerId = MeetingDetailLogic.speakerId(rawLabel: rawLabel) else { return }
         let meetingId = meeting.id
         let loaded = segments
@@ -677,7 +702,7 @@ struct MeetingDetailContentView: View {
 
     /// Loads the parts off main, then (for a continued meeting) rebuilds the file-text
     /// fallback from every part's transcript file, since `meeting.transcriptPath` is part 1's.
-    private func loadParts(reloadTranscript: Bool = false) {
+    func loadParts(reloadTranscript: Bool = false) {
         guard let store = appState.coreStore else { return }
         let meetingId = meeting.id
         CoreMemoryStore.accessQueue.async {
@@ -691,7 +716,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private var metadataChips: some View {
+    var metadataChips: some View {
         HStack(spacing: Spacing.sm) {
             Text(Self.formattedMeetingTime(startUnixMs: meeting.startUnixMs, endUnixMs: meeting.endUnixMs))
                 .font(.whimbrelBody(.caption))
@@ -704,7 +729,7 @@ struct MeetingDetailContentView: View {
     }
 
     @ViewBuilder
-    private var notesTab: some View {
+    var notesTab: some View {
         HStack {
             Spacer()
             Button(isEditing ? "Done" : "Edit") { isEditing.toggle() }
@@ -730,7 +755,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func bulletRows(_ items: [String]) -> some View {
+    func bulletRows(_ items: [String]) -> some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
@@ -745,7 +770,7 @@ struct MeetingDetailContentView: View {
     }
 
     @ViewBuilder
-    private func readingBlock(_ title: LocalizedStringKey, _ items: [String], bullet: Bool = true) -> some View {
+    func readingBlock(_ title: LocalizedStringKey, _ items: [String], bullet: Bool = true) -> some View {
         let items = items.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -765,12 +790,36 @@ struct MeetingDetailContentView: View {
     /// What the reader sees: the edited text when the user has edited a section, otherwise
     /// the generated one; the same precedence the editors start from.
     @ViewBuilder
-    private var readingNotes: some View {
+    var readingNotes: some View {
         if meeting.status != .completed {
             Text("Summary will be generated once the meeting ends.")
                 .font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextSecondary)
         } else if summaryDraftText.isEmpty && decisionsDraftItems.isEmpty && actionItems.isEmpty && openQuestionsDraftItems.isEmpty {
-            Text(summaryPlaceholderText).font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextSecondary)
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                Text(summaryPlaceholderText).font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextSecondary)
+                if MeetingDetailLogic.showsRegenerateWithoutSummary(
+                    isCompleted: true, hasSummaryContent: false, hasTranscript: transcriptText != nil,
+                    isProcessing: appState.processingMeetingId == meeting.id, isRegenerating: isRegenerating, isEditing: isEditing
+                ) {
+                    // Same call as the edit-mode Regenerate, so routing and client exclusion apply unchanged.
+                    Button("Regenerate") { regenerate() }
+                        .buttonStyle(.whimbrelSecondary)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("meeting-regenerate-no-summary")
+                    let failure = appState.summaryFailures[meeting.id]
+                    if let message = regenerateError ?? failure?.userFacingMessage {
+                        Text(message)
+                            .font(.whimbrelBody(.caption2))
+                            .foregroundStyle(Color.whimbrelError)
+                    }
+                    if failure?.opensAIProvidersSettings == true { OpenAIProvidersSettingsButton() }
+                } else if isRegenerating {
+                    HStack(spacing: Spacing.xs) {
+                        ProgressView().controlSize(.small)
+                        Text("Regenerating…").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+                    }
+                }
+            }
         } else {
             VStack(alignment: .leading, spacing: Spacing.lg) {
                 if !summaryDraftText.isEmpty {
@@ -794,7 +843,7 @@ struct MeetingDetailContentView: View {
     }
 
     @ViewBuilder
-    private func transcriptTab(proxy: ScrollViewProxy) -> some View {
+    func transcriptTab(proxy: ScrollViewProxy) -> some View {
         if !fullTranscriptText.isEmpty {
             HStack {
                 Spacer()
@@ -842,7 +891,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func rejoinedDivider(_ label: String) -> some View {
+    func rejoinedDivider(_ label: String) -> some View {
         Text(verbatim: MeetingDetailLogic.renderedDivider(label))
             .font(.whimbrelBody(.caption))
             .foregroundStyle(Color.whimbrelTextSecondary)
@@ -850,11 +899,11 @@ struct MeetingDetailContentView: View {
             .padding(.vertical, Spacing.xs)
     }
 
-    private var fullTranscriptText: String {
+    var fullTranscriptText: String {
         MeetingDetailLogic.transcriptCopyText(fileText: transcriptText, segments: segments, names: speakerNames)
     }
 
-    private static func clock(_ startCs: Int64) -> String { MeetingDetailLogic.clock(startCs) }
+    static func clock(_ startCs: Int64) -> String { MeetingDetailLogic.clock(startCs) }
 
     /// The empty-state placeholder shown INSIDE the summary editor when there's no
     /// TL;DR text yet -- distinct from the "no card at all" states below, which only
@@ -862,15 +911,15 @@ struct MeetingDetailContentView: View {
     /// `TextEditor` (SwiftUI's `TextEditor` has no native placeholder support) rather
     /// than hiding the editor, so an empty summary never takes decisions/action items/
     /// open questions down with it -- see Important #1 in the final review.
-    private var summaryPlaceholderText: String {
+    var summaryPlaceholderText: String {
         switch MeetingDetailLogic.summaryPlaceholder(processing: appState.processingMeetingId == meeting.id, refusedForExclusion: summaryRefusedForExclusion) {
         case .transcribing: return String(localized: "Transcribing meeting audio — summary will follow.")
-        case .refusedForExclusion: return String(localized: "Not summarised: this meeting names a client excluded from hosted models, and no local model is set up. In Settings > AI & Routing, turn on Use local model or download a small local model, then choose Regenerate.")
+        case .refusedForExclusion: return String(localized: "Not summarised: this meeting involves a client excluded from hosted models, and no local model is set up. In Settings > AI & Routing, turn on Use local model or download a small local model, then choose Regenerate.")
         case .none: return String(localized: "No summary yet.")
         }
     }
 
-    private var completedWithoutTranscriptText: String {
+    var completedWithoutTranscriptText: String {
         if appState.processingMeetingId == meeting.id {
             return String(localized: "Transcribing in the background — check back shortly.")
         }
@@ -882,8 +931,41 @@ struct MeetingDetailContentView: View {
             : String(localized: "No transcript for this meeting.")
     }
 
+    /// The summary, decisions, action item and open question editors, in their card. Shared by the old page and the redesigned one.
     @ViewBuilder
-    private var summarySection: some View {
+    var summaryEditorsCard: some View {
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+            ZStack(alignment: .topLeading) {
+                if summaryDraftText.isEmpty {
+                    Text(appState.redesignEnabled ? noteSummaryPlaceholderText : summaryPlaceholderText)
+                        .font(.system(size: appState.readingFontSize + 2, design: .default))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $summaryDraftText)
+                    .font(.system(size: appState.readingFontSize + 2, design: .default))
+                    .foregroundStyle(Color.whimbrelTextPrimary)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 80)
+                    .accessibilityIdentifier("meeting-note-summary-editor")
+                    .accessibilityLabel("Summary")
+                    .onChange(of: summaryDraftText) { _, _ in
+                        guard !suppressSummaryAutosave else { return }
+                        scheduleSummarySave()
+                    }
+            }
+            editableList(title: String(localized: "Decisions"), items: $decisionsDraftItems, onChange: scheduleDecisionsSave)
+            actionItemsSection
+            editableList(title: String(localized: "Open questions"), items: $openQuestionsDraftItems, onChange: scheduleOpenQuestionsSave)
+            provenanceChips
+        }
+        .whimbrelCard()
+    }
+
+    @ViewBuilder
+    var summarySection: some View {
         HStack {
             Text("Summary").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
             if !summaryPlainText.isEmpty {
@@ -898,34 +980,7 @@ struct MeetingDetailContentView: View {
         // action items live here too, and were previously unreachable once the summary
         // string was empty (Important #1).
         if meeting.status == .completed {
-            VStack(alignment: .leading, spacing: Spacing.lg) {
-                ZStack(alignment: .topLeading) {
-                    if summaryDraftText.isEmpty {
-                        Text(summaryPlaceholderText)
-                            .font(.system(size: appState.readingFontSize + 2, design: .default))
-                            .foregroundStyle(Color.whimbrelTextSecondary)
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
-                    TextEditor(text: $summaryDraftText)
-                        .font(.system(size: appState.readingFontSize + 2, design: .default))
-                        .foregroundStyle(Color.whimbrelTextPrimary)
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 80)
-                        .accessibilityIdentifier("meeting-note-summary-editor")
-                        .accessibilityLabel("Summary")
-                        .onChange(of: summaryDraftText) { _, _ in
-                            guard !suppressSummaryAutosave else { return }
-                            scheduleSummarySave()
-                        }
-                }
-                editableList(title: String(localized: "Decisions"), items: $decisionsDraftItems, onChange: scheduleDecisionsSave)
-                actionItemsSection
-                editableList(title: String(localized: "Open questions"), items: $openQuestionsDraftItems, onChange: scheduleOpenQuestionsSave)
-                provenanceChips
-            }
-            .whimbrelCard()
+            summaryEditorsCard
         } else {
             Text("Summary will be generated once the meeting ends.")
                 .font(.whimbrelBody(.callout))
@@ -934,7 +989,7 @@ struct MeetingDetailContentView: View {
     }
 
     @ViewBuilder
-    private var provenanceChips: some View {
+    var provenanceChips: some View {
         HStack(spacing: Spacing.xs) {
             if let currentProvider, let currentModel {
                 WhimbrelMetadataChip(text: String(localized: "Generated by \(currentModel) (\(currentProvider))"))
@@ -951,7 +1006,7 @@ struct MeetingDetailContentView: View {
     /// because index-identity `ForEach` plus a same-frame delete can otherwise hand a
     /// stale index to a still-in-flight `TextField` binding.
     @ViewBuilder
-    private func editableList(title: String, items: Binding<[String]>, onChange: @escaping () -> Void) -> some View {
+    func editableList(title: String, items: Binding<[String]>, onChange: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             Text(title).font(.whimbrelBody(.caption).bold()).foregroundStyle(Color.whimbrelTextSecondary)
             ForEach(items.wrappedValue.indices, id: \.self) { index in
@@ -1013,7 +1068,7 @@ struct MeetingDetailContentView: View {
     }
 
     @ViewBuilder
-    private var actionItemsSection: some View {
+    var actionItemsSection: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             Text("Action items").font(.whimbrelBody(.caption).bold()).foregroundStyle(Color.whimbrelTextSecondary)
             ForEach(actionItems) { item in
@@ -1057,7 +1112,7 @@ struct MeetingDetailContentView: View {
     /// way `ForEach($array) { $item in ... }` normally allows. These construct a fresh
     /// `Binding` that reads the current value out of `actionItems` by id and, on write,
     /// replaces that array element with a copy carrying the new value.
-    private func actionItemCompletedBinding(id: Int64) -> Binding<Bool> {
+    func actionItemCompletedBinding(id: Int64) -> Binding<Bool> {
         Binding(
             get: { actionItems.first(where: { $0.id == id })?.completed ?? false },
             set: { newValue in
@@ -1078,7 +1133,7 @@ struct MeetingDetailContentView: View {
         )
     }
 
-    private func actionItemTextBinding(id: Int64) -> Binding<String> {
+    func actionItemTextBinding(id: Int64) -> Binding<String> {
         Binding(
             get: { actionItems.first(where: { $0.id == id })?.text ?? "" },
             set: { newValue in
@@ -1103,7 +1158,7 @@ struct MeetingDetailContentView: View {
     }
 
     @ViewBuilder
-    private var regenerateSection: some View {
+    var regenerateSection: some View {
         if transcriptText != nil {
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 ProviderModelPicker(
@@ -1133,7 +1188,7 @@ struct MeetingDetailContentView: View {
     }
 
     @ViewBuilder
-    private var transcriptSection: some View {
+    var transcriptSection: some View {
         if appState.noSpeechDetected(meeting) {
             Text("No speech detected in this recording. The recording is still here: choose Meeting options › Transcribe again.")
                 .font(.whimbrelBody(.caption))
@@ -1190,7 +1245,7 @@ struct MeetingDetailContentView: View {
     /// from those — this is what makes a meeting captured on one Mac actually readable
     /// on another (confirmed missing via live dogfooding 2026-08-05: meeting entry
     /// synced, transcript did not).
-    private func loadTranscriptIfNeeded() {
+    func loadTranscriptIfNeeded() {
         guard transcriptText == nil, !transcriptLoadFailed, let path = meeting.transcriptPath else { return }
         let parts = parts
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1215,7 +1270,7 @@ struct MeetingDetailContentView: View {
     /// 2026-08-05: meeting entry synced, transcript did not). FFI calls must serialize
     /// through `CoreMemoryStore.accessQueue`, not the generic global queue the caller's
     /// file read ran on (see `CoreMemoryStore`'s own not-thread-safe contract).
-    private func loadTranscriptFromSyncedSegments() {
+    func loadTranscriptFromSyncedSegments() {
         guard let store = appState.coreStore else {
             DispatchQueue.main.async { transcriptLoadFailed = true }
             return
@@ -1265,7 +1320,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func regenerate() {
+    func regenerate() {
         guard let transcriptText, !isRegenerating else { return }
         isRegenerating = true
         regenerateError = nil
@@ -1284,7 +1339,7 @@ struct MeetingDetailContentView: View {
     }
 
     /// What a finished Regenerate or Re-summarize does with its result (`isRegenerating` is already cleared).
-    private func finishRegeneration(_ outcome: Result<CoreMeetingSummary, CoreLLMError>?) {
+    func finishRegeneration(_ outcome: Result<CoreMeetingSummary, CoreLLMError>?) {
             switch outcome {
             case .some(.success(let summary)):
                 namesChanged = false
@@ -1326,9 +1381,9 @@ struct MeetingDetailContentView: View {
 
     // MARK: - Note-overrides autosave
 
-    private static let autosaveDebounceNanoseconds: UInt64 = 1_500_000_000
+    static let autosaveDebounceNanoseconds: UInt64 = 1_500_000_000
 
-    private func scheduleSummarySave() {
+    func scheduleSummarySave() {
         summarySaveTask?.cancel()
         let meetingId = meeting.id
         let text = summaryDraftText
@@ -1350,7 +1405,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func scheduleDecisionsSave() {
+    func scheduleDecisionsSave() {
         decisionsSaveTask?.cancel()
         let meetingId = meeting.id
         let items = decisionsDraftItems
@@ -1372,7 +1427,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func scheduleOpenQuestionsSave() {
+    func scheduleOpenQuestionsSave() {
         openQuestionsSaveTask?.cancel()
         let meetingId = meeting.id
         let items = openQuestionsDraftItems
@@ -1396,7 +1451,7 @@ struct MeetingDetailContentView: View {
 
     // MARK: - Action items
 
-    private func persistActionItemCompleted(id: Int64, completed: Bool) {
+    func persistActionItemCompleted(id: Int64, completed: Bool) {
         guard let store = appState.coreStore else { return }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         CoreMemoryStore.accessQueue.async {
@@ -1404,7 +1459,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func scheduleActionItemTextSave(id: Int64, text: String) {
+    func scheduleActionItemTextSave(id: Int64, text: String) {
         actionItemTextSaveTasks[id]?.cancel()
         guard let store = appState.coreStore else { return }
         actionItemTextSaveTasks[id] = Task { @MainActor in
@@ -1417,7 +1472,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func deleteActionItem(id: Int64) {
+    func deleteActionItem(id: Int64) {
         guard let store = appState.coreStore else { return }
         actionItemTextSaveTasks[id]?.cancel()
         actionItemTextSaveTasks[id] = nil
@@ -1427,7 +1482,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func addActionItem() {
+    func addActionItem() {
         guard let store = appState.coreStore else { return }
         let meetingId = meeting.id
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
@@ -1445,7 +1500,7 @@ struct MeetingDetailContentView: View {
 
     /// `by` is `-1` for "move up" / `+1` for "move down" -- explicit buttons, not
     /// drag-and-drop-only, per the spec's accessibility requirement.
-    private func moveActionItem(id: Int64, by offset: Int) {
+    func moveActionItem(id: Int64, by offset: Int) {
         guard let index = actionItems.firstIndex(where: { $0.id == id }) else { return }
         let newIndex = index + offset
         guard actionItems.indices.contains(newIndex) else { return }
@@ -1481,7 +1536,7 @@ struct MeetingDetailContentView: View {
     /// generated items -- Important #3 in the final review). `replaceMeetingActionItemsFromGenerated`
     /// is safe unconditionally in this branch precisely because we've already confirmed
     /// there's no `source == "user"` row and nothing completed/edited to lose.
-    private func applyRegeneratedSummary(_ summary: CoreMeetingSummary, newGenerationUnixMs: Int64) {
+    func applyRegeneratedSummary(_ summary: CoreMeetingSummary, newGenerationUnixMs: Int64) {
         summarySaveTask?.cancel()
         decisionsSaveTask?.cancel()
         openQuestionsSaveTask?.cancel()
@@ -1501,7 +1556,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func resolveRegenerationConflict(_ choice: RegenerationConflictChoice, conflict: PendingRegenerationConflict) {
+    func resolveRegenerationConflict(_ choice: RegenerationConflictChoice, conflict: PendingRegenerationConflict) {
         guard let store = appState.coreStore else {
             pendingConflict = nil
             return
@@ -1548,7 +1603,7 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private static func formattedMeetingTime(startUnixMs: Int64, endUnixMs: Int64?) -> String {
+    static func formattedMeetingTime(startUnixMs: Int64, endUnixMs: Int64?) -> String {
         let start = Date(timeIntervalSince1970: TimeInterval(startUnixMs) / 1000)
         let startText = start.formatted(date: .abbreviated, time: .shortened)
         guard let endUnixMs else { return startText }
@@ -1567,6 +1622,13 @@ enum MeetingDetailLogic {
     static func summaryPlaceholder(processing: Bool, refusedForExclusion: Bool) -> SummaryPlaceholder {
         if processing { return .transcribing }
         return refusedForExclusion ? .refusedForExclusion : .none
+    }
+
+    /// Whether the reading view offers a Regenerate next to the "no summary" message: only once the
+    /// meeting is over and transcribed, never while a summary is being made, and never in edit mode
+    /// (which has its own Regenerate).
+    static func showsRegenerateWithoutSummary(isCompleted: Bool, hasSummaryContent: Bool, hasTranscript: Bool, isProcessing: Bool, isRegenerating: Bool, isEditing: Bool) -> Bool {
+        isCompleted && !hasSummaryContent && hasTranscript && !isProcessing && !isRegenerating && !isEditing
     }
 
     private static let dividerPrefix = "\u{2014} rejoined "

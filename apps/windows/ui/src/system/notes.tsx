@@ -11,16 +11,23 @@ export interface WTranscriptLineProps {
   speaker: string;
   text: string;
   state?: "normal" | "cited" | "live";
+  /** The line's id in the data, so a screen can scroll to it. */
+  lineId?: number;
+  /** Replaces the speaker chip, for a speaker the person can name. */
+  speakerSlot?: ReactNode;
 }
 
-export function WTranscriptLine({ time, speaker, text, state = "normal" }: WTranscriptLineProps) {
+export function WTranscriptLine({ time, speaker, text, state = "normal", lineId, speakerSlot }: WTranscriptLineProps) {
   return (
     <li
       className={state === "normal" ? "w-transcript-line" : `w-transcript-line w-transcript-${state}`}
       aria-current={state === "cited" ? "true" : undefined}
+      data-line-id={lineId}
+      // A line a screen can scroll to can also take focus (not a tab stop), so a jump lands the reader on it.
+      tabIndex={lineId != null ? -1 : undefined}
     >
       <span className="w-transcript-time">{time}</span>
-      <WSpeakerChip name={speaker} size="small" />
+      {speakerSlot ?? <WSpeakerChip name={speaker} size="small" />}
       <p className="w-transcript-text">{text}</p>
       {state === "live" ? <span className="w-listening">{t("Listening")}</span> : null}
       {state === "cited" ? <span className="w-visually-hidden">{t("Cited by a note")}</span> : null}
@@ -43,15 +50,17 @@ export interface WSourceMarkProps {
   selected?: boolean;
   /** Called with the mark's number, so the caller selects the matching source. */
   onSelect: (number: number) => void;
+  /** The mark's name for assistive tech when "Source 3" is not enough ("Source 3, Jo, 18:25"). */
+  label?: string;
 }
 
-export function WSourceMark({ number, selected, onSelect }: WSourceMarkProps) {
+export function WSourceMark({ number, selected, onSelect, label }: WSourceMarkProps) {
   return (
     <button
       type="button"
       className="w-mark"
       aria-pressed={!!selected}
-      aria-label={t("Source {number}", { number })}
+      aria-label={label ?? t("Source {number}", { number })}
       onClick={() => onSelect(number)}
     >
       {number}
@@ -62,9 +71,10 @@ export function WSourceMark({ number, selected, onSelect }: WSourceMarkProps) {
 export interface WSourceCardProps {
   number: number;
   appName: string;
-  appIcon: WIconName;
-  /** "Transcript moment" or "Seen on screen" */
-  kind: string;
+  /** Left out in the compact margin card. */
+  appIcon?: WIconName;
+  /** "Transcript moment" or "Seen on screen"; left out in the compact margin card. */
+  kind?: string;
   title?: string;
   /** "18:25" */
   time: string;
@@ -89,11 +99,11 @@ export function WSourceCard(p: WSourceCardProps) {
         <span className="w-source-num" aria-hidden="true">
           {p.number}
         </span>
-        <WIcon name={p.appIcon} size={16} />
+        {p.appIcon ? <WIcon name={p.appIcon} size={16} /> : null}
         <span className="w-source-name">{p.appName}</span>
         <span className="w-source-time">{p.time}</span>
       </div>
-      <span className="w-source-kind">{p.kind}</span>
+      {p.kind ? <span className="w-source-kind">{p.kind}</span> : null}
       {p.title ? <span className="w-source-title">{p.title}</span> : null}
       {p.quote ? <q className="w-source-quote">{p.quote}</q> : null}
       <button type="button" className="w-source-open" onClick={p.onOpen}>
@@ -116,21 +126,28 @@ export interface WNoteBlockProps {
   /** Which source mark is selected, if any. */
   selectedSource?: number | null;
   onSelectSource?: (number: number) => void;
+  /** Each mark's name for assistive tech, by number. */
+  sourceLabels?: Record<number, string>;
   /** Check blocks only. */
   checked?: boolean;
   onCheck?: (next: boolean) => void;
+  /** Whether a screen reader is told "Written by Whimbrel" with this block. Defaults to yes for text, no for a heading; a screen
+   *  that says it once for a section turns it off on the lines and on in the section's heading. */
+  announceAi?: boolean;
 }
 
 export function WNoteBlock(p: WNoteBlockProps) {
   const ai = p.author === "whimbrel";
   const cls = ["w-note-block", `w-note-${p.kind}`, ai ? "w-note-ai" : "", p.selected ? "w-note-selected" : ""].filter(Boolean).join(" ");
   const marks = ai
-    ? (p.sources ?? []).map((n) => <WSourceMark key={n} number={n} selected={p.selectedSource === n} onSelect={(x) => p.onSelectSource?.(x)} />)
+    ? (p.sources ?? []).map((n) => <WSourceMark key={n} number={n} label={p.sourceLabels?.[n]} selected={p.selectedSource === n} onSelect={(x) => p.onSelectSource?.(x)} />)
     : null;
+  const say = ai && (p.announceAi ?? p.kind !== "heading");
   if (p.kind === "heading") {
     return (
       <h3 className={cls}>
         <span className="w-note-text">{p.text}</span>
+        {say ? <span className="w-visually-hidden">{". "}{t("Written by Whimbrel")}</span> : null}
       </h3>
     );
   }
@@ -140,7 +157,7 @@ export function WNoteBlock(p: WNoteBlockProps) {
         <input type="checkbox" checked={!!p.checked} aria-label={p.text} onChange={(e) => p.onCheck?.(e.target.checked)} />
       ) : null}
       <p className="w-note-text">
-        {ai ? <span className="w-visually-hidden">{t("Written by Whimbrel")}{". "}</span> : null}
+        {say ? <span className="w-visually-hidden">{t("Written by Whimbrel")}{". "}</span> : null}
         {p.text}
         {marks}
       </p>
@@ -159,24 +176,33 @@ export interface WActionItemRowProps {
   sourceTime?: string;
   done: boolean;
   onToggle: (next: boolean) => void;
+  /** The box cannot be changed here (another device's meeting). */
+  disabled?: boolean;
   onOpenSource?: () => void;
   /** A line Whimbrel wrote: reading serif in the AI ink, with its numbered source marks. */
   sources?: number[];
   selectedSource?: number | null;
   onSelectSource?: (number: number) => void;
+  sourceLabels?: Record<number, string>;
+  /** The row's element: a list item (the default) or a div, for a screen that keeps the rows in one list of its own. */
+  as?: "li" | "div";
+  /** Tell a screen reader "Written by Whimbrel" with this row (a Whimbrel line only). Off by default. */
+  announceAi?: boolean;
 }
 
 /** Every control is drawn at rest. Nothing waits for hover. */
 export function WActionItemRow(p: WActionItemRowProps) {
+  const Row = p.as ?? "li";
   return (
-    <li className={p.done ? "w-action w-action-done" : "w-action"}>
+    <Row className={p.done ? "w-action w-action-done" : "w-action"}>
       <label className="w-action-check">
-        <input type="checkbox" checked={p.done} aria-label={p.text} onChange={(e) => p.onToggle(e.target.checked)} />
+        <input type="checkbox" checked={p.done} disabled={p.disabled} aria-label={p.text} onChange={(e) => p.onToggle(e.target.checked)} />
       </label>
       <span className={p.sources ? "w-action-text w-action-ai" : "w-action-text"}>
+        {p.sources && p.announceAi ? <span className="w-visually-hidden">{t("Written by Whimbrel")}{". "}</span> : null}
         {p.text}
         {(p.sources ?? []).map((n) => (
-          <WSourceMark key={n} number={n} selected={p.selectedSource === n} onSelect={(x) => p.onSelectSource?.(x)} />
+          <WSourceMark key={n} number={n} label={p.sourceLabels?.[n]} selected={p.selectedSource === n} onSelect={(x) => p.onSelectSource?.(x)} />
         ))}
       </span>
       <span className="w-action-meta">
@@ -188,6 +214,6 @@ export function WActionItemRow(p: WActionItemRowProps) {
           </button>
         ) : null}
       </span>
-    </li>
+    </Row>
   );
 }

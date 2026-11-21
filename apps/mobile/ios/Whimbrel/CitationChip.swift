@@ -54,7 +54,7 @@ struct CitationChip: View {
         let text = CitationChipLabel.text(for: card, deviceName: card.deviceId.map(labels.label(for:)))
         switch target {
         case .none:
-            chip(text).accessibilityLabel(text)
+            chip(text, opens: false).accessibilityLabel(text)
         case .capture(let id):
             Button { openCapture(id) } label: { chip(text) }
                 .buttonStyle(.plain)
@@ -68,16 +68,24 @@ struct CitationChip: View {
         }
     }
 
-    private func chip(_ text: String) -> some View {
-        Text(text)
-            .font(.footnote)
-            .foregroundStyle(Color.theme(card.found ? .textPrimary : .textSecondary))
-            .multilineTextAlignment(.leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(minHeight: 44, alignment: .leading)
-            .background(Color.theme(.backgroundCard), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.theme(.border), lineWidth: 1))
+    /// A source that opens shows a chevron; one that does not is plain text on the same card.
+    private func chip(_ text: String, opens: Bool = true) -> some View {
+        HStack(spacing: WTokens.Space.sm) {
+            Text(text)
+                .wType(WTokens.TypeScale.secondary)
+                .foregroundStyle(Color.theme(card.found ? .textPrimary : .textSecondary))
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if opens {
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.theme(.textSecondary)).accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, WTokens.Space.md)
+        .padding(.vertical, WTokens.Space.sm)
+        .frame(minHeight: WTokens.Size.target, alignment: .leading)
+        .wCard()
+        .contentShape(Rectangle())
     }
 }
 
@@ -94,17 +102,18 @@ struct CaptureSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if let item {
-                        Text(item.title).font(.system(.title3, design: .serif)).foregroundStyle(Color.theme(.textPrimary))
+                        Text(item.title).wReading(WTokens.TypeScale.title).foregroundStyle(Color.theme(.textPrimary))
                         if let url = item.url, !url.isEmpty {
-                            Text(url).font(.footnote).foregroundStyle(Color.theme(.textSecondary))
+                            Text(url).wType(WTokens.TypeScale.secondary).foregroundStyle(Color.theme(.textSecondary))
                         }
-                        Text(item.text).foregroundStyle(Color.theme(.textPrimary)).textSelection(.enabled)
+                        Text(item.text).wReading(WTokens.TypeScale.reading).foregroundStyle(Color.theme(.textPrimary)).textSelection(.enabled)
                     } else {
                         Text(loaded ? "This capture isn't on this iPhone." : "Loading…").foregroundStyle(Color.theme(.textSecondary))
                     }
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(WTokens.Space.lg)
+                .frame(maxWidth: WTokens.Size.contentMax, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
             .background(Color.theme(.backgroundPage).ignoresSafeArea())
             .navigationTitle("Screen capture")

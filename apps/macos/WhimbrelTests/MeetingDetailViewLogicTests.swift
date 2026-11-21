@@ -254,4 +254,17 @@ final class MeetingDetailViewLogicTests: XCTestCase {
         XCTAssertEqual(MeetingDetailLogic.summaryPlaceholder(processing: false, refusedForExclusion: true), .refusedForExclusion)
         XCTAssertEqual(MeetingDetailLogic.summaryPlaceholder(processing: false, refusedForExclusion: false), .none)
     }
+
+    func test_regenerate_action_shows_only_for_a_finished_empty_summary_with_a_transcript() {
+        func shows(completed: Bool = true, hasSummary: Bool = false, hasTranscript: Bool = true, processing: Bool = false, regenerating: Bool = false, editing: Bool = false) -> Bool {
+            MeetingDetailLogic.showsRegenerateWithoutSummary(isCompleted: completed, hasSummaryContent: hasSummary, hasTranscript: hasTranscript, isProcessing: processing, isRegenerating: regenerating, isEditing: editing)
+        }
+        XCTAssertTrue(shows())
+        XCTAssertFalse(shows(completed: false), "still recording")
+        XCTAssertFalse(shows(hasSummary: true))
+        XCTAssertFalse(shows(hasTranscript: false))
+        XCTAssertFalse(shows(processing: true), "transcribing")
+        XCTAssertFalse(shows(regenerating: true), "summary being generated")
+        XCTAssertFalse(shows(editing: true), "edit mode has its own Regenerate")
+    }
 }

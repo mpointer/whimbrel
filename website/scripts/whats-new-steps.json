@@ -1,0 +1,149 @@
+{
+ "client": [
+  {
+   "tab": "Topics"
+  },
+  {
+   "wait": 1800
+  },
+  {
+   "scroll": ".client-controls"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "shot": "wn-client"
+  },
+  {
+   "select": ".client-controls select",
+   "value": "12"
+  },
+  {
+   "wait": 600
+  },
+  {
+   "shot": "wn-keep"
+  },
+  {
+   "css": ".client-controls .toggle input"
+  },
+  {
+   "wait": 700
+  },
+  {
+   "scroll": ".client-controls .notice"
+  },
+  {
+   "shot": "wn-exclude"
+  },
+  {
+   "click": "Export\u2026"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "shot": "wn-export"
+  },
+  {
+   "click": "Cancel"
+  },
+  {
+   "wait": 900
+  },
+  {
+   "scroll": ".client-controls"
+  },
+  {
+   "click": "Delete this client\u2026"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "fill": "Acme",
+   "sel": "input[placeholder=\"Client name\"]"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "shot": "wn-delete"
+  },
+  {
+   "click": "Delete client and chosen items"
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "shot": "wn-receipt"
+  },
+  {
+   "scroll": ".client-review-body .client-left:last-of-type",
+   "block": "end"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "shot": "wn-receipt-left"
+  }
+ ],
+ "encryption": [
+  {
+   "tab": "Settings"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click": "Capture & Privacy",
+   "exact": false
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "scroll": "section[aria-labelledby=encryption-heading]",
+   "block": "start"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "shot": "wn-encrypt"
+  },
+  {
+   "click": "Encrypt the database\u2026"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "fill": "Whimbrel keeps notes close",
+   "sel": "input[autocomplete=new-password] >> nth=0"
+  },
+  {
+   "fill": "Whimbrel keeps notes close",
+   "sel": "input[autocomplete=new-password] >> nth=1"
+  },
+  {
+   "click": "Create recovery key"
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "scroll": "#setup-step-file",
+   "block": "start"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "shot": "wn-recovery"
+  }
+ ]
+}

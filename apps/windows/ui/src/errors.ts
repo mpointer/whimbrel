@@ -50,7 +50,10 @@ export function providerFailureReason(reason: ProviderFailureReason): string | n
     case "rate_limited":
       return t("{provider} is busy or out of credit. Try again shortly.", { provider: name(reason.provider) });
     case "credit_exhausted":
-      return t("Whimbrel AI credit is used up. Add credit in Settings.");
+      // A Plus account's message names the month's allowance too (the Mac's PlusCopy.creditExhaustedMessage).
+      return reason.plus
+        ? t("Your Whimbrel AI credit or monthly allowance is used up. Add credit in Settings, or choose another model in Settings → AI.")
+        : t("Whimbrel AI credit is used up. Add credit in Settings.");
     case "model_unavailable":
       return t("{provider} doesn't offer the model {model} to your key. Choose another in Settings → AI.", {
         provider: name(reason.provider),

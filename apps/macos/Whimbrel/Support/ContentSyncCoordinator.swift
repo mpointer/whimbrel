@@ -114,11 +114,13 @@ final class ContentSyncCoordinator: ObservableObject {
 
     /// A round that ended without reaching the core still counts as a failed round: backs off,
     /// shows in the log, and moves `lastRoundFinishedAt` so the watchdog sees the loop is alive.
-    private func failRound(reason: String, message: String) {
+    @discardableResult
+    private func failRound(reason: String, message: String) -> RoundResult {
         consecutiveFailures += 1
         lastSyncError = message
         log.error("syncNow: round not run (\(self.consecutiveFailures, privacy: .public) in a row): \(reason, privacy: .public)")
         recordRoundFinished(Date())
+        return .failed(message)
     }
 
     init(coreStore: CoreMemoryStore?, backgroundStore: CoreMemoryStore? = nil, syncState: SyncState, deviceId: String) {
@@ -270,29 +272,31 @@ final class ContentSyncCoordinator: ObservableObject {
     /// left the UI showing literally nothing (neither an error nor a sync time) if
     /// that guard ever failed on the first-ever call, indistinguishable from "never
     /// ran at all."
-    func syncNow() async {
+    @discardableResult
+    func syncNow() async -> RoundResult {
+        // One round at a time: the loop and the "Sync now" button both come through here, and a second
+        // round would only queue behind the first on the store lane.
+        guard !roundInFlight else { return .alreadyRunning }
+        roundInFlight = true
+        defer { roundInFlight = false }
         log.log("syncNow: starting (status=\(String(describing: self.syncState.status), privacy: .public))")
         await syncState.renewIfDue()
         // A replaced loop wakes up here after its wait; the new loop owns the next round.
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return .skipped }
         guard case let .ready(tursoToken, tursoDatabaseUrl) = syncState.status else {
-            failRound(reason: "sync status is not ready", message: String(localized: "Not enrolled in sync yet."))
-            return
+            return failRound(reason: "sync status is not ready", message: String(localized: "Not enrolled in sync yet."))
         }
         let groupKeyBase64: String
         do {
             guard let loaded = try SyncKeychain.loadGroupKey() else {
-                failRound(reason: "no group key in the Keychain", message: String(localized: "No group key available yet."))
-                return
+                return failRound(reason: "no group key in the Keychain", message: String(localized: "No group key available yet."))
             }
             groupKeyBase64 = loaded
         } catch {
-            failRound(reason: "reading the group key from the Keychain failed: \(String(describing: error))", message: String(localized: "No group key available yet."))
-            return
+            return failRound(reason: "reading the group key from the Keychain failed: \(String(describing: error))", message: String(localized: "No group key available yet."))
         }
         guard let coreStore else {
-            failRound(reason: "the local store is unavailable", message: String(localized: "Local store is unavailable."))
-            return
+            return failRound(reason: "the local store is unavailable", message: String(localized: "Local store is unavailable."))
         }
 
         let deviceId = self.deviceId
@@ -346,14 +350,121 @@ final class ContentSyncCoordinator: ObservableObject {
                 hasEverSynced = true
                 UserDefaults.standard.set(true, forKey: Self.everSyncedKey)
             }
+            // `lastSuccess` is not published and was set after the awaits above, so say so now: the stale
+            // line must clear as soon as a round (the loop's or the button's) works.
+            objectWillChange.send()
+            return .succeeded
         } else {
             consecutiveFailures += 1
             let cause = CoreMemoryStore.lastSyncContentError() ?? "unknown"
             log.error("syncNow: failed (\(self.consecutiveFailures, privacy: .public) in a row): \(cause, privacy: .public)")
-            lastSyncError = String(localized: "Content sync failed. Will retry automatically.")
+            let message = String(localized: "Content sync failed. Will retry automatically.")
+            lastSyncError = message
             await syncState.renewIfDue(afterFailure: true)
             recordRoundFinished(Date())
+            return .failed(message)
         }
+    }
+
+    /// How a round ended, for the "Sync now" button.
+    enum RoundResult: Equatable {
+        case succeeded
+        case failed(String)
+        /// Another round holds the lane; this call did nothing.
+        case alreadyRunning
+        /// The loop was replaced while this call waited; the new loop owns the next round.
+        case skipped
+    }
+
+    /// True from the start of a round to its end, so the button can show progress for the loop's rounds too.
+    @Published private(set) var roundInFlight = false
+
+    /// Whether a manual round can run: sync is on and signed in.
+    var canSyncNow: Bool {
+        if case .ready = syncState.status { return true }
+        return false
+    }
+
+    var syncStatus: SyncStatus { syncState.status }
+
+    /// The "Sync now" button's round: one `syncNow`, now instead of after the loop's wait. It shares
+    /// `syncNow`'s one-round guard, so it never runs beside the loop's round. It does not reset the
+    /// failure count: a failed manual round backs the loop off like any other failed round.
+    func syncNowManually() async -> SyncNowModel.Outcome {
+        guard canSyncNow else { return .unavailable }
+        switch await syncNow() {
+        case .succeeded: return .synced
+        case .failed(let message): return .failed(message)
+        case .alreadyRunning: return .alreadyRunning
+        case .skipped: return .unavailable
+        }
+    }
+}
+
+/// The "Sync now" button's state and outcome line (Settings, Devices; the sidebar's stale warning).
+/// Holds no sync logic: `run` is the coordinator's `syncNowManually`.
+@MainActor
+final class SyncNowModel: ObservableObject {
+    enum Outcome: Equatable {
+        case synced
+        case failed(String)
+        case alreadyRunning
+        case unavailable
+    }
+
+    enum Phase: Equatable {
+        case idle
+        case syncing
+        case synced
+        case failed(String)
+    }
+
+    enum ButtonState: Equatable {
+        case enabled
+        case syncing
+        case disabled
+    }
+
+    @Published private(set) var phase: Phase = .idle
+
+    private let canSync: () -> Bool
+    private let run: () async -> Outcome
+
+    init(canSync: @escaping () -> Bool, run: @escaping () async -> Outcome) {
+        self.canSync = canSync
+        self.run = run
+    }
+
+    /// Enabled only when sync is running (`.ready`). A stopped sync (signed out, waiting, error) has
+    /// nothing to run a round against; the loop's own recovery handles `.error`.
+    static func buttonState(status: SyncStatus, roundRunning: Bool, phase: Phase) -> ButtonState {
+        guard case .ready = status else { return .disabled }
+        if roundRunning || phase == .syncing { return .syncing }
+        return .enabled
+    }
+
+    /// The line next to the button, nil when there is nothing to say.
+    var message: String? {
+        switch phase {
+        case .idle, .syncing: return nil
+        case .synced: return String(localized: "Synced")
+        case .failed(let text): return text
+        }
+    }
+
+    func start() async {
+        guard phase != .syncing, canSync() else { return }
+        phase = .syncing
+        switch await run() {
+        case .synced: phase = .synced
+        case .failed(let text): phase = .failed(text)
+        case .alreadyRunning: phase = .failed(String(localized: "A sync is already running."))
+        case .unavailable: phase = .idle
+        }
+    }
+
+    func clearOutcome() {
+        if phase != .syncing { phase = .idle }
     }
 }
 

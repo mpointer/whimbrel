@@ -91,6 +91,8 @@ fn fts_query(terms: &[String]) -> Option<String> {
 pub(crate) fn fts_query_for(terms: &[String]) -> Option<String> {
     let mut phrases: Vec<String> = Vec::new();
     for t in terms {
+        // The spelling without invisible characters (a soft hyphen would split the word).
+        let t = crate::words::without_invisibles(t);
         let words: Vec<Vec<String>> = t
             .split(|c: char| !c.is_alphanumeric())
             .filter(|w| !w.is_empty())
@@ -423,7 +425,8 @@ impl Store {
     /// Rows whose text names any of `terms`: email and calendar items, meeting titles and
     /// transcripts, slides, screen captures and assistant conversations. One hit per
     /// (kind, ref_id), newest first. Full-text indexes narrow the candidates; `confirm`
-    /// (the caller's whole-word matcher, `llm::guard::ExclusionSet::find_in`) decides, so
+    /// (the caller's whole-word matcher: `llm::guard::ExclusionSet::names_in` for the delete
+    /// inventory, which never counts merely undecodable text) decides, so
     /// "Ann" never finds "Annual".
     pub fn name_hits(
         &self,
@@ -439,7 +442,8 @@ impl Store {
     /// the client's everywhere, not only where the summary path looks.
     /// Every text about a meeting that a user or a model wrote (fix round 4, S1): the workspace
     /// draft (the Mac never copies it to `meeting.notes`), action items, follow-ups, the people
-    /// named as speakers, live alerts, live transcript lines, slide text and attendee details.
+    /// named as speakers, live alerts, marker labels, line sources (line, owner, due date, anchor), live
+    /// transcript lines, slide text and attendee details.
     /// Keep in step with `Store::meeting_authored_text` and the exclusion triggers.
     pub(crate) fn meeting_text_hits(
         &self,
@@ -460,6 +464,8 @@ impl Store {
              coalesce((SELECT group_concat(quote || ' ' || restatement || ' ' || coalesce(asker, '') || ' ' || coalesce(draft_json, ''), ' ') \
                        FROM live_alert WHERE meeting_id = m.id), '') || ' ' || \
              coalesce((SELECT group_concat(label, ' ') FROM meeting_marker WHERE meeting_id = m.id AND label IS NOT NULL), '') || ' ' || \
+             coalesce((SELECT group_concat(line_text || ' ' || coalesce(owner, '') || ' ' || coalesce(due, '') || ' ' || coalesce(anchor, ''), ' ') \
+                       FROM meeting_line_source WHERE meeting_id = m.id), '') || ' ' || \
              coalesce((SELECT group_concat(text, ' ') FROM live_transcript_segment WHERE meeting_id = m.id), '') || ' ' || \
              coalesce((SELECT group_concat(ocr_text, ' ') FROM meeting_snapshot WHERE meeting_id = m.id), '') \
              FROM meeting m LEFT JOIN meeting_note_draft d ON d.meeting_id = m.id{filter}",

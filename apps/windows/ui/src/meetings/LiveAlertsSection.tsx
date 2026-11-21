@@ -6,6 +6,7 @@ import { dateTimeLabel } from "../library/rows";
 import type { LiveAlertView } from "../generated/types";
 import { useL10n } from "../l10n";
 import { shouldPoll } from "./liveAlertsModel";
+import { clockToCs } from "./redesign/noteModel";
 
 /**
  * "Questions for you": the live question alerts heard in this meeting, each with its draft
@@ -18,10 +19,13 @@ export function LiveAlertsSection({
   meetingId,
   recording,
   endedUnixMs,
+  onJump,
 }: {
   meetingId: number;
   recording: boolean;
   endedUnixMs: number | null;
+  /** The redesigned note passes this: "Jump to moment" opens the transcript at the time it was asked, in centiseconds. */
+  onJump?: (cs: number) => void;
 }) {
   const { locale, t } = useL10n();
   const [rows, setRows] = useState<LiveAlertView[]>([]);
@@ -81,6 +85,13 @@ export function LiveAlertsSection({
             </div>
           )}
           {row.sourcesElsewhere && <p className="muted small">{t("Sources are on the device that recorded this meeting.")}</p>}
+          {onJump && clockToCs(row.askedAt) != null && (
+            <div className="toolbar">
+              <button className="mode" onClick={() => onJump(clockToCs(row.askedAt) ?? 0)}>
+                {t("Jump to moment")}
+              </button>
+            </div>
+          )}
         </div>
       ))}
     </section>

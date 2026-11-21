@@ -1832,6 +1832,40 @@
         }
       }
     },
+    "About the numbers" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zu den Nummern"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acerca de los números"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "À propos des numéros"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "À propos des numéros"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sobre os números"
+          }
+        }
+      }
+    },
     "About this PC" : {
       "localizations" : {
         "de" : {
@@ -3545,10 +3579,10 @@
         }
       }
     },
-    "Answered locally: a client named here is excluded from hosted models." : {
+    "Answered locally: this question involves a client excluded from hosted models." : {
       "shouldTranslate" : false
     },
-    "Answering on this PC: this question names a client excluded from hosted models…" : {
+    "Answering on this PC: this question involves a client excluded from hosted models…" : {
       "shouldTranslate" : false
     },
     "Any app" : {
@@ -5081,6 +5115,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "De volta às {time}"
+          }
+        }
+      }
+    },
+    "Back to the start" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zurück zum Anfang"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Volver al principio"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revenir au début"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revenir au début"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voltar ao início"
           }
         }
       }
@@ -10040,6 +10108,40 @@
         }
       }
     },
+    "Copy transcript" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transkript kopieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiar la transcripción"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copier la transcription"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copier la transcription"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiar a transcrição"
+          }
+        }
+      }
+    },
     "Copy what Whimbrel holds about this client into a folder you choose." : {
       "comment" : "Client controls (X6, Task 11; the Mac's Task 10 wording, with this PC's facts).",
       "localizations" : {
@@ -13725,41 +13827,6 @@
         }
       }
     },
-    "Deleting. Whimbrel first waits for other work on this PC to finish, which can take a few minutes." : {
-      "comment" : "Client controls (X6, Task 11; the Mac's Task 10 wording, with this PC's facts).",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Löschvorgang läuft. Whimbrel wartet zuerst, bis andere Arbeiten auf diesem PC abgeschlossen sind; das kann einige Minuten dauern."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Eliminando. Primero Whimbrel espera a que termine otro trabajo en esta PC, lo que puede tardar unos minutos."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Suppression en cours. Whimbrel attend d'abord la fin des autres tâches sur ce PC, ce qui peut prendre quelques minutes."
-          }
-        },
-        "fr-CA" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Suppression en cours. Whimbrel attend d'abord la fin des autres tâches sur ce PC, ce qui peut prendre quelques minutes."
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Excluindo. O Whimbrel primeiro espera outras tarefas neste PC terminarem, o que pode levar alguns minutos."
-          }
-        }
-      }
-    },
     "Deleting…" : {
       "localizations" : {
         "de" : {
@@ -14722,6 +14789,40 @@
         }
       }
     },
+    "Due {date}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fällig: {date}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vence el {date}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Échéance : {date}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Échéance : {date}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vence em {date}"
+          }
+        }
+      }
+    },
     "Each PC keeps its own skin." : {
       "localizations" : {
         "de" : {
@@ -14991,6 +15092,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Editar tópico"
+          }
+        }
+      }
+    },
+    "Edited by you" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Von Ihnen bearbeitet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Editado por ti"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modifié par vous"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modifié par vous"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Editado por você"
           }
         }
       }
@@ -17216,6 +17351,12 @@
           }
         }
       }
+    },
+    "Get Plus: $144 a year" : {
+      "shouldTranslate" : false
+    },
+    "Get Plus: $15 a month" : {
+      "shouldTranslate" : false
     },
     "Get a free Gemini key" : {
       "localizations" : {
@@ -19895,6 +20036,40 @@
         }
       }
     },
+    "Jump to moment" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zum Moment springen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ir al momento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aller à ce moment"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aller à ce moment"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ir para o momento"
+          }
+        }
+      }
+    },
     "Just written." : {
       "localizations" : {
         "de" : {
@@ -20133,6 +20308,9 @@
           }
         }
       }
+    },
+    "Keep my current setup" : {
+      "shouldTranslate" : false
     },
     "Keep my edits" : {
       "localizations" : {
@@ -21464,6 +21642,40 @@
         }
       }
     },
+    "Line at {time}, {speaker}: {text}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zeile bei {time}, {speaker}: {text}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Línea de las {time}, {speaker}: {text}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ligne à {time}, {speaker} : {text}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ligne à {time}, {speaker} : {text}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Linha em {time}, {speaker}: {text}"
+          }
+        }
+      }
+    },
     "Lines that mention you, and the minutes before them, go to your Ask model." : {
       "localizations" : {
         "de" : {
@@ -22346,6 +22558,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Gerenciar assinatura"
+          }
+        }
+      }
+    },
+    "Mark label" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Name der Markierung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Etiqueta de la marca"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Libellé du repère"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Libellé du repère"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rótulo da marca"
           }
         }
       }
@@ -24523,6 +24769,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Mais opções"
+          }
+        }
+      }
+    },
+    "More ways to copy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Weitere Kopieroptionen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Más formas de copiar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autres façons de copier"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autres façons de copier"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mais formas de copiar"
           }
         }
       }
@@ -30364,6 +30644,40 @@
         }
       }
     },
+    "Open in transcript at {time}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Im Transkript bei {time} öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir en la transcripción en {time}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir dans la transcription à {time}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir dans la transcription à {time}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir na transcrição em {time}"
+          }
+        }
+      }
+    },
     "Open items" : {
       "localizations" : {
         "de" : {
@@ -30598,6 +30912,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Abrir fonte em {time}"
+          }
+        }
+      }
+    },
+    "Open the transcript at {time}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transkript bei {time} öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir la transcripción en {time}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir la transcription à {time}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir la transcription à {time}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir a transcrição em {time}"
           }
         }
       }
@@ -31803,6 +32151,18 @@
         }
       }
     },
+    "Plus" : {
+      "shouldTranslate" : false
+    },
+    "Plus ends {date}. It won't renew." : {
+      "shouldTranslate" : false
+    },
+    "Plus includes a monthly Whimbrel AI allowance. Use it for your AI features?" : {
+      "shouldTranslate" : false
+    },
+    "Plus includes hosted sync on all your devices and a monthly Whimbrel AI allowance. Tax is added at checkout where it applies." : {
+      "shouldTranslate" : false
+    },
     "Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server." : {
       "localizations" : {
         "de" : {
@@ -31836,6 +32196,15 @@
           }
         }
       }
+    },
+    "Plus until {date}" : {
+      "shouldTranslate" : false
+    },
+    "Plus: {amount} of this month's AI allowance left" : {
+      "shouldTranslate" : false
+    },
+    "Plus: {amount} of this month's AI allowance left, resets {date}" : {
+      "shouldTranslate" : false
     },
     "Point the assistant at {address} and have it send the header \"Authorization: Bearer <your token>\" with each request." : {
       "localizations" : {
@@ -32041,6 +32410,9 @@
           }
         }
       }
+    },
+    "Prepaid credit: {amount} left" : {
+      "shouldTranslate" : false
     },
     "Prepare a Meeting Prep brief this many minutes before a meeting" : {
       "localizations" : {
@@ -34632,6 +35004,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Gerar resumo novamente"
+          }
+        }
+      }
+    },
+    "Regenerate the summary to add sources." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fassen Sie neu zusammen, um Quellen hinzuzufügen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Regenera el resumen para añadir fuentes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Régénérez le résumé pour ajouter des sources."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Régénérez le résumé pour ajouter des sources."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gere o resumo novamente para adicionar fontes."
           }
         }
       }
@@ -39054,6 +39460,40 @@
     "Show linked items" : {
       "shouldTranslate" : false
     },
+    "Show older meetings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ältere Meetings anzeigen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar reuniones anteriores"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voir les réunions passées"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voir les réunions passées"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar reuniões mais antigas"
+          }
+        }
+      }
+    },
     "Show screen captures" : {
       "localizations" : {
         "de" : {
@@ -39224,6 +39664,100 @@
         }
       }
     },
+    "Showing all {count} meetings" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Das einzige Meeting wird angezeigt"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Alle {count} Meetings werden angezeigt"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Mostrando la única reunión"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Mostrando las {count} reuniones"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Affichage de la réunion (1 au total)"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Affichage des {count} réunions"
+                }
+              }
+            }
+          }
+        },
+        "fr-CA" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Affichage de la réunion ({count})"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Affichage des {count} réunions"
+                }
+              }
+            }
+          }
+        },
+        "pt" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Mostrando todas as {count} reuniões"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Mostrando todas as {count} reuniões"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Showing the first part of a long transcript." : {
       "localizations" : {
         "de" : {
@@ -39254,6 +39788,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Mostrando o início de uma transcrição longa."
+          }
+        }
+      }
+    },
+    "Showing {loaded} of {total} meetings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{loaded} von {total} Meetings werden angezeigt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrando {loaded} de {total} reuniones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage de {loaded} réunions sur {total}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage de {loaded} réunions sur {total}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrando {loaded} de {total} reuniões"
           }
         }
       }
@@ -40506,6 +41074,40 @@
         }
       }
     },
+    "Source {number}, {speaker}, {time}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quelle {number}, {speaker}, {time}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fuente {number}, {speaker}, {time}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Source {number}, {speaker}, {time}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Source {number}, {speaker}, {time}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fonte {number}, {speaker}, {time}"
+          }
+        }
+      }
+    },
     "Sources" : {
       "localizations" : {
         "de" : {
@@ -40570,6 +41172,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "As fontes estão no dispositivo que gravou esta reunião."
+          }
+        }
+      }
+    },
+    "Speaker lanes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sprecherspuren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Carriles de hablantes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pistes par intervenant"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pistes par intervenant"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Faixas por falante"
           }
         }
       }
@@ -46548,6 +47184,40 @@
         }
       }
     },
+    "The summary appears here when it is ready." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Zusammenfassung erscheint hier, sobald sie fertig ist."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El resumen aparece aquí cuando está listo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le résumé apparaît ici dès qu'il est prêt."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le résumé apparaît ici dès qu'il est prêt."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O resumo aparece aqui quando estiver pronto."
+          }
+        }
+      }
+    },
     "The summary didn't finish. Regenerate summary tries again. What went wrong: {reason}" : {
       "localizations" : {
         "de" : {
@@ -47293,6 +47963,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Os arquivos do conector {label} não estão instalados. Reinstale o Whimbrel ou, se você o compila a partir do código-fonte, execute {script}."
+          }
+        }
+      }
+    },
+    "There is no summary yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Es gibt noch keine Zusammenfassung."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Todavía no hay resumen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il n'y a pas encore de résumé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il n'y a pas encore de résumé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ainda não há resumo."
           }
         }
       }
@@ -48786,6 +49490,15 @@
           }
         }
       }
+    },
+    "This month's AI allowance is used up." : {
+      "shouldTranslate" : false
+    },
+    "This month's AI allowance is used up. Add credit or choose another model in Settings." : {
+      "shouldTranslate" : false
+    },
+    "This month's AI allowance is used up. Your allowance renews with your plan." : {
+      "shouldTranslate" : false
     },
     "This month: {spent}" : {
       "localizations" : {
@@ -51857,6 +52570,9 @@
         }
       }
     },
+    "Upgrade to Plus for unlimited devices." : {
+      "shouldTranslate" : false
+    },
     "Use Delete everything again, or quit Whimbrel and remove them by hand." : {
       "localizations" : {
         "de" : {
@@ -51890,6 +52606,9 @@
           }
         }
       }
+    },
+    "Use Whimbrel AI" : {
+      "shouldTranslate" : false
     },
     "Use a time like 08:30." : {
       "localizations" : {
@@ -52331,6 +53050,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "A versão {version} está pronta. Reinicie para instalá-la."
+          }
+        }
+      }
+    },
+    "View" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ansicht"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vista"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Visualização"
           }
         }
       }
@@ -55372,6 +56125,40 @@
         }
       }
     },
+    "Whimbrel wrote the marked lines. Each number points to the moment in the transcript it came from." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel hat die markierten Zeilen geschrieben. Jede Nummer verweist auf die Stelle im Transkript, aus der sie stammt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel escribió las líneas marcadas. Cada número señala el momento de la transcripción de donde salió."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel a écrit les lignes marquées. Chaque numéro renvoie au moment de la transcription d'où elle vient."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel a écrit les lignes marquées. Chaque numéro renvoie au moment de la transcription d'où elle vient."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel escreveu as linhas marcadas. Cada número aponta para o momento da transcrição de onde ela veio."
+          }
+        }
+      }
+    },
     "Whimbrel {version}" : {
       "localizations" : {
         "de" : {
@@ -56256,6 +57043,9 @@
         }
       }
     },
+    "You can change this any time in Settings → AI. To keep a particular client's material away from hosted models, use Exclude from hosted models on that client's page." : {
+      "shouldTranslate" : false
+    },
     "You can keep at most 30 facts. Remove one first." : {
       "localizations" : {
         "de" : {
@@ -56708,6 +57498,9 @@
           }
         }
       }
+    },
+    "Your Whimbrel AI credit or monthly allowance is used up. Add credit in Settings, or choose another model in Settings → AI." : {
+      "shouldTranslate" : false
     },
     "Your calendar couldn't sync, so meetings may be missing: {error}" : {
       "localizations" : {
@@ -62596,6 +63389,41 @@
           }
         }
       }
+    },
+    "{speaker}, {time}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{speaker}, {time}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{speaker}, {time}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{speaker}, {time}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{speaker}, {time}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{speaker}, {time}"
+          }
+        }
+      },
+      "shouldTranslate" : false
     },
     "{startDay}, {start} to {endDay}, {end}" : {
       "localizations" : {

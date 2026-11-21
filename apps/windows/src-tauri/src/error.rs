@@ -57,8 +57,10 @@ pub enum ProviderFailureReason {
     Unauthorized { provider: String },
     RateLimited { provider: String },
     Network { provider: String },
-    /// Whimbrel's server answered 402: the prepaid Whimbrel AI credit can't cover the request.
-    CreditExhausted,
+    /// Whimbrel's server answered 402: the prepaid Whimbrel AI credit (and, on Plus, the month's
+    /// allowance) can't cover the request. `plus`: the account is on Plus, so the message names the
+    /// allowance too (`billing::plus_flag`).
+    CreditExhausted { plus: bool },
     Other { provider: String, status: Option<u16> },
     /// The provider answered that the chosen model does not exist, and no default answered for it.
     ModelUnavailable { provider: String, model: String },
@@ -79,7 +81,7 @@ impl From<llm::ProviderFailureKind> for ProviderFailureReason {
             K::RateLimited { provider } => Self::RateLimited { provider: provider.as_str().into() },
             K::Network { provider: llm::Provider::Ollama } => Self::ollama_network(crate::chat::ollama_reachable()),
             K::Network { provider } => Self::Network { provider: provider.as_str().into() },
-            K::CreditExhausted => Self::CreditExhausted,
+            K::CreditExhausted => Self::credit_exhausted(),
             K::Other { provider, status } => Self::Other { provider: provider.as_str().into(), status },
             K::ModelUnavailable { provider, model } => Self::ModelUnavailable { provider: provider.as_str().into(), model },
             K::ExcludedClient => Self::ExcludedClient,
@@ -89,6 +91,11 @@ impl From<llm::ProviderFailureKind> for ProviderFailureReason {
 }
 
 impl ProviderFailureReason {
+    /// A 402 from Whimbrel AI, worded for a Plus account when the last plan or balance read said Plus.
+    pub fn credit_exhausted() -> Self {
+        Self::CreditExhausted { plus: crate::syncing::billing::plus_flag::is_on() }
+    }
+
     /// Core reads an Ollama connection that timed out as a running Ollama that was slow
     /// (`Network`), not a stopped one. On Windows a connect to a closed port retries for seconds,
     /// so a stopped or uninstalled Ollama can time out too: a tester with no Ollama installed was
@@ -123,7 +130,12 @@ impl ProviderFailureReason {
             Self::NoProviderConfigured => tr("No AI provider is set up. Add one in Settings → AI.", &[]),
             Self::Unauthorized { provider } => tr("{provider} rejected the API key. Check it in Settings → AI.", &[("provider", &name(provider))]),
             Self::RateLimited { provider } => tr("{provider} is busy or out of credit. Try again shortly.", &[("provider", &name(provider))]),
-            Self::CreditExhausted => tr("Whimbrel AI credit is used up. Add credit in Settings.", &[]),
+            Self::CreditExhausted { plus: false } => tr("Whimbrel AI credit is used up. Add credit in Settings.", &[]),
+            // Core's wording with this app's section name (Settings → AI). English only until Mike says
+            // translate (pending translation keys).
+            Self::CreditExhausted { plus: true } => {
+                "Your Whimbrel AI credit or monthly allowance is used up. Add credit in Settings, or choose another model in Settings → AI.".to_string()
+            }
             // English only for now: not in the translation catalogs yet.
             Self::ExcludedClient => llm::guard::REFUSED_MESSAGE.to_string(),
             Self::ExclusionUnreadable => llm::guard::UNREADABLE_MESSAGE.to_string(),

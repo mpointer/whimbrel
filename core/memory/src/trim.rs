@@ -226,6 +226,8 @@ impl Store {
              AND ts_unix_ms - (SELECT start_unix_ms FROM meeting WHERE id = ?1) >= ?2",
             params![meeting_id, keep_ms],
         )?;
+        // A source that located its line in the removed words must not keep them in its anchor.
+        Self::prune_unresolved_line_sources_tx(tx, meeting_id)?;
         Ok(())
     }
 }

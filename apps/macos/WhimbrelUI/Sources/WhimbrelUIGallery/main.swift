@@ -10,6 +10,10 @@ import WhimbrelUI
 //   WhimbrelUIGallery --live --out <folder> --scale 1
 // renders the live meeting screen (recording, paused, resuming, starting, processing, problem, read only, with and
 // without the transcript column, 200 percent text, high contrast) and the in-meeting window (made-up data).
+//   WhimbrelUIGallery --note --out <folder> --scale 1
+// renders the finished note (with sources, without, narrow, processing, regenerating, another device's meeting, editing,
+// failed, 200 percent text, a larger reading size, high contrast) and the transcript with speaker lanes, a continued
+// meeting and a crowded one (made-up data), each in light and dark where it says so.
 //   WhimbrelUIGallery --onboarding --out <folder>
 // renders the first run, launch and setup screens (made-up data) at 900 points wide, 2x:
 // <screen>-light, -dark, -light-2.0 (text at 200 percent) and -high-contrast.
@@ -30,6 +34,7 @@ var pixelScale: CGFloat = 2
 var onboarding = false
 var home = false
 var live = false
+var note = false
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
     let flag = args.removeFirst()
@@ -39,6 +44,7 @@ while !args.isEmpty {
     case "--onboarding": onboarding = true
     case "--home": home = true
     case "--live": live = true
+    case "--note": note = true
     case "--scale": if !args.isEmpty { pixelScale = CGFloat(Double(args.removeFirst()) ?? 2) }
     default:
         FileHandle.standardError.write(Data("Unknown argument \(flag)\n".utf8))
@@ -127,6 +133,9 @@ func renderHome() throws { try renderCases(WHomeGallery.cases()) }
 func renderLive() throws { try renderCases(WLiveGallery.cases()) }
 
 @MainActor
+func renderNote() throws { try renderCases(WNoteGallery.cases()) }
+
+@MainActor
 func renderCases(_ cases: [WHomeGalleryCase]) throws {
     for item in cases {
         let theme = WTheme.thread(variant: item.mode.variant)
@@ -143,6 +152,13 @@ func renderCases(_ cases: [WHomeGalleryCase]) throws {
 }
 
 MainActor.assumeIsolated {
+    if note {
+        do { try renderNote() } catch {
+            FileHandle.standardError.write(Data("Failed note render: \(error)\n".utf8))
+            exit(1)
+        }
+        exit(0)
+    }
     if live {
         do { try renderLive() } catch {
             FileHandle.standardError.write(Data("Failed live render: \(error)\n".utf8))

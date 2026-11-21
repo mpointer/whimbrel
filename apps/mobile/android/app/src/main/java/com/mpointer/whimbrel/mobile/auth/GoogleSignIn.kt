@@ -1,5 +1,6 @@
 package com.mpointer.whimbrel.mobile.auth
 
+import com.mpointer.whimbrel.mobile.BuildConfig
 import android.app.Activity
 import android.content.Context
 import android.net.ConnectivityManager
@@ -138,6 +139,19 @@ class GoogleSignIn(
         }
     }
 
+    /**
+     * The claims of an ID token that say whether the sync server will accept it, for the log. None is a secret:
+     * the issuer, whether the audience is our web client, how long it has left, and whether it carries a verified
+     * email. Never the token, the email or the subject.
+     */
+    private fun describeClaims(jwt: String): String = runCatching {
+        val payload = jwt.split(".").getOrNull(1) ?: return@runCatching "claims=unreadable"
+        val o = org.json.JSONObject(String(android.util.Base64.decode(payload, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)))
+        val aud = o.opt("aud")
+        val audOk = aud == webClientId || (aud as? org.json.JSONArray)?.let { a -> (0 until a.length()).any { a.optString(it) == webClientId } } == true
+        "iss=${o.optString("iss")} aud_is_web_client=$audOk expires_in=${o.optLong("exp") - System.currentTimeMillis() / 1000}s has_email=${o.has("email")} email_verified=${o.opt("email_verified")}"
+    }.getOrDefault("claims=unreadable")
+
     private fun describe(e: GoogleSignInError): String = when (e) {
         GoogleSignInError.NotSignedIn -> "NotSignedIn (asks to sign in again)"
         GoogleSignInError.Cancelled -> "Cancelled"
@@ -162,7 +176,8 @@ class GoogleSignIn(
             // Play services caches the token; drop its copy so the next renewal gets a fresh one
             // (our own cache holds it until it expires).
             runCatching { GoogleAuthUtil.clearToken(appContext, token) }
-            Log.i(SIGNIN_TAG, "account token: success")
+            // The claims are diagnostic detail for debug builds only; a release build logs the bare result.
+            Log.i(SIGNIN_TAG, if (BuildConfig.DEBUG) "account token: success ${describeClaims(token)}" else "account token: success")
             token
         } catch (e: CancellationException) {
             throw e

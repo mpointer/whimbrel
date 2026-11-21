@@ -24,7 +24,7 @@ export interface Turn {
   /** Retrieved items a hosted model answered without, because they involve an excluded client (core's
    *  `filtered_hosted`; items, not clients). Shown under the answer only, never saved. */
   leftOut?: number | null;
-  /** The question names a client excluded from hosted models: a model on this PC answers it (PR 874). */
+  /** The question involves a client excluded from hosted models (its name, an alias or a known contact's address): a model on this PC answers it (PR 874). */
   routedLocally?: boolean;
   /** The answer was made on this PC for that reason: a note under it says so, never naming the client. */
   answeredLocally?: boolean;
@@ -111,11 +111,11 @@ export function spendLine(spend: ChatSpend): string {
     : t("{used}¢ / {cap}¢ today", { used: String(spend.userCents), cap: String(spend.capCents) });
 }
 
-/** The spinner while a model on this PC answers a question that names an excluded client (PR 874). */
-export const answeringLocallyLine = () => t("Answering on this PC: this question names a client excluded from hosted models…");
+/** The spinner while a model on this PC answers a question that involves an excluded client (PR 874). */
+export const answeringLocallyLine = () => t("Answering on this PC: this question involves a client excluded from hosted models…");
 
 /** Under an answer made on this PC for that reason. Never names the client. */
-export const answeredLocallyLine = () => t("Answered locally: a client named here is excluded from hosted models.");
+export const answeredLocallyLine = () => t("Answered locally: this question involves a client excluded from hosted models.");
 
 /** The small line under an answer that isn't finished yet. */
 export function statusLine(turn: Turn): string | null {

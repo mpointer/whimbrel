@@ -141,6 +141,7 @@ struct WhimbrelShellView: View {
                     DispatchQueue.global(qos: .utility).async { EngineBenchmark.runIfNeeded() }
                 } }
         }
+        .plusAiPrompt(syncState: appState.syncState, routing: appState.routing)
         .sheet(item: $appState.prepBriefToShow) { request in
             PrepBriefSheet(key: request.key)
                 .environmentObject(appState)
@@ -277,7 +278,7 @@ struct WhimbrelShellView: View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             Divider().overlay(Color.whimbrelBorder)
             ModelStatusLine(bootstrap: appState.modelBootstrap)
-            StaleSyncLine(sync: appState.contentSyncCoordinator)
+            StaleSyncLine(sync: appState.contentSyncCoordinator, offersSyncNow: true)
             HStack(spacing: Spacing.sm) {
                 DeviceChip(deviceId: appState.deviceId)
                 Text(syncLabel)
@@ -504,21 +505,82 @@ private struct HideWindowTitle: NSViewRepresentable {
 struct StaleSyncLine: View {
     @ObservedObject var sync: ContentSyncCoordinator
     var inset: CGFloat = Spacing.md
+    /// Adds the "Sync now" link under the warning (the sidebar). The Devices pane has its own button.
+    var offersSyncNow = false
 
     var body: some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: 300)) { context in
             if sync.isStale(now: context.date), let last = sync.lastSuccess {
-                Text(sync.retryPossible
-                     ? String(localized: "Sync hasn't worked since \(last.formatted(date: .abbreviated, time: .shortened)). Whimbrel keeps trying.")
-                     : String(localized: "Sync hasn't worked since \(last.formatted(date: .abbreviated, time: .shortened))."))
-                    .font(.whimbrelBody(.caption2))
-                    .foregroundStyle(Color.whimbrelError)
-                    // A line limit, never `fixedSize(vertical:)`: while the sidebar collapses its width nears zero,
-                    // and unbounded wrapping then asked for ~800 pt. The window could not fit that and AppKit looped
-                    // on Update Constraints until it aborted (Nov 18 2026, every sidebar toggle while sync was stale).
-                    .lineLimit(4)
-                    .padding(.horizontal, inset)
+                VStack(alignment: .leading, spacing: Spacing.xs) {
+                    Text(sync.retryPossible
+                         ? String(localized: "Sync hasn't worked since \(last.formatted(date: .abbreviated, time: .shortened)). Whimbrel keeps trying.")
+                         : String(localized: "Sync hasn't worked since \(last.formatted(date: .abbreviated, time: .shortened))."))
+                        .font(.whimbrelBody(.caption2))
+                        .foregroundStyle(Color.whimbrelError)
+                        // A line limit, never `fixedSize(vertical:)`: while the sidebar collapses its width nears zero,
+                        // and unbounded wrapping then asked for ~800 pt. The window could not fit that and AppKit looped
+                        // on Update Constraints until it aborted (Nov 18 2026, every sidebar toggle while sync was stale).
+                        .lineLimit(4)
+                    if offersSyncNow {
+                        // Compact: one line, link style, so the footer's height stays bounded.
+                        SyncNowControl(sync: sync, compact: true)
+                    }
+                }
+                .padding(.horizontal, inset)
             }
+        }
+    }
+}
+
+/// "Sync now": one content sync round on request, with its outcome. Disabled when sync is off or not
+/// signed in. The round itself (and its one-at-a-time guard) is `ContentSyncCoordinator.syncNow`.
+struct SyncNowControl: View {
+    @ObservedObject var sync: ContentSyncCoordinator
+    /// Sidebar footer form: the label and outcome share one line and never wrap past it.
+    var compact = false
+    @StateObject private var model: SyncNowModel
+
+    init(sync: ContentSyncCoordinator, compact: Bool = false) {
+        self.sync = sync
+        self.compact = compact
+        _model = StateObject(wrappedValue: SyncNowModel(
+            canSync: { [weak sync] in sync?.canSyncNow ?? false },
+            run: { [weak sync] in await sync?.syncNowManually() ?? .unavailable }
+        ))
+    }
+
+    var body: some View {
+        let state = SyncNowModel.buttonState(status: sync.syncStatus, roundRunning: sync.roundInFlight, phase: model.phase)
+        HStack(spacing: compact ? Spacing.sm : Spacing.md) {
+            Button {
+                Task { await model.start() }
+            } label: {
+                if state == .syncing {
+                    HStack(spacing: Spacing.xs) {
+                        ProgressView().controlSize(.small)
+                        Text("Syncing…")
+                    }
+                } else {
+                    Text("Sync now")
+                }
+            }
+            .buttonStyle(.link)
+            .disabled(state != .enabled)
+            .accessibilityIdentifier("sync-now-button")
+            if let message = model.message {
+                Text(message)
+                    .foregroundStyle(model.phase == .synced ? Color.whimbrelTextSecondary : Color.whimbrelError)
+                    // Bounded, never `fixedSize`: see `StaleSyncLine`.
+                    .lineLimit(compact ? 1 : 3)
+            }
+        }
+        .font(.whimbrelBody(compact ? .caption2 : .caption))
+        .lineLimit(compact ? 1 : 3)
+        // The "Synced" line goes away by itself; an error stays until the next try.
+        .task(id: model.phase) {
+            guard model.phase == .synced else { return }
+            try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
+            if !Task.isCancelled { model.clearOutcome() }
         }
     }
 }

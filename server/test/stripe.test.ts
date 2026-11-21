@@ -49,20 +49,20 @@ function sub(status: string, extra: any = {}): any {
 }
 
 it("past_due_stays_cloud_until_period_end", () => {
-  expect(planFromSubscription(sub("past_due"), NOW)).toEqual({ plan: "cloud", untilUnixMs: END * 1000, interval: "month", renews: true });
+  expect(planFromSubscription(sub("past_due"), NOW)).toEqual({ plan: "cloud", tier: "cloud", untilUnixMs: END * 1000, interval: "month", renews: true });
   expect(planFromSubscription(sub("active"), NOW)?.plan).toBe("cloud");
   expect(planFromSubscription(sub("trialing"), NOW)?.plan).toBe("cloud");
 });
 it("a_cancelled_subscription_stays_cloud_until_it_ends_and_does_not_renew", () => {
   // The customer portal sets cancel_at (flexible billing) or cancel_at_period_end.
-  expect(planFromSubscription(sub("active", { cancel_at: END }), NOW)).toEqual({ plan: "cloud", untilUnixMs: END * 1000, interval: "month", renews: false });
+  expect(planFromSubscription(sub("active", { cancel_at: END }), NOW)).toEqual({ plan: "cloud", tier: "cloud", untilUnixMs: END * 1000, interval: "month", renews: false });
   expect(planFromSubscription(sub("active", { cancel_at_period_end: true }), NOW)?.renews).toBe(false);
   expect(planFromSubscription(sub("active", { cancel_at: END - 100 }), NOW)?.untilUnixMs).toBe((END - 100) * 1000);
   expect(planFromSubscription(sub("active", { cancel_at: null, cancel_at_period_end: false }), NOW)?.renews).toBe(true);
 });
 it("unpaid_and_canceled_end_the_plan_at_ended_at_or_now", () => {
-  expect(planFromSubscription(sub("canceled", { ended_at: 1_799_000_000 }), NOW)).toEqual({ plan: "free", untilUnixMs: 1_799_000_000_000, interval: null, renews: false });
-  expect(planFromSubscription(sub("unpaid"), NOW)).toEqual({ plan: "free", untilUnixMs: NOW, interval: null, renews: false });
+  expect(planFromSubscription(sub("canceled", { ended_at: 1_799_000_000 }), NOW)).toEqual({ plan: "free", tier: null, untilUnixMs: 1_799_000_000_000, interval: null, renews: false });
+  expect(planFromSubscription(sub("unpaid"), NOW)).toEqual({ plan: "free", tier: null, untilUnixMs: NOW, interval: null, renews: false });
   expect(planFromSubscription(sub("incomplete_expired"), NOW)?.plan).toBe("free");
   expect(planFromSubscription(sub("paused"), NOW)?.plan).toBe("free");
 });
@@ -79,6 +79,29 @@ it("yearly_interval_is_read_from_the_price", () => {
   const s = sub("active");
   s.items.data[0].price.recurring.interval = "year";
   expect(planFromSubscription(s, NOW)?.interval).toBe("year");
+});
+
+const PLUS = ["price_plus_monthly", "price_plus_yearly"];
+function onPrice(id: string, extra: any = {}): any {
+  return { status: "active", items: { data: [{ current_period_end: END, price: { id, recurring: { interval: "month" } } }] }, ...extra };
+}
+it("a_subscription_on_a_plus_price_is_plus_and_any_other_is_cloud", () => {
+  expect(planFromSubscription(onPrice("price_plus_monthly"), NOW, PLUS)?.tier).toBe("plus");
+  expect(planFromSubscription(onPrice("price_plus_yearly"), NOW, PLUS)?.tier).toBe("plus");
+  expect(planFromSubscription(onPrice("price_monthly"), NOW, PLUS)?.tier).toBe("cloud");
+  // Without the Plus price ids, a plain Plus price reads as Cloud.
+  expect(planFromSubscription(onPrice("price_plus_monthly"), NOW)?.tier).toBe("cloud");
+  // Another tier value in the metadata is not Plus.
+  expect(planFromSubscription(onPrice("price_monthly", { metadata: { tier: "cloud" } }), NOW, PLUS)?.tier).toBe("cloud");
+});
+it("a_subscription_with_tier_plus_metadata_is_plus_even_on_a_retired_price", () => {
+  const retired = onPrice("price_plus_monthly_2025", { metadata: { account_id: "acct_1", tier: "plus" } });
+  expect(planFromSubscription(retired, NOW, PLUS)).toEqual({ plan: "cloud", tier: "plus", untilUnixMs: END * 1000, interval: "month", renews: true });
+  expect(planFromSubscription(retired, NOW, [])?.tier).toBe("plus");
+});
+it("an_ended_plus_subscription_has_no_tier", () => {
+  expect(planFromSubscription(onPrice("price_plus_monthly", { status: "canceled", metadata: { tier: "plus" } }), NOW, PLUS)?.tier).toBeNull();
+  expect(planFromSubscription(onPrice("price_plus_monthly", { status: "unpaid" }), NOW, PLUS)?.tier).toBeNull();
 });
 
 it("subscription_id_from_invoice_parent_or_legacy_field", () => {

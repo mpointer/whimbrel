@@ -81,16 +81,24 @@ impl HostedGate for RefuseAllHosted {
     }
 }
 
-/// One excluded name or alias, as its lowercase words.
+/// One excluded name, alias or client contact address (or an address's spoken form), as its
+/// lowercase words.
 #[derive(Clone)]
 struct Term(Vec<String>);
 
-/// The names and aliases of every client excluded from hosted models. Matching is
-/// case-insensitive on whole words: the text and each term are split into words (runs
-/// of letters and digits) and a term matches where its words appear in a row. So "Acme"
-/// matches "Met ACME today" and "acme-related", not "Acmeville"; "Acme Corp" matches
-/// across a line break. No pattern is ever built from a term. A term with no letters or
-/// digits is dropped (it would match nothing, or everything).
+/// The names and aliases of every client excluded from hosted models, and the addresses of its
+/// known contacts (`exclusion::hosted_terms`). Matching is case-insensitive on whole words: the
+/// text and each term are split into words (runs of letters and digits) and a term matches where
+/// its words appear in a row. So "Acme" matches "Met ACME today" and "acme-related", not
+/// "Acmeville"; "Acme Corp" matches across a line break; `wile@coyote.example` matches
+/// `WILE@coyote.example’s`, `mailto:wile@coyote.example?subject=hi` and `wile＠coyote.example`,
+/// and, read without its tag, `wile+pricing@coyote.example`; not `wile.e@coyote.example` (another
+/// mailbox), while `wile@coyote.example.org` matches (fail closed). Every term, name or address, is
+/// also matched in the text decoded (`memory::words::readings`: percent escapes, HTML entities and
+/// invisible characters undone, up to four times; `wile%40coyote.example`, `wile&#64;coyote.example`,
+/// `Ac&#109;e`). An address is also matched spoken (`spoken_forms`: "wile at coyote dot example"),
+/// in text only. No pattern is ever built from a term. A term with no letters or digits is dropped
+/// (it would match nothing, or everything).
 #[derive(Clone)]
 pub struct ExclusionSet {
     terms: Vec<Term>,
@@ -105,9 +113,15 @@ impl ExclusionSet {
     pub fn new(terms: Vec<String>) -> Self {
         let terms = terms
             .iter()
-            .map(|t| words(t))
-            .filter(|w| !w.is_empty())
-            .map(Term)
+            .flat_map(|t| {
+                // As written and without invisible characters (review 5, M3), and an address's
+                // spoken forms.
+                // Only the spelling without invisible characters (review 6, M3): as written, an alias
+                // `Ac\u{AD}me` would fold to "ac me" and match those two words.
+                let plain = memory::words::without_invisibles(t);
+                std::iter::once(words(&plain)).chain(spoken_forms(&plain)).map(Term).collect::<Vec<_>>()
+            })
+            .filter(|t| !t.0.is_empty())
             .collect();
         Self { terms }
     }
@@ -118,24 +132,93 @@ impl ExclusionSet {
 
     /// Whether the text `fingerprints` ([`word_fingerprints`], sorted) were taken from names any
     /// excluded client. A term longer than [`MAX_FINGERPRINT_WORDS`] words is looked up by its first
-    /// [`MAX_FINGERPRINT_WORDS`] (a match counts as found).
+    /// [`MAX_FINGERPRINT_WORDS`] (a match counts as found). The fingerprints are taken over the
+    /// same readings [`Self::find_in`] matches (`memory::words::word_fingerprints`), and text that
+    /// could not be fully decoded matches here too. An address's spoken forms are looked up too, a
+    /// form of five words or more by its first four: prose such as "john smith at acme said hi"
+    /// matches `john.smith@acme-widgets.com` here (review 4, S1: fail closed; the answer is only
+    /// kept off hosted models).
     pub fn find_in_fingerprints(&self, fingerprints: &[u32]) -> bool {
         // A name over four words is looked up by its first four (fix round 5, N5): absent means
         // absent; present counts as found.
-        self.terms.iter().any(|Term(term)| fingerprints.binary_search(&memory::words::term_fingerprint(term)).is_ok())
+        !self.terms.is_empty()
+            && (fingerprints.binary_search(&memory::words::UNDECIDABLE_FINGERPRINT).is_ok()
+                || self.terms.iter().any(|Term(term)| fingerprints.binary_search(&memory::words::term_fingerprint(term)).is_ok()))
     }
 
-    /// Whether `text` names any excluded client.
+    /// Whether `text` names any excluded client, in any of its readings (`memory::words::readings`):
+    /// as written, decoded (percent escapes, HTML entities, invisible characters; up to four passes),
+    /// and each of those with plus tags read off (`wile+pricing@coyote.example` is
+    /// `wile@coyote.example`). Text still decodable after the last pass matches (fail closed).
     pub fn find_in(&self, text: &str) -> bool {
         if self.terms.is_empty() {
             return false;
         }
-        let haystack = words(text);
-        self.terms
-            .iter()
-            .any(|Term(term)| haystack.windows(term.len()).any(|w| w == term.as_slice()))
+        // The same readings the fingerprints are taken over (`memory::words::readings`): as
+        // written, each decoding pass, each with plus tags read off. Text still decodable after
+        // the last pass matches (fail closed).
+        let readings = memory::words::readings(text);
+        readings.undecidable || self.names_in_readings(&readings)
+    }
+
+    /// Whether `text` really names an excluded client in one of its readings
+    /// (`memory::words::visit_readings`: up to `MAX_NAMING_DECODE_PASSES` full passes and
+    /// `4 × MAX_NAMING_DECODE_PASSES + 2` single steps per chain, every reading also without plus
+    /// tags), never only because it could not be fully decoded. Its work per text is bounded at
+    /// `NAMING_READING_BUDGET` times the text's length (plus a floor), so one adversarial row costs
+    /// a few linear passes at most. For what acts on the answer and cannot be undone or must not
+    /// misfile: deleting a client's derived rows, filing a source under a client, the delete
+    /// inventory (review 4, I2). The hosted gate and filters keep [`Self::find_in`], which fails
+    /// closed. Known limit: text whose only mention is encoded past that budget reads as not naming
+    /// the client here (kept off hosted models all the same).
+    pub fn names_in(&self, text: &str) -> bool {
+        if self.terms.is_empty() {
+            return false;
+        }
+        // The same readings as `find_in` (`memory::words::visit_readings`), decoded with the deeper
+        // cap and the naming budget, visited one at a time, never kept; undecidable alone never
+        // matches here.
+        memory::words::visit_readings(text, memory::words::MAX_NAMING_DECODE_PASSES, memory::words::NAMING_READING_BUDGET, &mut |t| {
+            let haystack = words(t);
+            self.terms.iter().any(|Term(term)| haystack.windows(term.len()).any(|w| w == term.as_slice()))
+        })
+        .0
+    }
+
+    fn names_in_readings(&self, readings: &memory::words::Readings) -> bool {
+        readings.texts.iter().any(|t| {
+            let haystack = words(t);
+            self.terms.iter().any(|Term(term)| haystack.windows(term.len()).any(|w| w == term.as_slice()))
+        })
     }
 }
+
+/// The spoken and bracketed forms of a contact address term (one with an `@`), as words:
+/// `wile@coyote.example` is also matched as "wile at coyote dot example" (how speech recognition
+/// writes a spoken address; `[at]`, `(at)` and `[dot]` fold to the same words) and as "wile at
+/// coyote example" ("at" spelled out, the dots kept). Nothing for a name or alias.
+fn spoken_forms(term: &str) -> Vec<Vec<String>> {
+    let Some((local, domain)) = term.split_once('@') else { return Vec::new() };
+    if local.is_empty() || domain.is_empty() || domain.contains('@') {
+        return Vec::new();
+    }
+    let dotted = |part: &str| -> Vec<String> {
+        let mut out = Vec::new();
+        for (i, label) in part.split('.').enumerate() {
+            if i > 0 {
+                out.push("dot".to_string());
+            }
+            out.extend(words(label));
+        }
+        out
+    };
+    let at = vec!["at".to_string()];
+    let spoken = [dotted(local), at.clone(), dotted(domain)].concat();
+    let at_only = [words(local), at, words(domain)].concat();
+    vec![spoken, at_only]
+}
+
+
 
 pub use memory::words::{word_fingerprints, MAX_FINGERPRINT_WORDS};
 
@@ -224,6 +307,267 @@ mod tests {
     use super::*;
     use crate::TokenUsage;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Security review: every decoding the text match reads is read by the fingerprints too
+    /// (answer stamps), through any number of encodings up to the pass cap; past it, both fail
+    /// closed. Another client's contact matches neither way.
+    #[test]
+    fn layered_encodings_match_alike_as_text_and_as_fingerprints() {
+        let set = ExclusionSet::new(vec!["wile@coyote.example".into()]);
+        let fp = |t: &str| set.find_in_fingerprints(&word_fingerprints(t));
+        for text in [
+            "wile%2540coyote.example",
+            "wile&amp;#64;coyote.example",
+            "wile%2526%2364%253Bcoyote.example",
+            "wile%EF%BC%A0coyote.example",
+            "wile&#0000064;coyote.example",
+            "wile&#x0040;coyote.example",
+            "wile&#X00000040;coyote.example",
+            "wile&#64coyote.example",
+            "wile%26%23x0040%3Bcoyote%2Eexample",
+            "wi%E2%80%8Ble%2Bdeal%2540coyote.example",
+            "wile+deal&#64;coyote.example",
+            "mailto:wile%252Bdeal%2540coyote.example",
+            "wile%26#64;coyote.example",
+            "wile@coyote.example",
+            // Review 4, I1: every default-ignorable character inside the address.
+            "wi\u{200E}le@coyote.example",
+            "wi\u{200F}le@coyote.example",
+            "wi\u{202E}le@coyote.example",
+            "wi\u{2066}le@coyote.ex\u{2069}ample",
+            "wi\u{2063}le@coyote.example",
+            "wi\u{180E}le@coyote.example",
+            "wi\u{FE0F}le@coyote.example",
+            "wi\u{E0069}le@coyote.example",
+            "wi\u{115F}le@coyote.ex\u{3164}ample",
+            "wi\u{1D173}le@coyote.example",
+            "wi\u{061C}le@coyote.ex\u{17B4}ample\u{FFA0}",
+            "wi&#x200E;le@coyote.example",
+            // Review 4, M1 and M2: named references with and without `;`, and a UTF-8 sequence split
+            // across a percent escape and a reference.
+            "wile&commatcoyote&periodexample",
+            "wile&amp#64;coyote.example",
+        ] {
+            assert!(set.find_in(text), "text: {text:?}");
+            assert!(fp(text), "fingerprints: {text:?}");
+        }
+        // The spoken form is matched in text only (review 3, M-a).
+        assert!(set.find_in("call wile at coyote dot example"));
+        for text in ["carol%2540example.com", "carol&#x0040;example.com", "50% off &amp; more", "plain words"] {
+            assert!(!set.find_in(text), "text: {text:?}");
+            assert!(!fp(text), "fingerprints: {text:?}");
+        }
+        // Past the pass cap: both fail closed, and only when something is excluded.
+        let deep = format!("wile&{}#64;coyote.example", "amp;".repeat(memory::words::MAX_DECODE_PASSES));
+        assert!(memory::words::readings(&deep).undecidable, "{deep}");
+        assert!(set.find_in(&deep) && fp(&deep));
+        assert!(!ExclusionSet::new(vec![]).find_in(&deep) && !ExclusionSet::new(vec![]).find_in_fingerprints(&word_fingerprints(&deep)));
+    }
+
+    /// Review 4, S1: an address's spoken forms are looked up by fingerprints too, a form of five
+    /// words or more by its first four, so prose sharing those words makes an answer unclean (fail
+    /// closed: the answer only stays off hosted models). The text check still needs every word.
+    #[test]
+    fn prose_sharing_a_spoken_address_prefix_fails_closed_in_the_recheck() {
+        let set = ExclusionSet::new(vec!["john.smith@acme-widgets.com".into()]);
+        let fp = |t: &str| set.find_in_fingerprints(&word_fingerprints(t));
+        for prose in ["john smith at acme said hi", "john dot smith at acme was there"] {
+            assert!(fp(prose), "fail closed: {prose:?}");
+            assert!(!set.find_in(prose), "the text check needs the whole form: {prose:?}");
+        }
+        assert!(!fp("john smith said hi") && !fp("acme said hi"), "a prefix of fewer words does not");
+        for written in ["john.smith@acme-widgets.com", "John.Smith%40acme-widgets.com", "john.smith&#64;acme-widgets.com", "john.smith+x@acme-widgets.com"] {
+            assert!(fp(written) && set.find_in(written), "{written:?}");
+        }
+        // In text, the whole spoken form still matches.
+        assert!(set.find_in("email john dot smith at acme widgets dot com today"));
+    }
+
+    /// Review 5, I1: a name glued to a letter that a later stage of the same pass decodes, or that
+    /// the other kind of escape decodes, is still read alone (single-operation chains); as text and
+    /// as fingerprints alike.
+    #[test]
+    fn a_name_glued_to_a_later_decoded_letter_is_read_alone() {
+        let wile = ExclusionSet::new(vec!["wile@coyote.example".into()]);
+        let acme = ExclusionSet::new(vec!["Acme".into()]);
+        let jose = ExclusionSet::new(vec!["José".into()]);
+        for (set, text) in [
+            (&wile, "wile%40coyote.example%2541"),
+            (&acme, "Ac%6De%2541"),
+            (&acme, "Ac%6De%25C3%25A9"),
+            (&acme, "Ac&#109;e&#37;41"),
+            (&acme, "Ac%6De&#65;"),
+            (&wile, "wile%40coyote.example&#x41;"),
+            (&acme, "Ac&#109;e%41"),
+            (&wile, "wile&#64;coyote.example%41"),
+            (&acme, "Ac&amp;#109;e%41"),
+            (&jose, "Jos%C3&#x25;A9 from Acme"),
+            // Needs the chain to switch operation: a reference that yields an escape, then that
+            // escape, with a doubly escaped letter glued after the name.
+            (&acme, "Ac&#37;6De%2541"),
+            // Review 6, I1: percent decoding once, then references (a URL-decoded value shown as
+            // HTML), with a doubly escaped letter glued after the name.
+            (&acme, "Ac%26%23109%3Be%2541"),
+            (&wile, "wile%26%2364%3Bcoyote.example%2541"),
+            (&acme, "see Ac%26%23x6D%3Be%2541 today"),
+            // A name split only by an invisible character, with escapes on both sides.
+            (&acme, "&#65;Ac\u{200B}me%5A"),
+            (&acme, "Ac&shy;me signed"),
+        ] {
+            assert!(set.find_in(text), "text: {text:?}");
+            assert!(set.find_in_fingerprints(&word_fingerprints(text)), "fingerprints: {text:?}");
+            assert!(set.names_in(text), "names_in: {text:?}");
+        }
+        for text in ["Acmeville%41", "carol%40example.com%2541", "Ac%6Dez", "R&amp;D %41"] {
+            assert!(!acme.find_in(text) && !wile.find_in(text), "{text:?}");
+        }
+    }
+
+    /// Review 5, M3: a term's invisible characters are dropped too, so an alias pasted with a soft
+    /// hyphen or a direction mark matches its plain spelling, and a plain term matches text with
+    /// them inside.
+    #[test]
+    fn a_term_with_invisible_characters_matches_its_plain_spelling() {
+        for (term, text) in [
+            ("Ac\u{00AD}me", "Acme signed"),
+            ("\u{845B}\u{E0100}\u{57CE}", "\u{845B}\u{57CE} office"),
+            ("wi\u{200E}le@coyote.example", "mail wile@coyote.example"),
+            ("Acme", "Ac\u{00AD}me signed"),
+        ] {
+            let set = ExclusionSet::new(vec![term.into()]);
+            assert!(set.find_in(text) && set.names_in(text), "{term:?} in {text:?}");
+            assert!(set.find_in_fingerprints(&word_fingerprints(text)), "fingerprints: {term:?} in {text:?}");
+        }
+        assert!(memory::words::names_any("Acme signed", &["Ac\u{00AD}me".to_string()]));
+        assert!(!ExclusionSet::new(vec!["Ac\u{00AD}me".into()]).find_in("Acmeville"));
+        // Review 6, M3: only the plain spelling is a term, so the alias never folds to "ac me".
+        let shy = ExclusionSet::new(vec!["Ac\u{00AD}me".into()]);
+        assert!(!shy.names_in("an ac me meeting") && !shy.find_in("an ac me meeting"), "two words are not the alias");
+        assert!(shy.names_in("Acme signed") && shy.names_in("Ac\u{00AD}me signed"));
+    }
+
+    /// Review 6, M2: what deletes or files does bounded work per text, so one adversarial 1 MB row
+    /// cannot hold a client delete for long, while an ordinary three-level encoded name is found.
+    #[test]
+    fn names_in_does_bounded_work_per_text() {
+        let set = ExclusionSet::new(vec!["Acme".into(), "wile@coyote.example".into()]);
+        assert!(set.names_in("Zorbl Ac%25256De signed"), "three levels of percent");
+        assert!(set.names_in("Ac&amp;amp;#109;e signed"), "three levels of references");
+        let rows = [
+            format!("&{}#64;", "amp;".repeat(250_000)),
+            format!("{}40", "%25".repeat(333_000)),
+            "x%2540y &amp;#64; ".repeat(1_000_000 / 18),
+            (0..20_000).map(|i| if i % 2 == 0 { "%2526" } else { "amp;" }).collect::<String>().repeat(10),
+        ];
+        let plain = "plain words in a row ".repeat(1_000_000 / 21);
+        let started = std::time::Instant::now();
+        let _ = set.names_in(&plain);
+        let baseline = started.elapsed();
+        for row in &rows {
+            let started = std::time::Instant::now();
+            let _ = set.names_in(row);
+            let took = started.elapsed();
+            assert!(took < baseline * 40 + std::time::Duration::from_secs(2), "{} bytes: {took:?} against {baseline:?}", row.len());
+        }
+    }
+
+    /// Review 3, I1: decoding is linear per pass, with no search past an entity's few characters:
+    /// 1 MB of `&`, of `&#` and of query-string text each take a small multiple of 1 MB of plain
+    /// prose (a quadratic scan takes minutes here, seconds in release).
+    #[test]
+    fn decoding_a_megabyte_stays_linear() {
+        let set = ExclusionSet::new(vec!["wile@coyote.example".into(), "Acme".into()]);
+        let time = |text: &str| {
+            let started = std::time::Instant::now();
+            let _ = set.find_in(text);
+            let _ = word_fingerprints(text);
+            started.elapsed()
+        };
+        let baseline = time(&"plain words here ".repeat(1_000_000 / 17));
+        for (name, text) in [
+            ("&", "&".repeat(1_000_000)),
+            ("&#", "&#".repeat(500_000)),
+            ("query string", "a=1&b=2".repeat(1_000_000 / 7)),
+            ("percent", "%".repeat(1_000_000)),
+            ("&am", "&am".repeat(333_333)),
+        ] {
+            let took = time(&text);
+            assert!(took < baseline * 10 + std::time::Duration::from_secs(1), "{name}: {took:?} against {baseline:?} for plain text");
+        }
+    }
+
+    /// Security review: adversarial input stays linear (a pass cap times linear passes) and never
+    /// panics.
+    #[test]
+    fn adversarial_encodings_are_read_fast_and_never_panic() {
+        let set = ExclusionSet::new(vec!["wile@coyote.example".into(), "Acme".into()]);
+        let started = std::time::Instant::now();
+        for text in ["%".repeat(1_000_000), "&#".repeat(500_000), "at ".repeat(300_000), "&#0".repeat(300_000), "%25".repeat(300_000)] {
+            let _ = set.find_in(&text);
+            let _ = word_fingerprints(&text);
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(60), "took {:?}", started.elapsed());
+        for text in ["%", "%4", "%%%", "&", "&#", "&#x", "&#;", "&#x;", "&#99999999;", "&#xFFFFFFFF;", "&commat", "%FF%FE%80", "%C3", "a%ZZb"] {
+            let _ = set.find_in(text);
+            let _ = word_fingerprints(text);
+            let _ = memory::words::decode_once(text);
+        }
+    }
+
+    /// Review C2: a client contact's address is matched as words, in the forms it is written in.
+    #[test]
+    fn a_contact_address_is_matched_as_words_in_every_written_form() {
+        let set = ExclusionSet::new(vec!["wile@coyote.example".into()]);
+        for text in [
+            "wile@coyote.example",
+            "WILE@Coyote.Example",
+            "Wile E <wile@coyote.example>",
+            "wile@coyote.example\u{2019}s team",
+            "ask wile@coyote.example\u{2014}what pricing",
+            "https://mail.example/compose?to=wile@coyote.example",
+            "mailto:wile@coyote.example?subject=pricing",
+            "see wile@coyote.example/carol",
+            "wile\u{ff20}coyote.example",
+            "wile+pricing@coyote.example",
+            "Wile+A.B-c_d@coyote.example",
+            "wile+pricing\u{ff20}coyote.example",
+            // Review 2, I1: encoded, spoken and hidden forms.
+            "https://mail.google.com/#search/from%3Awile%40coyote.example",
+            "mailto:wile%40coyote.example",
+            "Reply to wile&#64;coyote.example",
+            "Reply to wile&#x40;coyote.example",
+            "Reply to wile&commat;coyote&period;example",
+            "Call wile at coyote dot example about pricing",
+            "Wile At Coyote Dot Example",
+            "wile [at] coyote [dot] example",
+            "wile (at) coyote (dot) example",
+            "wile at coyote.example",
+            "wi\u{200B}le@coyote.example",
+            "wile@coy\u{00AD}ote.example",
+            "wile%2Bdeal%40coyote.example",
+        ] {
+            assert!(set.find_in(text), "{text:?}");
+        }
+        for text in [
+            "carol@example.com",
+            "wile.e@coyote.example",
+            "wile@coyote.examples",
+            "wile@coyote alone is not the address",
+            "a + b @ c",
+            "wile at the coyote example",
+            "100%4 coyote &#9999999999; &bogus; %zz",
+            "carol at example dot com",
+        ] {
+            assert!(!set.find_in(text), "{text:?}");
+        }
+        // A tag is read off only where it ends at an `@`: nothing else in the text changes.
+        assert_eq!(memory::words::without_plus_tags("a+b@c and 1+2=3"), Some("a@c and 1+2=3".to_string()));
+        assert_eq!(memory::words::without_plus_tags("1+2=3"), None);
+        assert_eq!(memory::words::decode_once("a%40b &#64; &#x40; &commat; x\u{200B}y"), Some("a@b @ @ @ xy".to_string()));
+        assert_eq!(memory::words::decode_once("no escapes"), None);
+        // A name gets no spoken form.
+        assert!(spoken_forms("Acme Corp").is_empty());
+    }
 
     /// Fix round 4: a text's word fingerprints answer "does it name this client" like the text
     /// itself, folding included.

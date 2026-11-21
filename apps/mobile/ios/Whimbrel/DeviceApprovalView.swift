@@ -94,43 +94,71 @@ struct DeviceApprovalView: View {
     @ObservedObject private var themes = ThemeStore.shared
 
     var body: some View {
-        List {
-            if let error = model.actionError {
-                Text(error).foregroundStyle(Color.theme(.textSecondary))
-                    .listRowBackground(Color.theme(.backgroundCard))
-            }
-            if model.rows.isEmpty {
-                Text("No other devices.").foregroundStyle(Color.theme(.textSecondary))
-                    .listRowBackground(Color.theme(.backgroundCard))
-            }
-            ForEach(model.rows, id: \.device.id) { row in
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(row.device.name ?? row.device.platform ?? "Unnamed device").foregroundStyle(Color.theme(.textPrimary))
-                        Text(row.statusLine).font(.caption).foregroundStyle(Color.theme(.textSecondary))
-                        if let line = row.codeLine {
-                            Text(line).font(.caption).foregroundStyle(Color.theme(.textSecondary))
-                        }
-                        if row.collides {
-                            Text(DeviceApprovalModel.collisionWarning).font(.caption).foregroundStyle(Color.theme(.textPrimary))
-                        }
-                    }
-                    Spacer()
-                    if row.canApprove {
-                        Button("Approve") { Task { await model.approve(row.device) } }
-                            .buttonStyle(.bordered)
-                            .disabled(model.approving)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: WTokens.Space.md) {
+                if let error = model.actionError { ProblemLine(text: error) }
+                if model.rows.isEmpty {
+                    WStateView(kind: .empty, title: String(localized: "No other devices."))
                 }
-                .listRowBackground(Color.theme(.backgroundCard))
+                ForEach(model.rows, id: \.device.id) { row in card(row) }
             }
+            .padding(.horizontal, WTokens.Space.lg)
+            .padding(.vertical, WTokens.Space.md)
+            .frame(maxWidth: WTokens.Size.contentMax, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
-        .scrollContentBackground(.hidden)
+        .environment(\.wStrings, .app)
         .background(Color.theme(.backgroundPage).ignoresSafeArea())
         .navigationTitle("Devices")
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.run() }
         .id(themes.revision)
+    }
+
+    /// One device. A device waiting for approval shows the code to compare in the text color, not
+    /// greyed, because it is the thing to read before tapping Approve. The button sits under the
+    /// text at full width, so it keeps its size at the largest text sizes.
+    private func card(_ row: DeviceApprovalModel.Row) -> some View {
+        VStack(alignment: .leading, spacing: WTokens.Space.sm) {
+            VStack(alignment: .leading, spacing: WTokens.Space.xxs) {
+                Text(row.device.name ?? row.device.platform ?? "Unnamed device")
+                    .wType(WTokens.TypeScale.subtitle)
+                    .foregroundStyle(Color.theme(.textPrimary))
+                Text(row.statusLine)
+                    .wType(WTokens.TypeScale.secondary)
+                    .foregroundStyle(Color.theme(.textSecondary))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            if let line = row.codeLine {
+                Text(line)
+                    .wType(WTokens.TypeScale.body)
+                    .foregroundStyle(Color.theme(.textPrimary))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if row.collides { ProblemLine(text: DeviceApprovalModel.collisionWarning) }
+            if row.canApprove {
+                Button("Approve") { Task { await model.approve(row.device) } }
+                    .buttonStyle(.w(.primary, fill: true))
+                    .disabled(model.approving)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(WTokens.Space.lg)
+        .wCard()
+    }
+}
+
+/// Something went wrong, or needs care: a warning mark and the words, never color alone.
+private struct ProblemLine: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.triangle")
+            .wType(WTokens.TypeScale.secondary)
+            .foregroundStyle(Color.theme(.error))
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -143,39 +171,57 @@ struct DeviceLimitView: View {
     @State private var working = false
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text(EnrollmentModel.limitMessage(holders: holders)).foregroundStyle(Color.theme(.textPrimary))
+        VStack(spacing: WTokens.Space.lg) {
+            Text(EnrollmentModel.limitMessage(holders: holders))
+                .wType(WTokens.TypeScale.body)
+                .foregroundStyle(Color.theme(.textPrimary))
             Text("Cloud lifts this limit. Subscribe from Whimbrel on your Mac or PC (Settings → Sync & Devices).")
+                .wType(WTokens.TypeScale.secondary)
                 .foregroundStyle(Color.theme(.textSecondary))
-            if let error = model.actionError {
-                Text(error).font(.footnote).foregroundStyle(Color.theme(.textSecondary))
-            }
+            if let error = model.actionError { ProblemLine(text: error) }
             if let holder = holders.first {
                 Button("Use this phone instead") {
                     Task { working = true; await model.swap(replacing: holder); working = false }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.theme(.accentPrimary))
+                .buttonStyle(.w(.primary, fill: true))
                 .disabled(working)
             }
-            Divider()
+            waitlist
+        }
+    }
+
+    /// The waitlist, set apart on its own card so it does not read as part of the swap above.
+    private var waitlist: some View {
+        VStack(alignment: .leading, spacing: WTokens.Space.sm) {
             if joined {
-                Text("You're on the waitlist. Thanks for telling us what you need.").foregroundStyle(Color.theme(.textSecondary))
+                Text("You're on the waitlist. Thanks for telling us what you need.")
+                    .wType(WTokens.TypeScale.body)
+                    .foregroundStyle(Color.theme(.textPrimary))
             } else {
-                Text("Want more? Tell us what you'd use:").foregroundStyle(Color.theme(.textSecondary))
+                Text("Want more? Tell us what you'd use:")
+                    .wType(WTokens.TypeScale.bodyStrong)
+                    .foregroundStyle(Color.theme(.textPrimary))
+                    .accessibilityAddTraits(.isHeader)
                 ForEach(EnrollmentModel.waitlistOptions, id: \.want) { option in
-                    Toggle(option.label, isOn: Binding(
+                    Toggle(isOn: Binding(
                         get: { wants.contains(option.want) },
                         set: { if $0 { wants.insert(option.want) } else { wants.remove(option.want) } }
-                    ))
-                    .foregroundStyle(Color.theme(.textPrimary))
+                    )) {
+                        Text(option.label).wType(WTokens.TypeScale.body).foregroundStyle(Color.theme(.textPrimary))
+                    }
+                    .tint(Color.theme(.accentPrimary))
+                    .frame(minHeight: WTokens.Size.target)
                 }
                 Button("Join the waitlist") {
                     Task { working = true; joined = await model.joinWaitlist(wants: wants.sorted()); working = false }
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.w(.secondary, fill: true))
                 .disabled(wants.isEmpty || working)
             }
         }
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(WTokens.Space.lg)
+        .wCard()
     }
 }

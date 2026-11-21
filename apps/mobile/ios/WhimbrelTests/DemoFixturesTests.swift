@@ -4,6 +4,13 @@ import XCTest
 
 @MainActor
 final class DemoFixturesTests: XCTestCase {
+    /// A demo launch must not run the core's settings sync: it has no real account, and the
+    /// pull would write keys and routing into this phone's real settings.
+    func testDemoLaunchHasNoSettingsPuller() {
+        XCTAssertNil(WhimbrelApp.settingsPuller(isDemo: true))
+        XCTAssertNotNil(WhimbrelApp.settingsPuller(isDemo: false))
+    }
+
     /// Every screen can be shown from the demo store: Today, Meetings, detail and Routines.
     func testDemoStoreServesEveryScreen() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("DemoFixturesTests-\(UUID().uuidString)", isDirectory: true)

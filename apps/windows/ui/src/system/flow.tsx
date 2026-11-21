@@ -371,16 +371,23 @@ export interface WDialogProps {
   children: ReactNode;
   /** Escape. */
   onCancel: () => void;
+  /** More text under the body (not part of the description screen readers read with the title). */
+  details?: ReactNode;
+  /** Focus the dialog itself, not a button: when the user was typing elsewhere, so Enter or Space
+   *  can't answer it by accident. */
+  focusDialog?: boolean;
 }
 
 /** An alert dialog over the page. Focus goes to the safe button, Tab stays inside, Escape cancels, and focus returns
  *  to where it was. The page's own keys ignore it. */
-export function WDialog({ title, body, children, onCancel }: WDialogProps) {
+export function WDialog({ title, body, children, onCancel, details, focusDialog }: WDialogProps) {
   const id = useId();
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null;
-    const target = box.current?.querySelector<HTMLElement>("[data-initial]") ?? box.current?.querySelector<HTMLElement>("button");
+    const target = focusDialog
+      ? box.current
+      : (box.current?.querySelector<HTMLElement>("[data-initial]") ?? box.current?.querySelector<HTMLElement>("button"));
     target?.focus({ preventScroll: true });
     return () => before?.focus?.();
   }, []);
@@ -394,7 +401,11 @@ export function WDialog({ title, body, children, onCancel }: WDialogProps) {
       if (items.length === 0) return;
       const first = items[0];
       const last = items[items.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
+      if (document.activeElement === box.current) {
+        // The dialog itself has focus (`focusDialog`): Tab goes to its first button, Shift+Tab to its last.
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
         last.focus();
       } else if (!e.shiftKey && document.activeElement === last) {
@@ -405,7 +416,16 @@ export function WDialog({ title, body, children, onCancel }: WDialogProps) {
   };
   return (
     <div className="w-dialog-scrim">
-      <div ref={box} className="w-dialog" role="alertdialog" aria-modal="true" aria-labelledby={`${id}-t`} aria-describedby={body ? `${id}-b` : undefined} onKeyDown={onKeyDown}>
+      <div
+        ref={box}
+        className="w-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={`${id}-t`}
+        aria-describedby={body ? `${id}-b` : undefined}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+      >
         <h2 className="w-dialog-title" id={`${id}-t`}>
           {title}
         </h2>
@@ -414,6 +434,7 @@ export function WDialog({ title, body, children, onCancel }: WDialogProps) {
             {body}
           </p>
         ) : null}
+        {details}
         <div className="w-dialog-actions">{children}</div>
       </div>
     </div>

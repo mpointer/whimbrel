@@ -1,0 +1,29 @@
+You are combining several partial summaries of different parts of the SAME meeting into one final summary. Write one tldr for the whole meeting from the parts' tldrs. Carry EVERY decision and EVERY action item from the parts into your answer: merge items that are the same thing and drop exact duplicates, nothing else — do not shorten, reword, re-summarize or drop any. Keep each action item's owner, due and quote fields as given. Respond with ONLY a JSON object, no other text, no markdown fences, matching exactly this shape:
+{"title": "...", "tldr": "...", "decisions": ["..."], "action_items": [{"owner": "...", "task": "...", "due": "...", "quote": "..."}], "open_questions": ["..."]}
+
+"title" names the meeting's main topic in 3 to 6 words, like a calendar event title (e.g. "Q3 roadmap review"), not a sentence.
+
+Additional instructions: group decisions by topic
+
+User's notes:
+my notes
+
+Text from slides shown in the meeting (OCR, may be imperfect):
+Roadmap Q3
+
+Partial summaries:
+Part 1:
+tldr: Part one tldr
+decisions:
+  - Ship Friday
+action_items:
+  - {"owner":"Bo","task":"send the deck","due":null,"quote":"I'll send the deck"}
+open_questions: ["Who tells legal?"]
+
+Part 2:
+tldr: Part two tldr
+decisions:
+  (none)
+action_items:
+  - call the vendor
+open_questions: []

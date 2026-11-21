@@ -33,13 +33,13 @@ func effectiveAskRoutingProvider(
     return (.ollama, defaults.ollamaModel)
 }
 
-/// Ask copy for a question that core answers on this Mac because it names a client excluded from hosted
+/// Ask copy for a question that core answers on this Mac because it involves a client excluded from hosted
 /// models. Generic on purpose: it never says which client.
 enum AskLocalRouteCopy {
     /// While the question is in flight.
-    static let inFlight = String(localized: "Answering on this Mac: this question names a client excluded from hosted models…")
+    static let inFlight = String(localized: "Answering on this Mac: this question involves a client excluded from hosted models…")
     /// Under the finished answer.
-    static let answered = String(localized: "Answered locally: a client named here is excluded from hosted models.")
+    static let answered = String(localized: "Answered locally: this question involves a client excluded from hosted models.")
 
     /// Before the check ran: no model named, since the question may be answered on this Mac.
     static let askingPlain = String(localized: "Asking…")

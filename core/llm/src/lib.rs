@@ -92,6 +92,8 @@ mod backoff;
 pub mod limited_use;
 mod ledger;
 mod routing;
+mod summary_sources;
+pub use summary_sources::*;
 pub mod streaming;
 pub mod live_question;
 pub mod meeting_ask;
@@ -1876,11 +1878,33 @@ const ACTION_ITEM_GUIDANCE: &str = "\"action_items\" lists EVERY commitment, req
 
 /// The JSON shape a summary answer takes; `with_title` for the whole-meeting and reduce calls.
 fn summary_shape(with_title: bool) -> String {
+    summary_shape_with(with_title, false)
+}
+
+/// [`summary_shape`]; `want_sources` adds the `line_sources` list ([`SOURCE_GUIDANCE`] says what
+/// it holds). Without it the text is exactly what it was before sources existed.
+fn summary_shape_with(with_title: bool, want_sources: bool) -> String {
     let title = if with_title { "\"title\": \"...\", " } else { "" };
+    let sources = if want_sources {
+        ", \"line_sources\": [{\"kind\": \"decision\", \"line\": \"...\", \"at\": \"HH:mm:ss\", \"quote\": \"...\"}]"
+    } else {
+        ""
+    };
     format!(
-        "{{{title}\"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [{{\"owner\": \"...\", \"task\": \"...\", \"due\": \"...\", \"quote\": \"...\"}}], \"open_questions\": [\"...\"]}}"
+        "{{{title}\"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [{{\"owner\": \"...\", \"task\": \"...\", \"due\": \"...\", \"quote\": \"...\"}}], \"open_questions\": [\"...\"]{sources}}}"
     )
 }
+
+/// What the model is told about `line_sources`, only when sources are asked for. The decisions,
+/// open questions and action items stay exactly the strings and objects they were: this list is a
+/// separate pointer from each one to a transcript line, matched back by its text.
+const SOURCE_GUIDANCE: &str = "\"line_sources\" says where in the transcript each decision, open question \
+     and action item came from, one entry per line you can place. \"kind\" is \"decision\", \
+     \"open_question\" or \"action_item\"; \"line\" is that decision or open question exactly as you \
+     wrote it above, or the action item's \"task\" exactly as you wrote it above; \"at\" is the time \
+     tag of the one transcript line that supports it, copied exactly as written inside the square \
+     brackets (for example 14:03:22); \"quote\" is 4 to 12 words copied exactly from that same line. \
+     Leave an entry out when no single line supports it. Never guess a time and never reword a quote.\n\n";
 
 /// Summarizes one chunk of a (possibly split) transcript. When `chunk_count > 1`, the
 /// prompt tells the model this is a partial excerpt, so it doesn't treat a missing
@@ -1909,6 +1933,22 @@ pub fn summarize_chunk_with_context(
     custom_instructions: &str,
     previous_tldr: Option<&str>,
 ) -> Result<(MeetingSummary, TokenUsage), LlmError> {
+    let prompt = chunk_prompt(chunk_index, chunk_count, notes, chunk, custom_instructions, previous_tldr, false);
+    let completion = client.complete(&prompt)?;
+    let summary = parse_meeting_summary(&completion.text)?;
+    Ok((summary, completion.token_usage))
+}
+
+/// The request for one chunk; `want_sources` adds the `line_sources` ask and nothing else.
+fn chunk_prompt(
+    chunk_index: usize,
+    chunk_count: usize,
+    notes: &str,
+    chunk: &str,
+    custom_instructions: &str,
+    previous_tldr: Option<&str>,
+    want_sources: bool,
+) -> String {
     let mut context_note = if chunk_count > 1 {
         format!(
             "This is part {n} of {total} of a longer meeting transcript, split into parts \
@@ -1930,19 +1970,18 @@ pub fn summarize_chunk_with_context(
     } else {
         format!("Additional instructions: {custom_instructions}\n\n")
     };
-    let prompt = format!(
+    let source_guidance = if want_sources { SOURCE_GUIDANCE } else { "" };
+    format!(
         "You are summarizing part of a meeting by blending the user's rough notes with \
          the transcript excerpt below. Respond with ONLY a JSON object, no other text, \
          no markdown fences, matching exactly this shape:\n\
          {shape}\n\n\
          {ACTION_ITEM_GUIDANCE}\
+         {source_guidance}\
          {context_note}{instructions_block}User's notes:\n{notes}\n\n\
          Transcript excerpt:\n{chunk}\n",
-        shape = summary_shape(false),
-    );
-    let completion = client.complete(&prompt)?;
-    let summary = parse_meeting_summary(&completion.text)?;
-    Ok((summary, completion.token_usage))
+        shape = summary_shape_with(false, want_sources),
+    )
 }
 
 /// One partial summary's decisions and action items, each on its own line exactly as the
@@ -2026,13 +2065,23 @@ pub fn summarize_whole_transcript(
     slides: &str,
     custom_instructions: &str,
 ) -> Result<MeetingSummary, LlmError> {
+    let prompt = whole_prompt(notes, transcript, slides, custom_instructions, false);
+    let completion = client.complete(&prompt)?;
+    let mut summary = parse_meeting_summary(&completion.text)?;
+    summary.token_usage = completion.token_usage;
+    Ok(summary)
+}
+
+/// The single-call request; `want_sources` adds the `line_sources` ask and nothing else.
+fn whole_prompt(notes: &str, transcript: &str, slides: &str, custom_instructions: &str, want_sources: bool) -> String {
     let instructions_block = if custom_instructions.is_empty() {
         String::new()
     } else {
         format!("Additional instructions: {custom_instructions}\n\n")
     };
     let slides_block = slides_prompt_block(slides);
-    let prompt = format!(
+    let source_guidance = if want_sources { SOURCE_GUIDANCE } else { "" };
+    format!(
         "You are summarizing a meeting by blending the user's rough notes with the \
          transcript below. Respond with ONLY a JSON object, no other text, no markdown \
          fences, matching exactly this shape:\n\
@@ -2040,14 +2089,11 @@ pub fn summarize_whole_transcript(
          \"title\" names the meeting's main topic in 3 to 6 words, like a calendar event \
          title (e.g. \"Q3 roadmap review\"), not a sentence.\n\n\
          {ACTION_ITEM_GUIDANCE}\
+         {source_guidance}\
          {instructions_block}User's notes:\n{notes}{slides_block}\n\n\
          Transcript:\n{transcript}\n",
-        shape = summary_shape(true),
-    );
-    let completion = client.complete(&prompt)?;
-    let mut summary = parse_meeting_summary(&completion.text)?;
-    summary.token_usage = completion.token_usage;
-    Ok(summary)
+        shape = summary_shape_with(true, want_sources),
+    )
 }
 
 /// FR-MTG-5: blends the user's rough notes with the transcript into one summary. Long
@@ -2096,7 +2142,7 @@ pub fn summarize_meeting(
     Ok(summary)
 }
 
-fn parse_meeting_summary(text: &str) -> Result<MeetingSummary, LlmError> {
+pub(crate) fn parse_meeting_summary(text: &str) -> Result<MeetingSummary, LlmError> {
     let json_str = extract_json_object(text).ok_or_else(|| {
         LlmError::Provider(format!("model response contained no JSON object: {text:?}"))
     })?;

@@ -65,6 +65,8 @@ struct CoreMeetingTranscriptSegment: Codable, Identifiable {
     let startCs: Int64
     let speakerLabel: String
     let text: String
+    /// The line's end on the clock of `startCs`; only for a line stored with one (new recordings, redesign flag on).
+    var endCs: Int64? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -73,6 +75,7 @@ struct CoreMeetingTranscriptSegment: Codable, Identifiable {
         case startCs = "start_cs"
         case speakerLabel = "speaker_label"
         case text
+        case endCs = "end_cs"
     }
 }
 
@@ -89,11 +92,14 @@ struct NewTranscriptSegmentInput: Encodable {
     let startCs: Int64
     let speakerLabel: String
     let text: String
+    /// Written only with the redesign flag on; nil leaves the JSON exactly as it was.
+    var endCs: Int64? = nil
 
     enum CodingKeys: String, CodingKey {
         case startCs = "start_cs"
         case speakerLabel = "speaker_label"
         case text
+        case endCs = "end_cs"
     }
 }
 
@@ -1315,6 +1321,7 @@ enum CoreLLMError: Error, Equatable, Decodable {
             let name = Self.providerNames[provider] ?? provider
             return String(localized: "\(name) is busy or out of credit. Try again shortly.")
         case .providerFailureBecause(.creditExhausted):
+            if PlusCopy.isPlusAccount.isOn { return PlusCopy.creditExhaustedMessage }
             return String(localized: "Whimbrel AI credit is used up. Add credit in Settings.")
         case .providerFailureBecause(.modelUnavailable(let provider, let model)):
             let name = Self.providerNames[provider] ?? provider
@@ -2738,7 +2745,7 @@ final class CoreMemoryStore {
         return decodeLLMResult(json)
     }
 
-    /// Whether this Ask bar question (with the conversation so far) names a client excluded from hosted
+    /// Whether this Ask bar question (with the conversation so far) involves a client excluded from hosted
     /// models, so core answers it on this Mac or refuses it. A cheap check, no model call. False when
     /// core cannot say.
     func askNamesExcludedClient(_ query: String, history: [CoreChatTurn] = []) -> Bool {
@@ -3917,7 +3924,7 @@ final class CoreMemoryStore {
     /// malformed args) — otherwise (LB0-5) a `Result` distinguishing success from
     /// `.spendCap`/`.providerFailure` (a cap rejection can happen either before the
     /// first provider is tried or mid-operation on a later chunk).
-    func summarizeMeeting(meetingId: Int64, notes: String, transcript: String, slides: String, model: String, routing: CoreRoutingConfig, customInstructions: String) -> Result<CoreMeetingSummary, CoreLLMError>? {
+    func summarizeMeeting(meetingId: Int64, notes: String, transcript: String, slides: String, model: String, routing: CoreRoutingConfig, customInstructions: String, wantSources: Bool = false) -> Result<CoreMeetingSummary, CoreLLMError>? {
         guard let routingJSON = try? JSONEncoder().encode(routing),
               let routingString = String(data: routingJSON, encoding: .utf8) else { return nil }
         guard let json = notes.withCString({ n in
@@ -3926,7 +3933,9 @@ final class CoreMemoryStore {
                     model.withCString { m in
                         routingString.withCString { r in
                             customInstructions.withCString { ci in
-                                whimbrel_llm_summarize_meeting(handle, meetingId, n, t, sl, m, r, ci)
+                                wantSources
+                                    ? whimbrel_llm_summarize_meeting_sourced(handle, meetingId, n, t, sl, m, r, ci, true)
+                                    : whimbrel_llm_summarize_meeting(handle, meetingId, n, t, sl, m, r, ci)
                             }
                         }
                     }
@@ -3940,7 +3949,7 @@ final class CoreMemoryStore {
     /// "Re-summarize with Whimbrel": `summarizeMeeting` with no fallback to another model. `routing`
     /// must name Whimbrel as the preferred provider. A failure also carries core's `fallback_reason`
     /// code (see `CoreSummaryFallback`) when it had one. `nil` only on invalid usage.
-    func summarizeMeetingPreferred(meetingId: Int64, notes: String, transcript: String, slides: String, model: String, routing: CoreRoutingConfig, customInstructions: String) -> (result: Result<CoreMeetingSummary, CoreLLMError>, reason: String?)? {
+    func summarizeMeetingPreferred(meetingId: Int64, notes: String, transcript: String, slides: String, model: String, routing: CoreRoutingConfig, customInstructions: String, wantSources: Bool = false) -> (result: Result<CoreMeetingSummary, CoreLLMError>, reason: String?)? {
         guard let routingJSON = try? JSONEncoder().encode(routing),
               let routingString = String(data: routingJSON, encoding: .utf8) else { return nil }
         guard let json = notes.withCString({ n in
@@ -3949,7 +3958,9 @@ final class CoreMemoryStore {
                     model.withCString { m in
                         routingString.withCString { r in
                             customInstructions.withCString { ci in
-                                whimbrel_llm_summarize_meeting_preferred(handle, meetingId, n, t, sl, m, r, ci)
+                                wantSources
+                                    ? whimbrel_llm_summarize_meeting_preferred_sourced(handle, meetingId, n, t, sl, m, r, ci, true)
+                                    : whimbrel_llm_summarize_meeting_preferred(handle, meetingId, n, t, sl, m, r, ci)
                             }
                         }
                     }
@@ -3981,7 +3992,7 @@ final class CoreMemoryStore {
         return Self.summaryFallback(inEnvelope: Data(String(cString: json).utf8))
     }
 
-    /// Whether a summary of this meeting would be refused now: it names a client excluded from
+    /// Whether a summary of this meeting would be refused now: it involves a client excluded from
     /// hosted models and no local model is available. Recomputed by core on each call, so it is
     /// false again once a local model is on. Reads only; nothing is sent.
     func summaryRefusedForExclusion(meetingId: Int64, model: String, routing: CoreRoutingConfig) -> Bool {
@@ -4134,6 +4145,12 @@ final class CoreMemoryStore {
         guard let json = whimbrel_meetings_recent_grouped(handle, limit) else { return [] }
         defer { whimbrel_core_free_string(json) }
         return decode(json) ?? []
+    }
+
+    /// Meetings after grouping copies, over every meeting (no list cap); nil on failure.
+    func groupedMeetingCount() -> Int? {
+        let n = whimbrel_meetings_grouped_count(handle)
+        return n < 0 ? nil : Int(n)
     }
 
     func recentMeetings(limit: Int = 20) -> [CoreMeeting] {
@@ -6800,5 +6817,71 @@ extension CoreMemoryStore {
     @discardableResult
     func setMeetingMarkerLabel(id: Int64, label: String?) -> Bool {
         Self.withOptionalCString(label) { whimbrel_meeting_marker_set_label(handle, id, $0) }
+    }
+}
+
+// MARK: Line sources (finished note, redesign flag only)
+
+/// The transcript line a summary line came from, as core returns it. `segmentId` is the id in the transcript page.
+struct CoreLineSource: Decodable, Equatable {
+    let segmentId: Int64
+    let startCs: Int64
+    let speakerLabel: String
+    let text: String
+
+    enum CodingKeys: String, CodingKey {
+        case segmentId = "segment_id"
+        case startCs = "start_cs"
+        case speakerLabel = "speaker_label"
+        case text
+    }
+}
+
+struct CoreSourcedText: Decodable, Equatable {
+    let text: String
+    let source: CoreLineSource?
+}
+
+struct CoreSourcedActionItem: Decodable, Equatable {
+    let itemId: Int64?
+    let text: String
+    let owner: String?
+    let due: String?
+    let source: CoreLineSource?
+
+    enum CodingKeys: String, CodingKey {
+        case itemId = "item_id"
+        case text, owner, due, source
+    }
+}
+
+/// `whimbrel_meeting_note_sources`: the current lines with the sources that still hold on this device.
+struct CoreNoteSources: Decodable, Equatable {
+    var decisions: [CoreSourcedText] = []
+    var openQuestions: [CoreSourcedText] = []
+    var actionItems: [CoreSourcedActionItem] = []
+
+    enum CodingKeys: String, CodingKey {
+        case decisions
+        case openQuestions = "open_questions"
+        case actionItems = "action_items"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        decisions = try c.decodeIfPresent([CoreSourcedText].self, forKey: .decisions) ?? []
+        openQuestions = try c.decodeIfPresent([CoreSourcedText].self, forKey: .openQuestions) ?? []
+        actionItems = try c.decodeIfPresent([CoreSourcedActionItem].self, forKey: .actionItems) ?? []
+    }
+}
+
+extension CoreMemoryStore {
+    /// Call on `CoreMemoryStore.accessQueue`. Nil on an error or a missing meeting.
+    func meetingNoteSources(meetingId: Int64) -> CoreNoteSources? {
+        guard let json = whimbrel_meeting_note_sources(handle, meetingId) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
     }
 }

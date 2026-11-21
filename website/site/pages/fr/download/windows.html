@@ -1,7 +1,7 @@
 <!--
 {
   "title": "Whimbrel pour Windows 11 – Notes de réunion IA",
-  "description": "Téléchargez Whimbrel pour Windows 11 : notes de réunion IA sans robot, mémoire d'écran et breffages. Aucun droit admin requis. Accès anticipé gratuit.",
+  "description": "Téléchargez Whimbrel pour Windows 11 : notes de réunion IA sans robot, mémoire d'écran et breffages. Sans droits d'administrateur. Accès anticipé gratuit.",
   "schema": [
     "software-windows"
   ],
@@ -18,19 +18,19 @@
   ],
   "faq": [
     {
-      "q": "Pourquoi Windows affiche-t-il un avertissement SmartScreen ?",
-      "a": "Pendant l'accès anticipé, le programme d'installation n'est pas encore signé avec un certificat de signature de code Windows. Microsoft Defender SmartScreen peut donc afficher « Windows a protégé votre ordinateur ». Choisissez Informations complémentaires, puis Exécuter quand même. Les mises à jour reçues dans l'application sont vérifiées par signature avant leur installation."
+      "q": "Pourquoi Windows affiche-t-il un avertissement SmartScreen ?",
+      "a": "Pendant l'accès anticipé, le programme d'installation n'est pas encore signé avec un certificat de signature de code Windows. Microsoft Defender SmartScreen peut donc afficher « Windows a protégé votre ordinateur ». Choisissez Informations complémentaires, puis Exécuter quand même. Les mises à jour reçues dans l'application sont vérifiées par signature avant d'être installées."
     },
     {
-      "q": "Ai-je besoin de droits d'administrateur ?",
+      "q": "Ai-je besoin des droits d'administrateur ?",
       "a": "Non. Whimbrel s'installe uniquement pour votre compte utilisateur, dans votre profil, de sorte qu'un compte standard peut l'installer et le mettre à jour."
     },
     {
-      "q": "L'application Windows offre-t-elle toutes les fonctionnalités de la version Mac ?",
-      "a": "Pas encore. Whimbrel pour Windows est en accès anticipé et rattrape l'application Mac à chaque version. Les deux applications partagent le même noyau, et un Mac et un PC peuvent partager une seule chronologie."
+      "q": "L'application Windows offre-t-elle toutes les fonctionnalités de la version Mac ?",
+      "a": "Pas encore. Whimbrel pour Windows est en accès anticipé et rattrape l'application Mac version après version. Les deux applications partagent le même noyau, et un Mac et un PC peuvent partager une même chronologie."
     }
   ],
-  "sourceHash": "225788630ec0"
+  "sourceHash": "2bc8fa1f3957"
 }
 -->
 {{{crumbs}}}
@@ -39,14 +39,14 @@
     <div>
       <p class="eyebrow">Windows 11 · Accès anticipé</p>
       <h1>Whimbrel pour Windows</h1>
-      <p class="lede">La même mémoire privée et la même saisie de réunions sans robot que sur Mac, sur votre PC Windows, avec une seule chronologie partagée avec vos autres appareils.</p>
+      <p class="lede">La même mémoire privée et la même capture de réunions sans robot que sur Mac, sur votre PC Windows, avec une seule chronologie partagée avec vos autres appareils.</p>
       {{{site.renameNote}}}
       <div class="hero-actions">
         <a class="btn btn-primary btn-lg" href="/api/download/windows">Télécharger pour Windows</a>
         <span class="version" data-version="windows"></span>
       </div>
-      <p class="fine muted">Première visite ? Vous devrez vous inscrire avant le début du téléchargement.</p>
-      <p class="fine" data-arm-download hidden>Votre PC a un processeur Arm (comme Snapdragon) ? <a href="/api/download/windows-arm">Téléchargez la version pour Windows sur Arm</a>. Elle s’exécute en natif, donc la transcription est plus rapide qu’avec la version standard émulée.</p>
+      <p class="fine muted">Première visite ? Vous devrez vous inscrire avant le début du téléchargement.</p>
+      <p class="fine" data-arm-download hidden>Un PC doté d'un processeur Arm (comme Snapdragon) ? <a href="/api/download/windows-arm">Téléchargez la version pour Windows on Arm</a>. Elle s'exécute en natif, donc la transcription y est plus rapide qu'avec la version standard sous émulation.</p>
     </div>
     {{> app-mock}}
   </div>
@@ -57,16 +57,16 @@
     <div>
       <h2>Configuration requise</h2>
       <ul class="checklist">
-        <li><strong>Windows 11, 64 bits (x64 ou Arm)</strong>Sur un PC Arm, utilisez la version pour Windows sur Arm. Elle ne distingue pas encore les autres participants d'un appel.</li>
-        <li><strong>Microsoft Edge WebView2</strong>Déjà inclus dans Windows 11.</li>
+        <li><strong>Windows 11, 64 bits (x64 ou Arm)</strong>Sur un PC Arm, utilisez le téléchargement pour Windows on Arm. Il ne distingue pas encore les autres interlocuteurs d'un appel.</li>
+        <li><strong>Microsoft Edge WebView2</strong>Déjà inclus avec Windows 11.</li>
         <li><strong>Espace disque</strong>De la place pour l'application, le modèle de reconnaissance vocale sur l'appareil et votre historique grandissant.</li>
-        <li><strong>Facultatif : Ollama</strong>Pour exécuter des modèles de langage entièrement sur votre PC.</li>
+        <li><strong>Facultatif : Ollama</strong>Pour exécuter des modèles de langage entièrement sur votre PC.</li>
       </ul>
     </div>
     <div>
       <h2>Installation en deux minutes</h2>
       <ol class="install-steps">
-        <li>Lancez le fichier téléchargé <code>Whimbrel_x.y.z_x64-setup.exe</code> (<code>_arm64-setup.exe</code> sous Windows sur Arm).</li>
+        <li>Lancez le fichier téléchargé <code>Whimbrel_x.y.z_x64-setup.exe</code> (<code>_arm64-setup.exe</code> sur Windows on Arm).</li>
         <li>Si SmartScreen s'affiche, choisissez <strong>Informations complémentaires</strong> → <strong>Exécuter quand même</strong> (voir plus bas pourquoi).</li>
         <li>L'installation se termine sans droits d'administrateur.</li>
         <li>Whimbrel démarre dans la zone de notification. Ouvrez-le pour terminer la configuration.</li>

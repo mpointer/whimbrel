@@ -29,6 +29,10 @@ import com.mpointer.whimbrel.mobile.reminders.ReminderSettingsStore
 import com.mpointer.whimbrel.mobile.reminders.ResourceReminderText
 import com.mpointer.whimbrel.mobile.reminders.SystemAlarmBackend
 import com.mpointer.whimbrel.mobile.secrets.KeystoreCipher
+import com.mpointer.whimbrel.mobile.ask.AskLanguage
+import com.mpointer.whimbrel.mobile.ask.AskModel
+import com.mpointer.whimbrel.mobile.ask.PhoneAskBackend
+import com.mpointer.whimbrel.mobile.ask.PhoneRoutingPrefs
 import com.mpointer.whimbrel.mobile.secrets.SecretVault
 import com.mpointer.whimbrel.mobile.secrets.SyncSecrets
 import com.mpointer.whimbrel.mobile.sync.CatchUpService
@@ -116,6 +120,8 @@ class WhimbrelApplication : Application() {
         ).also {
             it.onWipe = {
                 wipeHandler(prefs, rawPrefs, keys, liveSync, storeDir)()
+                // Questions and answers quote the account's data: none stay on screen after a revoke or sign-out.
+                appScope.launch { liveAsk.reset() }
                 // Revoked or signed out: no reminder may outlive the account's data.
                 reminders.clearOnWipe()
             }
@@ -159,6 +165,20 @@ class WhimbrelApplication : Application() {
 
     /** The demo's models when a debug launch asked for one; replaces the live ones for the rest of the process. */
     private var demo: Pair<EnrollmentModel, SyncModel>? = null
+    private var demoAsk: AskModel? = null
+
+    private val liveAsk: AskModel by lazy {
+        AskModel(
+            backend = PhoneAskBackend({ sync }, Native, appScope),
+            prefs = PhoneRoutingPrefs(prefs),
+            keys = keys::key,
+            scope = appScope,
+            outputLanguage = { AskLanguage.outputTag(java.util.Locale.getDefault().country) },
+        )
+    }
+
+    /** Ask; only ever read when [coreSupported]. Its questions and answers are dropped on a wipe. */
+    val ask: AskModel get() = demoAsk ?: liveAsk
 
     val enrollment: EnrollmentModel get() = demo?.first ?: liveEnrollment
 
@@ -170,14 +190,18 @@ class WhimbrelApplication : Application() {
      * over [store], so no real state, Google or server is touched. Call before any UI reads [enrollment] or [sync];
      * a second call (an Activity restart) keeps the demo already running.
      */
-    internal fun startDemo(store: MeetingSyncStore, backend: EnrollmentBackend) {
+    internal fun startDemo(store: MeetingSyncStore, backend: EnrollmentBackend, ask: ((CoroutineScope) -> AskModel)? = null, approved: Boolean = true) {
         if (!coreSupported || demo != null) return
+        demoAsk = ask?.invoke(appScope)
         // The demo never checks the plan, schedules or asks for permission, whatever the cached plan says.
         reminders.isEnabled = false
         val secrets = SyncSecrets(SecretVault(File(cacheDir, "demo-secrets").also { it.deleteRecursively() }, KeystoreCipher()))
         // Keys already held: the model starts approved and its silent resume lands the (fake) token.
-        secrets.deviceSecretKey = Json.parseToJsonElement(Native.syncGenerateDeviceKeypair()!!).jsonObject.getValue("secret_key_base64").jsonPrimitive.content
-        secrets.groupKey = "demo"
+        // With [approved] false the phone holds no keys and signs in against [backend] (the device-limit demo).
+        if (approved) {
+            secrets.deviceSecretKey = Json.parseToJsonElement(Native.syncGenerateDeviceKeypair()!!).jsonObject.getValue("secret_key_base64").jsonPrimitive.content
+            secrets.groupKey = "demo"
+        }
         val enrollment = EnrollmentModel(
             backend = backend,
             secrets = secrets,
@@ -197,6 +221,7 @@ class WhimbrelApplication : Application() {
             clock = System::currentTimeMillis,
         )
         demo = enrollment to sync
+        if (!approved) appScope.launch { enrollment.signIn() }
     }
 
     override fun onCreate() {

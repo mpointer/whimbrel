@@ -17,9 +17,14 @@
   "routes": [
     { "pattern": "sync.whimbrelapp.com", "custom_domain": true }
   ],
-  // The daily inactivity cron (src/inactivity.ts): warnings, deletions, expired
-  // swaps, reset notices and retired databases.
-  "triggers": { "crons": ["0 9 * * *"] },
+  // Two crons, the strings in src/schedules.ts (a test keeps them equal);
+  // `scheduled` dispatches on them. "0 9 * * *" (DAILY_CRON): inactivity
+  // (warnings, deletions, expired swaps, reset notices, retired databases)
+  // and the stale AI hold settle. "30 * * * *" (YEARLY_GRANTS_CRON): only
+  // the yearly Plus monthly grants, a few per run (server_setting
+  // plus_yearly_grants_per_run, default 10, for the Free plan's 50
+  // subrequests per invocation).
+  "triggers": { "crons": ["0 9 * * *", "30 * * * *"] },
   "kv_namespaces": [
     {
       "binding": "ENROLLMENT_HANDOFF",

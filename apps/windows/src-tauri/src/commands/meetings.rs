@@ -131,6 +131,12 @@ pub async fn meeting_marker_list(state: tauri::State<'_, AppState>, meeting_id: 
         .map_err(CommandError::store)
 }
 
+/// Changes a mark's label, or clears it with null (the Mac has the same). Redesign only; false when there is no such mark.
+#[tauri::command]
+pub async fn meeting_marker_set_label(state: tauri::State<'_, AppState>, id: i64, label: Option<String>) -> Result<bool, CommandError> {
+    state.store()?.call(move |s| s.update_meeting_marker_label(id, label.as_deref()).map_err(|e| e.to_string())).await?.map_err(CommandError::store)
+}
+
 #[tauri::command]
 pub async fn meeting_marker_delete(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, CommandError> {
     state.store()?.call(move |s| s.delete_meeting_marker(id).map_err(|e| e.to_string())).await?.map_err(CommandError::store)

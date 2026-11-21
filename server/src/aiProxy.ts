@@ -1,6 +1,6 @@
 import type { ExecutionContext } from "@cloudflare/workers-types";
 import { findAccountByGoogleSub, findDeviceByPublicKey, type SqlExecutor } from "./accounts";
-import { aiBalance, placeHold, settleHold, type AiUsage } from "./aiCredit";
+import { aiBalance, placeHold, settleHold, spendable, type AiUsage } from "./aiCredit";
 import { isSignInAllowed } from "./allowlist";
 import { allowedAudiences, googleJwks, verifyGoogleIdToken } from "./googleAuth";
 import { rateLimit, rateLimited } from "./rateLimit";
@@ -398,7 +398,8 @@ export async function handleAiMessages(
     let hold = await placeHold(db, accountId, amount, now);
     if (!hold) {
       // placeHold refuses for short credit or for 4 holds already open.
-      const balance = await aiBalance(db, accountId);
+      // The decision is on what the account can spend (allowance + prepaid).
+      const balance = await spendable(db, accountId, now);
       if (balance >= roundUp100(amount)) return Response.json({ error: "too_many_in_flight" }, { status: 429 });
       // Ruling R16: short credit forwards the largest max_tokens the
       // balance can hold (floor 512), so the service stops at $0, not at
@@ -414,7 +415,7 @@ export async function handleAiMessages(
       hold = await placeHold(db, accountId, amount, now);
       if (!hold) {
         // Another request took credit or a slot in between.
-        const short = (await aiBalance(db, accountId)) < roundUp100(amount);
+        const short = (await spendable(db, accountId, now)) < roundUp100(amount);
         return short
           ? Response.json({ error: "credit_exhausted" }, { status: 402 })
           : Response.json({ error: "too_many_in_flight" }, { status: 429 });
@@ -449,7 +450,9 @@ export async function handleAiMessages(
     }
 
     // The header is a convenience: a failed balance read leaves it out and
-    // must never stop the bill below.
+    // must never stop the bill below. It is prepaid-only BY DESIGN: no client
+    // reads it, and a client must not gate on it for a Plus user (whose
+    // allowance is not in it).
     const creditHeader = async () => {
       try {
         headers.set("x-whimbrel-credit", String(await aiBalance(db, accountId)));

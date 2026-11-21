@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -45,7 +44,21 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
 import com.mpointer.whimbrel.mobile.R
+import com.mpointer.whimbrel.mobile.design.WFilterChip
+import com.mpointer.whimbrel.mobile.design.WMeetingCard
+import com.mpointer.whimbrel.mobile.design.WMeetingVariant
+import com.mpointer.whimbrel.mobile.design.WSpineNode
+import com.mpointer.whimbrel.mobile.design.WSpineStop
+import com.mpointer.whimbrel.mobile.design.WStateKind
+import com.mpointer.whimbrel.mobile.design.WStateView
+import com.mpointer.whimbrel.mobile.design.WTokens
+import com.mpointer.whimbrel.mobile.design.style
 import com.mpointer.whimbrel.mobile.read.MeetingsModel
 import com.mpointer.whimbrel.mobile.read.PhoneMeeting
 import com.mpointer.whimbrel.mobile.read.ReadLogic
@@ -69,17 +82,6 @@ fun meetingRowText(meeting: PhoneMeeting, labels: DeviceLabels, strings: ReadStr
     alsoRecorded = meeting.alsoRecorded?.size?.takeIf { it > 0 }?.let(strings::copies),
     device = strings.device(labels.label(meeting.deviceId)),
 )
-
-/** One meeting in a list: title, then time, where it was recorded, how many copies exist, and who was there. */
-@Composable
-fun MeetingListRow(meeting: PhoneMeeting, labels: DeviceLabels, strings: ReadStrings, modifier: Modifier = Modifier, withDate: Boolean = false) {
-    val row = meetingRowText(meeting, labels, strings, ZoneId.systemDefault(), withDate)
-    Column(modifier.fillMaxWidth().heightIn(min = 48.dp), verticalArrangement = Arrangement.Center) {
-        Text(row.title, style = MaterialTheme.typography.bodyLarge)
-        Text(listOfNotNull(row.timeRange, row.device, row.alsoRecorded).joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (row.attendees.isNotEmpty()) Text(row.attendees, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
 
 /** A new selection replaces the open meeting, so the history never grows past [List, Detail]. */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
@@ -156,46 +158,47 @@ private fun MeetingList(sync: SyncModel, model: MeetingsModel, labels: DeviceLab
             onRefresh = { scope.launch { refreshing = true; sync.syncNow(manual = true); refreshing = false } },
             modifier = Modifier.fillMaxSize(),
         ) {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = WTokens.Space.lg, vertical = WTokens.Space.sm)) {
                 if (devices.size > 1) item(key = "devices") {
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = model.deviceFilter == null, onClick = { model.deviceFilter = null }, label = { Text(stringResource(R.string.meetings_all)) })
-                        devices.forEach { id ->
-                            FilterChip(
-                                selected = model.deviceFilter == id,
-                                onClick = { model.deviceFilter = id },
-                                label = { Text(strings.device(labels.label(id))) },
-                            )
-                        }
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = WTokens.Space.sm), horizontalArrangement = Arrangement.spacedBy(WTokens.Space.sm)) {
+                        WFilterChip(stringResource(R.string.meetings_all), model.deviceFilter == null, { model.deviceFilter = null })
+                        devices.forEach { id -> WFilterChip(strings.device(labels.label(id)), model.deviceFilter == id, { model.deviceFilter = id }) }
                     }
                 }
                 sections.forEach { section ->
                     item(key = "day-${section.day}") {
                         Text(
-                            dayTitle(section.day, zone), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                            dayTitle(section.day, zone), style = WTokens.TypeScale.subtitle.style(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp).semantics { heading() },
+                            modifier = Modifier.padding(top = WTokens.Space.md, bottom = WTokens.Space.xs).semantics { heading() },
                         )
                     }
                     items(section.meetings, key = { it.id }) { meeting ->
-                        MeetingListRow(
-                            meeting, labels, strings,
-                            Modifier
-                                .background(if (meeting.id == selected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
-                                .clickable { onOpen(meeting.id) }
-                                .padding(horizontal = 8.dp),
-                        )
+                        val row = meetingRowText(meeting, labels, strings, zone)
+                        val shape = RoundedCornerShape(WTokens.Radius.card)
+                        WSpineStop(DateUtils.formatDateTime(context, meeting.startUnixMs, DateUtils.FORMAT_SHOW_TIME), Modifier.padding(bottom = WTokens.Space.sm), node = WSpineNode.Past) {
+                            WMeetingCard(
+                                WMeetingVariant.Past, row.title,
+                                // Beside an open meeting (two panes) the open one is outlined as well as described as selected.
+                                Modifier
+                                    .then(if (meeting.id == selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
+                                    .clip(shape)
+                                    .semantics { this.selected = meeting.id == selected }
+                                    .clickable(role = Role.Button) { onOpen(meeting.id) },
+                                detail = listOfNotNull(row.device, row.alsoRecorded, row.attendees.ifEmpty { null }).joinToString(" · "),
+                            )
+                        }
                     }
                 }
                 if (sections.isEmpty()) item(key = "empty") {
-                    Text(
+                    WStateView(
+                        if (loaded) WStateKind.Empty else WStateKind.Loading,
                         stringResource(if (!loaded) R.string.today_loading else if (meetings.isEmpty()) R.string.meetings_none else R.string.meetings_no_match),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (model.isCapped) item(key = "capped") {
                     Text(
-                        stringResource(R.string.meetings_capped, MeetingsModel.limit), style = MaterialTheme.typography.bodySmall,
+                        stringResource(R.string.meetings_capped, MeetingsModel.limit), style = WTokens.TypeScale.secondary.style(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp),
                     )
                 }

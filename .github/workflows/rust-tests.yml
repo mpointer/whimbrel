@@ -588,7 +588,7 @@ jobs:
         env:
           WHIMBREL_UNSIGNED_RELEASE: "1"
         run: |
-          ./gradlew :app:assembleRelease
+          ./gradlew :app:testReleaseUnitTest :app:assembleRelease
           find app/build -name 'lib*.so' -path '*elease*' -exec ls -l {} \; -exec file {} \;
       - uses: actions/upload-artifact@v4
         with:

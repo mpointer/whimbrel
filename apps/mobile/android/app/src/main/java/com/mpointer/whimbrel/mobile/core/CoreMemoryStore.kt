@@ -1,6 +1,11 @@
 package com.mpointer.whimbrel.mobile.core
 
 import com.mpointer.whimbrel.mobile.sync.SyncCredentials
+import com.mpointer.whimbrel.mobile.ask.AskWire
+import com.mpointer.whimbrel.mobile.ask.CitationCard
+import com.mpointer.whimbrel.mobile.ask.CitationRef
+import com.mpointer.whimbrel.mobile.ask.PhoneAskStore
+import com.mpointer.whimbrel.mobile.ask.PrepareResult
 import com.mpointer.whimbrel.mobile.read.*
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -29,10 +34,13 @@ interface MeetingSyncStore : PhoneReadStore, AutoCloseable {
     fun devicesStillToUpdate(): Int? = null
 }
 
+/** Same context limit as the Mac's Ask. */
+private const val ASK_CONTEXT_LIMIT = 5L
+
 @kotlinx.serialization.Serializable
 private data class PendingDevices(@Suppress("PropertyName") val pending_devices: Int? = null)
 
-class CoreMemoryStore(private val store: CoreStore, private val native: CoreNative) : MeetingSyncStore {
+class CoreMemoryStore(private val store: CoreStore, private val native: CoreNative) : MeetingSyncStore, PhoneCaptureStore, PhoneAskStore {
     override fun pullOnly(c: SyncCredentials, captureWindowDays: Int): Boolean {
         native.memorySetDeviceId(store.handle, c.deviceId)
         return native.syncContentPullOnly(store.handle, c.tursoDatabaseUrl, c.tursoToken, c.groupKeyBase64, c.deviceId, captureWindowDays)
@@ -67,7 +75,27 @@ class CoreMemoryStore(private val store: CoreStore, private val native: CoreNati
     override fun prep(eventId: String): PhoneMeetingPrep? = decode(native.meetingPrepGet(h, eventId))
     override fun upcomingEvents(fromUnixMs: Long, untilUnixMs: Long, limit: Int): List<PhoneCalendarEvent> =
         decode(native.memoryUpcomingCalendarEvents(h, fromUnixMs, untilUnixMs, limit.toLong())) ?: emptyList()
-    override fun topicSnapshots(): List<PhoneTopicSnapshot> = decode(native.topicSnapshotsJson(h)) ?: emptyList()
+    override fun topicSnapshots(): List<PhoneTopicSnapshot> = PhoneTopicSnapshot.decodeList(native.topicSnapshotsJson(h)) ?: emptyList()
+    override fun meetingId(deviceId: String, sourceMeetingId: Long): Long? =
+        native.meetingIdForSource(h, deviceId, sourceMeetingId).takeIf { it >= 0 }
+    override fun captureItem(id: Long): PhoneCaptureItem? = decode(native.memoryGetCaptureItem(h, id))
+
+    // Ask (the iPhone's `CoreMemoryStore: PhoneAskStore`). Store thread only.
+
+    override fun prepareAsk(query: String, historyJson: String, routingJson: String): PrepareResult =
+        AskWire.prepareResult(native.llmPrepareAsk(h, query, ASK_CONTEXT_LIMIT, historyJson, routingJson))
+
+    override fun finalizeAsk(prepareId: String, text: String, model: String, inputTokens: Long, outputTokens: Long): List<CitationCard>? =
+        AskWire.citationRefs(native.llmFinalizeAsk(h, prepareId, text, model, inputTokens, outputTokens))?.let(::resolveCitations)
+
+    override fun discardAsk(prepareId: String) = native.llmDiscardAsk(prepareId)
+
+    override fun resolveCitations(refs: List<CitationRef>): List<CitationCard> =
+        if (refs.isEmpty()) emptyList() else AskWire.citationCards(native.citationsResolve(h, AskWire.refsJson(refs)))
+
+    override fun noteModelAnswer(provider: String, requested: String, answered: String, nowUnixMs: Long) {
+        native.modelNoteAnswer(h, provider, requested, answered, nowUnixMs)
+    }
 
     override fun close() = store.close()
 }

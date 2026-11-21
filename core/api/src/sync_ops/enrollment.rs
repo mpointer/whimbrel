@@ -269,19 +269,50 @@ pub struct AccountPlan {
     /// False once a Cloud subscription is cancelled; None from a server that predates it.
     #[serde(default)]
     pub renews: Option<bool>,
+    /// `"cloud"` or `"plus"` on a paid plan, None otherwise and from a server that predates it.
+    #[serde(default)]
+    pub plan_tier: Option<String>,
+    /// True only when the Worker can sell Plus (its Plus price ids are set); false from an older Worker.
+    #[serde(default)]
+    pub plus_available: bool,
     pub billing: bool,
 }
 
 /// `POST /v1/ai/balance`: the Whimbrel AI credit left and the newest purchase, in micro-dollars
 /// (1,000,000 = $1).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AiBalance {
     pub balance_micros: i64,
     #[serde(default)]
     pub last_purchase_micros: Option<i64>,
+    /// The Plus plan's monthly allowance left, in micro-dollars; 0 when there is none or it expired.
+    #[serde(default)]
+    pub allowance_micros: i64,
+    /// When the allowance resets (ms since the epoch); only meaningful while `allowance_micros > 0`.
+    #[serde(default)]
+    pub allowance_expires_ms: Option<i64>,
+    /// `"cloud"` or `"plus"` on a paid plan, None otherwise and from a server that predates it.
+    #[serde(default)]
+    pub plan_tier: Option<String>,
+}
+
+/// The `POST /v1/billing/checkout` body. `plan` is left out for Cloud: the Worker rejects an explicit null.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckoutRequest<'a> {
+    id_token: &'a str,
+    device_public_key: &'a str,
+    interval: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan: Option<&'a str>,
 }
 
 impl AiBalance {
+    /// What the next AI call can draw on: prepaid credit plus any unexpired allowance.
+    pub fn spendable_micros(&self) -> i64 {
+        self.balance_micros.saturating_add(self.allowance_micros)
+    }
+
     /// Under 10% of the newest purchase is left (the Mac's `AIBalance.isLow`).
     pub fn is_low(&self) -> bool {
         self.last_purchase_micros.is_some_and(|last| last > 0 && self.balance_micros.saturating_mul(10) < last)
@@ -395,9 +426,11 @@ impl WorkerClient {
         serde_json::from_value(body).map_err(|_| WorkerError::MalformedResponse)
     }
 
-    /// `interval` is `"month"` or `"year"`; returns the Stripe Checkout URL.
-    pub fn billing_checkout(&self, id_token: &str, device_public_key: &str, interval: &str) -> Result<String, WorkerError> {
-        let body = self.post("v1/billing/checkout", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key, "interval": interval }))?;
+    /// `interval` is `"month"` or `"year"`; `plan` is `Some("plus")` for Plus and None for Cloud
+    /// (the key is then left out of the request); returns the Stripe Checkout URL.
+    pub fn billing_checkout(&self, id_token: &str, device_public_key: &str, interval: &str, plan: Option<&str>) -> Result<String, WorkerError> {
+        let request = CheckoutRequest { id_token, device_public_key, interval, plan };
+        let body = self.post("v1/billing/checkout", serde_json::to_value(request).map_err(|_| WorkerError::MalformedResponse)?)?;
         body["url"].as_str().map(str::to_string).ok_or(WorkerError::MalformedResponse)
     }
 
@@ -669,7 +702,7 @@ mod tests {
     fn billing_routes() {
         let (url, rx) = worker(200, r#"{"plan":"cloud","until":1790000000000,"interval":"year","billing":true}"#);
         let plan = WorkerClient::new(&url).account_plan("id", "pk").unwrap();
-        assert_eq!(plan, AccountPlan { plan: "cloud".into(), until: Some(1790000000000), interval: Some("year".into()), renews: None, billing: true });
+        assert_eq!(plan, AccountPlan { plan: "cloud".into(), until: Some(1790000000000), interval: Some("year".into()), renews: None, plan_tier: None, plus_available: false, billing: true });
         let req = rx.recv().unwrap();
         assert!(req.starts_with("POST /v1/account/plan "), "{req}");
 
@@ -680,7 +713,7 @@ mod tests {
         assert!(serde_json::to_string(&plan).unwrap().contains(r#""renews":false"#));
 
         let (url, rx) = worker(200, r#"{"url":"https://checkout.example/c"}"#);
-        assert_eq!(WorkerClient::new(&url).billing_checkout("id", "pk", "month").unwrap(), "https://checkout.example/c");
+        assert_eq!(WorkerClient::new(&url).billing_checkout("id", "pk", "month", None).unwrap(), "https://checkout.example/c");
         let req = rx.recv().unwrap();
         assert!(req.starts_with("POST /v1/billing/checkout ") && req.contains(r#""interval":"month""#), "{req}");
 
@@ -692,14 +725,58 @@ mod tests {
         assert!(matches!(WorkerClient::new(&url).billing_portal("id", "pk"), Err(WorkerError::Http { status: 409, .. })));
 
         let (url, _) = worker(200, "{}");
-        assert_eq!(WorkerClient::new(&url).billing_checkout("id", "pk", "year"), Err(WorkerError::MalformedResponse));
+        assert_eq!(WorkerClient::new(&url).billing_checkout("id", "pk", "year", None), Err(WorkerError::MalformedResponse));
+    }
+
+    #[test]
+    fn plus_fields_decode_and_old_responses_default() {
+        let (url, _rx) = worker(200, r#"{"balance_micros":2000000,"last_purchase_micros":null,"allowance_micros":3500000,"allowance_expires_ms":1790000000000,"plan_tier":"plus"}"#);
+        let b = WorkerClient::new(&url).ai_balance("id", "pk").unwrap();
+        assert_eq!((b.allowance_micros, b.allowance_expires_ms, b.plan_tier.as_deref()), (3_500_000, Some(1_790_000_000_000), Some("plus")));
+        assert_eq!(b.spendable_micros(), 5_500_000);
+        assert!(!b.is_low());
+
+        // An old Worker omits all three.
+        let (url, _rx) = worker(200, r#"{"balance_micros":7420000,"last_purchase_micros":10000000}"#);
+        let old = WorkerClient::new(&url).ai_balance("id", "pk").unwrap();
+        assert_eq!((old.allowance_micros, old.allowance_expires_ms, old.plan_tier.clone()), (0, None, None));
+        assert_eq!(old.spendable_micros(), 7_420_000);
+
+        let (url, _rx) = worker(200, r#"{"plan":"cloud","until":1790000000000,"interval":"month","plan_tier":"plus","billing":true}"#);
+        assert_eq!(WorkerClient::new(&url).account_plan("id", "pk").unwrap().plan_tier.as_deref(), Some("plus"));
+        let (url, _rx) = worker(200, r#"{"plan":"free","until":null,"interval":null,"billing":true}"#);
+        let free = WorkerClient::new(&url).account_plan("id", "pk").unwrap();
+        assert_eq!((free.plan_tier, free.plus_available), (None, false));
+        for (json, want) in [
+            (r#"{"plan":"free","until":null,"interval":null,"plus_available":true,"billing":true}"#, true),
+            (r#"{"plan":"free","until":null,"interval":null,"plus_available":false,"billing":true}"#, false),
+        ] {
+            let (url, _rx) = worker(200, json);
+            let plan = WorkerClient::new(&url).account_plan("id", "pk").unwrap();
+            assert_eq!(plan.plus_available, want);
+            // The Mac reads the field from the core's re-serialised JSON.
+            assert!(serde_json::to_string(&plan).unwrap().contains(&format!(r#""plus_available":{want}"#)));
+        }
+    }
+
+    #[test]
+    fn checkout_body_omits_plan_for_cloud_and_sends_plus() {
+        let (url, rx) = worker(200, r#"{"url":"https://checkout.example/c"}"#);
+        WorkerClient::new(&url).billing_checkout("id", "pk", "month", None).unwrap();
+        let req = rx.recv().unwrap();
+        assert!(req.contains(r#""interval":"month""#) && !req.contains(r#""plan""#), "{req}");
+
+        let (url, rx) = worker(200, r#"{"url":"https://checkout.example/c"}"#);
+        WorkerClient::new(&url).billing_checkout("id", "pk", "year", Some("plus")).unwrap();
+        let req = rx.recv().unwrap();
+        assert!(req.contains(r#""plan":"plus""#) && req.contains(r#""interval":"year""#), "{req}");
     }
 
     #[test]
     fn whimbrel_ai_balance_and_checkout_routes() {
         let (url, rx) = worker(200, r#"{"balance_micros":7420000,"last_purchase_micros":10000000}"#);
         let balance = WorkerClient::new(&url).ai_balance("id", "pk").unwrap();
-        assert_eq!(balance, AiBalance { balance_micros: 7_420_000, last_purchase_micros: Some(10_000_000) });
+        assert_eq!(balance, AiBalance { balance_micros: 7_420_000, last_purchase_micros: Some(10_000_000), allowance_micros: 0, allowance_expires_ms: None, plan_tier: None });
         assert!(!balance.is_low());
         let req = rx.recv().unwrap();
         assert!(req.starts_with("POST /v1/ai/balance ") && req.contains(r#""devicePublicKey":"pk""#), "{req}");
@@ -709,8 +786,8 @@ mod tests {
         let empty = WorkerClient::new(&url).ai_balance("id", "pk").unwrap();
         assert_eq!(empty.last_purchase_micros, None);
         assert!(!empty.is_low());
-        assert!(AiBalance { balance_micros: 999_999, last_purchase_micros: Some(10_000_000) }.is_low());
-        assert!(!AiBalance { balance_micros: 1_000_000, last_purchase_micros: Some(10_000_000) }.is_low());
+        assert!(AiBalance { balance_micros: 999_999, last_purchase_micros: Some(10_000_000), ..Default::default() }.is_low());
+        assert!(!AiBalance { balance_micros: 1_000_000, last_purchase_micros: Some(10_000_000), ..Default::default() }.is_low());
 
         let (url, rx) = worker(200, r#"{"url":"https://checkout.example/ai"}"#);
         assert_eq!(WorkerClient::new(&url).ai_checkout("id", "pk", "25").unwrap(), "https://checkout.example/ai");

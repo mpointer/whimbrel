@@ -1,6 +1,7 @@
 //! The hosted-model gate as the store says it is now (X6 client controls, spec 7.3-7.4).
 //!
-//! [`current_gate`] reads the excluded clients' names and aliases and builds the gate every
+//! [`current_gate`] reads the excluded clients' names, aliases and known contacts' addresses
+//! (`llm::exclusion::hosted_terms`, the term set retrieval matches too) and builds the gate every
 //! hosted request passes (`llm::guard`): a no-op when nothing is excluded, a refuse-all when
 //! the setting can't be read (fail closed), otherwise the exclusion set.
 //!
@@ -16,8 +17,10 @@
 //! client that never names it:
 //! - [`context_filter`]: retrieval for a hosted prompt leaves excluded material out
 //!   (`llm::ContextFilter`), and says how many items it left out ([`ExclusionOutcome`]).
-//! - [`request_carries_client`]: a request that names the client, is asked from its page or
-//!   about its meeting, or whose window text names it goes local-only, or is refused.
+//! - [`request_carries_client`]: a request that names the client or holds a known contact's
+//!   address (as written, encoded or spoken), is asked from its page or about its meeting, or whose
+//!   window text does either goes local-only, or is refused. In material, an address keeps out only
+//!   the lines holding it; a name keeps out the whole meeting.
 //! - [`classify_before_hosted`]: new material is matched locally (names, aliases, attendee
 //!   emails, no model) before any hosted call about it.
 //! - [`hosted_summaries_to_redo`]: the local re-summary offer when exclusion is turned on.
@@ -34,7 +37,7 @@ use crate::ApiResult;
 
 /// The gate for hosted requests, read from `store` now.
 pub fn current_gate(store: &memory::Store) -> Arc<dyn HostedGate> {
-    gate_for(store.exclusion_unreadable(), store.excluded_terms())
+    gate_for(store.exclusion_unreadable(), llm::exclusion::hosted_terms(store).ok_or(rusqlite::Error::InvalidQuery))
 }
 
 /// Reads the gate from `store` and publishes it for the store-less streaming entry points.
@@ -158,8 +161,8 @@ pub fn excluded_source_ids(store: &memory::Store) -> rusqlite::Result<HashSet<i6
 }
 
 /// Whether a request carries an excluded client: `query` (with the conversation so far) names
-/// one, it is asked from an excluded client's page or about an excluded client's meeting, or the
-/// window text names one. True when the setting cannot be read. Such a request is answered on
+/// one or holds a known client contact's address, it is asked from an excluded client's page or
+/// about an excluded client's meeting, or the window text does either. True when the setting cannot be read. Such a request is answered on
 /// this computer or refused; it never falls back to a hosted model (spec 7.2).
 pub fn request_carries_client(store: &memory::Store, query: &str, origin: RequestOrigin) -> bool {
     let filter = context_filter(store);
@@ -171,6 +174,8 @@ pub(crate) fn carries_with(store: &memory::Store, filter: &llm::ContextFilter, q
         return true;
     }
     let Some(material) = filter.material() else { return false };
+    // By name or alias, or by a known client contact's address written anywhere in the request
+    // ("what did wile@coyote.example's team say?"): the filter's one term set (`llm::exclusion::hosted_terms`).
     if filter.names_client(query) {
         return true;
     }

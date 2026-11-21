@@ -1,5 +1,8 @@
 package com.mpointer.whimbrel.mobile.theme
 
+import android.app.UiModeManager
+import android.content.Context
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -11,6 +14,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.mpointer.whimbrel.mobile.R
+import com.mpointer.whimbrel.mobile.design.LocalWAppearance
+import com.mpointer.whimbrel.mobile.design.LocalWStrings
+import com.mpointer.whimbrel.mobile.design.WAppearance
+import com.mpointer.whimbrel.mobile.design.WStrings
 
 /** The tokens Material has no slot for, read as `LocalThemePalette.current`. */
 data class ExtraColors(
@@ -64,7 +74,12 @@ fun WhimbrelTheme(store: ThemeStore, content: @Composable () -> Unit) {
         highlight = palette.color(ThemeToken.highlight), selection = palette.color(ThemeToken.selection),
         accentSecondary = palette.color(ThemeToken.accentSecondary), accentHighlight = palette.color(ThemeToken.accentHighlight),
     )
-    CompositionLocalProvider(LocalThemePalette provides extras) {
+    // The design-system components read these: light or dark with the system's contrast setting, and
+    // their own words from resources (English for the ones no rebuilt screen shows yet).
+    val context = LocalContext.current
+    val highContrast = Build.VERSION.SDK_INT >= 34 && (context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).contrast > 0.5f
+    val words = WStrings(now = stringResource(R.string.read_now), done = stringResource(R.string.done))
+    CompositionLocalProvider(LocalThemePalette provides extras, LocalWAppearance provides WAppearance(dark, highContrast), LocalWStrings provides words) {
         MaterialTheme(colorScheme = palette.toColorScheme(dark), content = content)
     }
 }

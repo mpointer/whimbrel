@@ -153,3 +153,83 @@ final class SyncStallRecoveryTests: XCTestCase {
         XCTAssertFalse(stale(lastSuccessHoursAgo: nil, finished: nil))
     }
 }
+
+/// The "Sync now" button's model: when it can be pressed, and that one press runs one round.
+@MainActor
+final class SyncNowModelTests: XCTestCase {
+    private let ready = SyncStatus.ready(tursoToken: "t", tursoDatabaseUrl: "u")
+
+    func testButtonIsEnabledOnlyWhenSyncIsReadyAndIdle() {
+        XCTAssertEqual(SyncNowModel.buttonState(status: ready, roundRunning: false, phase: .idle), .enabled)
+        XCTAssertEqual(SyncNowModel.buttonState(status: ready, roundRunning: false, phase: .synced), .enabled)
+        XCTAssertEqual(SyncNowModel.buttonState(status: ready, roundRunning: false, phase: .failed("x")), .enabled)
+    }
+
+    func testButtonIsDisabledWhenSyncIsOffOrNotSignedIn() {
+        let others: [SyncStatus] = [.notSignedIn, .signingIn, .waitingForApproval, .waitingForGroupKey, .rateLimited,
+                                    .error("Sign-in expired"), .deviceLimit(kind: "computer", holders: [])]
+        for status in others {
+            XCTAssertEqual(SyncNowModel.buttonState(status: status, roundRunning: false, phase: .idle), .disabled, "\(status)")
+        }
+    }
+
+    func testButtonShowsProgressWhileARoundRuns() {
+        XCTAssertEqual(SyncNowModel.buttonState(status: ready, roundRunning: true, phase: .idle), .syncing)
+        XCTAssertEqual(SyncNowModel.buttonState(status: ready, roundRunning: false, phase: .syncing), .syncing)
+    }
+
+    func testSuccessShowsSynced() async {
+        let model = SyncNowModel(canSync: { true }, run: { .synced })
+        await model.start()
+        XCTAssertEqual(model.phase, .synced)
+        XCTAssertEqual(model.message, "Synced")
+    }
+
+    func testFailureShowsTheRoundsOwnErrorText() async {
+        let model = SyncNowModel(canSync: { true }, run: { .failed("Content sync failed. Will retry automatically.") })
+        await model.start()
+        XCTAssertEqual(model.phase, .failed("Content sync failed. Will retry automatically."))
+        XCTAssertEqual(model.message, "Content sync failed. Will retry automatically.")
+    }
+
+    func testNoRoundRunsWhenSyncIsNotAvailable() async {
+        var runs = 0
+        let model = SyncNowModel(canSync: { false }, run: { runs += 1; return .synced })
+        await model.start()
+        XCTAssertEqual(runs, 0)
+        XCTAssertEqual(model.phase, .idle)
+    }
+
+    func testASecondPressWhileOneRunsStartsNoSecondRound() async {
+        var runs = 0
+        var release: CheckedContinuation<Void, Never>?
+        let model = SyncNowModel(canSync: { true }, run: {
+            runs += 1
+            await withCheckedContinuation { release = $0 }
+            return .synced
+        })
+        let first = Task { await model.start() }
+        while release == nil { await Task.yield() }
+        XCTAssertEqual(model.phase, .syncing)
+        await model.start()
+        XCTAssertEqual(runs, 1)
+        release?.resume()
+        await first.value
+        XCTAssertEqual(model.phase, .synced)
+        XCTAssertEqual(runs, 1)
+    }
+
+    func testARoundAlreadyRunningElsewhereIsReportedNotDoubled() async {
+        let model = SyncNowModel(canSync: { true }, run: { .alreadyRunning })
+        await model.start()
+        XCTAssertEqual(model.phase, .failed("A sync is already running."))
+    }
+
+    func testClearOutcomeReturnsToIdle() async {
+        let model = SyncNowModel(canSync: { true }, run: { .synced })
+        await model.start()
+        model.clearOutcome()
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertNil(model.message)
+    }
+}

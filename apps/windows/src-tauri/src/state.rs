@@ -290,6 +290,8 @@ impl AppState {
                 return;
             }
         };
+        // Whether the last plan or balance read said Plus, for the first "credit used up" of a session.
+        crate::syncing::billing::plus_flag::load(&self.paths.root);
         let controller = SyncController::new(SyncConfig::embedded(), self.secrets.clone(), identity, self.device_names.clone());
         if let Some(store) = self.io_lane() {
             // A deleted sync account: a later account gets everything again (Mac: `resetPushCursor`).

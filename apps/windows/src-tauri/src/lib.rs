@@ -34,6 +34,7 @@ pub mod meetings;
 pub mod budget_alert;
 pub mod ollama_default;
 pub mod paths;
+pub mod plus_prompt;
 pub mod perf_log;
 pub mod perf_report;
 pub mod meeting_load;

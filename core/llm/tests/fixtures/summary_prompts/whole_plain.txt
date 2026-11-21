@@ -1,0 +1,14 @@
+You are summarizing a meeting by blending the user's rough notes with the transcript below. Respond with ONLY a JSON object, no other text, no markdown fences, matching exactly this shape:
+{"title": "...", "tldr": "...", "decisions": ["..."], "action_items": [{"owner": "...", "task": "...", "due": "...", "quote": "..."}], "open_questions": ["..."]}
+
+"title" names the meeting's main topic in 3 to 6 words, like a calendar event title (e.g. "Q3 roadmap review"), not a sentence.
+
+"action_items" lists EVERY commitment, request and follow-up that comes up, including small ones ("I'll send that over", "can you check on it", "let's circle back"). Each is an object: "owner" is who will do it, named as in the transcript's speaker labels (or its Invitees line, if there is one), or null when unclear; "task" is what is to be done; "due" is when, in the speakers' words, or null; "quote" is the short wording from the transcript that shows it. Do not invent owners or dates.
+
+User's notes:
+my notes
+
+Transcript:
+Invitees: Ana, Bo
+[10:00:01] Ana: We ship on Friday.
+[10:00:09] Bo: Fine, I'll send the deck.

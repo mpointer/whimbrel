@@ -32,27 +32,42 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.sp
 import com.mpointer.whimbrel.mobile.R
+import com.mpointer.whimbrel.mobile.ask.AskModel
 import com.mpointer.whimbrel.mobile.read.MeetingsModel
+import com.mpointer.whimbrel.mobile.read.TopicsModel
 import com.mpointer.whimbrel.mobile.read.RoutinesModel
 import com.mpointer.whimbrel.mobile.read.TodayModel
+import com.mpointer.whimbrel.mobile.sync.DeviceApproval
 import com.mpointer.whimbrel.mobile.sync.EnrollmentModel
 import com.mpointer.whimbrel.mobile.sync.SyncModel
 import com.mpointer.whimbrel.mobile.theme.ThemeStore
 import kotlinx.coroutines.launch
 
+/** The tabs, in the iPhone's order. */
 enum class RootTab(val icon: ImageVector, val label: Int) {
     Today(Icons.Filled.Home, R.string.tab_today),
+    Ask(AskTabIcon, R.string.tab_ask),
     Meetings(Icons.AutoMirrored.Filled.List, R.string.tab_meetings),
+    Topics(TopicsTabIcon, R.string.tab_topics),
     Routines(Icons.Filled.Refresh, R.string.tab_routines),
 }
 
 /** Where the shell starts; only a debug demo launch sets anything but the default. */
-data class RootStart(val tab: RootTab = RootTab.Today, val meetingId: Long? = null, val settingsOpen: Boolean = false, val launchId: Int = 0)
+data class RootStart(
+    val tab: RootTab = RootTab.Today,
+    val meetingId: Long? = null,
+    val settingsOpen: Boolean = false,
+    val launchId: Int = 0,
+    val topicKey: String? = null,
+    val devicesOpen: Boolean = false,
+    val prepOpen: Boolean = false,
+)
 
 /**
- * The approved phone: Today, Meetings and Routines in a bottom bar (cover screen) or a rail (inner screen),
- * with Settings in a sheet. The tested [navKind], not the library default, picks which.
+ * The approved phone: Today, Ask, Meetings, Topics and Routines in a bottom bar (cover screen) or a rail (inner
+ * screen), with Settings in a sheet. The tested [navKind], not the library default, picks which.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
@@ -62,11 +77,22 @@ fun RootScreen(
     reminders: com.mpointer.whimbrel.mobile.reminders.ReminderCoordinator,
     themes: ThemeStore,
     phoneName: String,
+    ask: AskModel,
     start: RootStart = RootStart(),
 ) {
     var tab by rememberSaveable { mutableStateOf(start.tab) }
-    // True while the open meeting was reached from a Today row: closing it returns to Today, as the iPhone's pushed detail does.
-    var fromToday by rememberSaveable { mutableStateOf(false) }
+    // The tab the open meeting was reached from (a Today row, an Ask source, a topic's step): closing it returns
+    // there, as the iPhone's pushed detail does. Null when it was opened from the Meetings list.
+    var returnTab by rememberSaveable { mutableStateOf<RootTab?>(null) }
+    // The open topic page; null shows the Topics list.
+    var topicKey by rememberSaveable { mutableStateOf(start.topicKey) }
+    val topics = remember { TopicsModel() }
+    // Ask runs only while its tab is the one showing: leaving the tab ends it, as on the iPhone.
+    var lastTab by remember { mutableStateOf(tab) }
+    LaunchedEffect(tab) {
+        if (lastTab == RootTab.Ask && tab != RootTab.Ask) ask.stop()
+        lastTab = tab
+    }
     var settingsOpen by rememberSaveable { mutableStateOf(start.settingsOpen) }
     val today = remember { TodayModel() }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -112,22 +138,31 @@ fun RootScreen(
             try { navigator.openMeeting(id) } finally { replacing = false }
         }
     }
+    // A meeting opened from another tab shows in Meetings (where the meeting page lives) and closes back to that tab.
+    val openFrom: (RootTab, Long) -> Unit = { from, id ->
+        returnTab = from
+        tab = RootTab.Meetings
+        openMeeting(id)
+    }
     // A later demo launch (launchId > 0) arriving in the running Activity; the first one is the initial state above.
     LaunchedEffect(start.launchId) {
         if (start.launchId > 0) {
-            fromToday = false
+            returnTab = null
             tab = start.tab
+            topicKey = start.topicKey
             settingsOpen = start.settingsOpen
             start.meetingId?.let(openMeeting)
         }
     }
     LaunchedEffect(detailOpen) {
-        if (wasOpen && !detailOpen && !replacing && fromToday && tab == RootTab.Meetings) { tab = RootTab.Today; fromToday = false }
+        val back = returnTab
+        if (wasOpen && !detailOpen && !replacing && back != null && tab == RootTab.Meetings) { tab = back; returnTab = null }
         wasOpen = detailOpen
     }
     // Once per sync, as on the iPhone: names the devices that recorded each meeting.
     val revision by sync.readRevision.collectAsState()
     LaunchedEffect(revision) { enrollment.refreshDeviceLabels() }
+    val pendingDevices by enrollment.pendingDeviceCount.collectAsState()
     val kind = navKind(info.widthDp)
 
     NavigationSuiteScaffold(
@@ -135,9 +170,11 @@ fun RootScreen(
             RootTab.entries.forEach { t ->
                 item(
                     selected = t == tab,
-                    onClick = { tab = t; fromToday = false },
+                    onClick = { tab = t; returnTab = null },
                     icon = { Icon(t.icon, contentDescription = null) },
-                    label = { Text(stringResource(t.label)) },
+                    // Five labels share the bar, so they grow with the text size only up to 1.15 times and stay on
+                    // one line; past that a word broke in the middle ("Meeti ngs"). Each screen's own title scales in full.
+                    label = { Text(stringResource(t.label), fontSize = tabLabelSize(), maxLines = 1, softWrap = false) },
                 )
             }
         },
@@ -151,18 +188,25 @@ fun RootScreen(
                     model = today,
                     labels = enrollment.deviceLabels,
                     onOpenSettings = { settingsOpen = true },
-                    onOpenMeeting = { id ->
-                        fromToday = true
-                        tab = RootTab.Meetings
-                        openMeeting(id)
-                    },
+                    onOpenMeeting = { id -> openFrom(RootTab.Today, id) },
+                    pendingDevices = if (DeviceApproval.enabled) pendingDevices else 0,
+                    startWithPrep = start.prepOpen,
                     update = update,
                     onDismissUpdate = { updates.dismiss() },
                 )
+                RootTab.Ask -> AskScreen(sync, ask, enrollment.deviceLabels, onOpenMeeting = { id -> openFrom(RootTab.Ask, id) })
                 RootTab.Meetings -> MeetingsScreen(sync, meetings, enrollment.deviceLabels, navigator, openMeeting)
+                RootTab.Topics -> TopicsScreen(sync, topics, topicKey, onOpenTopic = { topicKey = it }, onOpenMeeting = { id -> openFrom(RootTab.Topics, id) })
                 RootTab.Routines -> RoutinesScreen(sync, routines, enrollment.deviceLabels)
             }
         }
     }
-    if (settingsOpen) SettingsSheet(sync, reminders, themes, phoneName, onDismiss = { settingsOpen = false })
+    if (settingsOpen) SettingsSheet(sync, reminders, themes, phoneName, enrollment, onDismiss = { settingsOpen = false }, startOnDevices = start.devicesOpen)
+}
+
+/** The tab label size: 12sp, growing with the system text size up to 1.15 times, which is what "Meetings" has room for on a narrow phone. */
+@Composable
+private fun tabLabelSize(): androidx.compose.ui.unit.TextUnit {
+    val scale = androidx.compose.ui.platform.LocalDensity.current.fontScale
+    return (12f * minOf(scale, 1.15f) / scale).sp
 }

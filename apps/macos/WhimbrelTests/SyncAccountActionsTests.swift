@@ -466,4 +466,236 @@ final class SyncAccountActionsTests: XCTestCase {
         XCTAssertEqual(keys.groupKey, "key", "not treated as gone")
         XCTAssertFalse(recorder.events.contains("auth"))
     }
+
+    // MARK: - Plus allowance (balance and plan decoding, copy)
+
+    func testBalanceDecodesPlusFieldsAndOldResponsesDefault() throws {
+        let plus = try JSONDecoder().decode(AIBalance.self, from: Data(
+            #"{"balance_micros":2000000,"last_purchase_micros":null,"allowance_micros":3500000,"allowance_expires_ms":1790000000000,"plan_tier":"plus"}"#.utf8))
+        XCTAssertEqual(plus.allowanceMicros, 3_500_000)
+        XCTAssertEqual(plus.allowanceExpiresMs, 1_790_000_000_000)
+        XCTAssertEqual(plus.planTier, "plus")
+        XCTAssertEqual(plus.spendableMicros, 5_500_000)
+        XCTAssertFalse(plus.isLow)
+
+        let old = try JSONDecoder().decode(AIBalance.self, from: Data(#"{"balance_micros":7420000,"last_purchase_micros":10000000}"#.utf8))
+        XCTAssertEqual(old.allowanceMicros, 0)
+        XCTAssertNil(old.allowanceExpiresMs)
+        XCTAssertNil(old.planTier)
+        XCTAssertNil(PlusCopy.allowanceLine(old))
+    }
+
+    func testPlanDecodesTier() throws {
+        let plus = try JSONDecoder().decode(AccountPlan.self, from: Data(
+            #"{"plan":"cloud","until":1790000000000,"interval":"month","plan_tier":"plus","billing":true}"#.utf8))
+        XCTAssertTrue(plus.isPlus)
+        XCTAssertTrue(PlusCopy.planLine(plus).hasPrefix("Plus"))
+        let cloud = try JSONDecoder().decode(AccountPlan.self, from: Data(
+            #"{"plan":"cloud","until":1790000000000,"interval":"month","billing":true}"#.utf8))
+        XCTAssertNil(cloud.planTier)
+        XCTAssertFalse(cloud.isPlus)
+        XCTAssertTrue(PlusCopy.planLine(cloud).hasPrefix("Cloud"))
+    }
+
+    func testAllowanceLineAndStaleDateRule() {
+        let now = Date(timeIntervalSince1970: 1_780_000_000)
+        let future: Int64 = 1_790_000_000_000
+        let past: Int64 = 1_770_000_000_000
+
+        let live = AIBalance(balanceMicros: 0, allowanceMicros: 3_500_000, allowanceExpiresMs: future, planTier: "plus")
+        let line = PlusCopy.allowanceLine(live, now: now) ?? ""
+        XCTAssertTrue(line.contains("$3.50") && line.contains("resets"), line)
+        XCTAssertNotNil(live.allowanceResetDate(now: now))
+
+        // A past date is never shown, even with allowance left.
+        let stale = AIBalance(balanceMicros: 0, allowanceMicros: 3_500_000, allowanceExpiresMs: past, planTier: "plus")
+        XCTAssertNil(stale.allowanceResetDate(now: now))
+        XCTAssertFalse((PlusCopy.allowanceLine(stale, now: now) ?? "").contains("resets"))
+
+        // A date with no allowance is ignored.
+        let none = AIBalance(balanceMicros: 0, allowanceMicros: 0, allowanceExpiresMs: future, planTier: "plus")
+        XCTAssertNil(none.allowanceResetDate(now: now))
+        XCTAssertEqual(PlusCopy.allowanceLine(none, now: now), "This month's AI allowance is used up. Add credit or choose another model in Settings.")
+
+        // Prepaid credit left on a Plus account: the allowance is still said to be used up, and the prepaid figure is labelled.
+        let prepaidOnly = AIBalance(balanceMicros: 2_000_000, planTier: "plus")
+        XCTAssertEqual(PlusCopy.allowanceLine(prepaidOnly, now: now), "This month's AI allowance is used up. Your allowance renews with your plan.")
+        XCTAssertEqual(PlusCopy.allowanceLine(prepaidOnly, renews: false, now: now), "This month's AI allowance is used up.")
+        XCTAssertEqual(PlusCopy.prepaidLine(prepaidOnly), "Prepaid credit: $2.00 left")
+        XCTAssertNil(PlusCopy.prepaidLine(AIBalance(balanceMicros: 2_000_000, planTier: "cloud")))
+        // No "running low" warning while allowance is left.
+        XCTAssertFalse(PlusCopy.showsLowWarning(AIBalance(balanceMicros: 1, lastPurchaseMicros: 10_000_000, allowanceMicros: 5_000_000, allowanceExpiresMs: future, planTier: "plus")))
+        XCTAssertTrue(PlusCopy.showsLowWarning(AIBalance(balanceMicros: 1, lastPurchaseMicros: 10_000_000, planTier: "plus")))
+        // Not Plus: nothing.
+        XCTAssertNil(PlusCopy.allowanceLine(AIBalance(balanceMicros: 0, allowanceMicros: 5, planTier: "cloud"), now: now))
+    }
+
+    func testPlanDecodesPlusAvailable() throws {
+        func decode(_ extra: String) throws -> AccountPlan {
+            try JSONDecoder().decode(AccountPlan.self, from: Data(#"{"plan":"free","until":null,"interval":null,"billing":true\#(extra)}"#.utf8))
+        }
+        XCTAssertEqual(try decode(#","plus_available":true"#).plusAvailable, true)
+        XCTAssertEqual(try decode(#","plus_available":false"#).plusAvailable, false)
+        XCTAssertNil(try decode("").plusAvailable)
+    }
+
+    // MARK: - Checkout: request body and error mapping
+
+    final class FakeBilling: SyncBilling {
+        var checkoutError: Error?
+        var plan = AccountPlan(plan: "free", until: nil, interval: nil, billing: true)
+        private(set) var calls: [(interval: String, plan: String?)] = []
+        private(set) var planReads = 0
+        func accountPlan(idToken: String, devicePublicKey: String) async throws -> AccountPlan {
+            planReads += 1
+            return plan
+        }
+        func checkoutURL(idToken: String, devicePublicKey: String, interval: String, plan: String?) async throws -> URL {
+            calls.append((interval, plan))
+            throw checkoutError ?? SyncAPIError.malformedResponse
+        }
+        func portalURL(idToken: String, devicePublicKey: String) async throws -> URL { throw SyncAPIError.malformedResponse }
+        func aiBalance(idToken: String, devicePublicKey: String) async throws -> AIBalance { AIBalance(balanceMicros: 0) }
+        func aiModels(idToken: String, devicePublicKey: String) async throws -> [String] { [] }
+        func aiCheckoutURL(idToken: String, devicePublicKey: String, pack: String) async throws -> URL { throw SyncAPIError.malformedResponse }
+    }
+
+    private func billingState(_ billing: FakeBilling) -> SyncState {
+        let s = SyncState(signIn: signIn, worker: worker, keys: keys, defaults: defaults, billing: billing)
+        wire(s)
+        return s
+    }
+
+    func testPlanIsReadOnceWhenSyncReachesReady() async {
+        // The plan read sets the persisted Plus flag in the host's standard defaults; clear it.
+        addTeardownBlock { PlusCopy.isPlusAccount.isOn = false }
+        let billing = FakeBilling()
+        billing.plan = AccountPlan(plan: "cloud", until: 1_790_000_000_000, interval: "month", planTier: "plus", billing: true)
+        let s = billingState(billing)
+        worker.authResults = [.approved(tursoToken: "t", tursoDatabaseUrl: "libsql://x", wrappedGroupKey: nil)]
+        await s.enableSync(presentationContextProvider: WindowPresentationContextProvider())
+        guard case .ready = s.status else { return XCTFail("expected ready, got \(s.status)") }
+        await waitUntil { billing.planReads >= 1 }
+        XCTAssertEqual(s.plan?.isPlus, true, "the Plus plan landed without opening Settings")
+        // Ready again after another sign-in round: no second read.
+        worker.authResults = [.approved(tursoToken: "t2", tursoDatabaseUrl: "libsql://x", wrappedGroupKey: nil)]
+        await s.enableSync(presentationContextProvider: WindowPresentationContextProvider())
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(billing.planReads, 1)
+    }
+
+    func testAlreadyPaidMapsToPaidPlanMessageForPlusAndCloud() async {
+        for plan in [nil, "plus"] as [String?] {
+            let billing = FakeBilling()
+            billing.checkoutError = SyncAPIError.httpError(status: 409, body: #"{"error":"already_cloud"}"#)
+            let s = billingState(billing)
+            await s.upgrade(interval: "month", plan: plan)
+            XCTAssertEqual(s.billingError, "You already have a paid plan.")
+            XCTAssertEqual(billing.calls.first?.plan, plan)
+        }
+    }
+
+    func testBillingUnavailableMessageOnlyForPlus() async {
+        let plusBilling = FakeBilling()
+        plusBilling.checkoutError = SyncAPIError.httpError(status: 503, body: #"{"error":"billing_unavailable"}"#)
+        let plusState = billingState(plusBilling)
+        await plusState.upgrade(interval: "year", plan: "plus")
+        XCTAssertEqual(plusState.billingError, "Plus isn't available yet. Try again later.")
+        XCTAssertEqual(plusBilling.calls.first?.interval, "year")
+
+        let cloudBilling = FakeBilling()
+        cloudBilling.checkoutError = SyncAPIError.httpError(status: 503, body: #"{"error":"billing_unavailable"}"#)
+        let cloudState = billingState(cloudBilling)
+        await cloudState.upgrade(interval: "month")
+        XCTAssertNil(cloudState.billingError, "Cloud keeps the silent plan refresh")
+        XCTAssertEqual(cloudBilling.calls.count, 1, "the checkout was reached")
+        XCTAssertEqual(cloudBilling.calls.first?.plan, nil)
+    }
+
+    /// Answers every request with a Stripe URL and keeps the last body.
+    final class CheckoutStub: URLProtocol, @unchecked Sendable {
+        nonisolated(unsafe) static var lastBody: [String: String] = [:]
+        nonisolated(unsafe) static var lastPath = ""
+        override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "worker.test" }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            var data = Data()
+            if let stream = request.httpBodyStream {
+                stream.open()
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let n = stream.read(&buffer, maxLength: buffer.count)
+                    if n <= 0 { break }
+                    data.append(buffer, count: n)
+                }
+                stream.close()
+            } else if let body = request.httpBody { data = body }
+            Self.lastBody = (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+            Self.lastPath = request.url?.path ?? ""
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(#"{"url":"https://checkout.example/c"}"#.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        override func stopLoading() {}
+    }
+
+    func testPlusCheckoutPostsPlanAndInterval() async throws {
+        URLProtocol.registerClass(CheckoutStub.self)
+        defer { URLProtocol.unregisterClass(CheckoutStub.self) }
+        let client = SyncBillingClient(baseURL: URL(string: "https://worker.test")!)
+        let url = try await client.checkoutURL(idToken: "t", devicePublicKey: "k", interval: "year", plan: "plus")
+        XCTAssertEqual(url.absoluteString, "https://checkout.example/c")
+        XCTAssertEqual(CheckoutStub.lastPath, "/v1/billing/checkout")
+        XCTAssertEqual(CheckoutStub.lastBody["plan"], "plus")
+        XCTAssertEqual(CheckoutStub.lastBody["interval"], "year")
+    }
+
+    func testPlusFlagPersistsAcrossRelaunchAndDrivesTheExhaustedMessage() async throws {
+        let suite = UserDefaults(suiteName: "PlusFlag-\(UUID().uuidString)")!
+        PlusCopy.PlusFlag(defaults: suite).isOn = true
+        XCTAssertTrue(PlusCopy.PlusFlag(defaults: suite).isOn, "a new instance (a relaunch) reads the stored value")
+        XCTAssertFalse(PlusCopy.PlusFlag(defaults: UserDefaults(suiteName: "PlusFlag-\(UUID().uuidString)")!).isOn)
+
+        let shared = PlusCopy.isPlusAccount
+        let was = shared.isOn
+        defer { shared.isOn = was }
+        let old = CoreLLMError.providerFailureBecause(.creditExhausted).userFacingMessage
+        shared.isOn = true
+        XCTAssertEqual(CoreLLMError.providerFailureBecause(.creditExhausted).userFacingMessage, PlusCopy.creditExhaustedMessage)
+        XCTAssertNotEqual(old, PlusCopy.creditExhaustedMessage)
+        shared.isOn = false
+        XCTAssertEqual(CoreLLMError.providerFailureBecause(.creditExhausted).userFacingMessage, old)
+    }
+
+    func testPlanReadSetsAndClearsThePlusFlag() async {
+        let shared = PlusCopy.isPlusAccount
+        let was = shared.isOn
+        defer { shared.isOn = was }
+        let billing = FakeBilling()
+        let s = billingState(billing)
+        billing.plan = AccountPlan(plan: "cloud", until: 1_790_000_000_000, interval: "month", planTier: "plus", billing: true)
+        await s.refreshPlan()
+        XCTAssertTrue(shared.isOn)
+        billing.plan = AccountPlan(plan: "cloud", until: 1_790_000_000_000, interval: "month", planTier: nil, billing: true)
+        await s.refreshPlan()
+        XCTAssertFalse(shared.isOn)
+    }
+
+    func testPlusWithNoPrepaidShowsNoPrepaidFigure() {
+        let plusNone = AIBalance(balanceMicros: 0, allowanceMicros: 3_500_000, planTier: "plus")
+        XCTAssertNil(PlusCopy.prepaidLine(plusNone))
+        XCTAssertFalse(PlusCopy.showsPlainBalanceLine(plusNone), "no unlabelled $0.00 left on Plus")
+        let plusSome = AIBalance(balanceMicros: 2_000_000, planTier: "plus")
+        XCTAssertEqual(PlusCopy.prepaidLine(plusSome), "Prepaid credit: $2.00 left")
+        XCTAssertTrue(PlusCopy.showsPlainBalanceLine(AIBalance(balanceMicros: 0, planTier: "cloud")))
+        XCTAssertTrue(PlusCopy.showsPlainBalanceLine(AIBalance(balanceMicros: 0)))
+    }
+
+    func testPlusPlanLineWithoutEndDateSaysPlus() {
+        let plus = AccountPlan(plan: "cloud", until: nil, interval: nil, planTier: "plus", billing: true)
+        XCTAssertEqual(PlusCopy.planLine(plus), "Plus")
+        let cloud = AccountPlan(plan: "cloud", until: 1_790_000_000_000, interval: "month", billing: true)
+        XCTAssertTrue(PlusCopy.planLine(cloud).hasPrefix("Cloud"))
+    }
 }

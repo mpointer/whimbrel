@@ -211,14 +211,27 @@ async fn speaker_context(
         .map_err(CommandError::store)
 }
 
+/// How many meetings to read: a search looks through every meeting (it was the newest 200 only, so
+/// older meetings could not be found); the plain list reads `limit`, the newest 200 by default
+/// (the Meetings list asks for 200 more each time its end is reached).
+fn list_limit(searching: bool, limit: Option<usize>) -> usize {
+    if searching {
+        // `recent_meetings` binds the limit as an i64; this one reads every row.
+        i64::MAX as usize
+    } else {
+        limit.unwrap_or(crate::meetings::controller::RECONCILE_WINDOW)
+    }
+}
+
 /// The meeting list: newest first, optionally filtered by title (the Mac's search box).
 #[tauri::command]
-pub async fn meeting_list(state: State<'_, AppState>, filter: Option<String>) -> Result<Vec<MeetingRow>, CommandError> {
+pub async fn meeting_list(state: State<'_, AppState>, filter: Option<String>, limit: Option<usize>) -> Result<Vec<MeetingRow>, CommandError> {
     let labeler = state.device_labeler();
     let needle = filter.unwrap_or_default().trim().to_lowercase();
+    let limit = list_limit(!needle.is_empty(), limit);
     let meetings = state
         .store()?
-        .call(move |s| s.recent_meetings(crate::meetings::controller::RECONCILE_WINDOW).map_err(|e| e.to_string()))
+        .call(move |s| s.recent_meetings(limit).map_err(|e| e.to_string()))
         .await?
         .map_err(CommandError::store)?;
     Ok(meetings
@@ -226,6 +239,17 @@ pub async fn meeting_list(state: State<'_, AppState>, filter: Option<String>) ->
         .filter(|m| needle.is_empty() || m.title.to_lowercase().contains(&needle))
         .map(|m| meeting_row(m, &labeler))
         .collect())
+}
+
+/// How many meetings the store holds (every row `meeting_list` can show), for the list's
+/// "Showing X of Y meetings" line.
+#[tauri::command]
+pub async fn meeting_total(state: State<'_, AppState>) -> Result<i64, CommandError> {
+    state
+        .store()?
+        .call(|s| s.data_counts().map(|c| c.meetings).map_err(|e| e.to_string()))
+        .await?
+        .map_err(CommandError::store)
 }
 
 #[tauri::command]
@@ -409,6 +433,164 @@ pub async fn meeting_transcript(state: State<'_, AppState>, id: i64) -> Result<T
         .collect::<Vec<_>>()
         .join("\n");
     Ok(view(turns(&raw, &speakers), "segments", more))
+}
+
+/// One line of a meeting's transcript with its id and numeric times, for the redesigned note (redesign only).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptLineView {
+    /// The stored line's id: what a note source and the speaker lanes point at.
+    pub id: i64,
+    /// Centiseconds from the start of the recording.
+    pub start_cs: i64,
+    /// Centiseconds from the start of the recording, when this device stored the line's end.
+    pub end_cs: Option<i64>,
+    /// The label as stored: "Me", "Others", "Speaker 2".
+    pub speaker: String,
+    /// What to show: the speaker's name when one is assigned, else `speaker`.
+    pub label: String,
+    /// The name is a guess, shown as "Name?".
+    pub guess: bool,
+    /// The diarized speaker ("Speaker 2" is 1), the ones the speaker menu can name.
+    pub speaker_id: Option<i32>,
+    /// The named person, for "Yes, that's {name}".
+    pub person_key: Option<String>,
+    pub text: String,
+}
+
+/// A page of a meeting's transcript lines, none merged, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptLinesView {
+    pub lines: Vec<TranscriptLineView>,
+    /// How many lines the meeting has in all.
+    pub total: i64,
+    /// The speaker menu is offered: see [`can_name_speakers`].
+    pub can_name: bool,
+    pub invitees: Vec<InviteeView>,
+}
+
+fn line_view(r: memory::line_source::TranscriptLine, speakers: &[memory::speaker_names::MeetingSpeaker]) -> TranscriptLineView {
+    let (label, guess) = memory::speaker_names::display_label(&r.speaker_label, speakers);
+    let person_key = memory::speaker_names::labelled_speaker(&r.speaker_label, speakers)
+        .filter(|s| s.name.is_some())
+        .and_then(|s| s.person_key.clone());
+    TranscriptLineView {
+        id: r.id,
+        start_cs: r.start_cs,
+        end_cs: r.end_cs,
+        speaker_id: diarized_speaker_id(&r.speaker_label),
+        speaker: r.speaker_label,
+        label,
+        guess,
+        person_key,
+        text: r.text,
+    }
+}
+
+/// A page of the stored transcript lines with ids and numeric times (redesign only). Unlike
+/// `meeting_transcript` it never reads the transcript file and merges nothing, so ids match a
+/// note's sources and the speaker lanes.
+#[tauri::command]
+pub async fn meeting_transcript_lines(state: State<'_, AppState>, id: i64, offset: i64, limit: i64) -> Result<TranscriptLinesView, CommandError> {
+    let meeting = state
+        .store()?
+        .call(move |s| s.get_meeting(id).map_err(|e| e.to_string()))
+        .await?
+        .map_err(CommandError::store)?;
+    let own_device_id = state.identity.as_ref().map(|i| i.device_id.clone());
+    let own = meeting.as_ref().is_some_and(|m| own_device_id.as_deref().is_none_or(|own| m.device_id == own));
+    let (speakers, invitees, can_name) = speaker_context(&state, id, own).await?;
+    let (offset, limit) = (offset.max(0) as usize, limit.clamp(1, 2000) as usize);
+    let (rows, total) = state
+        .store()?
+        .call(move |s| s.get_transcript_lines_page(id, offset, limit).map_err(|e| e.to_string()))
+        .await?
+        .map_err(CommandError::store)?;
+    let lines = rows.into_iter().map(|r| line_view(r, &speakers)).collect();
+    Ok(TranscriptLinesView { lines, total: total as i64, can_name, invitees })
+}
+
+/// The transcript line a note line came from, as the meeting holds it now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteSourceView {
+    /// The id `meeting_transcript_lines` gives that line.
+    pub segment_id: i64,
+    /// Centiseconds from the start of the recording.
+    pub start_cs: i64,
+    /// The speaker as shown (a name when one is assigned).
+    pub speaker: String,
+    /// The line's own stored words, never the model's wording.
+    pub text: String,
+}
+
+/// A decision or open question, with its source when one still holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SourcedLineView {
+    pub text: String,
+    pub source: Option<NoteSourceView>,
+}
+
+/// An action item with the owner and due the model gave and its source, each only when stored and still valid.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SourcedActionItemView {
+    /// The `ActionItemView` id; null before the items are seeded from the summary.
+    pub item_id: Option<i64>,
+    pub text: String,
+    pub owner: Option<String>,
+    pub due: Option<String>,
+    pub source: Option<NoteSourceView>,
+}
+
+/// The note's lines with the sources that still hold (redesign only); device-local, never synced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteSourcesView {
+    pub decisions: Vec<SourcedLineView>,
+    pub open_questions: Vec<SourcedLineView>,
+    pub action_items: Vec<SourcedActionItemView>,
+}
+
+fn source_view(s: memory::line_source::LineSource, speakers: &[memory::speaker_names::MeetingSpeaker]) -> NoteSourceView {
+    let (speaker, _) = memory::speaker_names::display_label(&s.speaker_label, speakers);
+    NoteSourceView { segment_id: s.segment_id, start_cs: s.start_cs, speaker, text: s.text }
+}
+
+fn sourced_line_view(l: memory::line_source::SourcedLine, speakers: &[memory::speaker_names::MeetingSpeaker]) -> SourcedLineView {
+    SourcedLineView { text: l.text, source: l.source.map(|s| source_view(s, speakers)) }
+}
+
+/// The finished note's sources (redesign only): `None` for a meeting that does not exist.
+#[tauri::command]
+pub async fn meeting_note_sources(state: State<'_, AppState>, id: i64) -> Result<Option<NoteSourcesView>, CommandError> {
+    state
+        .store()?
+        .call(move |s| -> Result<Option<NoteSourcesView>, String> {
+            let Some(found) = s.meeting_note_sources(id).map_err(|e| e.to_string())? else {
+                return Ok(None);
+            };
+            let speakers = s.meeting_speakers(id).map_err(|e| e.to_string())?;
+            Ok(Some(NoteSourcesView {
+                decisions: found.decisions.into_iter().map(|l| sourced_line_view(l, &speakers)).collect(),
+                open_questions: found.open_questions.into_iter().map(|l| sourced_line_view(l, &speakers)).collect(),
+                action_items: found
+                    .action_items
+                    .into_iter()
+                    .map(|a| SourcedActionItemView {
+                        item_id: a.item_id,
+                        text: a.text,
+                        owner: a.owner,
+                        due: a.due,
+                        source: a.source.map(|s| source_view(s, &speakers)),
+                    })
+                    .collect(),
+            }))
+        })
+        .await?
+        .map_err(CommandError::store)
 }
 
 /// The speaker menu's pick: an invitee (with their email) or a typed name, confirmed and
@@ -834,6 +1016,23 @@ pub async fn meeting_most_relevant(state: State<'_, AppState>) -> Result<Option<
 mod tests {
     use super::*;
     use memory::{MeetingTrigger, NewMeeting, Store};
+
+    #[test]
+    fn the_list_reads_a_page_and_a_search_reads_every_meeting() {
+        assert_eq!(list_limit(false, None), 200, "the first page, the Mac's 200");
+        assert_eq!(list_limit(false, Some(400)), 400, "the list asked for a page more");
+        assert_eq!(list_limit(true, Some(200)), i64::MAX as usize, "a search finds meetings older than the loaded pages");
+        // The limit is bound as an i64: the search's limit must stay a positive one (-1 would mean the same to SQLite, but by accident).
+        assert!((list_limit(true, None) as i64) > 0);
+        // On a real store: 273 meetings, the first page holds 200, a search's limit reads all 273,
+        // and the total the footer shows counts all of them.
+        let rows: Vec<_> = (0..273).map(|i| (MeetingStatus::Completed, 1_000 + i)).collect();
+        let (store, _) = store_with(&rows);
+        assert_eq!(store.recent_meetings(list_limit(false, None)).unwrap().len(), 200);
+        assert_eq!(store.recent_meetings(list_limit(false, Some(400))).unwrap().len(), 273);
+        assert_eq!(store.recent_meetings(list_limit(true, None)).unwrap().len(), 273);
+        assert_eq!(store.data_counts().unwrap().meetings, 273);
+    }
 
     fn speaker(id: i32, name: &str, status: memory::speaker_names::NameStatus) -> memory::speaker_names::MeetingSpeaker {
         memory::speaker_names::MeetingSpeaker {

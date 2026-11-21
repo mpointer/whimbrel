@@ -13,4 +13,15 @@ interface PhoneReadStore {
 
     /** Topic pages as the computer built them; empty when none have synced. */
     fun topicSnapshots(): List<PhoneTopicSnapshot>
+
+    /**
+     * This replica's id for the meeting a topic page names (the recording device and its id there); null when
+     * that meeting is not on this phone. Local ids differ per device, so a ref is never compared with one.
+     */
+    fun meetingId(deviceId: String, sourceMeetingId: Long): Long? = null
+}
+
+/** A capture's text for a citation. Separate from [PhoneReadStore] so the screens' fakes needn't know about captures. */
+interface PhoneCaptureStore {
+    fun captureItem(id: Long): PhoneCaptureItem?
 }

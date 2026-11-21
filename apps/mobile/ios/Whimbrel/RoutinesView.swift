@@ -21,20 +21,25 @@ struct RoutinesView: View {
     @StateObject private var model = RoutinesModel()
 
     var body: some View {
-        List {
-            ForEach(model.runs) { run in
-                NavigationLink { RoutineRunDetailView(run: run, labels: labels) } label: { RoutineRunRow(run: run, labels: labels) }
-                    .listRowBackground(Color.theme(.backgroundPage))
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: WTokens.Space.sm) {
+                ForEach(model.runs) { run in
+                    WSpineStop(time: ThreadTime.pastLabel(run.ranAtUnixMs), node: .past) {
+                        NavigationLink { RoutineRunDetailView(run: run, labels: labels) } label: { RoutineRunCard(run: run, labels: labels) }
+                            .buttonStyle(.plain)
+                    }
+                }
+                if model.runs.isEmpty {
+                    WStateView(kind: model.loaded ? .empty : .loading, title: model.loaded ? String(localized: "No routine runs yet") : String(localized: "Loading…"))
+                }
             }
-            if model.runs.isEmpty {
-                Text(model.loaded ? "No routine runs yet" : "Loading…")
-                    .foregroundStyle(Color.theme(.textSecondary))
-                    .listRowBackground(Color.theme(.backgroundPage))
-            }
+            .padding(.horizontal, WTokens.Space.lg)
+            .padding(.bottom, WTokens.Space.xl)
+            .frame(maxWidth: WTokens.Size.contentMax, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
+        .environment(\.wStrings, .app)
         .themed()
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(Color.theme(.backgroundPage).ignoresSafeArea())
         .navigationTitle("Routines")
         .task(id: sync.readRevision) { await model.reload(sync: sync) }
@@ -42,29 +47,35 @@ struct RoutinesView: View {
     }
 }
 
-private struct RoutineRunRow: View {
+/// One run on the thread: whether it worked (a mark, and the word when it failed), the routine,
+/// the first lines of what it produced, and the device it ran on.
+private struct RoutineRunCard: View {
     let run: PhoneRoutineRun
     let labels: DeviceLabels
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: run.succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(run.succeeded ? Color.theme(.success) : Color.theme(.error))
-                .accessibilityLabel(run.succeeded ? "Succeeded" : "Failed")
-            VStack(alignment: .leading, spacing: 2) {
-                Text(run.routineName).font(.headline).foregroundStyle(Color.theme(.textPrimary))
-                Text(run.outputSummary)
-                    .font(.subheadline).foregroundStyle(Color.theme(.textSecondary)).lineLimit(2)
-                Text(caption).font(.caption).foregroundStyle(Color.theme(.textSecondary))
+        VStack(alignment: .leading, spacing: WTokens.Space.xxs) {
+            HStack(alignment: .firstTextBaseline, spacing: WTokens.Space.sm) {
+                Image(systemName: run.succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(run.succeeded ? Color.theme(.success) : Color.theme(.error))
+                    .accessibilityLabel(run.succeeded ? "Succeeded" : "Failed")
+                Text(run.routineName).wType(WTokens.TypeScale.subtitle).foregroundStyle(Color.theme(.textPrimary))
+            }
+            if !run.succeeded {
+                Text("Failed").wType(WTokens.TypeScale.caption).fontWeight(.semibold).foregroundStyle(Color.theme(.error))
+                    .accessibilityHidden(true)
+            }
+            Text(run.outputSummary)
+                .wType(WTokens.TypeScale.secondary).foregroundStyle(Color.theme(.textSecondary)).lineLimit(2)
+                .multilineTextAlignment(.leading)
+            if let origin = run.originDeviceId {
+                Text(labels.label(for: origin)).wType(WTokens.TypeScale.caption).foregroundStyle(Color.theme(.textSecondary))
             }
         }
-        .frame(minHeight: 44, alignment: .leading)
-    }
-
-    private var caption: String {
-        var parts = [Date(timeIntervalSince1970: Double(run.ranAtUnixMs) / 1000).formatted(.relative(presentation: .named))]
-        if let origin = run.originDeviceId { parts.append(labels.label(for: origin)) }
-        return parts.joined(separator: " · ")
+        .padding(WTokens.Space.md)
+        .frame(maxWidth: .infinity, minHeight: WTokens.Size.target, alignment: .leading)
+        .wCard()
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -74,15 +85,19 @@ struct RoutineRunDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(run.routineName).font(.system(.title2, design: .serif)).foregroundStyle(Color.theme(.textPrimary))
-                Text(subtitle).font(.subheadline).foregroundStyle(Color.theme(.textSecondary))
+            VStack(alignment: .leading, spacing: WTokens.Space.md) {
+                Text(run.routineName).wReading(WTokens.TypeScale.readingTitle).foregroundStyle(Color.theme(.textPrimary))
+                    .accessibilityAddTraits(.isHeader)
+                Text(subtitle).wType(WTokens.TypeScale.secondary).foregroundStyle(Color.theme(.textSecondary))
                 Text(run.outputSummary)
+                    .wReading(WTokens.TypeScale.reading)
                     .foregroundStyle(run.succeeded ? Color.theme(.textPrimary) : Color.theme(.error))
                     .textSelection(.enabled)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, WTokens.Space.lg)
+            .padding(.vertical, WTokens.Space.md)
+            .frame(maxWidth: WTokens.Size.contentMax, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .themed()
         .background(Color.theme(.backgroundPage).ignoresSafeArea())

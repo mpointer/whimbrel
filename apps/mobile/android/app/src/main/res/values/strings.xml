@@ -64,6 +64,8 @@
     <string name="tab_today">Today</string>
     <string name="tab_meetings">Meetings</string>
     <string name="tab_routines">Routines</string>
+    <string name="tab_ask">Ask</string>
+    <string name="tab_topics">Topics</string>
     <string name="settings_title">Settings</string>
     <string name="settings_open">Settings</string>
     <string name="done">Done</string>
@@ -104,6 +106,7 @@
     <string name="detail_decisions">Decisions</string>
     <string name="detail_action_items">Action items</string>
     <string name="detail_open_questions">Open questions</string>
+    <string name="detail_written_by">Written by Whimbrel</string>
     <string name="detail_no_summary">No summary yet</string>
     <string name="detail_no_transcript">No transcript on this phone</string>
     <string name="detail_load_more">Load more</string>
@@ -166,4 +169,79 @@
     <string name="update_not_now">Not now</string>
     <string name="update_channel_name">App updates</string>
     <string name="update_notification_text">Open Whimbrel to download it.</string>
+    <!-- Settings: the last update check. English only: not translated yet; translation waits on Mike. -->
+    <string name="update_status_never">Update check: not checked yet</string>
+    <string name="update_status_up_to_date">Update check: up to date (checked %1$s)</string>
+    <string name="update_status_available">Update check: version %1$s is available (checked %2$s)</string>
+    <string name="update_status_network">Update check: couldn\'t reach GitHub (checked %1$s)</string>
+    <string name="update_status_checked_only">Update check: checked %1$s</string>
+    <string name="update_status_http">Update check: GitHub refused the request, HTTP %1$d (checked %2$s)</string>
+    <string name="update_status_http_rate_limit">Update check: GitHub refused the request (rate limit), HTTP %1$d (checked %2$s)</string>
+    <string name="update_status_http_problem">Update check: GitHub had a problem, HTTP %1$d (checked %2$s)</string>
+    <string name="update_status_unreadable">Update check: GitHub\'s answer couldn\'t be read (checked %1$s)</string>
+    <string name="update_notifications_off">Update notifications are off. Turn them on in your phone\'s settings to be told about new versions.</string>
+    <!-- Devices: approving another device from this phone. English only. -->
+    <string name="devices_title">Devices</string>
+    <string name="devices_none">No other devices.</string>
+    <string name="devices_unnamed">Unnamed device</string>
+    <string name="devices_status_pending">Waiting for approval</string>
+    <string name="devices_status_approved">Approved</string>
+    <string name="devices_status_resetting">Resetting…</string>
+    <string name="devices_check_code">Check this matches the code on the new device: %1$s</string>
+    <string name="devices_cant_verify">This device shows no code to compare, so it can\'t be approved from this phone. Approve it on your computer.</string>
+    <string name="devices_collision">Another device waiting for approval shows the same code. Don\'t approve it.</string>
+    <string name="devices_approve">Approve</string>
+    <string name="devices_code_changed">This device\'s code changed. Nothing was approved. Check the code again before you approve.</string>
+    <string name="devices_wrap_failed">Couldn\'t prepare the key for the new device. Nothing was sent. Try again.</string>
+    <string name="devices_badge">%1$d waiting for approval</string>
+    <plurals name="devices_waiting">
+        <item quantity="one">A new device is waiting for your approval</item>
+        <item quantity="other">%d new devices are waiting for your approval</item>
+    </plurals>
+    <!-- Ask and Topics (ported from the iPhone, same wording with "phone" for "iPhone"). English only. -->
+    <string name="ask_no_hosted_key">Ask on your phone needs a hosted model. Add an Anthropic, OpenAI, Google or OpenRouter key on your computer and turn on \"Sync this key\", then pull to refresh.</string>
+    <string name="ask_local_only">Local-only mode is on, so Ask stays on your computer.</string>
+    <string name="ask_intro">Ask about your meetings, screen captures and routine runs.</string>
+    <string name="ask_placeholder">Ask Whimbrel</string>
+    <string name="ask_question_field">Question</string>
+    <string name="ask_send">Send</string>
+    <string name="ask_stop">Stop</string>
+    <string name="ask_you_asked">You asked: %1$s</string>
+    <string name="ask_thinking">Thinking</string>
+    <string name="ask_stopped">Stopped</string>
+    <string name="ask_spend_cap">Daily spend cap reached on this phone</string>
+    <string name="ask_failed">Couldn\'t get an answer. Try again.</string>
+    <string name="ask_model_line">%1$s · your key</string>
+    <string name="ask_copy">Copy</string>
+    <string name="ask_copy_answer">Copy answer</string>
+    <string name="ask_answer_clip_label">Whimbrel answer</string>
+    <string name="citation_not_here">Not on this phone</string>
+    <string name="action_open_source">open the source</string>
+    <string name="action_show_capture">show the captured text</string>
+    <string name="capture_title">Screen capture</string>
+    <string name="capture_not_here">This capture isn\'t on this phone.</string>
+    <string name="run_not_here">This run isn\'t on this phone.</string>
+    <string name="topics_empty">Topics appear here once Whimbrel on your computer has built them.</string>
+    <string name="topic_not_here">This topic isn\'t on this phone.</string>
+    <string name="topic_your_role">Your role</string>
+    <string name="topic_next_meeting">Next meeting</string>
+    <string name="topic_you_owe">You owe</string>
+    <string name="topic_owed_to_you">Owed to you</string>
+    <string name="topic_done_recently">Done recently</string>
+    <string name="topic_recent">Recent</string>
+    <string name="topic_nothing_you_owe">Nothing you owe right now.</string>
+    <string name="topic_nothing_owed">Nothing owed to you right now.</string>
+    <string name="topic_nothing_yet">Nothing yet.</string>
+    <string name="topic_truncated">Showing the latest items. See the rest on your computer.</string>
+    <string name="topic_open_on_computer">Open on your computer</string>
+    <string name="topic_overdue">overdue</string>
+    <string name="topic_due">due %1$s</string>
+    <string name="topic_asked">asked %1$s</string>
+    <string name="topic_you">%1$d you</string>
+    <string name="topic_built_on">Built on %1$s · %2$s</string>
+    <string name="topic_just_now">just now</string>
+    <plurals name="topic_older_items">
+        <item quantity="one">%d older item not shown</item>
+        <item quantity="other">%d older items not shown</item>
+    </plurals>
 </resources>

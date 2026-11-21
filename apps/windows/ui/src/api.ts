@@ -1,7 +1,7 @@
 // Typed wrappers over the shell's Tauri commands (src-tauri/src/commands).
 
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { AudioLevel, DeleteEverythingPreview, MeetingMarkerView } from "./generated/types";
+import type { AudioLevel, DeleteEverythingPreview, MeetingMarkerView, NoteSourcesView, TranscriptLinesView } from "./generated/types";
 import type {
   ClientControl,
   ClientDeleteReceipt,
@@ -148,6 +148,8 @@ import type {
   ForeignFilesDeleted,
   ForeignFilesView,
   SpeedCheckResult,
+  PlusAiPromptAnswer,
+  PlusAiPromptView,
 } from "./generated/types";
 import type { SkinDto } from "./skin";
 import type { CloudRoutinesView, RunnerRegistration } from "./automations/cloudRoutineModel";
@@ -239,6 +241,12 @@ export const syncManageSubscription = () => invoke<SyncView>("sync_manage_subscr
 export const whimbrelAiStatus = () => invoke<WhimbrelAiView>("whimbrel_ai_status");
 export const whimbrelAiRefresh = () => invoke<WhimbrelAiView>("whimbrel_ai_refresh");
 export const whimbrelAiBuy = (pack: "10" | "25") => invoke<WhimbrelAiView>("whimbrel_ai_buy", { pack });
+/** Plus: whether to ask "Use Whimbrel AI?" now (the shell's `plus_prompt::check` decides). */
+export const plusAiPrompt = () => invoke<PlusAiPromptView>("plus_ai_prompt");
+/** The answer; false when the question no longer applied and nothing was written. */
+export const plusAiPromptAnswer = (answer: PlusAiPromptAnswer) => invoke<boolean>("plus_ai_prompt_answer", { answer });
+/** The question is on screen: closing the window from now on is Not now. */
+export const plusAiPromptDisplayed = () => invoke<void>("plus_ai_prompt_displayed");
 export const syncDevices = () => invoke<DeviceView[]>("sync_devices");
 export const syncSetDeviceName = (name: string) => invoke<DeviceView[]>("sync_set_device_name", { name });
 export const syncApproveDevice = (id: string) => invoke<DeviceView[]>("sync_approve_device", { id });
@@ -399,6 +407,8 @@ export const meetingRecordResume = () => invoke<MeetingRecordingView>("meeting_r
 export const meetingMarkerAdd = (meetingId: number, atCs: number, label: string | null) => invoke<MeetingMarkerView>("meeting_marker_add", { meetingId, atCs, label });
 export const meetingMarkerList = (meetingId: number) => invoke<MeetingMarkerView[]>("meeting_marker_list", { meetingId });
 export const meetingMarkerDelete = (id: number) => invoke<boolean>("meeting_marker_delete", { id });
+/** A mark's label changed, or cleared with null; false when there is no such mark (finished note, redesign only). */
+export const meetingMarkerSetLabel = (id: number, label: string | null) => invoke<boolean>("meeting_marker_set_label", { id, label });
 // A question typed in the in-meeting window: parked in the shell until the main window takes it (once), or cancelled.
 export const meetingBarAsk = (meetingId: number, text: string) => invoke<void>("meeting_bar_ask", { meetingId, text });
 export const meetingBarTakeAsk = (meetingId: number) => invoke<string | null>("meeting_bar_take_ask", { meetingId });
@@ -453,7 +463,10 @@ export const meetingRecordingStatus = () => invoke<MeetingRecordingView>("meetin
 export const localModelStatus = () => invoke<LocalModelStatus>("local_model_status");
 export const localModelDownloadStart = () => invoke<string>("local_model_download_start");
 export const localModelRemove = () => invoke<LocalModelStatus>("local_model_remove");
-export const meetingList = (filter: string) => invoke<MeetingRow[]>("meeting_list", { filter });
+/** Newest first: `limit` rows (200 when left out); a non-empty `filter` searches every meeting. */
+export const meetingList = (filter: string, limit?: number) => invoke<MeetingRow[]>("meeting_list", { filter, limit });
+/** How many meetings the store holds, for the list's "Showing X of Y meetings". */
+export const meetingTotal = () => invoke<number>("meeting_total");
 /** Import (W-1.6): each opens a picker and resolves null when it's cancelled. */
 export const importTranscripts = () => invoke<ImportView | null>("import_transcripts");
 export const importMarkdownFolder = () => invoke<ImportView | null>("import_markdown_folder");
@@ -470,6 +483,10 @@ export const recapMailto = (to: string[], subject: string, body: string) => invo
 export const recapOpenMail = (url: string) => invoke<void>("recap_open_mail", { url });
 export const recapSent = (meetingId: number) => invoke<RecapSentView | null>("recap_sent", { meetingId });
 export const meetingTranscript = (id: number) => invoke<TranscriptView>("meeting_transcript", { id });
+/** The stored transcript lines with ids and numeric times, a page at a time, unmerged (finished note, redesign only). */
+export const meetingTranscriptLines = (id: number, offset: number, limit: number) => invoke<TranscriptLinesView>("meeting_transcript_lines", { id, offset, limit });
+/** The finished note's lines with the sources that still hold, owner and due (redesign only). */
+export const meetingNoteSources = (id: number) => invoke<NoteSourcesView | null>("meeting_note_sources", { id });
 /** Speaker names: an invitee or a typed name for one of the meeting's speakers, confirmed. */
 export const setMeetingSpeaker = (id: number, speakerId: number, name: string, email: string | null) =>
   invoke<TranscriptView>("set_meeting_speaker", { id, speakerId, name, email });

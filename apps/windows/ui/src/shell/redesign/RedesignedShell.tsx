@@ -13,6 +13,7 @@ import { RecordingBar } from "../../meetings/redesign/RecordingBar";
 import { clockOffsetCs, pauseToggle } from "../../meetings/redesign/liveModel";
 import { meetingMarkerAdd } from "../../api";
 import { useLiveScreenShown, useLiveScreenTitle } from "./liveScreen";
+import { useScreenTitle } from "./screenTitle";
 import { t, useL10n } from "../../l10n";
 import type { SearchRequest } from "../../library/searchRequest";
 import { SkinHeader, TabIcon } from "../../SkinIcon";
@@ -58,6 +59,7 @@ export function RedesignedShell({ tabs, active, onChoose, waiting, onWhatIsCaptu
   const recording = useRecording(true);
   const liveShown = useLiveScreenShown();
   const liveTitle = useLiveScreenTitle();
+  const screenTitle = useScreenTitle();
   // The key handler below reads the latest state without re-binding on every poll.
   const latest = useRef(recording);
   latest.current = recording;
@@ -179,12 +181,12 @@ export function RedesignedShell({ tabs, active, onChoose, waiting, onWhatIsCaptu
           </div>
         ) : null}
         <HeaderRow
-          title={liveShown && liveTitle ? liveTitle : tab.label}
-          date={liveShown && liveTitle ? t("Now, {time}", { time: timeLabel(capture.now, locale) }) : active === "today" ? date : undefined}
+          title={liveShown && liveTitle ? liveTitle : (screenTitle ?? tab.label)}
+          date={liveShown && liveTitle ? t("Now, {time}", { time: timeLabel(capture.now, locale) }) : active === "today" && !screenTitle ? date : undefined}
           capture={captureControl}
           ask={elements.ask}
           placeholder={voiceText(localizedVoice(skin.skin, lang), "askPlaceholder")}
-          filters={active === "today" && !liveShown}
+          filters={active === "today" && !liveShown && !screenTitle}
           now={capture.now}
           inputRef={search}
           onAsk={onAsk}

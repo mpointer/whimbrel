@@ -1081,6 +1081,13 @@ details summary {
   overflow-y: auto;
 }
 
+/* "Showing X of Y meetings" and Show older meetings, at the end of the list. */
+.meeting-list-footer {
+  align-items: center;
+  padding: var(--space-sm) 0;
+  text-align: center;
+}
+
 .row-card--active {
   border-color: var(--color-accent-primary);
 }

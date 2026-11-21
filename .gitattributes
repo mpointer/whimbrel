@@ -2,3 +2,5 @@
 # checkout with core.autocrlf would otherwise change the SHA-256 recorded in VECTORS.md).
 core/sealed/tests/vectors.json text eol=lf
 core/sealed/VECTORS.md text eol=lf
+# The summary prompt goldens are compared byte for byte (flag-off request unchanged).
+core/llm/tests/fixtures/summary_prompts/** text eol=lf

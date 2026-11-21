@@ -232,7 +232,7 @@ impl ProviderFailureKind {
                 format!("{} rejected the API key. Check it in Settings → AI Providers.", name(provider))
             }
             Self::RateLimited { provider } => format!("{} is busy or out of credit. Try again shortly.", name(provider)),
-            Self::CreditExhausted => "Whimbrel AI credit is used up. Add credit in Settings.".into(),
+            Self::CreditExhausted => "Your Whimbrel AI credit or monthly allowance is used up. Add credit in Settings, or choose another model in Settings → AI Providers.".into(),
             Self::ModelUnavailable { provider, model } => format!(
                 "{} doesn't offer the model {model} to your key. Pick another in Settings → AI Providers.",
                 name(provider)
@@ -466,7 +466,7 @@ mod tests {
         );
         assert_eq!(
             ProviderFailureKind::CreditExhausted.user_message(),
-            "Whimbrel AI credit is used up. Add credit in Settings."
+            "Your Whimbrel AI credit or monthly allowance is used up. Add credit in Settings, or choose another model in Settings → AI Providers."
         );
     }
 

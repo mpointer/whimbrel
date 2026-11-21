@@ -8,9 +8,21 @@ struct AccountPlan: Decodable, Equatable {
     let interval: String?
     /// False once a Cloud subscription is cancelled; nil from a server that predates it.
     var renews: Bool? = nil
+    /// "cloud" or "plus" on a paid plan, nil otherwise and from a server that predates it.
+    var planTier: String? = nil
+    /// True only when the Worker can sell Plus (its Plus price ids are set); nil from an older Worker.
+    var plusAvailable: Bool? = nil
     let billing: Bool
 
+    enum CodingKeys: String, CodingKey {
+        case plan, until, interval, renews, billing
+        case planTier = "plan_tier"
+        case plusAvailable = "plus_available"
+    }
+
     var isCloud: Bool { plan == "cloud" }
+    /// A paid plan whose tier is Plus (a Plus account is also `isCloud`).
+    var isPlus: Bool { isCloud && planTier == "plus" }
 }
 
 /// `POST /v1/ai/balance`: the Whimbrel AI credit left and the newest purchase, in
@@ -18,10 +30,50 @@ struct AccountPlan: Decodable, Equatable {
 struct AIBalance: Decodable, Equatable {
     let balanceMicros: Int64
     let lastPurchaseMicros: Int64?
+    /// The Plus monthly allowance left; 0 when there is none, it expired, or the server predates Plus.
+    let allowanceMicros: Int64
+    /// When the allowance resets (ms). Only read while `allowanceMicros > 0`.
+    let allowanceExpiresMs: Int64?
+    /// "cloud" or "plus" on a paid plan; nil otherwise and from an older server.
+    let planTier: String?
 
     enum CodingKeys: String, CodingKey {
         case balanceMicros = "balance_micros"
         case lastPurchaseMicros = "last_purchase_micros"
+        case allowanceMicros = "allowance_micros"
+        case allowanceExpiresMs = "allowance_expires_ms"
+        case planTier = "plan_tier"
+    }
+
+    init(balanceMicros: Int64, lastPurchaseMicros: Int64? = nil, allowanceMicros: Int64 = 0,
+         allowanceExpiresMs: Int64? = nil, planTier: String? = nil) {
+        self.balanceMicros = balanceMicros
+        self.lastPurchaseMicros = lastPurchaseMicros
+        self.allowanceMicros = allowanceMicros
+        self.allowanceExpiresMs = allowanceExpiresMs
+        self.planTier = planTier
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        balanceMicros = try c.decode(Int64.self, forKey: .balanceMicros)
+        lastPurchaseMicros = try c.decodeIfPresent(Int64.self, forKey: .lastPurchaseMicros)
+        allowanceMicros = try c.decodeIfPresent(Int64.self, forKey: .allowanceMicros) ?? 0
+        allowanceExpiresMs = try c.decodeIfPresent(Int64.self, forKey: .allowanceExpiresMs)
+        planTier = try c.decodeIfPresent(String.self, forKey: .planTier)
+    }
+
+    var isPlus: Bool { planTier == "plus" }
+
+    /// What the next AI call can draw on: prepaid credit plus any allowance.
+    var spendableMicros: Int64 { balanceMicros + allowanceMicros }
+
+    /// The reset date, only while there is allowance left (a stale date is never shown), and
+    /// never one in the past.
+    func allowanceResetDate(now: Date = Date()) -> Date? {
+        guard allowanceMicros > 0, let ms = allowanceExpiresMs else { return nil }
+        let date = Date(timeIntervalSince1970: Double(ms) / 1000)
+        return date > now ? date : nil
     }
 
     /// Under 10% of the newest purchase is left.
@@ -51,7 +103,8 @@ struct AIModelList: Decodable, Equatable {
 /// Mac-only, so `SyncWorker` (shared with the iPhone) stays as it is.
 protocol SyncBilling: AnyObject {
     func accountPlan(idToken: String, devicePublicKey: String) async throws -> AccountPlan
-    func checkoutURL(idToken: String, devicePublicKey: String, interval: String) async throws -> URL
+    /// `plan` is "plus" for Plus; nil for Cloud, where the key is left out of the request.
+    func checkoutURL(idToken: String, devicePublicKey: String, interval: String, plan: String?) async throws -> URL
     func portalURL(idToken: String, devicePublicKey: String) async throws -> URL
     func aiBalance(idToken: String, devicePublicKey: String) async throws -> AIBalance
     func aiModels(idToken: String, devicePublicKey: String) async throws -> [String]
@@ -78,7 +131,15 @@ final class SyncBillingClient: SyncBilling {
         }.value.get()
     }
 
-    func checkoutURL(idToken: String, devicePublicKey: String, interval: String) async throws -> URL {
+    func checkoutURL(idToken: String, devicePublicKey: String, interval: String, plan: String?) async throws -> URL {
+        if let plan {
+            // The core's checkout call has no plan argument in its C interface, so Plus POSTs directly,
+            // as the AI routes do. Cloud (plan nil) keeps the core path, which sends no `plan` key.
+            let data = try await post("v1/billing/checkout",
+                                      ["idToken": idToken, "devicePublicKey": devicePublicKey, "interval": interval, "plan": plan])
+            guard let reply = try? JSONDecoder().decode(URLReply.self, from: data) else { throw SyncAPIError.malformedResponse }
+            return try reply.parsed.get()
+        }
         let base = baseURL.absoluteString
         return try await Task.detached(priority: .userInitiated) {
             let json = base.withCString { b in idToken.withCString { t in devicePublicKey.withCString { k in interval.withCString { i in

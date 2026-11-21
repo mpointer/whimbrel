@@ -2556,7 +2556,7 @@ final class AppState: ObservableObject {
                     CoreMemoryStore.slowLaneQueue.async { [weak self] in
                         defer { UserModelGate.shared.leave(gateToken) }
                         let slides = slow?.meetingSlidesText(meetingId: meetingId) ?? ""
-                        let outcome = slow?.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: transcript, slides: slides, model: ollamaModel, routing: routingConfig.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: instructions)
+                        let outcome = slow?.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: transcript, slides: slides, model: ollamaModel, routing: routingConfig.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: instructions, wantSources: RedesignFlag.isOn())
                         DispatchQueue.main.async {
                             self?.recordSummaryOutcome(outcome, meetingId: meetingId)
                             self?.clearProcessingState(for: meetingId)
@@ -3293,7 +3293,7 @@ final class AppState: ObservableObject {
             let text = named.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? transcript : named
             // Regenerate also sees what was typed on Today (a meeting stored before that was merged in).
             let withToday = LiveNotesMerge.combined(library: notes, draft: slow.getMeetingNoteDraft(meetingId: meetingId)?.personalNotes)
-            let outcome = slow.summarizeMeeting(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
+            let outcome = slow.summarizeMeeting(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions, wantSources: RedesignFlag.isOn())
             DispatchQueue.main.async {
                 self?.regeneratingSummaryIds.remove(meetingId)
                 self?.recordSummaryOutcome(outcome, meetingId: meetingId)
@@ -3327,7 +3327,7 @@ final class AppState: ObservableObject {
             let text = named.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? transcript : named
             // Regenerate also sees what was typed on Today (a meeting stored before that was merged in).
             let withToday = LiveNotesMerge.combined(library: notes, draft: slow.getMeetingNoteDraft(meetingId: meetingId)?.personalNotes)
-            let outcome = slow.summarizeMeetingPreferred(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
+            let outcome = slow.summarizeMeetingPreferred(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions, wantSources: RedesignFlag.isOn())
             DispatchQueue.main.async {
                 self?.regeneratingSummaryIds.remove(meetingId)
                 // Only a success is recorded: a failure is shown by the notice's own line, with its reason.

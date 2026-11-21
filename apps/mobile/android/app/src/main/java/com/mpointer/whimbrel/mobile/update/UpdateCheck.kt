@@ -3,6 +3,9 @@ package com.mpointer.whimbrel.mobile.update
 import android.content.SharedPreferences
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Calendar
+import java.util.TimeZone
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -61,19 +64,95 @@ object UpdateCheck {
         return AvailableUpdate(tag.removePrefix("v"), apk["browser_download_url"]!!.jsonPrimitive.content, o["html_url"]!!.jsonPrimitive.content)
     }
 
-    suspend fun fetchLatest(): String? = withContext(Dispatchers.IO) {
-        runCatching {
+    suspend fun fetchLatest(): FetchResult = withContext(Dispatchers.IO) {
+        try {
             val c = URL(RELEASES_URL).openConnection() as HttpURLConnection
             c.connectTimeout = 10_000
             c.readTimeout = 10_000
             c.setRequestProperty("Accept", "application/vnd.github+json")
             c.setRequestProperty("User-Agent", "Whimbrel-Android")
             try {
-                if (c.responseCode == 200) c.inputStream.bufferedReader().readText() else null
+                val code = c.responseCode
+                when {
+                    code == 200 -> FetchResult.Body(c.inputStream.bufferedReader().readText())
+                    code < 100 -> FetchResult.Network // -1: no usable status line, so no answer to report
+                    else -> FetchResult.Http(code)
+                }
             } finally {
                 c.disconnect()
             }
-        }.getOrNull()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // As before, nothing escapes (the old runCatching caught every Throwable). CancellationException is
+            // rethrown above; nothing in this block suspends, so that only matters for structured cancellation.
+            FetchResult.Network
+        }
+    }
+}
+
+/** What one request for the releases list came back with: the body, an HTTP status other than 200, or no answer at all. */
+sealed class FetchResult {
+    data class Body(val json: String) : FetchResult()
+    data class Http(val code: Int) : FetchResult()
+    object Network : FetchResult()
+}
+
+/** How the last check attempt ended. CHECKED_EARLIER: only a time is known (written by an older app version). FAILED_* keep the cached update info; only the attempt record changes. */
+enum class CheckOutcome { CHECKED_EARLIER, UP_TO_DATE, UPDATE_AVAILABLE, FAILED_NETWORK, FAILED_HTTP, FAILED_UNREADABLE }
+
+/**
+ * The last check attempt, success or failure: when, how it ended, the latest version seen (UP_TO_DATE and
+ * UPDATE_AVAILABLE) and the HTTP status (FAILED_HTTP). Holds no personal data.
+ */
+data class LastCheck(val atMs: Long, val outcome: CheckOutcome, val version: String? = null, val httpCode: Int? = null)
+
+/** The English wording of the one-line check status; the app reads it from string resources, tests from a fake. */
+interface UpdateStatusStrings {
+    fun notChecked(): String
+    fun checkedOnly(time: String): String
+    fun upToDate(time: String): String
+    fun updateAvailable(version: String, time: String): String
+    fun network(time: String): String
+    fun httpRateLimit(code: Int, time: String): String
+    fun httpRefused(code: Int, time: String): String
+    fun httpProblem(code: Int, time: String): String
+    fun unreadable(time: String): String
+}
+
+/** How times are shown: the phone's own 12/24-hour setting and date style in the app, fixed patterns in tests. */
+interface UpdateTimeFormats {
+    val zone: TimeZone
+    fun time(atMs: Long): String
+    fun dateTime(atMs: Long): String
+}
+
+object UpdateStatus {
+    /** Time only for a moment today, date and time for an earlier day (day boundaries in [UpdateTimeFormats.zone]). */
+    fun formatTime(atMs: Long, nowMs: Long, formats: UpdateTimeFormats): String {
+        fun day(ms: Long) = Calendar.getInstance(formats.zone).apply { timeInMillis = ms }.let { it.get(Calendar.YEAR) * 1000 + it.get(Calendar.DAY_OF_YEAR) }
+        return if (day(atMs) == day(nowMs)) formats.time(atMs) else formats.dateTime(atMs)
+    }
+
+    fun line(last: LastCheck?, nowMs: Long, strings: UpdateStatusStrings, formats: UpdateTimeFormats): String {
+        if (last == null) return strings.notChecked()
+        val time = formatTime(last.atMs, nowMs, formats)
+        return when (last.outcome) {
+            CheckOutcome.CHECKED_EARLIER -> strings.checkedOnly(time)
+            CheckOutcome.UP_TO_DATE -> strings.upToDate(time)
+            CheckOutcome.UPDATE_AVAILABLE -> strings.updateAvailable(last.version.orEmpty(), time)
+            CheckOutcome.FAILED_NETWORK -> strings.network(time)
+            CheckOutcome.FAILED_HTTP -> {
+                val code = last.httpCode ?: 0
+                when {
+                    code < 100 -> strings.network(time) // never show "HTTP 0" or "HTTP -1"
+                    code == 403 || code == 429 -> strings.httpRateLimit(code, time)
+                    code >= 500 -> strings.httpProblem(code, time)
+                    else -> strings.httpRefused(code, time)
+                }
+            }
+            CheckOutcome.FAILED_UNREADABLE -> strings.unreadable(time)
+        }
     }
 }
 
@@ -82,7 +161,7 @@ class UpdateModel(
     private val prefs: SharedPreferences,
     private val installed: String,
     private val now: () -> Long = System::currentTimeMillis,
-    private val fetch: suspend () -> String? = UpdateCheck::fetchLatest,
+    private val fetch: suspend () -> FetchResult = UpdateCheck::fetchLatest,
 ) {
     private val _available = MutableStateFlow<AvailableUpdate?>(null)
     val available: StateFlow<AvailableUpdate?> = _available.asStateFlow()
@@ -95,9 +174,23 @@ class UpdateModel(
             _available.value = stored()
             return
         }
-        val latest = fetch()?.let(UpdateCheck::parse) ?: return
-        prefs.edit().putLong(LAST_CHECK, now()).putString(LATEST_VERSION, latest.version).putString(LATEST_APK_KEY, latest.apkUrl).putString(LATEST_URL_KEY, latest.pageUrl).apply()
+        val result = fetch()
+        val at = now()
+        val body = when (result) {
+            is FetchResult.Body -> result.json
+            is FetchResult.Http -> return record(LastCheck(at, CheckOutcome.FAILED_HTTP, httpCode = result.code))
+            FetchResult.Network -> return record(LastCheck(at, CheckOutcome.FAILED_NETWORK))
+        }
+        val latest = UpdateCheck.parse(body) ?: return record(LastCheck(at, CheckOutcome.FAILED_UNREADABLE))
+        val outcome = if (UpdateCheck.isNewer(latest.version, installed)) CheckOutcome.UPDATE_AVAILABLE else CheckOutcome.UP_TO_DATE
+        record(LastCheck(at, outcome, version = latest.version))
+        prefs.edit().putLong(LAST_CHECK, at).putString(LATEST_VERSION, latest.version).putString(LATEST_APK_KEY, latest.apkUrl).putString(LATEST_URL_KEY, latest.pageUrl).apply()
         _available.value = shown(latest)
+    }
+
+    /** The last attempt's record (one prefs write, kept apart from the cache so a failure never clears the cached update). */
+    private fun record(c: LastCheck) {
+        prefs.edit().putLong(ATTEMPT_MS, c.atMs).putString(ATTEMPT_OUTCOME, c.outcome.name).putString(ATTEMPT_VERSION, c.version).putInt(ATTEMPT_HTTP, c.httpCode ?: 0).apply()
     }
 
     /** The update to announce in a notification, once per version: null if there is none, it was dismissed
@@ -127,10 +220,25 @@ class UpdateModel(
     companion object {
         const val PREFS = "update_check"
         private const val LAST_CHECK = "last_check_ms"
+        private const val ATTEMPT_MS = "attempt_ms"
+        private const val ATTEMPT_OUTCOME = "attempt_outcome"
+        private const val ATTEMPT_VERSION = "attempt_version"
+        private const val ATTEMPT_HTTP = "attempt_http"
+
         private const val LATEST_VERSION = "latest_version"
         private const val LATEST_APK_KEY = "latest_apk_url"
         private const val LATEST_URL_KEY = "latest_url"
         private const val DISMISSED = "dismissed_version"
         private const val NOTIFIED = "notified_version"
+
+        /**
+         * The last check attempt (foreground or background), or null if none has run yet. An install upgraded from
+         * a version that kept only the check time reports that time as CHECKED_EARLIER until its next attempt.
+         */
+        fun lastCheck(prefs: SharedPreferences): LastCheck? {
+            if (!prefs.contains(ATTEMPT_MS)) return if (prefs.contains(LAST_CHECK)) LastCheck(prefs.getLong(LAST_CHECK, 0L), CheckOutcome.CHECKED_EARLIER) else null
+            val outcome = runCatching { CheckOutcome.valueOf(prefs.getString(ATTEMPT_OUTCOME, "") ?: "") }.getOrNull() ?: return null
+            return LastCheck(prefs.getLong(ATTEMPT_MS, 0L), outcome, prefs.getString(ATTEMPT_VERSION, null), prefs.getInt(ATTEMPT_HTTP, 0).takeIf { it != 0 })
+        }
     }
 }

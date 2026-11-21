@@ -119,6 +119,11 @@ class SyncWorkerClient(private val native: CoreNative, private val baseUrl: Stri
         ok(native.syncWorkerRevokeDevice(baseUrl, idToken, devicePublicKey, targetDeviceId))
     }
 
+    /** Approves a pending device, handing it the group key wrapped to its public key. */
+    suspend fun approve(idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String) = call {
+        ok(native.syncWorkerApproveDevice(baseUrl, idToken, devicePublicKey, targetDeviceId, wrappedGroupKey))
+    }
+
     suspend fun setDeviceName(idToken: String, devicePublicKey: String, name: String) = call {
         ok(native.syncWorkerSetDeviceName(baseUrl, idToken, devicePublicKey, name))
     }

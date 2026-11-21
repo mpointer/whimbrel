@@ -122,7 +122,8 @@
   border-radius: var(--sx-radius-control);
   border-color: currentColor;
 }
-.w-button:disabled {
+.w-button:disabled,
+.w-button[aria-disabled="true"] {
   opacity: 0.55;
   cursor: default;
 }

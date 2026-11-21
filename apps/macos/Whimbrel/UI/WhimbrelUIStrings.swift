@@ -160,6 +160,36 @@ enum WhimbrelUIStrings {
                     String(localized: "Moment marked at \(time)", comment: "Spoken once after Mark this moment worked. The placeholder is a clock time.")
                 },
                 count: { number in "\(number)" }
+            ),
+            note: WNoteStrings(
+                note: String(localized: "Note"),
+                viewSwitch: String(localized: "View", comment: "Spoken name of the switch between the Note and the Transcript on a finished meeting page."),
+                copy: String(localized: "Copy"),
+                copyTranscript: String(localized: "Copy transcript", comment: "Button in the header of a finished meeting's transcript view. It copies the whole transcript. In the note view the Copy button copies the summary instead."),
+                moreCopyFormats: String(localized: "More copy formats", comment: "Spoken name of the small arrow beside the Copy button on a finished meeting note. It opens a menu with Copy as Markdown and Copy as Slack."),
+                copyAsMarkdown: String(localized: "Copy as Markdown"),
+                copyAsSlack: String(localized: "Copy as Slack"),
+                sendRecap: String(localized: "Send recap"),
+                edit: String(localized: "Edit"),
+                regenerate: String(localized: "Regenerate"),
+                yourNotes: String(localized: "Your notes"),
+                summary: String(localized: "Summary"),
+                decisions: String(localized: "Decisions"),
+                openQuestions: String(localized: "Open questions"),
+                actionItems: String(localized: "Action items"),
+                marginIntro: String(localized: "Whimbrel wrote the marked lines. Each number points to the moment in the transcript it came from.", comment: "Line at the top of the margin of a finished meeting note. The lines Whimbrel wrote are marked with a colored rule and a number; each number points to a moment in the transcript."),
+                regenerateForSources: String(localized: "Regenerate the summary to add sources.", comment: "Line in the margin of an older finished meeting note whose lines have no sources yet."),
+                openInTranscriptAt: { time in
+                    String(localized: "Open in transcript at \(time)", comment: "Link on a source card, and the spoken name of a marked moment: opens the transcript at a time. The placeholder is a time in the meeting, for example 18:25.")
+                },
+                dueOn: { due in
+                    String(localized: "Due \(due)", comment: "Due date under an action item. The placeholder is a date, for example Thu, Nov 19.")
+                },
+                speakerLanes: String(localized: "Speaker lanes", comment: "Spoken name of the picture above a transcript that shows when each person spoke, one lane per person."),
+                showingLine: { time in
+                    String(localized: "Showing the line at \(time)", comment: "Spoken once when a transcript line is highlighted. The placeholder is a time in the meeting, for example 18:25.")
+                },
+                lanesHint: String(localized: "Use the arrow keys to move between spans, and Return to open the line.", comment: "Spoken hint of the speaker lanes above a transcript.")
             )
         )
     }

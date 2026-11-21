@@ -66,14 +66,15 @@ public struct WSpeakerChip: View {
     }
 
     public var body: some View {
-        let avatar: CGFloat = (size == .small ? 18 : 22) * k
+        let avatar: CGFloat = (size == .small ? 20 : 22) * k
         HStack(spacing: theme.space(6)) {
             Text(person.initials)
                 .wFont(.caption)
                 .fontWeight(.bold)
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(0.5)
                 .lineLimit(1)
                 .foregroundStyle(theme.textPrimary)
+                .padding(.horizontal, theme.isHighContrast ? 2.5 : 1)
                 .frame(width: avatar, height: avatar)
                 .background(Circle().fill(theme.border.opacity(theme.isHighContrast ? 0 : 0.55)))
                 .overlay(Circle().strokeBorder(theme.border, lineWidth: theme.isHighContrast ? 1 : 0))
@@ -102,11 +103,25 @@ public struct WSourceMark: View {
     @Environment(\.wStrings) private var strings
     let number: Int
     let isSelected: Bool
+    /// Spoken after "Source 3": the speaker and the time ("Jo", "18:25").
+    let spokenDetail: [String]
+    /// The source's own words, spoken as the mark's value, so a screen reader hears the source once, at its line.
+    let spokenQuote: String?
+    /// With `onOpen`: the name of the extra action that opens the source ("Open in transcript at 18:25").
+    let openTitle: String?
+    let onOpen: (() -> Void)?
     let action: () -> Void
 
-    public init(number: Int, isSelected: Bool = false, action: @escaping () -> Void) {
+    public init(
+        number: Int, isSelected: Bool = false, spokenDetail: [String] = [], spokenQuote: String? = nil, openTitle: String? = nil,
+        onOpen: (() -> Void)? = nil, action: @escaping () -> Void
+    ) {
         self.number = number
         self.isSelected = isSelected
+        self.spokenDetail = spokenDetail
+        self.spokenQuote = spokenQuote
+        self.openTitle = openTitle
+        self.onOpen = onOpen
         self.action = action
     }
 
@@ -125,9 +140,13 @@ public struct WSourceMark: View {
                 .padding(-(max(diameter, WTokens.Size.target * k) - diameter) / 2)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(strings.sourceNumber(number))
+        .accessibilityLabel(strings.joinDetails([strings.sourceNumber(number)] + spokenDetail))
+        .accessibilityValue(spokenQuote.map(strings.quoted) ?? "")
         .accessibilityHint(strings.selectsThisSource)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityActions {
+            if let onOpen, let openTitle { Button(openTitle, action: onOpen) }
+        }
     }
 }
 

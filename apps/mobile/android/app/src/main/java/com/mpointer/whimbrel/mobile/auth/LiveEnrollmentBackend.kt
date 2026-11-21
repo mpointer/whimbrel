@@ -26,6 +26,9 @@ class LiveEnrollmentBackend(
     override suspend fun revokeDevice(idToken: String, devicePublicKey: String, targetDeviceId: String) =
         worker.revoke(idToken, devicePublicKey, targetDeviceId)
 
+    override suspend fun approve(idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String) =
+        worker.approve(idToken, devicePublicKey, targetDeviceId, wrappedGroupKey)
+
     override suspend fun setDeviceName(idToken: String, devicePublicKey: String, name: String) =
         worker.setDeviceName(idToken, devicePublicKey, name)
 

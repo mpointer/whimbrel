@@ -126,8 +126,7 @@ function softwareApplication(platform) {
   };
 }
 
-function videoObject() {
-  const v = site.demoVideo;
+function videoObject(v = site.demoVideo, embedUrl = `${siteUrl}/#demo`) {
   return {
     "@type": "VideoObject",
     name: v.title,
@@ -136,7 +135,7 @@ function videoObject() {
     uploadDate: v.uploadDate,
     duration: v.duration,
     contentUrl: `${siteUrl}${v.mp4}`,
-    embedUrl: `${siteUrl}/#demo`,
+    embedUrl,
   };
 }
 
@@ -386,6 +385,7 @@ for (const file of pageFiles) {
     else if (kind === "software-mac") graph.push(softwareApplication("mac"));
     else if (kind === "software-windows") graph.push(softwareApplication("windows"));
     else if (kind === "video") graph.push(videoObject());
+    else if (kind === "whats-new-video") graph.push(videoObject(site.whatsNewVideo, `${siteUrl}${route}#whats-new`));
     else throw new Error(`${route}: unknown schema kind ${kind}`);
   }
   if (meta.faq) graph.push(faqPage(meta.faq.map(({ q, a }) => ({ q, a: stripTags(a) }))));

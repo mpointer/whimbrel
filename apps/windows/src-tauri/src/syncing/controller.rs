@@ -571,6 +571,7 @@ impl SyncController {
         *self.last_auth.lock().unwrap() = None;
         self.devices.lock().unwrap().clear();
         *self.plan.lock().unwrap() = None;
+        crate::syncing::billing::plus_flag::set(false);
         *self.kind_backfill_percent.lock().unwrap() = None;
         tracing::info!("the sync account was deleted");
     }
@@ -944,6 +945,7 @@ impl SyncController {
         match read {
             Ok(plan) => {
                 self.plan_failures.store(0, Ordering::SeqCst);
+                crate::syncing::billing::plus_flag::set(crate::syncing::billing::is_plus(&plan));
                 let view = crate::syncing::billing::PlanView::from(&plan);
                 *self.plan.lock().unwrap() = Some(plan);
                 Ok(view)
@@ -965,23 +967,27 @@ impl SyncController {
             && (1..crate::syncing::billing::PLAN_RETRIES).contains(&self.plan_failures.load(Ordering::SeqCst))
     }
 
-    /// Upgrade to Cloud: opens Stripe Checkout for `interval` in the browser, then watches the plan.
+    /// Upgrade: opens Stripe Checkout for `interval` in the browser, then watches the plan. Plus when
+    /// the server sells it and the account isn't paid yet (the Plus buttons are the ones showing);
+    /// Cloud otherwise.
     pub fn upgrade(self: &Arc<Self>, interval: &str) -> Result<(), String> {
         let interval = crate::syncing::billing::interval(interval).ok_or_else(|| format!("unknown billing interval {interval:?}"))?;
+        let plan = crate::syncing::billing::checkout_plan(self.plan.lock().unwrap().as_ref());
         let id_token = self.fresh_id_token()?;
-        let opened = self.worker()?.billing_checkout(&id_token, &self.identity.device_id, interval);
-        self.open_billing(opened)
+        let opened = self.worker()?.billing_checkout(&id_token, &self.identity.device_id, interval, plan);
+        self.open_billing(opened, plan.is_some())
     }
 
     /// Manage subscription: opens Stripe's customer portal, then watches the plan.
     pub fn manage_subscription(self: &Arc<Self>) -> Result<(), String> {
         let id_token = self.fresh_id_token()?;
         let opened = self.worker()?.billing_portal(&id_token, &self.identity.device_id);
-        self.open_billing(opened)
+        self.open_billing(opened, false)
     }
 
-    fn open_billing(self: &Arc<Self>, url: Result<String, en::WorkerError>) -> Result<(), String> {
-        use crate::syncing::billing::{billing_failure, BillingFailure};
+    /// `plus`: the request was a Plus checkout.
+    fn open_billing(self: &Arc<Self>, url: Result<String, en::WorkerError>, plus: bool) -> Result<(), String> {
+        use crate::syncing::billing::{billing_failure, BillingFailure, ALREADY_PAID, PLUS_UNAVAILABLE};
         match url {
             Ok(url) => {
                 (self.open_url)(&url)?;
@@ -989,7 +995,22 @@ impl SyncController {
                 Ok(())
             }
             Err(e) => match billing_failure(&e) {
+                BillingFailure::AlreadyPaid => {
+                    let _ = self.refresh_plan();
+                    // At the device limit a paid plan lets this PC in: sign in again, as the plan poll
+                    // does when the plan turns paid there.
+                    let at_limit = matches!(*self.status.lock().unwrap(), SyncStatus::DeviceLimit { .. });
+                    if at_limit && self.plan.lock().unwrap().as_ref().is_some_and(crate::syncing::billing::is_cloud) {
+                        self.check_again();
+                    }
+                    Err(ALREADY_PAID.to_string())
+                }
                 BillingFailure::RefreshPlan => self.refresh_plan().map(|_| ()),
+                // A stale `plus_available`: the read hides the Plus buttons.
+                BillingFailure::Unavailable if plus => {
+                    let _ = self.refresh_plan();
+                    Err(PLUS_UNAVAILABLE.to_string())
+                }
                 BillingFailure::Unavailable => {
                     // Hides Upgrade and Manage until a read says billing is open again.
                     if let Some(plan) = self.plan.lock().unwrap().as_mut() {
@@ -1120,9 +1141,15 @@ impl SyncController {
         refreshed.id_token.ok_or_else(|| tr("Google didn't return an ID token.", &[]))
     }
 
+    /// Whether this session's plan read says Plus; None before a read.
+    pub fn plan_is_plus(&self) -> Option<bool> {
+        self.plan.lock().unwrap().as_ref().map(crate::syncing::billing::is_plus)
+    }
+
     /// The Whimbrel AI card.
     pub fn whimbrel_ai_view(&self) -> crate::syncing::billing::WhimbrelAiView {
-        crate::syncing::billing::WhimbrelAiView::new(self.ready_credentials().is_some(), self.ai_balance.lock().unwrap().as_ref())
+        let renews = self.plan.lock().unwrap().as_ref().and_then(|p| p.renews);
+        crate::syncing::billing::WhimbrelAiView::new(self.ready_credentials().is_some(), self.ai_balance.lock().unwrap().as_ref(), renews)
     }
 
     /// Reads the credit balance. A failed read keeps the last one.
@@ -1136,6 +1163,9 @@ impl SyncController {
             .ai_balance(&id_token, &self.identity.device_id)
             .map_err(|e| en::user_message_in(&e, &crate::l10n::ui_language()))?;
         if self.ready_credentials().is_some() {
+            if let Some(tier) = balance.plan_tier.as_deref() {
+                crate::syncing::billing::plus_flag::set(tier == "plus");
+            }
             *self.ai_balance.lock().unwrap() = Some(balance);
         }
         Ok(())
@@ -1624,7 +1654,7 @@ mod tests {
     }
 
     fn plan(name: &str, billing: bool) -> api::sync_ops::enrollment::AccountPlan {
-        api::sync_ops::enrollment::AccountPlan { plan: name.into(), until: None, interval: None, billing, renews: None }
+        api::sync_ops::enrollment::AccountPlan { plan: name.into(), until: None, interval: None, billing, renews: None, plan_tier: None, plus_available: false }
     }
 
     #[test]
@@ -1659,7 +1689,7 @@ mod tests {
 
         *worker.plan.lock().unwrap() = Ok(plan("cloud", true));
         *worker.checkout.lock().unwrap() = Err(WorkerError::Http { status: 409, body: r#"{"error":"already_cloud"}"#.into() });
-        c.upgrade("month").unwrap();
+        assert_eq!(c.upgrade("month"), Err("You already have a paid plan.".to_string()));
         assert_eq!(c.view().plan.unwrap().plan, "cloud", "409 re-reads the plan");
 
         *worker.checkout.lock().unwrap() = Err(WorkerError::Http { status: 502, body: "{}".into() });
@@ -1668,6 +1698,35 @@ mod tests {
         *worker.plan.lock().unwrap() = Err(WorkerError::Network);
         assert!(c.refresh_plan().is_err());
         assert_eq!(c.view().plan.unwrap().plan, "cloud", "a failed read keeps the last plan");
+    }
+
+    #[test]
+    fn a_free_plan_with_plus_on_sale_checks_out_plus_and_cloud_otherwise() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let c = Arc::new(controller(worker.clone(), Arc::new(MemorySecrets::default())));
+        let plus_on_sale = || api::sync_ops::enrollment::AccountPlan { plus_available: true, ..plan("free", true) };
+
+        // First the stale `plus_available` (a failed checkout starts no plan poll): Plus says so and
+        // reads the plan again, which hides the Plus buttons.
+        *worker.plan.lock().unwrap() = Ok(plus_on_sale());
+        c.refresh_plan().unwrap();
+        assert!(c.view().plan.unwrap().plus_available);
+        *worker.plan.lock().unwrap() = Ok(plan("free", true));
+        *worker.checkout.lock().unwrap() = Err(WorkerError::Http { status: 503, body: r#"{"error":"billing_unavailable"}"#.into() });
+        assert_eq!(c.upgrade("year"), Err("Plus isn't available yet. Try again later.".to_string()));
+        assert!(!c.view().plan.unwrap().plus_available);
+
+        // On sale again: Plus. The plan poll this starts reads the same plan, so it changes nothing.
+        *worker.plan.lock().unwrap() = Ok(plus_on_sale());
+        c.refresh_plan().unwrap();
+        *worker.checkout.lock().unwrap() = Ok("https://checkout.stripe.test/s".into());
+        c.upgrade("month").unwrap();
+
+        // An older Worker (no `plus_available`): Cloud, with no `plan` key.
+        *worker.plan.lock().unwrap() = Ok(plan("free", true));
+        c.refresh_plan().unwrap();
+        c.upgrade("month").unwrap();
+        assert_eq!(*worker.checkouts.lock().unwrap(), vec!["year plus".to_string(), "month plus".to_string(), "month".to_string()]);
     }
 
     #[test]
@@ -1868,7 +1927,7 @@ mod tests {
         assert!(!c.whimbrel.needs_background_refresh(Instant::now(), now_ms()), "an hour left is fresh enough");
 
         // Sync leaves ready: the upkeep tick forgets the credentials and the balance.
-        *c.ai_balance.lock().unwrap() = Some(en::AiBalance { balance_micros: 1, last_purchase_micros: None });
+        *c.ai_balance.lock().unwrap() = Some(en::AiBalance { balance_micros: 1, ..Default::default() });
         *c.status.lock().unwrap() = SyncStatus::NotSignedIn;
         c.whimbrel_upkeep(false);
         assert!(c.whimbrel.get().is_none() && c.ai_balance.lock().unwrap().is_none());
@@ -1879,7 +1938,7 @@ mod tests {
     #[test]
     fn the_whimbrel_ai_card_reads_the_balance_and_buys_a_pack() {
         let worker = FakeWorker::new(approved(), vec![]);
-        *worker.ai_balance.lock().unwrap() = Ok(en::AiBalance { balance_micros: 500_000, last_purchase_micros: Some(10_000_000) });
+        *worker.ai_balance.lock().unwrap() = Ok(en::AiBalance { balance_micros: 500_000, last_purchase_micros: Some(10_000_000), ..Default::default() });
         let c = ready_with_id_token(worker.clone(), Duration::from_secs(60 * 60));
         assert_eq!(c.whimbrel_ai_view().balance_micros, None, "nothing read yet");
         c.refresh_ai_balance().unwrap();
@@ -1890,14 +1949,22 @@ mod tests {
         assert_eq!(*worker.ai_packs.lock().unwrap(), vec!["25".to_string()]);
         assert!(c.buy_ai_credit("5").is_err(), "only the packs the server sells");
         // Stripe finishes: the poll picks up the new balance.
-        *worker.ai_balance.lock().unwrap() = Ok(en::AiBalance { balance_micros: 25_500_000, last_purchase_micros: Some(25_000_000) });
+        *worker.ai_balance.lock().unwrap() = Ok(en::AiBalance { balance_micros: 25_500_000, last_purchase_micros: Some(25_000_000), ..Default::default() });
         for _ in 0..300 {
             if c.whimbrel_ai_view().balance_micros == Some(25_500_000) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(c.whimbrel_ai_view(), crate::syncing::billing::WhimbrelAiView { signed_in: true, balance_micros: Some(25_500_000), low: false });
+        assert_eq!(c.whimbrel_ai_view(), crate::syncing::billing::WhimbrelAiView {
+                signed_in: true,
+                balance_micros: Some(25_500_000),
+                low: false,
+                plus: false,
+                allowance_micros: 0,
+                allowance_resets_unix_ms: None,
+                renews: None
+            });
 
         *worker.checkout.lock().unwrap() = Err(WorkerError::Http { status: 502, body: "{}".into() });
         assert_eq!(c.buy_ai_credit("10"), Err("Couldn't reach Stripe. Try again in a minute.".to_string()));

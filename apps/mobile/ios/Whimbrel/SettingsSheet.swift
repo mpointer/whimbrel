@@ -10,6 +10,13 @@ struct SettingsSheet: View {
     @ObservedObject private var themes = ThemeStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var approvals: DeviceApprovalModel?
+    @State private var demoDevices: Bool = {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("-WhimbrelDemoDevices")
+        #else
+        return false
+        #endif
+    }()
     @AppStorage(AppLanguage.writeInKey) private var writeIn = ""
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
@@ -35,7 +42,7 @@ struct SettingsSheet: View {
                                 if enrollment.pendingDeviceCount > 0 {
                                     Text("\(enrollment.pendingDeviceCount)")
                                         .font(.caption.bold())
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(Color.theme(.textOnAccent))
                                         .padding(.horizontal, 8).padding(.vertical, 2)
                                         .background(Capsule().fill(Color.theme(.accentPrimary)))
                                         .accessibilityLabel("\(enrollment.pendingDeviceCount) waiting for approval")
@@ -56,6 +63,7 @@ struct SettingsSheet: View {
                             Text(verbatim: Locale.current.localizedString(forIdentifier: $0) ?? $0).tag($0)
                         }
                     }
+                    .modifier(RoomyPicker())
                     .listRowBackground(Color.theme(.backgroundCard))
                 }
                 Section("Sync") {
@@ -88,11 +96,13 @@ struct SettingsSheet: View {
                                 Text(theme.name).foregroundStyle(Color.theme(.textPrimary))
                                 Spacer()
                                 if theme.id == themes.selectedId {
-                                    Image(systemName: "checkmark").foregroundStyle(Color.theme(.accentPrimary))
+                                    Image(systemName: "checkmark").foregroundStyle(Color.theme(.accentPrimary)).accessibilityHidden(true)
                                 }
                             }
                         }
                         .listRowBackground(Color.theme(.backgroundCard))
+                        // The check mark alone is silent to VoiceOver.
+                        .accessibilityAddTraits(theme.id == themes.selectedId ? .isSelected : [])
                     }
                 }
             }
@@ -108,6 +118,10 @@ struct SettingsSheet: View {
             .background(Color.theme(.backgroundPage).ignoresSafeArea())
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            // Demo screenshots only (`-WhimbrelDemoDevices`): opens the Devices screen at launch.
+            .navigationDestination(isPresented: $demoDevices) {
+                if let approvals { DeviceApprovalView(model: approvals) }
+            }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         .tint(Color.theme(.accentPrimary))
@@ -158,6 +172,7 @@ private extension SettingsSheet {
                 Picker("Remind me", selection: reminderBinding(\.leadMinutes)) {
                     ForEach([5, 10, 15], id: \.self) { Text(String(localized: "\($0) minutes before")).tag($0) }
                 }
+                .modifier(RoomyPicker())
                 .listRowBackground(Color.theme(.backgroundCard))
             }
             if rows.showsDigestToggle {
@@ -177,6 +192,20 @@ private extension SettingsSheet {
             Text("Reminders")
         } footer: {
             if rows.showsFooter { Text("Reminders use your last sync.") }
+        }
+    }
+}
+
+/// At the accessibility text sizes a menu picker cuts its value off in the middle ("Same…guage").
+/// There the choices open on their own screen, where the label and the value each get a full line.
+private struct RoomyPicker: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    func body(content: Content) -> some View {
+        if typeSize.isAccessibilitySize {
+            content.pickerStyle(.navigationLink)
+        } else {
+            content
         }
     }
 }

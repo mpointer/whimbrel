@@ -2,9 +2,8 @@
 {
   "title": "Client Controls: Delete, Keep, Export, Exclude",
   "description": "Four controls on every client page in Whimbrel: delete a client in one step with a receipt, keep for a set time, export, and exclude from hosted AI models.",
-  "schema": ["software"],
+  "schema": ["software", "whats-new-video"],
   "priority": 0.6,
-  "noindex": true,
   "crumbs": [{ "name": "For confidential work", "path": "/for/confidential-work/" }, { "name": "Client controls", "path": "/for/client-controls/" }],
   "faq": [
     { "q": "What does Delete this client remove?", "a": "The client's page and the material Whimbrel filed under it: meetings with their transcripts and notes, email, calendar items, screen captures, conversations and steps, and, on the device you delete from, the summaries, suggestions, people and organisations Whimbrel made that name the client. You review the list first and type the client's name to confirm. A meeting shared with another client is deleted for both, and the screen tells you so. Notes in your Obsidian vault are removed only while vault sync is on." },
@@ -12,7 +11,7 @@
     { "q": "Does the delete reach my other devices?", "a": "It is sent to your other devices at once, and each current device applies it when it next syncs. A device that has not been updated yet applies it after it updates, and the receipt shows how many devices still need to. Routine results, profile suggestions, people's names and meeting briefs that named the client can stay on each of your other devices: the delete does not remove them there. Phones apply deletes but do not start them." },
     { "q": "Can a deleted client come back?", "a": "Whimbrel keeps no list of deleted clients, not even their name. If new email or meetings later match, the client can reappear as a new topic. The delete screen says so." },
     { "q": "What does excluding a client from hosted models do?", "a": "Material that names or involves the client is not put into a request to a hosted model. Whimbrel checks new material against the client's name, aliases and known attendee emails on your computer before any hosted request about it, so the exclusion applies from the moment Whimbrel files it under the client, and new material is checked locally first. A request about the client is answered by a local model, or not answered." },
-    { "q": "Can exclusion miss something?", "a": "Yes. Whimbrel recognises material by matching whole words of the client's name, aliases and known contact addresses, with no model. A name inside another word, or in text written without spaces (some inflected forms, some scripts), may not match. A recording that never names the client, and whose attendees Whimbrel does not know, cannot be recognised. That is why the claim is limited to material that names or involves the client." },
+    { "q": "Can exclusion miss something?", "a": "Yes. Whimbrel recognises material by matching whole words of the client's name, aliases and known contact addresses, with no model. A name inside another word, or in text written without spaces (some inflected forms, some scripts), may not match. A recording that never names the client, and whose attendees Whimbrel does not know, cannot be recognised. A known contact's address said or written in a recording that is not filed under the client keeps out only the lines holding it, so the rest of the recording can still go to a hosted model. An address spoken with extra words between its parts, or encoded another way (for example base64), may not match. That is why the claim is limited to material that names or involves the client." },
     { "q": "Does exclusion reach my other devices?", "a": "Yes, once the devices on your sync have been updated. While a device that has not been updated is still on your sync, the setting stays on the device where you set it, and your other devices could still send the client's material to a hosted model. The toggle says so when this is the case. Set it on each device you use, or update the older device." },
     { "q": "What if material already went to a hosted model?", "a": "Material that already left cannot be recalled. When you turn exclusion on, Whimbrel offers to summarise the client's existing meetings again with a local model." },
     { "q": "Does it cost extra?", "a": "No. The controls are part of the free app." }
@@ -27,6 +26,17 @@
     <div class="hero-actions" style="justify-content:center">
       <a class="btn btn-primary btn-lg" href="/download/?platform=mac#register" data-platform-link="mac">Download for Mac</a>
       <a class="btn btn-ghost btn-lg" href="/download/?platform=windows#register" data-platform-link="windows">Download for Windows</a>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-head center">
+      <h2>What's new in 0.9.80, in about a minute.</h2>
+    </div>
+    <div class="narrow video-wrap">
+      {{> whats-new-video}}
     </div>
   </div>
 </section>
@@ -65,7 +75,7 @@
     <p>Whimbrel recognises a client's material by matching their name, aliases and known attendee emails on your computer. No model is involved, and the check runs before any hosted request about new material. A call that never names the client, with attendees Whimbrel does not know, cannot be recognised, so the claim covers material that names or involves the client.</p>
     <p>Matching is on whole words. A name inside another word, or in text written without spaces (some inflected forms, some scripts), may not match, and that material can still go to a hosted model.</p>
     <p>The setting syncs to your other devices once they have been updated. While a device that has not been updated is still on your sync, the setting stays on the device where you set it, and the toggle says so.</p>
-    <p>A question that names the client, or is asked from the client's page, is answered by a local model or not at all. Material that already left cannot be recalled.</p>
+    <p>A question that names the client or holds a known contact's address, or is asked from the client's page, is not sent to a hosted model. A model you run yourself answers it, or it is not answered. Material that already left cannot be recalled.</p>
     <p><a href="/for/confidential-work/">More on confidential client work →</a></p>
   </div>
 </section>

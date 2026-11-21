@@ -50,13 +50,17 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
+        if (DemoHooks.gallery(intent)) {
+            setContent { DemoHooks.Gallery(intent) }
+            return
+        }
         val enrollment = app.enrollment
         app.resumeEnrollmentOnce()
         setContent {
             WhimbrelTheme(app.themes) {
                 val status by enrollment.status.collectAsState()
                 if (status == EnrollmentStatus.Approved) {
-                    RootScreen(app.sync, enrollment, app.reminders, app.themes, app.deviceName(), start)
+                    RootScreen(app.sync, enrollment, app.reminders, app.themes, app.deviceName(), app.ask, start)
                 } else {
                     EnrollmentScreen(enrollment)
                 }

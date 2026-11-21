@@ -5,6 +5,7 @@ import { RetentionNotice } from "./settings/RetentionNotice";
 import { UpdateBanner } from "./settings/UpdateBanner";
 import { ArmNotice } from "./settings/ArmNotice";
 import { SignInBanner } from "./settings/SignInBanner";
+import { PlusAiPrompt } from "./settings/PlusAiPrompt";
 import { SyncStoppedLine } from "./settings/SyncStoppedLine";
 import { bootstrapModels } from "./settings/modelBootstrap";
 import { ModelStatusLine } from "./settings/ModelStatusLine";
@@ -122,6 +123,7 @@ export function App() {
       <ArmNotice />
       <SignInBanner />
       <RetentionNotice key={retentionSaved} onChangeSettings={() => openSettings("capture")} />
+      <PlusAiPrompt />
       {/* Today writes its own heading: the greeting. The redesigned shell's header row carries every title. */}
       {!redesign && tab.id !== "today" && <h1 className="display">{tab.label}</h1>}
       {tab.id === "settings" ? (

@@ -180,7 +180,7 @@ fn stream(
         TerminalAction::CreditExhausted => {
             api::ask::discard_ask(&prepared.prepare_id);
             tracing::info!("Whimbrel AI credit is used up");
-            fail(send, CommandError::ProviderFailure { reason: Some(crate::error::ProviderFailureReason::CreditExhausted) }, false);
+            fail(send, CommandError::ProviderFailure { reason: Some(crate::error::ProviderFailureReason::credit_exhausted()) }, false);
         }
     }
 }

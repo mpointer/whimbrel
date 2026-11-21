@@ -18,6 +18,9 @@ interface EnrollmentBackend {
     /** Revokes a device row; the phone revokes its own when it is approved but cannot get a key. */
     suspend fun revokeDevice(idToken: String, devicePublicKey: String, targetDeviceId: String)
 
+    /** Approves the pending device [targetDeviceId]; [wrappedGroupKey] is the group key wrapped to that device's public key. */
+    suspend fun approve(idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String)
+
     /** Names this phone's own device row (approved devices only). */
     suspend fun setDeviceName(idToken: String, devicePublicKey: String, name: String)
 

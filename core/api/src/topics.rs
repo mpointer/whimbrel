@@ -659,6 +659,56 @@ mod tests {
         assert_eq!(naming_status(&s).unwrap().provisional_count, 1);
     }
 
+    /// Review I1 and I2: `run_naming_batch` itself, through routing's own chain (hosted links only):
+    /// a topic whose sources hold an excluded client's contact's address is never named by a
+    /// hosted model; one holding another client's contact's is.
+    #[test]
+    fn run_naming_batch_never_sends_a_client_contacts_address() {
+        struct Rec(std::rc::Rc<RefCell<Vec<String>>>);
+        impl llm::LlmClient for Rec {
+            fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+                self.0.borrow_mut().push(prompt.to_string());
+                Ok(llm::Completion { text: OK.into(), token_usage: llm::TokenUsage::default() })
+            }
+        }
+        for (who, hosted_ok) in [("wile@coyote.example", false), ("carol@example.com", true)] {
+            let title = format!("Renewal from {who}");
+            let (_d, s, c, t) = seeded(&[&title, "b"]);
+            make_suggestible(&c, t);
+            suggestions_pass(&s);
+            // Zed Holdings, excluded, met Wile only in its own material (the fixture's entities name
+            // an "Acme", which is not this client).
+            let zed = s.create_seed_topic("Zed Holdings", &[], None).unwrap();
+            c.execute("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, indexed_at_unix_ms) VALUES ('meeting', 4242, 1, 1)", []).unwrap();
+            let sid = c.last_insert_rowid();
+            c.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')", [zed.topic_id, sid]).unwrap();
+            c.execute("INSERT INTO entity (kind, key, display, updated_at_unix_ms) VALUES ('person', 'email:wile@coyote.example', 'Wile', 1)", [])
+                .unwrap();
+            c.execute("INSERT INTO entity_mention (entity_id, source_id) VALUES (?1, ?2)", [c.last_insert_rowid(), sid]).unwrap();
+            s.set_client_control(&zed.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+                .unwrap();
+            c.execute("UPDATE topic SET name_dirty = 1 WHERE id = ?1", [t]).unwrap();
+            let routing = RoutingConfig {
+                preferred_provider: "anthropic".into(),
+                anthropic_key: Some("k".into()),
+                use_local_model: false,
+                // The light chain's cheap models are not known in tests: today's chain.
+                cheap_first: false,
+                ..RoutingConfig::default()
+            };
+            let sent: std::rc::Rc<RefCell<Vec<String>>> = Default::default();
+            let log = sent.clone();
+            crate::routing::with_test_transport(
+                move |_, _| -> Box<dyn llm::LlmClient> { Box::new(Rec(log.clone())) },
+                || run_naming_batch(&s, &routing, None, 1000, 5),
+            )
+            .unwrap();
+            let sent = sent.borrow();
+            assert!(sent.iter().all(|p| !p.contains("wile@coyote.example")), "{who}: the client contact's address never left");
+            assert_eq!(sent.iter().any(|p| p.contains(&title)), hosted_ok, "{who}: {sent:?}");
+        }
+    }
+
     /// Spec 7.2: a topic holding an excluded client's material is named on this computer only.
     #[test]
     fn topic_naming_never_sends_excluded_text() {

@@ -23,6 +23,7 @@ import { describeError, isCommandError } from "../errors";
 import { t, useL10n } from "../l10n";
 import type { AiSettings, PromptSurface, Provider, ProviderInfoView, RoutingSettings, UsageRowView, UsageView, WhimbrelAiView } from "../generated/types";
 import {
+  ROUTING_CHANGED_EVENT,
   capToDollars,
   costLine,
   dataTermsLine,
@@ -46,7 +47,8 @@ import {
   usageTime,
   usageTokens,
   usageTotalsLine,
-  whimbrelBalanceLine,
+  whimbrelAllowanceLine,
+  whimbrelPrepaidLine,
   whimbrelSnap,
 } from "./aiModel";
 
@@ -70,11 +72,16 @@ export function AiCard() {
     aiSettings()
       .then(setSettings)
       .catch((e: unknown) => setError(message(e)));
+    // "Use Whimbrel AI" (the Plus question) saved a provider: read it, or a later save here would
+    // write the old one back.
+    const reload = () => void aiSettings().then(setSettings, () => {});
+    window.addEventListener(ROUTING_CHANGED_EVENT, reload);
     // Whether the local model answers decides if the on-ramp shows; a failed probe is "no".
     providerModels("ollama").then(
       (list) => setOllamaUp(list.length > 0),
       () => setOllamaUp(false),
     );
+    return () => window.removeEventListener(ROUTING_CHANGED_EVENT, reload);
   }, []);
 
   if (!settings) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
@@ -229,6 +236,7 @@ function useWhimbrelAi(): WhimbrelAiView | null {
  * `whimbrelAICard`). The balance, the two packs (Stripe Checkout in the browser), and the data note.
  */
 function WhimbrelAiCard(props: { view: WhimbrelAiView | null; refreshModels: () => Promise<void> }) {
+  const { locale } = useL10n();
   const [view, setView] = useState(props.view);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -254,9 +262,14 @@ function WhimbrelAiCard(props: { view: WhimbrelAiView | null; refreshModels: () 
       <h3 className="section-label">{providerLabel("whimbrel")}</h3>
       {view?.signedIn ? (
         <>
-          {view.balanceMicros != null && (
+          {whimbrelAllowanceLine(view, locale) && (
             <p>
-              <strong>{whimbrelBalanceLine(view.balanceMicros)}</strong>
+              <strong>{whimbrelAllowanceLine(view, locale)}</strong>
+            </p>
+          )}
+          {whimbrelPrepaidLine(view) && (
+            <p>
+              <strong>{whimbrelPrepaidLine(view)}</strong>
             </p>
           )}
           {view.low && <p className="small budget-over">{t("Credit is running low.")}</p>}

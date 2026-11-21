@@ -314,8 +314,8 @@ fn skin_client(routing: &RoutingSettings, keys: &ApiKeys) -> Result<(llm::Provid
     Ok((provider, model, client))
 }
 
-/// `text` may leave this PC: refused, never naming the client, when it names a client excluded from
-/// hosted models (core `api::exclusion`).
+/// `text` may leave this PC: refused, never naming the client, when it involves a client excluded
+/// from hosted models (core `api::exclusion`).
 async fn gate_check(state: &AppState, text: String) -> Result<(), CommandError> {
     let checked = state.store()?.call(move |s| api::exclusion::current_gate(s).check(&text)).await?;
     checked.map_err(|r| CommandError::refused(&r))

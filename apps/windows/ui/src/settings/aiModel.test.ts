@@ -22,7 +22,9 @@ import {
   usageCost,
   usageTokens,
   usageTotalsLine,
+  whimbrelAllowanceLine,
   whimbrelBalanceLine,
+  whimbrelPrepaidLine,
   whimbrelSnap,
   WHIMBREL_DEFAULT_MODEL,
 } from "./aiModel";
@@ -144,6 +146,38 @@ describe("the on-ramp", () => {
     expect(formatMicros(0)).toBe("$0.00");
     expect(formatMicros(-5)).toBe("$0.00");
     expect(whimbrelBalanceLine(25_000_000)).toBe("$25.00 left");
+  });
+
+  describe("on a Plus account (the Mac's PlusCopy)", () => {
+    const plus = { plus: true, balanceMicros: 0, allowanceMicros: 0, allowanceResetsUnixMs: null, renews: null };
+    const resets = Date.UTC(2027, 0, 9, 12);
+
+    it("shows the allowance left, with its reset date when the view has one", () => {
+      expect(whimbrelAllowanceLine({ ...plus, allowanceMicros: 3_500_000, allowanceResetsUnixMs: resets }, "en-US", resets - 1)).toBe(
+        "Plus: $3.50 of this month's AI allowance left, resets January 9, 2027",
+      );
+      expect(whimbrelAllowanceLine({ ...plus, allowanceMicros: 3_500_000 }, "en-US")).toBe("Plus: $3.50 of this month's AI allowance left");
+      // A date that has passed since the read never shows.
+      expect(whimbrelAllowanceLine({ ...plus, allowanceMicros: 3_500_000, allowanceResetsUnixMs: resets }, "en-US", resets + 1)).toBe(
+        "Plus: $3.50 of this month's AI allowance left",
+      );
+    });
+
+    it("says the allowance is used up, and what is left to do", () => {
+      expect(whimbrelAllowanceLine(plus, "en-US")).toBe("This month's AI allowance is used up. Add credit or choose another model in Settings.");
+      expect(whimbrelAllowanceLine({ ...plus, balanceMicros: 2_000_000 }, "en-US")).toBe(
+        "This month's AI allowance is used up. Your allowance renews with your plan.",
+      );
+      expect(whimbrelAllowanceLine({ ...plus, balanceMicros: 2_000_000, renews: false }, "en-US")).toBe("This month's AI allowance is used up.");
+    });
+
+    it("labels the prepaid credit, and keeps the old line off Plus", () => {
+      expect(whimbrelPrepaidLine({ ...plus, balanceMicros: 2_000_000 })).toBe("Prepaid credit: $2.00 left");
+      expect(whimbrelPrepaidLine(plus)).toBeNull();
+      expect(whimbrelPrepaidLine({ ...plus, plus: false, balanceMicros: 2_000_000 })).toBe("$2.00 left");
+      expect(whimbrelAllowanceLine({ ...plus, plus: false, allowanceMicros: 1 }, "en-US")).toBeNull();
+      expect(whimbrelPrepaidLine({ ...plus, balanceMicros: null })).toBeNull();
+    });
   });
 
   it("notes an OpenRouter default without a pick", () => {

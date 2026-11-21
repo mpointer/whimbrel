@@ -300,7 +300,9 @@ fn answer_detailed_never_sends_excluded_text() {
     assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
 
     // The function it wraps, with recording links in place of the routing-built chains: a hosted
-    // answer leaves the client's material out, and says it answered on a hosted link.
+    // answer leaves the client's material out, and says it answered on a hosted link. (This half
+    // passes its own filter; `every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material`
+    // drives `answer_detailed` itself, so it fails if the entry stops reading the filter.)
     let hosted_log = Log::default();
     let (_, outcome, by) = crate::ask::answer_with_filter_by(
         &fx.s,
@@ -339,6 +341,278 @@ fn answer_detailed_never_sends_excluded_text() {
     assert!(by.local);
     assert_eq!(hosted_log.count(), 0);
     assert_eq!(local_log.count(), 1);
+}
+
+// ---- Ask wiring: the public entry points, each link's client a recorder ----------------------
+
+/// Words of an unfiled meeting that names the client only by its alias (Roadrunner Co).
+const ALIAS_CANARY: &str = "ostrichcanary";
+/// Words of an unfiled meeting that never names the client, attended by a client contact.
+const EMAIL_CANARY: &str = "emucanary";
+/// A client contact's address: met only in the client's meeting.
+const CONTACT: &str = "wile@coyote.example";
+
+/// [`fixture`] plus two meetings filed under no topic, each excluded by another rule: one names
+/// the client by its alias only, one never names it but was attended by [`CONTACT`].
+fn ask_fixture(excluded: bool) -> Fx {
+    let fx = fixture(excluded);
+    let now = crate::util::now_unix_ms();
+    meeting(&fx.s, "Weekly call", &[], now - 1_000_000, &[&format!("Roadrunner Co asked about the {ALIAS_CANARY} pricing.")], "");
+    let sid = fx.c.query_row("SELECT id FROM topic_source WHERE ref_id = ?1 AND kind = 'meeting'", [fx.acme_meeting], |r| r.get::<_, i64>(0)).unwrap();
+    fx.c.execute("INSERT INTO entity (kind, key, display, updated_at_unix_ms) VALUES ('person', ?1, 'Wile', 1)", [format!("email:{CONTACT}")]).unwrap();
+    let wile = fx.c.last_insert_rowid();
+    fx.c.execute("INSERT INTO entity_mention (entity_id, source_id) VALUES (?1, ?2)", rusqlite::params![wile, sid]).unwrap();
+    meeting(&fx.s, "Catch-up", &[&format!("Wile E <{CONTACT}>")], now - 1_200_000, &[&format!("The {EMAIL_CANARY} pricing was confirmed.")], "");
+    fx
+}
+
+const HOSTED_REPLY: &str = "A hosted answer.";
+const LOCAL_REPLY: &str = "An on-device answer.";
+
+/// Runs `f` with every link routing builds made of a recorder: links that leave this computer
+/// record into `hosted`, on-device links into `local`. Routing still picks the links, their
+/// order, the gate and the budgets ([`crate::routing::with_test_transport`]).
+fn recording_links<R>(hosted: &Log, local: &Log, f: impl FnOnce() -> R) -> R {
+    recording_links_replying(hosted, local, HOSTED_REPLY, LOCAL_REPLY, f)
+}
+
+/// [`recording_links`] whose recorders reply `hosted_reply` and `local_reply`.
+fn recording_links_replying<R>(hosted: &Log, local: &Log, hosted_reply: &str, local_reply: &str, f: impl FnOnce() -> R) -> R {
+    let (h, l) = (hosted.clone(), local.clone());
+    let (hr, lr) = (hosted_reply.to_string(), local_reply.to_string());
+    crate::routing::with_test_transport(
+        move |provider, model| -> Box<dyn llm::LlmClient> {
+            let (log, reply) = if llm::is_hosted(provider, model) { (h.clone(), hr.clone()) } else { (l.clone(), lr.clone()) };
+            Box::new(Recorder { log, reply })
+        },
+        f,
+    )
+}
+
+/// No hosted request carried any of the client's material: the filed meeting, the alias-only
+/// meeting, the contact's meeting, the name, the alias, the contact's address.
+fn assert_hosted_clean(log: &Log) {
+    assert_clean(log);
+    for p in log.prompts() {
+        for banned in [ALIAS_CANARY, EMAIL_CANARY, CONTACT] {
+            assert!(!p.to_lowercase().contains(banned), "a hosted request carried {banned:?}:\n{p}");
+        }
+    }
+}
+
+/// A blocking Ask entry point, called as a shell calls it with `routing`.
+type AskEntry = fn(&Fx, &str, &[llm::ChatTurn], &RoutingConfig) -> crate::ApiResult<llm::ChatAnswer>;
+
+/// Every public blocking Ask: `answer` (the Mac's `whimbrel_llm_answer`, the eval), `answer_from`
+/// (from the Ask bar, and from another client's page), `answer_detailed` (Windows' blocking Ask,
+/// the Mac's `whimbrel_llm_answer_detailed`).
+fn blocking_asks() -> [(&'static str, AskEntry); 4] {
+    [
+        ("answer", |fx, q, h, r| crate::ask::answer(&fx.s, q, "gemma-test", 10, h, r)),
+        ("answer_from", |fx, q, h, r| crate::ask::answer_from(&fx.s, q, RequestOrigin::AskBar, "gemma-test", 10, h, r).map(|(a, _)| a)),
+        ("answer_from another client's page", |fx, q, h, r| {
+            crate::ask::answer_from(&fx.s, q, RequestOrigin::TopicPage { key: globex_key(fx) }, "gemma-test", 10, h, r).map(|(a, _)| a)
+        }),
+        ("answer_detailed", |fx, q, h, r| crate::ask::answer_detailed(&fx.s, q, "gemma-test", 10, h, r).map(|d| d.answer)),
+    ]
+}
+
+/// Each public blocking Ask, through the chain routing builds for a hosted pick (Anthropic first,
+/// the on-device model after): the hosted link gets none of the client's material, by name, alias
+/// or contact; a question naming the client, by name or alias, or a follow-up to one, goes to the
+/// on-device link only, which gets the question as asked and all of memory.
+#[test]
+fn every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material() {
+    let routing = hosted_routing();
+    for (entry, ask) in blocking_asks() {
+        // Control: with nothing excluded, the hosted link gets all three, so the fixture reaches it.
+        let open = ask_fixture(false);
+        let (h, l) = (Log::default(), Log::default());
+        recording_links(&h, &l, || ask(&open, "what about the pricing?", &[], &routing)).unwrap();
+        assert_eq!((h.count(), l.count()), (1, 0), "{entry}: control went hosted");
+        for word in [CANARY, ALIAS_CANARY, EMAIL_CANARY] {
+            assert!(h.prompts()[0].contains(word), "{entry}: the control reaches {word}");
+        }
+
+        let fx = ask_fixture(true);
+        let (h, l) = (Log::default(), Log::default());
+        recording_links(&h, &l, || ask(&fx, "what about the pricing?", &[], &routing)).unwrap();
+        assert_eq!((h.count(), l.count()), (1, 0), "{entry}: a question that does not name the client goes hosted");
+        assert!(h.prompts()[0].contains(OTHER), "{entry}: another client's material still answers");
+        assert_hosted_clean(&h);
+        assert_reached(&fx.c, "ask");
+
+        // The question names the client, by name or by alias: on this computer only, unmodified.
+        for question in ["What did Acme decide on pricing?", "what did roadrunner co say about pricing?"] {
+            let (h, l) = (Log::default(), Log::default());
+            recording_links(&h, &l, || ask(&fx, question, &[], &routing)).unwrap();
+            assert_eq!((h.count(), l.count()), (0, 1), "{entry}: {question:?} stays local");
+            let local = &l.prompts()[0];
+            assert!(local.contains(question), "{entry}: the on-device link gets the question as asked");
+            for word in [CANARY, ALIAS_CANARY, EMAIL_CANARY] {
+                assert!(local.contains(word), "{entry}: on this computer the answer may use all of memory ({word})");
+            }
+        }
+
+        // A follow-up in a conversation that named the client stays local too.
+        let named = [
+            llm::ChatTurn { role: llm::ChatRole::User, text: "What did Acme say?".into() },
+            llm::ChatTurn { role: llm::ChatRole::Assistant, text: "They agreed.".into() },
+        ];
+        let (h, l) = (Log::default(), Log::default());
+        recording_links(&h, &l, || ask(&fx, "and the follow up on pricing?", &named, &routing)).unwrap();
+        assert_eq!((h.count(), l.count()), (0, 1), "{entry}: a follow-up to a question naming the client stays local");
+        // So does one whose earlier answer was made on this computer from the client's material,
+        // though no turn names the client (the gate alone would let it through).
+        let earlier = [
+            llm::ChatTurn { role: llm::ChatRole::User, text: "what was decided?".into() },
+            llm::ChatTurn { role: llm::ChatRole::Assistant, text: LOCAL_REPLY.into() },
+        ];
+        let (h, l) = (Log::default(), Log::default());
+        recording_links(&h, &l, || ask(&fx, "and who signs?", &earlier, &routing)).unwrap();
+        assert_eq!((h.count(), l.count()), (0, 1), "{entry}: an on-device answer never rides to a hosted link as history");
+
+        // With no on-device model it is refused, never sent.
+        let no_local = RoutingConfig { use_local_model: false, ..hosted_routing() };
+        let (h, l) = (Log::default(), Log::default());
+        let r = recording_links(&h, &l, || ask(&fx, "What did Acme decide on pricing?", &[], &no_local));
+        assert!(matches!(r, Err(crate::ApiError::ProviderFailure)), "{entry}: refused");
+        assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+        assert_eq!((h.count(), l.count()), (0, 0), "{entry}: nothing sent");
+    }
+}
+
+/// Matching is whole-word (spec 7.1, stated limit): a name inside another word is not the client,
+/// so a question about "Acmeville" goes hosted as asked, still without the client's material.
+#[test]
+fn a_name_inside_another_word_is_not_the_client_on_any_ask() {
+    let routing = hosted_routing();
+    let fx = ask_fixture(true);
+    let filter = crate::exclusion::context_filter(&fx.s);
+    let question = "Any news on the Acmeville pricing?";
+    assert!(!filter.names_client(question), "the documented whole-word limit");
+    for (entry, ask) in blocking_asks() {
+        let (h, l) = (Log::default(), Log::default());
+        recording_links(&h, &l, || ask(&fx, question, &[], &routing)).unwrap();
+        assert_eq!((h.count(), l.count()), (1, 0), "{entry}: goes hosted");
+        let p = &h.prompts()[0];
+        assert!(p.contains("Acmeville"), "{entry}: the question is sent as asked");
+        assert!(!filter.names_client(p), "{entry}: the hosted prompt names no excluded client as a word");
+        for word in [CANARY, ALIAS_CANARY, EMAIL_CANARY] {
+            assert!(!p.contains(word), "{entry}: {word} stays out");
+        }
+    }
+    let prepared = crate::ask::prepare_ask(&fx.s, question, 10, &[], &routing).unwrap();
+    assert!(prepared.prompt.contains("Acmeville") && !filter.names_client(&prepared.prompt));
+    crate::ask::discard_ask(&prepared.prepare_id);
+}
+
+/// A streamed Ask prepare, called as a shell calls it with `routing`.
+type PrepareEntry = fn(&Fx, &str, &[llm::ChatTurn], &RoutingConfig) -> crate::ApiResult<crate::ask::PreparedAskData>;
+
+/// Every public streamed Ask prepare: `prepare_ask` (Windows), `prepare_ask_for` (the Mac's
+/// `whimbrel_llm_prepare_ask`), `prepare_ask_from`.
+fn streamed_asks() -> [(&'static str, PrepareEntry); 3] {
+    [
+        ("prepare_ask", |fx, q, h, r| crate::ask::prepare_ask(&fx.s, q, 10, h, r)),
+        ("prepare_ask_for", |fx, q, h, r| crate::ask::prepare_ask_for(&fx.s, q, 10, h, r, &crate::routing::LimitedUseSettings::default())),
+        ("prepare_ask_from", |fx, q, h, r| crate::ask::prepare_ask_from(&fx.s, q, RequestOrigin::AskBar, 10, h, r)),
+    ]
+}
+
+/// The prompt each streamed prepare hands the shell for a hosted stream holds none of the client's
+/// material; a question naming the client, or a follow-up to one, is refused for a hosted stream;
+/// a stream on this computer gets the question as asked and all of memory.
+#[test]
+fn every_streamed_ask_hands_a_hosted_stream_none_of_the_clients_material() {
+    let hosted = hosted_routing();
+    let on_device = RoutingConfig::default();
+    let named = [
+        llm::ChatTurn { role: llm::ChatRole::User, text: "What did Acme say?".into() },
+        llm::ChatTurn { role: llm::ChatRole::Assistant, text: "They agreed.".into() },
+    ];
+    // An earlier answer with no record that it is clean for the clients excluded now.
+    let earlier = [
+        llm::ChatTurn { role: llm::ChatRole::User, text: "what was decided?".into() },
+        llm::ChatTurn { role: llm::ChatRole::Assistant, text: LOCAL_REPLY.into() },
+    ];
+    for (entry, prepare) in streamed_asks() {
+        let open = ask_fixture(false);
+        let control = prepare(&open, "what about the pricing?", &[], &hosted).unwrap();
+        for word in [CANARY, ALIAS_CANARY, EMAIL_CANARY] {
+            assert!(control.prompt.contains(word), "{entry}: the control reaches {word}");
+        }
+        crate::ask::discard_ask(&control.prepare_id);
+
+        let fx = ask_fixture(true);
+        let prepared = prepare(&fx, "what about the pricing?", &[], &hosted).unwrap();
+        let log = Log::default();
+        log.0.lock().unwrap().push(prepared.prompt.clone());
+        assert!(prepared.prompt.contains(OTHER), "{entry}: another client's material still answers");
+        assert_hosted_clean(&log);
+        assert!(matches!(prepared.exclusion, ExclusionOutcome::FilteredHosted { left_out } if left_out >= 3), "{entry}: {:?}", prepared.exclusion);
+        crate::ask::discard_ask(&prepared.prepare_id);
+
+        for (question, history) in [
+            ("What did Acme decide on pricing?", &[][..]),
+            ("what did roadrunner co say about pricing?", &[][..]),
+            ("and the follow up on pricing?", &named[..]),
+            ("and who signs?", &earlier[..]),
+        ] {
+            assert!(prepare(&fx, question, history, &hosted).is_err(), "{entry}: {question:?} is never streamed hosted");
+            assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+        }
+
+        let local = prepare(&fx, "What did Acme decide on pricing?", &[], &on_device).unwrap();
+        assert!(local.prompt.contains("What did Acme decide on pricing?"), "{entry}: the question as asked");
+        for word in [CANARY, ALIAS_CANARY, EMAIL_CANARY] {
+            assert!(local.prompt.contains(word), "{entry}: on this computer the stream may use all of memory ({word})");
+        }
+        assert_eq!(local.exclusion, ExclusionOutcome::LocalOnly);
+        crate::ask::discard_ask(&local.prepare_id);
+    }
+}
+
+/// The live question's drafted reply is an Ask asked from the meeting (`live_question::draft`,
+/// both shells), through routing's chain: in another client's meeting it goes hosted without the
+/// client's material; in the client's meeting, or quoting the client's alias, only on-device.
+#[test]
+fn the_live_question_draft_hands_a_hosted_link_none_of_the_clients_material() {
+    let routing = hosted_routing();
+    let verdict = |quote: &str| llm::live_question::LiveQuestionVerdict {
+        is_for_user: true,
+        confidence: "high".into(),
+        quote: quote.into(),
+        asker: None,
+        restatement: String::new(),
+    };
+    let recent = [llm::live_question::LiveLine { id: 1, channel: "them".into(), start_cs: 0, text: "Where are we on pricing?".into() }];
+    let draft = |fx: &Fx, meeting: i64, quote: &str, h: &Log, l: &Log| {
+        recording_links(h, l, || crate::live_question::draft(&fx.s, Some(meeting), &verdict(quote), &recent, "gemma-test", &routing))
+    };
+
+    let open = ask_fixture(false);
+    let (h, l) = (Log::default(), Log::default());
+    draft(&open, open.other_meeting, "what about the pricing?", &h, &l).unwrap();
+    assert_eq!((h.count(), l.count()), (1, 0));
+    for word in [CANARY, ALIAS_CANARY, EMAIL_CANARY] {
+        assert!(h.prompts()[0].contains(word), "the control reaches {word}");
+    }
+
+    let fx = ask_fixture(true);
+    let (h, l) = (Log::default(), Log::default());
+    draft(&fx, fx.other_meeting, "what about the pricing?", &h, &l).unwrap();
+    assert_eq!((h.count(), l.count()), (1, 0));
+    assert!(h.prompts()[0].contains(OTHER));
+    assert_hosted_clean(&h);
+    assert_reached(&fx.c, "ask");
+
+    for (meeting, quote) in [(fx.acme_meeting, "what about the pricing?"), (fx.other_meeting, "what did Roadrunner Co decide on pricing?")] {
+        let (h, l) = (Log::default(), Log::default());
+        draft(&fx, meeting, quote, &h, &l).unwrap();
+        assert_eq!((h.count(), l.count()), (0, 1), "{quote:?} in meeting {meeting} stays local");
+        assert!(l.prompts()[0].contains(quote), "the on-device link gets the quote as asked");
+    }
 }
 
 #[test]
@@ -989,6 +1263,7 @@ fn forced_resummary_never_sends_excluded_text() {
         &whimbrel,
         "",
         true,
+        crate::summary::SourceMode::Off,
         || vec![hosted_as(&fx.s, llm::Provider::Whimbrel, &hosted_log, summary_reply())],
         || vec![local(&local_log, summary_reply())],
     );
@@ -1012,12 +1287,70 @@ fn forced_resummary_never_sends_excluded_text() {
         &whimbrel,
         "",
         true,
+        crate::summary::SourceMode::Off,
         || vec![hosted_as(&fx.s, llm::Provider::Whimbrel, &ok, summary_reply()), local(&fallback, summary_reply())],
         Vec::new,
     )
     .unwrap();
     assert_eq!(out.provider, llm::Provider::Whimbrel);
     assert_eq!((ok.count(), fallback.count()), (1, 0));
+    assert_clean(&ok);
+    assert_reached(&fx.c, "meeting_summary");
+}
+
+/// The summary that also asks where each line came from goes through the same exclusion decision
+/// and gate: an excluded client's meeting is refused for a hosted link whether or not sources are
+/// asked for, the extra ask names no one, and another meeting's summary reaches only its link.
+#[test]
+fn a_summary_asked_for_sources_never_sends_excluded_text() {
+    let fx = fixture(true);
+    let whimbrel = RoutingConfig {
+        preferred_provider: "whimbrel".into(),
+        whimbrel_id_token: Some("tok".into()),
+        whimbrel_device_key: Some("key".into()),
+        ..RoutingConfig::default()
+    };
+    let transcript = format!("[10:00:01] Ana: We agreed the {CANARY} pricing for the launch.");
+    for forced in [true, false] {
+        let (hosted_log, local_log) = (Log::default(), Log::default());
+        let r = crate::summary::summarize_meeting_routed_as(
+            &fx.s,
+            fx.acme_meeting,
+            "",
+            &transcript,
+            "",
+            &whimbrel,
+            "",
+            forced,
+            crate::summary::SourceMode::Validate,
+            || vec![hosted_as(&fx.s, llm::Provider::Whimbrel, &hosted_log, summary_reply())],
+            Vec::new,
+        );
+        assert!(r.is_err());
+        assert_eq!((hosted_log.count(), local_log.count()), (0, 0), "nothing was sent (forced: {forced})");
+    }
+    // The public entry point refuses before any network: no on-device Whimbrel link.
+    let r = crate::summary::summarize_meeting_options(&fx.s, fx.acme_meeting, "", &transcript, "", "", &whimbrel, "", true, crate::summary::SourceMode::Validate);
+    assert!(r.is_err());
+    assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+    // Control: another client's meeting reaches the preferred hosted link, with the ask for sources.
+    let ok = Log::default();
+    let out = crate::summary::summarize_meeting_routed_as(
+        &fx.s,
+        fx.other_meeting,
+        "",
+        &format!("[10:00:01] Bo: The {OTHER} pricing review is next week."),
+        "",
+        &whimbrel,
+        "",
+        true,
+        crate::summary::SourceMode::Validate,
+        || vec![hosted_as(&fx.s, llm::Provider::Whimbrel, &ok, summary_reply())],
+        Vec::new,
+    )
+    .unwrap();
+    assert_eq!(out.provider, llm::Provider::Whimbrel);
+    assert_eq!(ok.count(), 1);
     assert_clean(&ok);
     assert_reached(&fx.c, "meeting_summary");
 }
@@ -2383,7 +2716,7 @@ fn the_daily_briefs_events_are_matched_by_calendar_id() {
 
 /// Calls that build or send a prompt a hosted model can receive, or that feed retrieval into
 /// one. Each site below names the test that proves it keeps an excluded client's material out.
-const CALLERS: [&str; 33] = [
+const CALLERS: [&str; 34] = [
     "build_chain_for(",
     "build_chain(",
     "build_chain_for_routine(",
@@ -2422,6 +2755,8 @@ const CALLERS: [&str; 33] = [
     "gather_findings(",
     "streamed_link(",
     "summarize_meeting_preferred(",
+    // The summary with a "want sources" choice (the forced and the normal call): the same chain and gate.
+    "summarize_meeting_options(",
     // The cloud runner's entries: the same routines and prep, each link's client made by a transport.
     "tick_cloud_with_transport(",
     "run_with_chain_transport(",
@@ -2498,10 +2833,10 @@ const COVERED: &[(&str, &str, usize, &str)] = &[
     ("apps/windows/src-tauri/src/chat/mod.rs", "start_whimbrel(", 1, "a_hosted_stream_naming_an_excluded_client_is_never_sent"),
     ("core/ffi/src/inference_ffi.rs", "start_whimbrel(", 1, "a_hosted_stream_naming_an_excluded_client_is_never_sent"),
     // The blocking Ask that reports the answering model (Windows since PR 874 parity; the Mac's ffi entry).
-    ("apps/windows/src-tauri/src/commands/chat.rs", "ask::answer_detailed(", 1, "answer_detailed_never_sends_excluded_text"),
-    ("core/ffi/src/lib.rs", "ask::answer_detailed(", 1, "answer_detailed_never_sends_excluded_text"),
-    ("core/ffi/src/lib.rs", "ask::answer(", 1, "ask_never_sends_excluded_text"),
-    ("core/eval/src/main.rs", "ask::answer(", 1, "ask_never_sends_excluded_text"),
+    ("apps/windows/src-tauri/src/commands/chat.rs", "ask::answer_detailed(", 1, "every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material"),
+    ("core/ffi/src/lib.rs", "ask::answer_detailed(", 1, "every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material"),
+    ("core/ffi/src/lib.rs", "ask::answer(", 1, "every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material"),
+    ("core/eval/src/main.rs", "ask::answer(", 1, "every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material"),
     ("core/api/src/ask.rs", "answer_from(", 1, "request_naming_client_goes_local_only"),
     ("core/api/src/ask.rs", "answer_from_filter(", 1, "request_naming_client_goes_local_only"),
     ("core/api/src/live_question.rs", "answer_from_filter(", 1, "live_questions_in_the_clients_meeting_stay_local"),
@@ -2515,6 +2850,8 @@ const COVERED: &[(&str, &str, usize, &str)] = &[
     ("core/api/src/ask.rs", "streamed_link(", 1, "meeting_ask_map_step_never_sends_excluded_text"),
     ("core/ffi/src/lib.rs", "summarize_meeting_preferred(", 2, "forced_resummary_never_sends_excluded_text"),
     ("apps/windows/src-tauri/src/meetings/pipeline.rs", "summarize_meeting_preferred(", 1, "forced_resummary_never_sends_excluded_text"),
+    ("core/ffi/src/lib.rs", "summarize_meeting_options(", 1, "a_summary_asked_for_sources_never_sends_excluded_text"),
+    ("apps/windows/src-tauri/src/meetings/pipeline.rs", "summarize_meeting_options(", 2, "a_summary_asked_for_sources_never_sends_excluded_text"),
     // The cloud runner: routines and meeting prep on a scratch store it filed after its pull.
     ("core/api/src/routine_runs.rs", "tick_cloud_with_transport(", 1, "a_substituted_transport_stays_behind_the_exclusion_gate"),
     ("core/cloud-runner/src/run.rs", "tick_cloud_with_transport(", 1, "an_item_filed_under_an_excluded_client_but_not_naming_it_is_left_out_of_a_briefs_context_on_the_runner"),
@@ -2547,12 +2884,15 @@ const EXERCISES: &[(&str, &str)] = &[
     ("mcp_tools_never_return_excluded_text", "search_memory(|get_timeline(|get_daily_digest(|assemble_context(|get_meeting("),
     ("request_naming_client_goes_local_only", "ask("),
     ("answer_detailed_never_sends_excluded_text", "answer_detailed(|answer_with_filter_by(|assert_reached(&fx.c, \"ask\")"),
+    // The public blocking Asks themselves, each link of routing's own chain a recorder.
+    ("every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material", "blocking_asks(|recording_links(|assert_reached(&fx.c, \"ask\")"),
     ("a_local_answer_never_rides_to_a_hosted_model_as_history_or_title", "answer_with(|generate_conversation_title_with(|finalize_ask("),
     ("live_questions_in_the_clients_meeting_stay_local", "live_origin(|detect_with("),
     ("routine_runs_without_clean_provenance_stay_out_of_hosted_prompts", "provenance_for("),
     ("a_brief_built_from_a_meeting_later_filed_under_the_client_is_not_clean", "run_daily_brief(|provenance_for("),
     ("meeting_ask_map_step_never_sends_excluded_text", "answer_meeting_with(|prepare_meeting_ask_with(|part 1 of|assert_reached(&fx.c, \"ask\")"),
     ("forced_resummary_never_sends_excluded_text", "summarize_meeting_routed_as(|summarize_meeting_preferred(|assert_reached(&fx.c, \"meeting_summary\")"),
+    ("a_summary_asked_for_sources_never_sends_excluded_text", "summarize_meeting_routed_as(|summarize_meeting_options(|assert_reached(&fx.c, \"meeting_summary\")"),
     ("a_substituted_transport_stays_behind_the_exclusion_gate", "tick_cloud_with_transport("),
     ("an_item_filed_under_an_excluded_client_but_not_naming_it_is_left_out_of_a_briefs_context_on_the_runner", "run_once_with(|client_peer(&relay, true"),
     ("runner_prep_never_sends_excluded_text", "run_once_with(|file_by_verdict("),
@@ -2642,4 +2982,678 @@ fn every_hosted_caller_is_covered() {
         }
     }
     assert_eq!(found, listed, "a hosted caller is not covered: keep excluded material out of it, test it, then list it here");
+}
+
+// ---- The public entry points: derived from the source, each with its test ------------------
+
+/// What makes a function in `core/api` a hosted path: it builds a chain (a hosted link is made
+/// there), wraps or makes a client that can leave this computer, starts a stream, or retrieves
+/// the context a hosted prompt is built from. Matched as calls, on word boundaries; a `::` entry
+/// matches any associated function of that type.
+const HOSTED_SINKS: &[&str] = &[
+    "build_chain_for",
+    "build_chain",
+    "build_chain_for_routine",
+    "build_light_chain",
+    "hosted_link",
+    "with_transport",
+    "guard_hosted",
+    "GuardedClient::new",
+    "TypeSafeClient::",
+    "OllamaClient::",
+    "AnthropicClient::",
+    "OpenAIClient::",
+    "GoogleClient::",
+    "AnthropicStreamingClient::",
+    "OpenAIStreamingClient::",
+    "GoogleStreamingClient::",
+    "gather_and_assemble_context",
+    "gather_and_assemble_context_for_window",
+    "generate_image",
+    "search_images",
+];
+
+/// Sink calls that stay on this computer, by file: the bundled model's OpenAI-compatible endpoint
+/// on loopback (`LocalClient`, as routing's `no_unguarded_hosted_clients` allows it). Without
+/// this, every `.complete(` would count as hosted.
+const ON_DEVICE_SINKS: &[(&str, &str)] = &[("local_model.rs", "OpenAIClient::")];
+
+/// Every `pub fn` in `core/api` from which a hosted sink is reached ([`hosted_entry_points`]),
+/// derived from the source: (file, function, the test that drives it, the call that test makes).
+/// The call is the function itself, one it calls (the injectable twin that takes the chain or
+/// client as a parameter), or one that calls it. A new public path to a hosted
+/// model fails [`every_public_hosted_entry_point_is_derived_and_driven`] until it is listed here
+/// with a test that drives it. `test>helper` names a test and the helper table it calls.
+const HOSTED_ENTRY_POINTS: &[(&str, &str, &str, &str)] = &[
+    // Ask: the blocking answers and the streamed prepares, driven through routing's own chain.
+    ("ask.rs", "answer", "every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material>blocking_asks", "crate::ask::answer"),
+    ("ask.rs", "answer_from", "every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material>blocking_asks", "crate::ask::answer_from"),
+    ("ask.rs", "answer_detailed", "every_blocking_ask_hands_a_hosted_link_none_of_the_clients_material>blocking_asks", "crate::ask::answer_detailed"),
+    ("ask.rs", "prepare_ask", "every_streamed_ask_hands_a_hosted_stream_none_of_the_clients_material>streamed_asks", "crate::ask::prepare_ask"),
+    ("ask.rs", "prepare_ask_for", "every_streamed_ask_hands_a_hosted_stream_none_of_the_clients_material>streamed_asks", "crate::ask::prepare_ask_for"),
+    ("ask.rs", "prepare_ask_from", "every_streamed_ask_hands_a_hosted_stream_none_of_the_clients_material>streamed_asks", "crate::ask::prepare_ask_from"),
+    // Meeting Ask and conversation titles.
+    ("ask.rs", "answer_meeting", "meeting_ask_and_titles_never_send_excluded_text", "answer_meeting_with"),
+    ("ask.rs", "prepare_meeting_ask", "meeting_ask_and_titles_never_send_excluded_text", "prepare_meeting_ask"),
+    ("ask.rs", "generate_conversation_title", "a_conversation_title_holding_a_client_contacts_address_is_made_locally", "crate::ask::generate_conversation_title"),
+    ("window_ask.rs", "prepare_window_ask", "window_ask_never_sends_excluded_text", "prepare_window_ask"),
+    ("window_ask.rs", "prepare_window_ask_for", "window_ask_never_sends_excluded_text", "prepare_window_ask_for"),
+    ("live_question.rs", "detect", "the_live_question_detect_entry_keeps_the_clients_lines_local", "crate::live_question::detect"),
+    ("live_question.rs", "draft", "the_live_question_draft_hands_a_hosted_link_none_of_the_clients_material", "crate::live_question::draft"),
+    // Streams.
+    ("inference.rs", "start", "an_ollama_cloud_stream_is_gated", "start"),
+    ("inference.rs", "start_whimbrel", "a_hosted_stream_naming_an_excluded_client_is_never_sent", "start_whimbrel_at"),
+    // Day-level callers.
+    ("digest.rs", "daily_digest", "digest_never_sends_excluded_text", "daily_digest_with"),
+    ("routine_runs.rs", "tick", "the_routine_tick_never_sends_or_stores_excluded_material", "crate::routine_runs::tick"),
+    ("routine_runs.rs", "tick_cloud", "a_substituted_transport_stays_behind_the_exclusion_gate", "tick_cloud_with_transport"),
+    ("routine_runs.rs", "tick_cloud_with_transport", "a_substituted_transport_stays_behind_the_exclusion_gate", "tick_cloud_with_transport"),
+    ("profile_suggest.rs", "run", "profile_suggest_never_sends_excluded_text", "run_with_prompts"),
+    ("meeting_prep.rs", "run_with_chain", "prep_on_routings_own_chain_never_sends_excluded_text", "crate::meeting_prep::run_with_chain"),
+    ("meeting_prep.rs", "run_with_chain_cloud", "prep_on_routings_own_chain_never_sends_excluded_text", "crate::meeting_prep::run_with_chain_cloud"),
+    ("meeting_prep.rs", "run_with_chain_transport", "prep_through_a_transport_never_sends_excluded_text", "run_with_chain_transport"),
+    // Meetings.
+    ("summary.rs", "summarize_meeting", "forced_resummary_never_sends_excluded_text", "summarize_meeting_routed_as"),
+    ("summary.rs", "summarize_meeting_options", "a_summary_asked_for_sources_never_sends_excluded_text", "summarize_meeting_options"),
+    ("summary.rs", "summarize_meeting_preferred", "forced_resummary_never_sends_excluded_text", "summarize_meeting_preferred"),
+    ("summary.rs", "summary_refused_for_exclusion", "summary_refusal_is_reported_only_for_an_excluded_meeting_with_no_local_model", "summary_refused_for_exclusion"),
+    ("speaker_names.rs", "assign_meeting_speakers", "speaker_names_never_send_excluded_text", "assign_meeting_speakers_with"),
+    ("title_check.rs", "check_calendar_title", "title_check_never_sends_excluded_text", "check_calendar_title_with"),
+    // Topic names and unattended jobs.
+    ("topics.rs", "run_naming_batch", "run_naming_batch_never_sends_a_client_contacts_address", "run_naming_batch"),
+    ("jobs.rs", "run_episode_summarize_batch", "an_excluded_clients_episode_is_never_sent_to_a_cloud_model", "run_episode_summarize_batch_with"),
+    ("jobs.rs", "run_thread_summarize_batch", "a_client_excluded_during_a_thread_summary_batch_is_not_sent_for_the_rest", "run_thread_summarize_batch_through"),
+    ("jobs.rs", "run_thread_summarize_batch_with", "a_client_excluded_during_a_thread_summary_batch_is_not_sent_for_the_rest", "run_thread_summarize_batch_through"),
+    // The chain builders themselves: every hosted link is behind the gate.
+    ("routing.rs", "build_chain", "ollama_cloud_models_are_treated_as_hosted", "build_chain"),
+    ("routing.rs", "build_chain_for", "ollama_cloud_models_are_treated_as_hosted", "build_chain"),
+    ("routing.rs", "build_chain_for_routine", "ollama_cloud_models_are_treated_as_hosted", "build_chain"),
+    ("routing.rs", "build_local_chain", "ollama_cloud_models_are_treated_as_hosted", "build_local_chain"),
+    ("routing.rs", "with_transport", "a_substituted_transport_stays_behind_the_exclusion_gate", "tick_cloud_with_transport"),
+];
+
+/// One function of `core/api`'s non-test source: its file, name, whether it is `pub fn`, whether
+/// it sits inside an `impl`, `trait` or inline `mod` (called as `.name(` or `Type::name(`), its
+/// text (a nested `fn` stays in its parent's), and its file's `use crate::module::name [as alias]`
+/// imports (alias, module, name).
+struct Item {
+    file: String,
+    module: String,
+    name: String,
+    public: bool,
+    method: bool,
+    body: String,
+    imports: std::rc::Rc<Vec<(String, String, String)>>,
+}
+
+/// Brace depth after `line`, from `depth`, skipping string, char and comment text. `block` and
+/// `raw` carry an open block comment and an open (raw) string across lines.
+fn brace_depth(line: &str, mut depth: i64, block: &mut bool, string: &mut Option<usize>) -> (i64, bool) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut saw_semicolon_at_start = false;
+    let start = depth;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if *block {
+            if c == '*' && chars.get(i + 1) == Some(&'/') {
+                *block = false;
+                i += 1;
+            }
+        } else if let Some(hashes) = *string {
+            if c == '\\' && hashes == 0 {
+                i += 1;
+            } else if c == '"' && chars[i + 1..].iter().take(hashes).filter(|&&h| h == '#').count() == hashes {
+                *string = None;
+                i += hashes;
+            }
+        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+            break;
+        } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+            *block = true;
+            i += 1;
+        } else if c == '"' {
+            // `r#"`: count the hashes before the quote.
+            let mut hashes = 0;
+            let mut k = i;
+            while k > 0 && chars[k - 1] == '#' {
+                hashes += 1;
+                k -= 1;
+            }
+            let raw = k > 0 && chars[k - 1] == 'r' && !(k > 1 && (chars[k - 2].is_alphanumeric() || chars[k - 2] == '_'));
+            *string = Some(if raw { hashes } else { 0 });
+        } else if c == '\'' {
+            // A char literal ('{', '\'', '\u{..}'), not a lifetime.
+            if chars.get(i + 2) == Some(&'\'') {
+                i += 2;
+            } else if chars.get(i + 1) == Some(&'\\') {
+                i += 2;
+                while i < chars.len() && chars[i] != '\'' {
+                    i += 1;
+                }
+            }
+        } else if c == '{' {
+            depth += 1;
+        } else if c == '}' {
+            depth -= 1;
+        } else if c == ';' && depth == start {
+            saw_semicolon_at_start = true;
+        }
+        i += 1;
+    }
+    (depth, saw_semicolon_at_start)
+}
+
+fn api_items(repo: &std::path::Path) -> Vec<Item> {
+    let mut files = Vec::new();
+    rust_files(&repo.join("core/api/src"), &mut files);
+    let def = regex::Regex::new(r"^\s*(pub(?:\([^)]*\))?\s+)?(?:const\s+|async\s+|unsafe\s+|extern\s+\S+\s+)*fn\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    let grouped = regex::Regex::new(r"use\s+(?:crate|super)::([a-z_][a-z0-9_]*)::\{([^}]*)\}").unwrap();
+    let single = regex::Regex::new(r"use\s+(?:crate|super)::([a-z_][a-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;").unwrap();
+    let mut items = Vec::new();
+    for path in files.iter().filter(|p| !p.ends_with("exclusion_sweep.rs")) {
+        let file = path.file_name().unwrap().to_string_lossy().to_string();
+        let module = if file == "mod.rs" || file == "lib.rs" {
+            path.parent().unwrap().file_name().unwrap().to_string_lossy().to_string()
+        } else {
+            file.trim_end_matches(".rs").to_string()
+        };
+        let source = non_test_source(path);
+        assert!(!source.contains("fn $"), "{file}: a macro defines functions this scan cannot see");
+        let mut imports = Vec::new();
+        for c in single.captures_iter(&source) {
+            imports.push((c.get(3).map_or(&c[2], |a| a.as_str()).to_string(), c[1].to_string(), c[2].to_string()));
+        }
+        for c in grouped.captures_iter(&source) {
+            for part in c[2].split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                let (name, alias) = part.split_once(" as ").map_or((part, part), |(n, a)| (n.trim(), a.trim()));
+                imports.push((alias.to_string(), c[1].to_string(), name.to_string()));
+            }
+        }
+        let imports = std::rc::Rc::new(imports);
+        let (mut depth, mut block, mut string) = (0i64, false, None);
+        // The open item and the depth its `fn` line started at.
+        let mut current: Option<(Item, i64, bool)> = None;
+        for line in source.lines() {
+            let at = depth;
+            if current.is_none() && !block && string.is_none() {
+                if let Some(c) = def.captures(line) {
+                    let item = Item {
+                        file: file.clone(),
+                        module: module.clone(),
+                        name: c[2].to_string(),
+                        public: c.get(1).is_some_and(|p| p.as_str().trim() == "pub"),
+                        method: at > 0,
+                        body: String::new(),
+                        imports: imports.clone(),
+                    };
+                    current = Some((item, at, false));
+                }
+            }
+            let (after, semicolon) = brace_depth(line, depth, &mut block, &mut string);
+            depth = after;
+            if let Some((item, start, opened)) = current.as_mut() {
+                if !line.trim_start().starts_with("//") {
+                    item.body.push_str(line);
+                    item.body.push('\n');
+                }
+                *opened |= depth > *start;
+                // Ends where its body closes, or at a `;` with no body (a trait's declaration).
+                if (*opened && depth <= *start) || (!*opened && semicolon) {
+                    items.push(current.take().unwrap().0);
+                }
+            }
+        }
+        items.extend(current.map(|(item, ..)| item));
+    }
+    items
+}
+
+/// Whether `body` calls `name` (or, for a `Type::` name, any of its functions): on a word
+/// boundary, not as a method.
+fn calls_name(body: &str, name: &str) -> bool {
+    body.match_indices(name).any(|(at, _)| {
+        let before = body[..at].chars().next_back();
+        let after = body[at + name.len()..].chars().next();
+        !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') && (name.ends_with("::") || after == Some('('))
+    })
+}
+
+/// Whether `caller` calls function `callee`: by its bare name in the same file, as
+/// `module::name(` from anywhere, by a name or alias its file imports it as, or, for a function
+/// inside an `impl`, as `.name(` or `Type::name(` from anywhere (by name alone: over-matching
+/// only adds paths).
+fn calls_item(caller: &Item, callee: &Item) -> bool {
+    (caller.file == callee.file && calls_name(&caller.body, &callee.name))
+        || calls_name(&caller.body, &format!("{}::{}", callee.module, callee.name))
+        || caller.imports.iter().any(|(alias, m, n)| *m == callee.module && *n == callee.name && calls_name(&caller.body, alias))
+        || (callee.method && [".", "::"].iter().any(|p| caller.body.contains(&format!("{p}{}(", callee.name))))
+}
+
+/// The indices of the items `from` reaches through calls, itself included.
+fn reached_from(items: &[Item], from: usize) -> std::collections::BTreeSet<usize> {
+    let mut seen = std::collections::BTreeSet::from([from]);
+    let mut stack = vec![from];
+    while let Some(i) = stack.pop() {
+        for (j, callee) in items.iter().enumerate() {
+            if !seen.contains(&j) && calls_item(&items[i], callee) {
+                seen.insert(j);
+                stack.push(j);
+            }
+        }
+    }
+    seen
+}
+
+/// The items from which a [`HOSTED_SINKS`] call is reached.
+fn hosted_reaching(items: &[Item]) -> std::collections::BTreeSet<usize> {
+    let mut hosted: std::collections::BTreeSet<usize> =
+        (0..items.len()).filter(|&i| HOSTED_SINKS.iter().any(|s| calls_name(&items[i].body, s) && !ON_DEVICE_SINKS.contains(&(items[i].file.as_str(), *s)))).collect();
+    loop {
+        let more: Vec<usize> =
+            (0..items.len()).filter(|i| !hosted.contains(i) && hosted.iter().any(|&j| calls_item(&items[*i], &items[j]))).collect();
+        if more.is_empty() {
+            return hosted;
+        }
+        hosted.extend(more);
+    }
+}
+
+/// The #888 review: `every_hosted_caller_is_covered` lists call names by hand, so a new public
+/// function reaching a hosted model through an internal helper (`answer_from_filter_by`) passed
+/// unseen. Here the public entry points are derived from the source: every `pub fn` in `core/api`
+/// from which a chain is built, a hosted client made or a hosted prompt's context retrieved. The
+/// derived set must equal [`HOSTED_ENTRY_POINTS`], and each entry's test must call it, or a function
+/// on its own path (one it calls, or one that calls it). Review I1: functions are split by brace
+/// depth (a nested `fn` stays in its parent), and calls through `use` imports and aliases and
+/// `.method(` calls are followed.
+#[test]
+fn every_public_hosted_entry_point_is_derived_and_driven() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
+    let items = api_items(repo);
+    assert!(items.len() > 500, "the scan found the functions ({})", items.len());
+    let hosted = hosted_reaching(&items);
+    let derived: std::collections::BTreeSet<(String, String)> =
+        hosted.iter().filter(|&&i| items[i].public).map(|&i| (items[i].file.clone(), items[i].name.clone())).collect();
+    for (file, name) in [("ask.rs", "answer"), ("ask.rs", "answer_detailed"), ("ask.rs", "prepare_ask_from"), ("live_question.rs", "draft")] {
+        assert!(derived.contains(&(file.to_string(), name.to_string())), "the scan sees {file} {name}");
+    }
+    let listed: std::collections::BTreeSet<(String, String)> =
+        HOSTED_ENTRY_POINTS.iter().map(|&(f, n, _, _)| (f.to_string(), n.to_string())).collect();
+    assert_eq!(
+        derived, listed,
+        "a public function in core/api reaches a hosted model: keep excluded material out of it, drive it in a test, then list it in HOSTED_ENTRY_POINTS"
+    );
+
+    let mut all_source = String::new();
+    let mut files = Vec::new();
+    rust_files(&repo.join("core/api/src"), &mut files);
+    for path in &files {
+        all_source.push_str(&std::fs::read_to_string(path).unwrap());
+    }
+    let index = |file: &str, name: &str| -> Vec<usize> {
+        (0..items.len()).filter(|&i| items[i].name == name && (file.is_empty() || items[i].file == file)).collect()
+    };
+    for &(file, name, test, via) in HOSTED_ENTRY_POINTS {
+        // `test>helper`: the test calls the helper that holds the call (a table of entry points).
+        let (test, helper) = test.split_once('>').map_or((test, None), |(t, h)| (t, Some(h)));
+        let mut body = test_body(&all_source, test).unwrap_or_else(|| panic!("the test {test} for {file} {name} exists"));
+        if let Some(helper) = helper {
+            assert!(calls_name(body, helper), "{test} calls {helper}(");
+            body = test_body(&all_source, helper).unwrap_or_else(|| panic!("the helper {helper} exists"));
+        }
+        assert!(calls_name(body, via), "{test} calls {via}( for {file} {name}");
+        let via_name = via.rsplit("::").next().unwrap();
+        if via_name == name {
+            continue;
+        }
+        let entry = index(file, name);
+        // Review I1: no sibling sharing a delegate counts (it hid `detect` reading an open filter);
+        // only the entry's own path: a function it reaches, or one that reaches it.
+        let on_path = entry.iter().any(|&e| {
+            let from_entry = reached_from(&items, e);
+            index("", via_name).into_iter().any(|v| from_entry.contains(&v) || reached_from(&items, v).contains(&e))
+        });
+        assert!(on_path, "{via} is on the path of {file} {name}: it calls it, or is called by it");
+    }
+}
+
+/// A question holding a known client contact's address is the client's request, as a name is:
+/// in any case, written bare or as `Name <address>`, every blocking Ask answers it on the
+/// on-device link only (the question as asked, all of memory) and every streamed prepare refuses
+/// it for a hosted stream and gives it to a stream on this computer. Another client's contact
+/// (Globex is not excluded) goes hosted as before, address and all.
+#[test]
+fn an_ask_question_holding_a_client_contacts_address_stays_on_this_computer() {
+    let routing = hosted_routing();
+    let fx = ask_fixture(true);
+    let questions = [
+        format!("What did {CONTACT} say about the pricing?"),
+        format!("What did {} say about the pricing?", CONTACT.to_uppercase()),
+        "Any word from Wile E <Wile@Coyote.Example> on pricing?".to_string(),
+        // Review C2: forms a split on spaces and brackets missed, matched as words now.
+        format!("What did {CONTACT}\u{2019}s team say about pricing?"),
+        format!("Ask {CONTACT}\u{2014}what pricing?"),
+        format!("Draft a reply to https://mail.example/compose?to={CONTACT} about pricing"),
+        format!("Open mailto:{CONTACT}?subject=pricing"),
+        format!("See {CONTACT}/carol on pricing"),
+        "What did wile\u{ff20}coyote.example say about pricing?".to_string(),
+        "What did wile+pricing@coyote.example say about pricing?".to_string(),
+        // Review 2, I1: encoded, spoken and hidden forms.
+        "Summarise https://mail.google.com/#search/from%3Awile%40coyote.example on pricing".to_string(),
+        "What did wile&#64;coyote.example say about pricing?".to_string(),
+        "What did wile at coyote dot example say about pricing?".to_string(),
+        "What did wile [at] coyote [dot] example say about pricing?".to_string(),
+        "What did wi\u{200B}le@coyote.example say about pricing?".to_string(),
+    ];
+    for question in &questions {
+        assert!(crate::ask::question_names_excluded_client(&fx.s, question, &[]), "the Ask bar's pre-check: {question:?}");
+        for (entry, ask) in blocking_asks() {
+            let (h, l) = (Log::default(), Log::default());
+            recording_links(&h, &l, || ask(&fx, question, &[], &routing)).unwrap();
+            assert_eq!((h.count(), l.count()), (0, 1), "{entry}: {question:?} stays local");
+            let local = &l.prompts()[0];
+            assert!(local.contains(question.as_str()), "{entry}: the on-device link gets the question as asked");
+            // No on-device model: refused, as for a name.
+            let no_local = RoutingConfig { use_local_model: false, ..hosted_routing() };
+            let (h, l) = (Log::default(), Log::default());
+            let r = recording_links(&h, &l, || ask(&fx, question, &[], &no_local));
+            assert!(matches!(r, Err(crate::ApiError::ProviderFailure)), "{entry}: refused");
+            assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+            assert_eq!((h.count(), l.count()), (0, 0));
+        }
+        for (entry, prepare) in streamed_asks() {
+            assert!(prepare(&fx, question, &[], &routing).is_err(), "{entry}: {question:?} is never streamed hosted");
+            assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+            let local = prepare(&fx, question, &[], &RoutingConfig::default()).unwrap();
+            assert!(local.prompt.contains(question.as_str()), "{entry}: a stream on this computer gets it as asked");
+            assert_eq!(local.exclusion, ExclusionOutcome::LocalOnly);
+            crate::ask::discard_ask(&local.prepare_id);
+        }
+    }
+
+    // A contact of a client that is not excluded: hosted, the address sent as asked.
+    let other = "What did carol@example.com say about the pricing?";
+    assert!(!crate::ask::question_names_excluded_client(&fx.s, other, &[]));
+    for (entry, ask) in blocking_asks() {
+        let (h, l) = (Log::default(), Log::default());
+        recording_links(&h, &l, || ask(&fx, other, &[], &routing)).unwrap();
+        assert_eq!((h.count(), l.count()), (1, 0), "{entry}: another client's contact goes hosted");
+        assert!(h.prompts()[0].contains("carol@example.com"));
+        assert_hosted_clean(&h);
+    }
+    for (entry, prepare) in streamed_asks() {
+        let p = prepare(&fx, other, &[], &routing).unwrap();
+        assert!(p.prompt.contains("carol@example.com"), "{entry}");
+        crate::ask::discard_ask(&p.prepare_id);
+    }
+}
+
+/// Review C1: a known client contact's address in stored material, never the client's name,
+/// filed under nothing (a Mail capture, a transcript line), stays out of a hosted Ask's prompt;
+/// another client's contact's (Carol, Globex not excluded) still reaches it.
+#[test]
+fn stored_material_holding_a_client_contacts_address_stays_out_of_a_hosted_ask() {
+    let routing = RoutingConfig { use_local_model: false, ..hosted_routing() };
+    let fx = ask_fixture(true);
+    let now = crate::util::now_unix_ms();
+    // (window title, URL, text): the address in the text as written, encoded or hidden (review 2,
+    // I1), or only in the window title or the URL (review 2, I4).
+    let captures: [(&str, Option<&str>, String); 8] = [
+        ("Inbox", None, format!("From: Wile E <{CONTACT}>\nWe accept the kiwicanary pricing at 40k.")),
+        ("Inbox", None, "From: Carol <carol@example.com>\nWe accept the lemoncanary pricing at 30k.".to_string()),
+        ("Search", None, "Search results: pctcanary pricing from wile%40coyote.example".to_string()),
+        ("Inbox", None, "Reply to wile&#64;coyote.example on ampcanary pricing.".to_string()),
+        ("Inbox", None, "Ask wi\u{200B}le@coyote.example about the zwcanary pricing.".to_string()),
+        ("Re: pricing - wile@coyote.example - Mail", None, "We accept the wintitlecanary pricing.".to_string()),
+        ("Compose", Some("https://mail.example/compose?to=wile%40coyote.example"), "We accept the urlcanary pricing.".to_string()),
+        ("Compose", Some("https://mail.example/compose?to=carol%40example.com"), "We accept the pearcanary pricing.".to_string()),
+    ];
+    for (i, (title, url, text)) in captures.iter().enumerate() {
+        let item = memory::NewCaptureItem {
+            device_id: "d".into(),
+            ts_unix_ms: now - 500_000 + i as i64,
+            app_bundle_id: "com.apple.mail".into(),
+            window_title: title.to_string(),
+            url: url.map(str::to_string),
+            text: text.clone(),
+            hash: 7_000 + i as i64,
+            source: "ax".into(),
+        };
+        fx.s.insert_capture_item(&item).unwrap();
+    }
+    meeting(&fx.s, "Notes", &[], now - 600_000, &[&format!("Send the moosecanary pricing to {CONTACT} today.")], "");
+    meeting(&fx.s, "Other notes", &[], now - 700_000, &["Send the plumcanary pricing to carol@example.com today."], "");
+    // How speech recognition writes a spoken address.
+    meeting(&fx.s, "Call", &[], now - 800_000, &["Call wile at coyote dot example about the spokencanary pricing."], "");
+    let (h, l) = (Log::default(), Log::default());
+    recording_links(&h, &l, || crate::ask::answer(&fx.s, "what about the accepted pricing?", "gemma-test", 40, &[], &routing)).unwrap();
+    assert_eq!((h.count(), l.count()), (1, 0));
+    let p = &h.prompts()[0];
+    for kept_in in ["lemoncanary", "plumcanary", "pearcanary", "carol@example.com"] {
+        assert!(p.contains(kept_in), "another client's contact's material still answers: {kept_in}");
+    }
+    for kept_out in ["kiwicanary", "moosecanary", "pctcanary", "ampcanary", "zwcanary", "wintitlecanary", "urlcanary", "spokencanary", CONTACT] {
+        assert!(!p.contains(kept_out), "the client contact's material stayed out ({kept_out}):\n{p}");
+    }
+    // The hosted gate holds the same terms: a prompt carrying the address never leaves.
+    let gate = crate::exclusion::current_gate(&fx.s);
+    assert!(llm::guard::HostedGate::check(&*gate, &format!("Summarise mail from {CONTACT}\u{2019}s team")).is_err());
+    assert!(llm::guard::HostedGate::check(&*gate, "Summarise mail from carol@example.com").is_ok());
+}
+
+/// Review C1: a meeting filed under nothing whose transcript holds a client contact's address is
+/// summarised on this computer (classify first); one holding another client's contact's is not.
+#[test]
+fn a_summary_of_material_holding_a_client_contacts_address_stays_local() {
+    let fx = ask_fixture(true);
+    let now = crate::util::now_unix_ms();
+    for (who, local_only) in [(CONTACT, true), ("carol@example.com", false)] {
+        let line = format!("Send the pricing to {who} today.");
+        let id = meeting(&fx.s, "Notes", &[], now - 900_000, &[&line], "");
+        let (h, l) = (Log::default(), Log::default());
+        crate::summary::summarize_meeting_routed(
+            &fx.s,
+            id,
+            "",
+            &line,
+            "",
+            &RoutingConfig::default(),
+            "",
+            || vec![hosted(&fx.s, &h, summary_reply())],
+            || vec![local(&l, summary_reply())],
+        )
+        .unwrap();
+        assert_eq!((h.count(), l.count()), if local_only { (0, 1) } else { (1, 0) }, "{who}");
+    }
+}
+
+/// Review I1 and I2: `live_question::detect` itself, through routing's chain: a line in the
+/// client's meeting, or one holding a client contact's address, is judged on this computer; a
+/// line in another client's meeting goes hosted, clean.
+#[test]
+fn the_live_question_detect_entry_keeps_the_clients_lines_local() {
+    let routing = hosted_routing();
+    let fx = ask_fixture(true);
+    let reply = r#"{"is_for_user":false,"confidence":"low","quote":"q","asker":null,"restatement":"r"}"#;
+    let line = |text: &str| llm::live_question::LiveLine { id: 1, channel: "them".into(), start_cs: 0, text: text.into() };
+    let detect = |meeting: i64, text: &str, h: &Log, l: &Log| {
+        recording_links_replying(h, l, reply, reply, || {
+            crate::live_question::detect(&fx.s, Some(meeting), &[line(text)], 0, &["Mike".to_string()], "gemma-test", &routing)
+        })
+    };
+    for (meeting, text, hosted_ok) in [
+        (fx.other_meeting, "Mike, can you ship it Friday?", true),
+        (fx.acme_meeting, "Mike, can you confirm the zebracanary pricing?", false),
+        (fx.other_meeting, &*format!("Mike, did {CONTACT} send it?"), false),
+        (fx.other_meeting, "Mike, did carol@example.com send it?", true),
+    ] {
+        let (h, l) = (Log::default(), Log::default());
+        detect(meeting, text, &h, &l).unwrap();
+        assert_eq!((h.count(), l.count()), if hosted_ok { (1, 0) } else { (0, 1) }, "{text:?} in meeting {meeting}");
+        assert_hosted_clean(&h);
+    }
+    assert_reached(&fx.c, "live_question");
+}
+
+/// Review I2: a conversation title for an exchange holding a client contact's address is never
+/// made by a hosted model (`ask::generate_conversation_title` through routing's chain, hosted links
+/// only: refused, nothing sent); another client's contact's is.
+#[test]
+fn a_conversation_title_holding_a_client_contacts_address_is_made_locally() {
+    // The light chain puts the on-device model first: hosted links only, so the choice shows.
+    let routing = RoutingConfig { use_local_model: false, ..hosted_routing() };
+    let fx = ask_fixture(true);
+    for (who, hosted_ok, answer) in [(CONTACT, false, "Friday."), ("carol@example.com", true, "Saturday.")] {
+        mark_clean_no_inputs(&fx, answer);
+        let (h, l) = (Log::default(), Log::default());
+        let r = recording_links_replying(&h, &l, "Title", "Title", || {
+            crate::ask::generate_conversation_title(&fx.s, "gemma-test", &format!("What did {who} say?"), answer, &routing)
+        });
+        assert_eq!(r.is_ok(), hosted_ok, "{who}");
+        assert_eq!((h.count(), l.count()), (hosted_ok as usize, 0), "{who}");
+        assert_hosted_clean(&h);
+    }
+    // With the on-device model, the client contact's exchange is titled there.
+    let (h, l) = (Log::default(), Log::default());
+    mark_clean_no_inputs(&fx, "Sunday.");
+    recording_links_replying(&h, &l, "Title", "Title", || {
+        crate::ask::generate_conversation_title(&fx.s, "gemma-test", &format!("What did {CONTACT} say?"), "Sunday.", &hosted_routing())
+    })
+    .unwrap();
+    assert_eq!((h.count(), l.count()), (0, 1));
+}
+
+/// Review I1: meeting prep on routing's own chain (`run_with_chain`, the device's; and
+/// `run_with_chain_cloud`, the cloud policy's), driven directly: the client's material never
+/// reaches the hosted link, the client's meeting has no hosted brief, another client's does.
+#[test]
+fn prep_on_routings_own_chain_never_sends_excluded_text() {
+    let routing = RoutingConfig { preferred_provider: "anthropic".into(), anthropic_key: Some("k".into()), use_local_model: false, ..RoutingConfig::default() };
+    type Prep = fn(&memory::Store, &[crate::connectors::calendar::QualifyingMeeting], i64, &RoutingConfig) -> rusqlite::Result<Vec<memory::RoutineRun>>;
+    let entries: [(&str, Prep); 2] = [
+        ("run_with_chain", |s, m, now, r| crate::meeting_prep::run_with_chain(s, m, now, 30.0, "", r, crate::routine_runs::RunGate::Full)),
+        ("run_with_chain_cloud", |s, m, now, r| {
+            crate::meeting_prep::run_with_chain_cloud(s, m, now, 30.0, "", r, crate::routine_runs::RunGate::Full, None)
+        }),
+    ];
+    for (entry, prep) in entries {
+        let prep_with = |excluded: bool, log: &Log| {
+            let fx = fixture(excluded);
+            fx.s.insert_routine(&memory::NewRoutine {
+                name: "Meeting Prep".into(),
+                template: memory::RoutineTemplate::MeetingPrep,
+                schedule_hhmm: "00:00".into(),
+                enabled: true,
+            })
+            .unwrap();
+            let now = crate::util::now_unix_ms();
+            let upcoming = |id: &str, title: &str, who: &str| crate::connectors::calendar::QualifyingMeeting {
+                id: id.into(),
+                title: title.into(),
+                start_unix_ms: now + 20 * 60_000,
+                end_unix_ms: now + 50 * 60_000,
+                attendees: vec![who.into()],
+                source: crate::connectors::calendar::MeetingSource::Calendar,
+                ..Default::default()
+            };
+            let meetings = [
+                upcoming("evt-1", "Planning", "Bob <bob@example.com>"),
+                upcoming("evt-2", "Acme renewal", "Carol <carol@example.com>"),
+                upcoming("evt-3", "Review", "Carol <carol@example.com>"),
+            ];
+            recording_links_replying(log, &Log::default(), "not json", "not json", || prep(&fx.s, &meetings, now, &routing)).unwrap();
+        };
+        let open = Log::default();
+        prep_with(false, &open);
+        assert!(open.prompts().iter().any(|p| p.contains(CANARY)), "{entry}: the control reaches the brief");
+        let log = Log::default();
+        prep_with(true, &log);
+        assert!(log.prompts().iter().any(|p| p.contains(OTHER)), "{entry}: another client's brief still goes hosted");
+        assert!(log.prompts().iter().all(|p| !p.contains("Acme renewal")), "{entry}: the client's meeting has no hosted brief");
+        assert_clean(&log);
+    }
+}
+
+/// Review 2, I1: window text holding a client contact's address, as written, encoded, spoken or
+/// hidden, is refused for a hosted stream; another client's contact's goes.
+#[test]
+fn a_window_holding_a_client_contacts_address_in_any_form_is_never_streamed_hosted() {
+    let fx = ask_fixture(true);
+    let window = |text: &str| crate::window_ask::WindowInput { app_name: "Mail".into(), title: "Inbox".into(), text: text.into(), is_selection: false };
+    for text in [
+        format!("Reply to {CONTACT} about pricing"),
+        "Reply to wile%40coyote.example about pricing".to_string(),
+        "Reply to wile&#x40;coyote.example about pricing".to_string(),
+        "Call wile at coyote dot example about pricing".to_string(),
+        "Reply to wile\u{200D}@coyote.example about pricing".to_string(),
+    ] {
+        assert!(crate::window_ask::prepare_window_ask(&fx.s, &window(&text), "summarise", &[], &hosted_routing()).is_err(), "{text:?}");
+        assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+    }
+    let carol = crate::window_ask::prepare_window_ask(&fx.s, &window("Reply to carol%40example.com about pricing"), "summarise", &[], &hosted_routing()).unwrap();
+    assert!(carol.prompt.contains("carol%40example.com"));
+    crate::ask::discard_ask(&carol.prepare_id);
+}
+
+/// Review 2, I4: a streamed Ask prepare publishes the gate it read, so a stream to an Ollama cloud
+/// model (store-less, `exclusion::published_gate`) knows a contact found since the last publish.
+#[test]
+fn a_streamed_prepare_publishes_the_gate_with_contacts_found_since() {
+    let fx = fixture(true);
+    let published = || crate::exclusion::LAST_PUBLISHED_HERE.with(|l| l.borrow().clone()).expect("a gate was published");
+    let mail = format!("Summarise mail from {CONTACT}");
+    crate::exclusion::refresh_published_gate(&fx.s);
+    assert!(llm::guard::HostedGate::check(&*published(), &mail).is_ok(), "not a contact yet");
+    let sid = fx.c.query_row("SELECT id FROM topic_source WHERE ref_id = ?1 AND kind = 'meeting'", [fx.acme_meeting], |r| r.get::<_, i64>(0)).unwrap();
+    fx.c.execute("INSERT INTO entity (kind, key, display, updated_at_unix_ms) VALUES ('person', ?1, 'Wile', 1)", [format!("email:{CONTACT}")]).unwrap();
+    let wile = fx.c.last_insert_rowid();
+    fx.c.execute("INSERT INTO entity_mention (entity_id, source_id) VALUES (?1, ?2)", rusqlite::params![wile, sid]).unwrap();
+    let prepared = crate::ask::prepare_ask(&fx.s, "what about the pricing?", 10, &[], &hosted_routing()).unwrap();
+    crate::ask::discard_ask(&prepared.prepare_id);
+    assert!(llm::guard::HostedGate::check(&*published(), &mail).is_err(), "the prepare published the contact");
+    assert!(llm::guard::HostedGate::check(&*published(), "Summarise mail from carol@example.com").is_ok());
+}
+
+/// Review 4, M4 and review 5, M1: an answer stamped by v0.9.80 kept fingerprints of its question
+/// as written (no version word). After the upgrade they read as unknown, so while a client is
+/// excluded a follow-up on that answer goes to the on-device link, and so does every later turn of
+/// that thread (on-device answers are not stamped clean). Once the same question is stamped again
+/// since the upgrade, its current fingerprints are read before the legacy row, and follow-ups on
+/// the old answer and on the new one go hosted again. Control: a current stamp goes hosted.
+#[test]
+fn a_follow_up_on_an_answer_stamped_before_the_upgrade_goes_local() {
+    let fx = fixture(true);
+    let first = Log::default();
+    crate::ask::answer_with(&fx.s, "what about the pricing review?", &RequestOrigin::AskBar, 10, &[], &RoutingConfig::default(), || vec![hosted(&fx.s, &first, "The giraffe review is next week.")], Vec::new).unwrap();
+    let history = [
+        llm::ChatTurn { role: llm::ChatRole::User, text: "what about the pricing review?".into() },
+        llm::ChatTurn { role: llm::ChatRole::Assistant, text: "The giraffe review is next week.".into() },
+    ];
+    let (h, l) = (Log::default(), Log::default());
+    let follow_up = || {
+        crate::ask::answer_with(&fx.s, "and who runs it?", &RequestOrigin::AskBar, 10, &history, &RoutingConfig::default(), || vec![hosted(&fx.s, &h, "Carol does.")], || vec![local(&l, "Carol does.")])
+    };
+    follow_up().unwrap();
+    assert_eq!((h.count(), l.count()), (1, 0), "control: a current stamp is clean");
+    // The question's fingerprints as v0.9.80 kept them: no version word.
+    assert!(fx.c.execute("UPDATE input_words SET fingerprints = substr(fingerprints, 5)", []).unwrap() > 0);
+    follow_up().unwrap();
+    assert_eq!((h.count(), l.count()), (1, 1), "an older stamp is not clean while a client is excluded");
+    follow_up().unwrap();
+    assert_eq!((h.count(), l.count()), (1, 2), "nor on the next turn");
+    // The same question asked again since the upgrade, answered hosted and stamped with current
+    // fingerprints under its own answer.
+    let again = Log::default();
+    crate::ask::answer_with(&fx.s, "what about the pricing review?", &RequestOrigin::AskBar, 10, &[], &RoutingConfig::default(), || vec![hosted(&fx.s, &again, "The review moved to Monday.")], Vec::new).unwrap();
+    assert_eq!(again.count(), 1);
+    let fresh = [
+        llm::ChatTurn { role: llm::ChatRole::User, text: "what about the pricing review?".into() },
+        llm::ChatTurn { role: llm::ChatRole::Assistant, text: "The review moved to Monday.".into() },
+    ];
+    let (h2, l2) = (Log::default(), Log::default());
+    crate::ask::answer_with(&fx.s, "and who runs it?", &RequestOrigin::AskBar, 10, &fresh, &RoutingConfig::default(), || vec![hosted(&fx.s, &h2, "Carol does.")], || vec![local(&l2, "Carol does.")]).unwrap();
+    assert_eq!((h2.count(), l2.count()), (1, 0), "a follow-up on the new answer goes hosted");
+    follow_up().unwrap();
+    assert_eq!((h.count(), l.count()), (2, 2), "the old answer is read by the current fingerprints too");
 }

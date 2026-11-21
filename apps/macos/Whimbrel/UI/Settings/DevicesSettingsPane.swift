@@ -28,6 +28,7 @@ struct DevicesSettingsPane: View {
             content
 
             StaleSyncLine(sync: appState.contentSyncCoordinator, inset: 0)
+            SyncNowControl(sync: appState.contentSyncCoordinator)
             if case .ready = appState.syncState.status, let bridge = appState.clientControlsBridge() {
                 ClientPendingDevicesLine(bridge: bridge, sync: appState.contentSyncCoordinator) { appState.deviceLabel(for: $0) }
             }
@@ -148,9 +149,15 @@ struct DevicesSettingsPane: View {
             }
             if let plan = appState.syncState.plan {
                 if plan.billing, !plan.isCloud {
-                    Text("Upgrade to Cloud for unlimited devices.")
-                        .font(.whimbrelBody(.body))
-                        .foregroundStyle(Color.whimbrelTextPrimary)
+                    Group {
+                        if plan.plusAvailable == true {
+                            Text("Upgrade to Plus for unlimited devices.")
+                        } else {
+                            Text("Upgrade to Cloud for unlimited devices.")
+                        }
+                    }
+                    .font(.whimbrelBody(.body))
+                    .foregroundStyle(Color.whimbrelTextPrimary)
                     upgradeButtons
                 }
             } else if appState.syncState.planReadFailed {
@@ -200,31 +207,57 @@ struct DevicesSettingsPane: View {
         }
     }
 
-    /// Monthly and yearly Upgrade, each opening Stripe Checkout in the browser.
+    /// Monthly and yearly purchase, each opening Stripe Checkout in the browser. When the Worker
+    /// says Plus is for sale, Plus replaces Cloud here; otherwise only today's Cloud buttons show.
     @ViewBuilder
     private var upgradeButtons: some View {
-        HStack {
-            Button("Upgrade to Cloud: $5 a month") {
-                Task {
-                    working = true
-                    await appState.syncState.upgrade(interval: "month")
-                    working = false
+        if appState.syncState.plan?.plusAvailable == true {
+            HStack {
+                Button("Get Plus: $15 a month") {
+                    Task {
+                        working = true
+                        await appState.syncState.upgrade(interval: "month", plan: "plus")
+                        working = false
+                    }
                 }
-            }
-            .buttonStyle(.whimbrelPrimary)
-            Button("Upgrade to Cloud: $50 a year") {
-                Task {
-                    working = true
-                    await appState.syncState.upgrade(interval: "year")
-                    working = false
+                .buttonStyle(.whimbrelPrimary)
+                Button("Get Plus: $144 a year") {
+                    Task {
+                        working = true
+                        await appState.syncState.upgrade(interval: "year", plan: "plus")
+                        working = false
+                    }
                 }
+                .buttonStyle(.whimbrelSecondary)
             }
-            .buttonStyle(.whimbrelSecondary)
+            .disabled(working)
+            Text("Plus includes hosted sync on all your devices and a monthly Whimbrel AI allowance. Tax is added at checkout where it applies.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+        } else {
+            HStack {
+                Button("Upgrade to Cloud: $5 a month") {
+                    Task {
+                        working = true
+                        await appState.syncState.upgrade(interval: "month")
+                        working = false
+                    }
+                }
+                .buttonStyle(.whimbrelPrimary)
+                Button("Upgrade to Cloud: $50 a year") {
+                    Task {
+                        working = true
+                        await appState.syncState.upgrade(interval: "year")
+                        working = false
+                    }
+                }
+                .buttonStyle(.whimbrelSecondary)
+            }
+            .disabled(working)
+            Text("Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
         }
-        .disabled(working)
-        Text("Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server.")
-            .font(.whimbrelBody(.caption))
-            .foregroundStyle(Color.whimbrelTextSecondary)
         billingError
     }
 
@@ -376,7 +409,7 @@ struct DevicesSettingsPane: View {
                 Text("Plan")
                     .font(.whimbrelBody(.body))
                     .foregroundStyle(Color.whimbrelTextPrimary)
-                Text(PlanCopy.line(plan))
+                Text(PlusCopy.planLine(plan))
                     .font(.whimbrelBody(.caption))
                     .foregroundStyle(Color.whimbrelTextSecondary)
                 if plan.billing {

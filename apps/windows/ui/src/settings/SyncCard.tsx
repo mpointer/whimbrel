@@ -35,7 +35,7 @@ import {
   showsAddRunner,
   type RunnerRegistration,
 } from "../automations/cloudRoutineModel";
-import { collidingPendingIds, contentLine, deviceActions, deviceTitle, indexingLine, offersManage, offersUpgrade, pendingDeviceName, planLine, primaryAction, settingsLine, stateLabel } from "./syncModel";
+import { collidingPendingIds, contentLine, deviceActions, deviceTitle, indexingLine, offersManage, offersUpgrade, pendingDeviceName, planLine, primaryAction, sellsPlus, settingsLine, stateLabel } from "./syncModel";
 
 /** The phone app's beta sign-up. The backend opens only pages on its allowlist, and this is one. */
 const MOBILE_BETA_URL = "https://whimbrelapp.com/mobile-beta/";
@@ -225,9 +225,24 @@ function BillingError({ error }: { error: string | null }) {
   ) : null;
 }
 
-/** The two Upgrade buttons (Cloud v1), shown only on the free plan with billing open. */
-function UpgradeButtons({ busy, act }: { busy: boolean; act: Act }) {
+/**
+ * The two Upgrade buttons (Cloud v1), shown only on the free plan with billing open. When the server
+ * sells Plus they are the Plus ones instead (the shell asks for Plus then); never both.
+ */
+function UpgradeButtons({ busy, act, plus }: { busy: boolean; act: Act; plus: boolean }) {
   const { t } = useL10n();
+  if (plus) {
+    return (
+      <div className="toolbar">
+        <button className="mode mode--active" disabled={busy} onClick={() => act(() => syncUpgrade("month"))}>
+          {t("Get Plus: $15 a month")}
+        </button>
+        <button className="mode" disabled={busy} onClick={() => act(() => syncUpgrade("year"))}>
+          {t("Get Plus: $144 a year")}
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="toolbar">
       <button className="mode mode--active" disabled={busy} onClick={() => act(() => syncUpgrade("month"))}>
@@ -240,8 +255,15 @@ function UpgradeButtons({ busy, act }: { busy: boolean; act: Act }) {
   );
 }
 
-function Caption() {
+function Caption({ plus }: { plus: boolean }) {
   const { t } = useL10n();
+  if (plus) {
+    return (
+      <p className="muted small">
+        {t("Plus includes hosted sync on all your devices and a monthly Whimbrel AI allowance. Tax is added at checkout where it applies.")}
+      </p>
+    );
+  }
   return <p className="muted small">{t("Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server.")}</p>;
 }
 
@@ -250,12 +272,13 @@ export function LimitUpgrade({ view, busy, act, error }: { view: SyncView; busy:
   const { t } = useL10n();
   if (view.planUnknown) return <p className="muted small">{t("Couldn't check your plan. Try again in a moment.")}</p>;
   if (!offersUpgrade(view)) return null;
+  const plus = sellsPlus(view);
   return (
     <div className="stack-sm">
-      <p>{t("Upgrade to Cloud for unlimited devices.")}</p>
-      <UpgradeButtons busy={busy} act={act} />
+      <p>{plus ? t("Upgrade to Plus for unlimited devices.") : t("Upgrade to Cloud for unlimited devices.")}</p>
+      <UpgradeButtons busy={busy} act={act} plus={plus} />
       <BillingError error={error} />
-      <Caption />
+      <Caption plus={plus} />
     </div>
   );
 }
@@ -272,9 +295,9 @@ export function Plan({ view, busy, act, error }: { view: SyncView; busy: boolean
       <p>{planLine(view.plan, locale)}</p>
       {offersUpgrade(view) && (
         <>
-          <UpgradeButtons busy={busy} act={act} />
+          <UpgradeButtons busy={busy} act={act} plus={sellsPlus(view)} />
           <BillingError error={error} />
-          <Caption />
+          <Caption plus={sellsPlus(view)} />
         </>
       )}
       {offersManage(view) && (

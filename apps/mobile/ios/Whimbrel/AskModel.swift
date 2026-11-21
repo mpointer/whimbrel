@@ -97,6 +97,11 @@ final class AskModel: ObservableObject {
         self.keys = keys
     }
 
+    #if DEBUG
+    /// Demo screenshots only: turns to show without a provider.
+    func seedDemo(_ demo: [AskTurn]) { turns = demo }
+    #endif
+
     var route: AskRoute { Self.route(prefs: prefs, keys: keys) }
     var isBusy: Bool { turns.last?.state == .streaming }
 

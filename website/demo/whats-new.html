@@ -1,0 +1,138 @@
+<!doctype html>
+<!-- Source of the "What's new in Whimbrel 0.9.80" video (site/media/whimbrel-whats-new.*). Not deployed.
+     Rendered by scripts/render-whats-new-video.mjs; modelled on tour.html.
+
+     The app screens in shots/wn-*.png are the real Windows UI (apps/windows/ui), built and served on its own
+     with every app call answered from fictional demo data in capture/fixtures-whatsnew.json (steps in
+     scripts/whats-new-steps.json). They are not mock-ups. Re-capture them with scripts/capture-app-shots.py
+     after a UI change, then re-render the video.
+
+     Captions: every claim is taken from the live /for/client-controls/ and /features/encryption-at-rest/ pages.
+     Do not add a claim that is not on those pages. -->
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>What's new in Whimbrel 0.9.80</title>
+<link rel="stylesheet" href="../site/assets/site.css">
+<style>
+  html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; }
+  body { background: radial-gradient(1200px 600px at 70% -10%, #F6E8D0, var(--bg) 60%); font-size: 15px; }
+  .stage { position: absolute; inset: 0; }
+  .scene { position: absolute; inset: 0; opacity: 0; transition: opacity .6s ease; }
+  .scene.on { opacity: 1; }
+  .center { display: grid; place-items: center; }
+  /* Captions wrap: some are long. */
+  .caption { position: absolute; left: 50%; bottom: 26px; translate: -50% 0; width: 1040px; box-sizing: border-box; background: var(--ink); color: #fff; padding: 14px 26px; border-radius: 22px; font: 600 19px/1.4 var(--sans); text-align: center; box-shadow: var(--shadow); }
+  .caption b { color: #E8B968; margin-right: 10px; }
+
+  .win { position: absolute; left: 50%; top: 22px; translate: -50% 0; width: 840px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow), 0 50px 90px -40px rgba(168,80,46,.4); overflow: hidden; }
+  .bar { padding: 8px 14px; background: var(--bg-alt); border-bottom: 1px solid var(--border); font: 600 13px var(--sans); color: var(--text-2); }
+  .shot { position: relative; height: 485px; overflow: hidden; }
+  .shot img { position: absolute; inset: 0; display: block; width: 100%; opacity: 0; transition: opacity .5s; }
+  .shot img.in { opacity: 1; }
+
+  .card-t { text-align: center; width: 1040px; }
+  .card-t h1 { font: 600 58px/1.1 var(--serif); margin: 0; letter-spacing: -.01em; }
+  .card-t h1 em { font-style: normal; color: var(--accent); }
+  .card-t p { font-size: 23px; color: var(--text-2); margin: 20px 0 0; }
+  .end img { width: 96px; margin: 0 auto 22px; border-radius: 22px; box-shadow: var(--shadow); display: block; }
+  .end p { font: 600 26px/1.5 var(--sans); color: var(--ink); margin: 8px 0 0; }
+  .facts { list-style: none; padding: 0; margin: 30px auto 0; width: fit-content; text-align: left; font-size: 26px; }
+  .facts li { margin: 0 0 14px; opacity: 0; transform: translateY(8px); transition: opacity .45s, transform .45s; }
+  .facts li.in { opacity: 1; transform: none; }
+  .facts li::before { content: "•"; color: var(--accent); font-weight: 700; margin-right: 14px; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <div class="scene center" id="s0">
+    <div class="card-t">
+      <h1>What's new in <em>Whimbrel 0.9.80</em></h1>
+      <p>Client controls and an encrypted memory database. Mac and Windows.</p>
+    </div>
+  </div>
+
+  <div class="scene" id="s1">
+    <div class="win"><div class="bar">Whimbrel</div><div class="shot"><img src="shots/wn-client.png" alt=""></div></div>
+    <div class="caption"><b>1</b>Every client page has four controls: delete, keep, export, exclude from hosted models.</div>
+  </div>
+
+  <div class="scene" id="s2">
+    <div class="win"><div class="bar">Whimbrel</div><div class="shot">
+      <img src="shots/wn-delete.png" alt=""><img src="shots/wn-receipt.png" alt=""><img src="shots/wn-receipt-left.png" alt="">
+    </div></div>
+    <div class="caption"><b>2</b>Delete shows you what will go, then gives a receipt of what was removed and what is left for you to check. The receipt holds no client name or text.</div>
+  </div>
+
+  <div class="scene" id="s3">
+    <div class="win"><div class="bar">Whimbrel</div><div class="shot">
+      <img src="shots/wn-keep.png" alt=""><img src="shots/wn-export.png" alt="">
+    </div></div>
+    <div class="caption"><b>3</b>Keep a client's material for a set time, or export it as plain files.</div>
+  </div>
+
+  <div class="scene" id="s4">
+    <div class="win"><div class="bar">Whimbrel</div><div class="shot"><img src="shots/wn-exclude.png" alt=""></div></div>
+    <div class="caption"><b>4</b>Material that names or involves the client is kept out of requests to hosted AI models. Matching is on whole words, so it can miss, and material that already left can't be recalled.</div>
+  </div>
+
+  <div class="scene" id="s5">
+    <div class="win"><div class="bar">Whimbrel</div><div class="shot">
+      <img src="shots/wn-encrypt.png" alt=""><img src="shots/wn-recovery.png" alt="">
+    </div></div>
+    <div class="caption"><b>5</b>You can encrypt the memory database on your computer. Keep the recovery key somewhere other than this computer.</div>
+  </div>
+
+  <div class="scene center" id="s6">
+    <div class="card-t">
+      <h1>What the encryption <em>covers</em></h1>
+      <ul class="facts" id="s6-facts">
+        <li>Only the memory database is encrypted.</li>
+        <li>Audio and other files are not.</li>
+        <li>Phones are unchanged.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="scene center end" id="s7">
+    <div class="card-t">
+      <img src="../site/assets/icon-512.png" alt="">
+      <h1>Client controls and <em>encryption</em></h1>
+      <p>whimbrelapp.com/for/client-controls &nbsp;·&nbsp; whimbrelapp.com/features/encryption-at-rest</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // Timeline in ms. window.tourDone flips true at the end so the renderer knows when to stop.
+  // The poster frame is taken during scene 1 (a client's page); keep the renderer's offset in step.
+  function $(id) { return document.getElementById(id); }
+  function on(id) { document.querySelectorAll(".scene").forEach(function (s) { s.classList.toggle("on", s.id === id); }); }
+  function pick(id, n) { Array.prototype.forEach.call($(id).querySelectorAll(".shot img"), function (im, i) { im.classList.toggle("in", i === n); }); }
+  function revealAll(id, start, gap) {
+    Array.prototype.forEach.call($(id).children, function (el, i) {
+      setTimeout(function () { el.classList.add("in"); }, start + i * gap);
+    });
+  }
+  var T = [
+    [0, function () { on("s0"); }],
+    [3000, function () { on("s1"); pick("s1", 0); }],
+    [9000, function () { on("s2"); pick("s2", 0); }],
+    [14500, function () { pick("s2", 1); }],
+    [18500, function () { pick("s2", 2); }],
+    [23500, function () { on("s3"); pick("s3", 0); }],
+    [27500, function () { pick("s3", 1); }],
+    [31500, function () { on("s4"); pick("s4", 0); }],
+    [43000, function () { on("s5"); pick("s5", 0); }],
+    [47500, function () { pick("s5", 1); }],
+    [54000, function () { on("s6"); revealAll("s6-facts", 700, 1200); }],
+    [59000, function () { on("s7"); }],
+    [63500, function () { window.tourDone = true; }],
+  ];
+  window.startTour = function () { T.forEach(function (step) { setTimeout(step[1], step[0]); }); };
+  if (!/render/.test(location.search)) window.startTour();
+</script>
+</body>
+</html>

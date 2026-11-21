@@ -20,10 +20,16 @@ struct RootView: View {
         self.sync = sync
         self.enrollment = enrollment
         self.router = router
-        _ask = StateObject(wrappedValue: AskModel(backend: PhoneAskBackend(sync: sync)))
-        var tab = 0, settings = false, path = NavigationPath()
         #if DEBUG
-        // Demo screenshots: `-WhimbrelDemoTab 0|1|2|3|4`, `-WhimbrelDemoMeeting <id>`, `-WhimbrelDemoSettings`.
+        let demoAsk = ProcessInfo.processInfo.arguments.contains("-WhimbrelDemoSynced")
+        _ask = StateObject(wrappedValue: demoAsk ? DemoAskBackend.model() : AskModel(backend: PhoneAskBackend(sync: sync)))
+        #else
+        _ask = StateObject(wrappedValue: AskModel(backend: PhoneAskBackend(sync: sync)))
+        #endif
+        var tab = 0, settings = false, path = NavigationPath(), topics = NavigationPath()
+        #if DEBUG
+        // Demo screenshots: `-WhimbrelDemoTab 0|1|2|3|4`, `-WhimbrelDemoMeeting <id>`, `-WhimbrelDemoSettings`,
+        // `-WhimbrelDemoTopic <key>`.
         let args = ProcessInfo.processInfo.arguments
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil } }
         tab = value("-WhimbrelDemoTab").flatMap(Int.init) ?? 0
@@ -31,11 +37,16 @@ struct RootView: View {
             path.append(meeting)
             tab = 2
         }
+        if let topic = value("-WhimbrelDemoTopic") {
+            topics.append(TopicRoute(key: topic))
+            tab = 4
+        }
         settings = args.contains("-WhimbrelDemoSettings")
         #endif
         _selection = State(initialValue: tab)
         _showSettings = State(initialValue: settings)
         _meetingsPath = State(initialValue: path)
+        _topicsPath = State(initialValue: topics)
     }
 
     /// Ask runs only while its tab is the one showing: leaving the tab ends it. (Pushing a

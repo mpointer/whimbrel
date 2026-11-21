@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DeviceView, PlanView } from "../generated/types";
-import { collidingPendingIds, contentLine, deviceActions, deviceTitle, indexingLine, offersManage, offersUpgrade, pendingUpdateLine, planLine, primaryAction, settingsLine } from "./syncModel";
+import { collidingPendingIds, contentLine, deviceActions, deviceTitle, indexingLine, offersManage, offersUpgrade, pendingUpdateLine, planLine, sellsPlus, primaryAction, settingsLine } from "./syncModel";
 
 describe("pendingUpdateLine", () => {
   it("says how many devices still need to update, and nothing for none or not known", () => {
@@ -96,14 +96,29 @@ describe("collidingPendingIds", () => {
 
 describe("the plan (Cloud v1)", () => {
   const view = (plan: PlanView | null) => ({ state: "ready" as const, message: null, deviceId: "k", deviceLimit: false, planUnknown: false, plan });
-  const free = { plan: "free", untilUnixMs: null, interval: null, billing: true };
-  const cloud = { plan: "cloud", untilUnixMs: Date.UTC(2027, 10, 9, 12), interval: "year", billing: true };
+  const free = { plan: "free", untilUnixMs: null, interval: null, billing: true, plusAvailable: false };
+  const cloud = { plan: "cloud", untilUnixMs: Date.UTC(2027, 10, 9, 12), interval: "year", billing: true, plusAvailable: false };
+  const plus = { ...cloud, planTier: "plus" };
 
   it("reads Free or Cloud until a date", () => {
     expect(planLine(free, "en-US")).toBe("Free: 1 computer + 1 phone");
     expect(planLine(cloud, "en-US")).toBe("Cloud until November 9, 2027");
     expect(planLine({ ...cloud, renews: true }, "en-US")).toBe("Cloud until November 9, 2027");
     expect(planLine({ ...cloud, renews: false }, "en-US")).toBe("Cloud ends November 9, 2027. It won't renew.");
+  });
+
+  it("says Plus, never Cloud, on a Plus plan", () => {
+    expect(planLine(plus, "en-US")).toBe("Plus until November 9, 2027");
+    expect(planLine({ ...plus, renews: false }, "en-US")).toBe("Plus ends November 9, 2027. It won't renew.");
+    expect(planLine({ ...plus, untilUnixMs: null }, "en-US")).toBe("Plus");
+    expect(planLine({ ...cloud, planTier: "cloud" }, "en-US")).toBe("Cloud until November 9, 2027");
+    expect([offersUpgrade(view(plus)), offersManage(view(plus))]).toEqual([false, true]);
+  });
+
+  it("sells Plus only when the server says so", () => {
+    expect(sellsPlus(view({ ...free, plusAvailable: true }))).toBe(true);
+    expect(sellsPlus(view(free))).toBe(false);
+    expect(sellsPlus(view(null))).toBe(false);
   });
 
   it("offers Upgrade on Free and Manage on Cloud, only with billing open", () => {

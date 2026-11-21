@@ -1787,6 +1787,9 @@
         }
       }
     },
+    "Daily brief" : {
+      "shouldTranslate" : false
+    },
     "Daily spend cap reached on this iPhone" : {
       "localizations" : {
         "de" : {
@@ -6197,6 +6200,9 @@
         }
       }
     },
+    "Up next" : {
+      "shouldTranslate" : false
+    },
     "Update needed on another of your devices before it applies deletes." : {
       "comment" : "Sync line (X6, Task 11): another of the user's devices has not announced client deletes yet. English only: not translated yet; translation waits on Mike.",
       "localizations" : {
@@ -6441,6 +6447,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Escrever notas e resumos em"
+          }
+        }
+      }
+    },
+    "Written by Whimbrel" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Von Whimbrel geschrieben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escrito por Whimbrel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Écrit par Whimbrel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Écrit par Whimbrel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escrito pelo Whimbrel"
           }
         }
       }
@@ -6920,12 +6960,6 @@
           }
         }
       }
-    },
-    "•" : {
-      "shouldTranslate" : false
-    },
-    "• %@" : {
-      "shouldTranslate" : false
     }
   },
   "version" : "1.0"

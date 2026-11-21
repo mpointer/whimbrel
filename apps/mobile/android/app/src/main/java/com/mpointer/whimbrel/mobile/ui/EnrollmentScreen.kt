@@ -12,12 +12,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,11 +33,18 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.heading
 import com.mpointer.whimbrel.mobile.R
+import com.mpointer.whimbrel.mobile.design.WButton
+import com.mpointer.whimbrel.mobile.design.WButtonKind
+import com.mpointer.whimbrel.mobile.design.WCard
+import com.mpointer.whimbrel.mobile.design.WTokens
+import com.mpointer.whimbrel.mobile.design.style
 import com.mpointer.whimbrel.mobile.core.CoreUserMessage
 import com.mpointer.whimbrel.mobile.core.LimitHolder
 import com.mpointer.whimbrel.mobile.sync.ActionError
@@ -146,33 +151,40 @@ fun EnrollmentScreen(model: EnrollmentModel) {
 
     Surface(Modifier.fillMaxSize()) {
         Column(
-            Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(24.dp).fillMaxWidth(),
+            Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(WTokens.Space.xl).fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(
                 Modifier.widthIn(max = 480.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+                verticalArrangement = Arrangement.spacedBy(WTokens.Space.lg),
             ) {
-                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.app_name), Modifier.padding(top = WTokens.Space.xl).semantics { heading() }, style = WTokens.TypeScale.pageTitle.style(), textAlign = TextAlign.Center)
                 val title = content.titleRes?.let { stringResource(it) } ?: content.title?.localized(resolve)
-                title?.let { Text(it, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center) }
-                content.code?.let { CodeText(it, content.codeDescription?.localized(resolve).orEmpty()) }
+                title?.let { Text(it, Modifier.semantics { heading() }, style = WTokens.TypeScale.title.style(), textAlign = TextAlign.Center) }
+                // The code to compare, set apart on its own card so it is the one thing to look at.
+                content.code?.let { code ->
+                    WCard(Modifier.fillMaxWidth(), tint = MaterialTheme.colorScheme.tertiaryContainer) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = WTokens.Space.sm), contentAlignment = Alignment.Center) {
+                            CodeText(code, content.codeDescription?.localized(resolve).orEmpty())
+                        }
+                    }
+                }
                 val body = content.bodyRes?.let { stringResource(it) } ?: content.body?.localized(resolve)
-                body?.let { Text(it, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                body?.let { Text(it, style = WTokens.TypeScale.body.style(), textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 if (content.showsProgress) CircularProgressIndicator()
                 for (action in content.actions) {
                     when (action) {
                         EnrollmentAction.SignIn ->
-                            Button({ scope.launch { model.signIn() } }, enabled = content.actionsEnabled) { Text(stringResource(R.string.enroll_sign_in)) }
+                            WButton(stringResource(R.string.enroll_sign_in), { scope.launch { model.signIn() } }, Modifier.fillMaxWidth(), enabled = content.actionsEnabled)
                         EnrollmentAction.TryAgain ->
-                            Button({ scope.launch { model.signIn() } }) { Text(stringResource(R.string.enroll_try_again)) }
+                            WButton(stringResource(R.string.enroll_try_again), { scope.launch { model.signIn() } }, Modifier.fillMaxWidth())
                         is EnrollmentAction.UseThisPhoneInstead -> UseThisPhoneButton(model, action.holder)
                         EnrollmentAction.JoinWaitlist -> Waitlist(model)
                     }
                 }
                 actionError?.let {
-                    Text(it.localized(resolve), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(it.localized(resolve), style = WTokens.TypeScale.secondary.style(), textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -186,9 +198,9 @@ private fun CodeText(code: String, description: String) {
     Text(
         code,
         Modifier.semantics { contentDescription = description },
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.onSurface,
         fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
         fontSize = size,
         maxLines = 1,
         softWrap = false,
@@ -200,9 +212,7 @@ private fun CodeText(code: String, description: String) {
 private fun UseThisPhoneButton(model: EnrollmentModel, holder: LimitHolder) {
     val scope = rememberCoroutineScope()
     var working by remember { mutableStateOf(false) }
-    Button({ scope.launch { working = true; model.swap(holder); working = false } }, enabled = !working) {
-        Text(stringResource(R.string.enroll_use_this_phone))
-    }
+    WButton(stringResource(R.string.enroll_use_this_phone), { scope.launch { working = true; model.swap(holder); working = false } }, Modifier.fillMaxWidth(), enabled = !working)
 }
 
 @Composable
@@ -220,15 +230,16 @@ private fun Waitlist(model: EnrollmentModel) {
     for ((labelRes, want) in EnrollmentModel.waitlistOptions) {
         val checked = want in wants
         Row(
-            Modifier.fillMaxWidth().toggleable(checked, role = Role.Checkbox) { wants = if (it) wants + want else wants - want },
+            Modifier.fillMaxWidth().heightIn(min = WTokens.Size.target).toggleable(checked, role = Role.Checkbox) { wants = if (it) wants + want else wants - want },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Checkbox(checked, onCheckedChange = null)
             Text(stringResource(labelRes), Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp))
         }
     }
-    OutlinedButton(
+    WButton(
+        stringResource(R.string.enroll_join_waitlist),
         { scope.launch { working = true; joined = model.joinWaitlist(wants.sorted()); working = false } },
-        enabled = wants.isNotEmpty() && !working,
-    ) { Text(stringResource(R.string.enroll_join_waitlist)) }
+        Modifier.fillMaxWidth(), kind = WButtonKind.Secondary, enabled = wants.isNotEmpty() && !working,
+    )
 }

@@ -98,19 +98,26 @@ struct ProviderModelPicker: View {
         }
     }
 
+    private var providerPicker: some View {
+        Picker("", selection: $selectedProvider) {
+            ForEach(RoutingSettings.Provider.allCases) { Text($0.displayName).tag($0) }
+        }
+        .labelsHidden()
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             // The segments size to their names (six providers no longer fit the old fixed 380 pt,
             // and the overflow drew over the label and the model menu), and the model menu has
             // its own row so a narrow window can't overlap the two.
+            // Segments when they fit, a menu when they don't: the fixed-size segments were wider
+            // than a narrow Ask column, which pushed the whole page out under the sidebar (Nov 20).
             HStack {
                 Text("Provider:").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
-                Picker("", selection: $selectedProvider) {
-                    ForEach(RoutingSettings.Provider.allCases) { Text($0.displayName).tag($0) }
+                ViewThatFits(in: .horizontal) {
+                    providerPicker.pickerStyle(.segmented).fixedSize()
+                    providerPicker.pickerStyle(.menu).fixedSize()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
                 .onChange(of: selectedProvider) { _, _ in
                     clampSelectedModelIfNeeded()
                     refreshHostedModelsIfNeeded()

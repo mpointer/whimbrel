@@ -34,6 +34,7 @@ pub mod l10n;
 pub mod limited_use;
 pub use limited_use::is_google_user_data;
 pub mod live;
+pub mod line_source;
 pub mod live_alert;
 pub mod meeting_marker;
 pub mod meeting_parts;
@@ -1526,6 +1527,15 @@ pub fn retry_when_busy<T>(
     }
 }
 
+/// How long opening a store waits for another connection's write. The schema step writes, and rusqlite's
+/// default 5 s made a second connection (another lane, the MCP server) fail to open with "database is locked"
+/// while a long write ran (Windows CI, Nov 19 2026). Only the open waits this long: it then goes back to
+/// [`DEFAULT_BUSY_TIMEOUT`], and the apps set their own.
+pub(crate) const OPEN_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The wait every connection has after its open: rusqlite's own default, which the shells raise as they need.
+pub(crate) const DEFAULT_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl Store {
     pub fn open(path: &Path, models_dir: &Path) -> rusqlite::Result<Self> {
         ensure_vec_extension_registered();
@@ -1534,8 +1544,10 @@ impl Store {
         // connection closes first, then the file unregisters (`open_registry`).
         let registration;
         let conn = Connection::open(path)?;
+        conn.busy_timeout(OPEN_BUSY_TIMEOUT)?;
         registration = open_registry::register(path, DbFileState::Plain)?;
         Self::init(&conn)?;
+        conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
         embedding::prune_stale_embedding_models(models_dir);
         Ok(Store {
             conn: Self::with_immediate_writes(conn),
@@ -1717,8 +1729,10 @@ impl Store {
         keyed_migrate::refuse_create_over_interrupted_migration(path)?;
         let registration;
         let conn = Connection::open(path)?;
+        conn.busy_timeout(OPEN_BUSY_TIMEOUT)?;
         registration = open_registry::register(path, DbFileState::Plain)?;
         Self::init(&conn)?;
+        conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
         Ok(Store {
             conn: Self::with_immediate_writes(conn),
             embedder,
@@ -2223,6 +2237,7 @@ impl Store {
         provider_budget::ensure_provider_budget_tables(conn)?;
         meeting_parts::ensure_meeting_part_schema(conn)?;
         meeting_marker::ensure_meeting_marker_table(conn)?;
+        line_source::ensure_line_source_tables(conn)?;
         summary_fallback::ensure_summary_fallback_table(conn)?;
         recap_sent::ensure_recap_sent_table(conn)?;
         Self::ensure_items_app_fields_columns(conn)?;
@@ -4025,7 +4040,22 @@ impl Store {
         // Embedding is slow: done before the transaction, never inside it.
         let embeddings = self.embed_segments(segments);
         let tx = self.conn.unchecked_transaction()?;
-        self.insert_transcript_segments_tx(&tx, segments, &embeddings)?;
+        self.insert_transcript_segments_tx(&tx, segments, &embeddings, &[])?;
+        tx.commit()
+    }
+
+    /// [`Store::insert_transcript_segments`] that also records how long each line ran:
+    /// `ends[i]` is the end time of `segments[i]` in centiseconds on the same clock as its
+    /// `start_cs` (`None`, or a list shorter than `segments`, stores no end for that line; an end
+    /// before the start counts as none). Ends are device-local, never synced.
+    pub fn insert_transcript_segments_with_ends(
+        &self,
+        segments: &[NewTranscriptSegment],
+        ends: &[Option<i64>],
+    ) -> rusqlite::Result<()> {
+        let embeddings = self.embed_segments(segments);
+        let tx = self.conn.unchecked_transaction()?;
+        self.insert_transcript_segments_tx(&tx, segments, &embeddings, ends)?;
         tx.commit()
     }
 
@@ -4041,6 +4071,7 @@ impl Store {
         tx: &rusqlite::Transaction<'_>,
         segments: &[NewTranscriptSegment],
         embeddings: &[Option<Vec<f32>>],
+        ends: &[Option<i64>],
     ) -> rusqlite::Result<()> {
         let Some(first) = segments.first() else {
             return Ok(());
@@ -4056,7 +4087,7 @@ impl Store {
             return Ok(());
         };
         let now_unix_ms = now_unix_ms();
-        for (seg, embedding) in segments.iter().zip(embeddings) {
+        for (index, (seg, embedding)) in segments.iter().zip(embeddings).enumerate() {
             // A trimmed meeting never gets lines back past its cut ("Transcribe again" on
             // audio whose truncation failed).
             if trimmed_keep_ms.is_some_and(|keep| seg.start_cs * 10 >= keep) {
@@ -4068,6 +4099,17 @@ impl Store {
                 params![seg.meeting_id, seg.start_cs, seg.speaker_label, seg.text, local_seq],
             )?;
             let id = tx.last_insert_rowid();
+            // An end that is not after the start, or would make the line longer than a day, is
+            // dropped and the line kept without one (an end comes from outside and may be anything).
+            if let Some(dur) = ends
+                .get(index)
+                .copied()
+                .flatten()
+                .and_then(|end| end.checked_sub(seg.start_cs))
+                .filter(|dur| (1..=line_source::MAX_LINE_DURATION_CS).contains(dur))
+            {
+                Self::set_segment_duration_tx(tx, id, dur)?;
+            }
             if let Some(embedding) = embedding {
                 tx.execute(
                     "INSERT INTO transcript_segment_vec(rowid, embedding) VALUES (?1, ?2)",
@@ -7090,6 +7132,10 @@ impl Store {
             &format!("DELETE FROM meeting_marker WHERE meeting_id IN {expired_ids}"),
             params![cutoff_unix_ms],
         )?;
+        self.conn.execute(
+            &format!("DELETE FROM meeting_line_source WHERE meeting_id IN {expired_ids}"),
+            params![cutoff_unix_ms],
+        )?;
         // No tombstone follows a retention delete: nothing will delete these server rows.
         self.conn.execute(
             &format!("DELETE FROM pushed_meeting_row WHERE meeting_id IN {expired_ids}"),
@@ -7241,6 +7287,7 @@ impl Store {
         )?;
         tx.execute("DELETE FROM live_alert WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM meeting_marker WHERE meeting_id = ?1", params![id])?;
+        tx.execute("DELETE FROM meeting_line_source WHERE meeting_id = ?1", params![id])?;
         tx.execute(
             "DELETE FROM meeting_speaker WHERE meeting_id = ?1",
             params![id],
@@ -9087,6 +9134,7 @@ impl Store {
             "UPDATE meeting_marker SET meeting_id = ?1 WHERE meeting_id = ?2",
             params![keep, drop],
         )?;
+        Self::fold_line_sources_tx(&tx, drop, keep)?;
         // A speaker id the kept copy already has stays the kept copy's.
         tx.execute(
             "UPDATE OR IGNORE meeting_speaker SET meeting_id = ?1 WHERE meeting_id = ?2",
@@ -10576,6 +10624,26 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    /// Opening a store waits for another connection's write as long as the app's own timeout does. The
+    /// schema step writes, and rusqlite's default 5 s wait failed the open with "database is locked" on a
+    /// busy machine (Windows CI, Nov 19 2026), so a second lane or the MCP server could fail to open.
+    #[test]
+    fn opening_a_store_waits_past_five_seconds_for_a_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.sqlite");
+        drop(Store::open(&path, dir.path()).unwrap());
+        let writer = rusqlite::Connection::open(&path).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE; INSERT OR REPLACE INTO kv_meta (key, value) VALUES ('busy_test', '1');").unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(7));
+            writer.execute_batch("COMMIT;").unwrap();
+        });
+        let started = std::time::Instant::now();
+        let opened = Store::open(&path, dir.path());
+        release.join().unwrap();
+        assert!(opened.is_ok(), "open failed after {:?}: {:?}", started.elapsed(), opened.err());
+    }
+
     use super::*;
     use chrono::TimeZone;
 

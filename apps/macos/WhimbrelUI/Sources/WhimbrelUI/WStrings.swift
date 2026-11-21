@@ -191,6 +191,85 @@ public struct WLiveStrings: Sendable {
     )
 }
 
+/// The words the finished note page and its transcript view draw themselves. Text that belongs to one meeting
+/// (the title, the notices, a placeholder) arrives in the model instead.
+public struct WNoteStrings: Sendable {
+    public var note: String
+    /// The spoken name of the Note and Transcript switch.
+    public var viewSwitch: String
+    public var copy: String
+    /// The transcript view's copy control, so the page never has two controls both named Copy.
+    public var copyTranscript: String
+    /// The spoken name of the chevron beside Copy that opens the other formats.
+    public var moreCopyFormats: String
+    public var copyAsMarkdown: String
+    public var copyAsSlack: String
+    public var sendRecap: String
+    public var edit: String
+    public var regenerate: String
+    public var yourNotes: String
+    public var summary: String
+    public var decisions: String
+    public var openQuestions: String
+    public var actionItems: String
+    /// The one line at the top of the margin.
+    public var marginIntro: String
+    /// Under the margin line on a note that has no sources.
+    public var regenerateForSources: String
+    /// "Open in transcript at 18:25".
+    public var openInTranscriptAt: @Sendable (String) -> String
+    /// "Due Thu, Nov 19".
+    public var dueOn: @Sendable (String) -> String
+    /// The spoken name of the group of speaker lanes.
+    public var speakerLanes: String
+    /// Spoken once when a transcript line is highlighted: "Showing the line at 18:25".
+    public var showingLine: @Sendable (String) -> String
+    /// The spoken hint of the lanes: how to move between spans.
+    public var lanesHint: String
+
+    public init(
+        note: String, viewSwitch: String, copy: String, copyTranscript: String, moreCopyFormats: String, copyAsMarkdown: String, copyAsSlack: String, sendRecap: String, edit: String,
+        regenerate: String, yourNotes: String, summary: String, decisions: String, openQuestions: String, actionItems: String,
+        marginIntro: String, regenerateForSources: String,
+        openInTranscriptAt: @escaping @Sendable (String) -> String, dueOn: @escaping @Sendable (String) -> String,
+        speakerLanes: String, showingLine: @escaping @Sendable (String) -> String, lanesHint: String
+    ) {
+        self.note = note
+        self.viewSwitch = viewSwitch
+        self.copy = copy
+        self.copyTranscript = copyTranscript
+        self.moreCopyFormats = moreCopyFormats
+        self.copyAsMarkdown = copyAsMarkdown
+        self.copyAsSlack = copyAsSlack
+        self.sendRecap = sendRecap
+        self.edit = edit
+        self.regenerate = regenerate
+        self.yourNotes = yourNotes
+        self.summary = summary
+        self.decisions = decisions
+        self.openQuestions = openQuestions
+        self.actionItems = actionItems
+        self.marginIntro = marginIntro
+        self.regenerateForSources = regenerateForSources
+        self.openInTranscriptAt = openInTranscriptAt
+        self.dueOn = dueOn
+        self.speakerLanes = speakerLanes
+        self.showingLine = showingLine
+        self.lanesHint = lanesHint
+    }
+
+    public static let english = WNoteStrings(
+        note: "Note", viewSwitch: "View", copy: "Copy", copyTranscript: "Copy transcript", moreCopyFormats: "More copy formats", copyAsMarkdown: "Copy as Markdown", copyAsSlack: "Copy as Slack",
+        sendRecap: "Send recap", edit: "Edit", regenerate: "Regenerate", yourNotes: "Your notes", summary: "Summary",
+        decisions: "Decisions", openQuestions: "Open questions", actionItems: "Action items",
+        marginIntro: "Whimbrel wrote the marked lines. Each number points to the moment in the transcript it came from.",
+        regenerateForSources: "Regenerate the summary to add sources.",
+        openInTranscriptAt: { "Open in transcript at \($0)" }, dueOn: { "Due \($0)" },
+        speakerLanes: "Speaker lanes", showingLine: { "Showing the line at \($0)" },
+        lanesHint: "Use the arrow keys to move between spans, and Return to open the line."
+    )
+}
+
 /// Every word the components show or speak, in one value. The package owns no translations: it ships
 /// English (`WStrings.english`) and the app hands in a `WStrings` built from its own string catalog
 /// (`apps/macos/Whimbrel/UI/WhimbrelUIStrings.swift`) through the environment.
@@ -285,6 +364,9 @@ public struct WStrings: Sendable {
     // The live meeting screen and the in-meeting window
     public var live: WLiveStrings
 
+    // The finished note page and its transcript view
+    public var note: WNoteStrings
+
     public init(
         recording: String, starting: String, resuming: String, recordingPaused: String, paused: String, processing: String, off: String, problem: String,
         pause: String, resume: String, stop: String,
@@ -309,9 +391,11 @@ public struct WStrings: Sendable {
         memory: String, loading: String, tryAgain: String,
         onboarding: WOnboardingStrings,
         home: WHomeStrings,
-        live: WLiveStrings
+        live: WLiveStrings,
+        note: WNoteStrings
     ) {
         self.live = live
+        self.note = note
         self.starting = starting
         self.resuming = resuming
         self.recordingPaused = recordingPaused
@@ -393,7 +477,8 @@ public struct WStrings: Sendable {
         memory: "Memory", loading: "Loading", tryAgain: "Try again",
         onboarding: .english,
         home: .english,
-        live: .english
+        live: .english,
+        note: .english
     )
 }
 

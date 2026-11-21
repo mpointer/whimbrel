@@ -17,7 +17,7 @@ struct WhimbrelApp: App {
         }
         let enrollment = Self.makeEnrollment()
         let sync = SyncModel(openStore: Self.makeStore, credentials: enrollment)
-        sync.settingsPuller = CoreSettingsPuller()
+        sync.settingsPuller = Self.settingsPuller(isDemo: Self.isDemo)
         if !Self.isDemo {
             // Revoked: close the store, then delete its directory (the demos use a temp store).
             // Marker first, so a wipe cut short by suspension or exit is finished at next launch.
@@ -51,8 +51,17 @@ struct WhimbrelApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if Self.isGallery {
+                WGallery().onAppear { WGallery.installThemes() }
+            } else {
+                EnrollmentView(model: enrollment, sync: sync, coordinator: coordinator, router: router)
+                    .environmentObject(coordinator)
+            }
+            #else
             EnrollmentView(model: enrollment, sync: sync, coordinator: coordinator, router: router)
                 .environmentObject(coordinator)
+            #endif
         }
         .onChange(of: scenePhase) { _, phase in
             coordinator.isForeground = phase == .active
@@ -64,14 +73,25 @@ struct WhimbrelApp: App {
         try FileManager.default.removeItem(at: try CoreMemoryStore.defaultPath().deletingLastPathComponent())
     }
 
+    /// The demos have no real account: no settings pull, so nothing reaches the relay and no
+    /// key or routing is written to this phone's real settings.
+    static func settingsPuller(isDemo: Bool) -> SettingsPulling? {
+        isDemo ? nil : CoreSettingsPuller()
+    }
+
     private static var isDemo: Bool {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
-        return arguments.contains("-WhimbrelDemoEnrollment") || arguments.contains("-WhimbrelDemoNeedsDesktop") || arguments.contains("-WhimbrelDemoSynced")
+        return arguments.contains("-WhimbrelDemoEnrollment") || arguments.contains("-WhimbrelDemoNeedsDesktop") || arguments.contains("-WhimbrelDemoDeviceLimit") || arguments.contains("-WhimbrelDemoSynced") || isGallery
         #else
         return false
         #endif
     }
+
+    #if DEBUG
+    /// The component gallery (`-WhimbrelGallery`): a demo launch, so it reads no account and no store.
+    private static var isGallery: Bool { ProcessInfo.processInfo.arguments.contains("-WhimbrelGallery") }
+    #endif
 
     /// Runs on the sync model's store queue.
     private static func makeStore() -> MeetingSyncStore? {
@@ -94,7 +114,7 @@ struct WhimbrelApp: App {
     private static func makeEnrollment() -> EnrollmentModel {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("-WhimbrelDemoEnrollment") || arguments.contains("-WhimbrelDemoNeedsDesktop") {
+        if arguments.contains("-WhimbrelDemoEnrollment") || arguments.contains("-WhimbrelDemoNeedsDesktop") || arguments.contains("-WhimbrelDemoDeviceLimit") {
             let model = EnrollmentModel(backend: DemoEnrollmentBackend())
             Task { await model.signIn() }
             return model

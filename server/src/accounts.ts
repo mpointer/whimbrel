@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS account (
   stripe_subscription_id TEXT,
   plan_renews INTEGER NOT NULL DEFAULT 1,
   ai_credit_micros INTEGER NOT NULL DEFAULT 0,
-  ai_open_holds INTEGER NOT NULL DEFAULT 0
+  ai_open_holds INTEGER NOT NULL DEFAULT 0,
+  plan_tier TEXT,
+  ai_allowance_micros INTEGER NOT NULL DEFAULT 0,
+  ai_allowance_expires_ms INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS ai_ledger (
@@ -60,17 +63,37 @@ CREATE TABLE IF NOT EXISTS ai_ledger (
   output_tokens INTEGER,
   stripe_ref TEXT UNIQUE,
   created_at_unix_ms INTEGER NOT NULL,
-  shortfall_micros INTEGER
+  shortfall_micros INTEGER,
+  from_allowance_micros INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS ai_hold (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
   micros INTEGER NOT NULL,
-  created_at_unix_ms INTEGER NOT NULL
+  created_at_unix_ms INTEGER NOT NULL,
+  from_allowance_micros INTEGER NOT NULL DEFAULT 0,
+  allowance_expires_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS ai_hold_account ON ai_hold(account_id);
 CREATE INDEX IF NOT EXISTS ai_ledger_account ON ai_ledger(account_id);
+
+CREATE TABLE IF NOT EXISTS ai_allowance_grant (
+  grant_key TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  micros INTEGER NOT NULL,
+  period_end_unix_ms INTEGER NOT NULL,
+  created_at_unix_ms INTEGER NOT NULL,
+  line_start_unix_ms INTEGER,
+  line_end_unix_ms INTEGER,
+  subscription_id TEXT
+);
+CREATE INDEX IF NOT EXISTS ai_allowance_grant_account ON ai_allowance_grant(account_id);
+
+CREATE TABLE IF NOT EXISTS server_setting (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS stripe_event (
   id TEXT PRIMARY KEY,
@@ -141,13 +164,18 @@ export interface AccountRecord {
   stripeSubscriptionId: string | null;
   /** False once a Cloud subscription is cancelled: it ends at planUntilUnixMs. */
   planRenews: boolean;
+  /** Which paid product; null for free accounts (a lapsed Plus never reports "plus"). */
+  planTier: "cloud" | "plus" | null;
+  /** Monthly AI allowance left, in micro-dollars; spendable only while aiAllowanceExpiresMs is in the future. */
+  aiAllowanceMicros: number;
+  aiAllowanceExpiresMs: number | null;
 }
 
 /** Thrown when a route touches an account that is claimed for deletion. */
 export class AccountDeletingError extends Error {}
 
 export const ACCOUNT_COLUMNS =
-  "id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews";
+  "id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews, plan_tier, ai_allowance_micros, ai_allowance_expires_ms";
 
 /** "resetting" is a pending swap device partway through a fresh-start
  * reset: it is treated like "pending" everywhere until the reset finishes. */
@@ -414,14 +442,16 @@ export async function setStripeCustomer(db: SqlExecutor, accountId: string, cust
  * Nothing is written to an account claimed for deletion. */
 export async function applyPlan(db: SqlExecutor, accountId: string, subscriptionId: string, state: PlanState): Promise<boolean> {
   const set = [state.plan, state.untilUnixMs, state.interval, state.renews ? 1 : 0, subscriptionId];
+  // The paid branch stores the tier (a paid plan without one is Cloud); the
+  // free branch clears it, so a lapsed Plus account never reports "plus".
   const rows =
     state.plan === "cloud"
       ? await db.execute(
-          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, plan_renews = ?, stripe_subscription_id = ?, warned_at_unix_ms = NULL WHERE id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
-          [...set, accountId],
+          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, plan_renews = ?, stripe_subscription_id = ?, plan_tier = ?, warned_at_unix_ms = NULL WHERE id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
+          [...set, state.tier === "plus" ? "plus" : "cloud", accountId],
         )
       : await db.execute(
-          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, plan_renews = ?, stripe_subscription_id = ? WHERE id = ? AND stripe_subscription_id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
+          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, plan_renews = ?, stripe_subscription_id = ?, plan_tier = NULL WHERE id = ? AND stripe_subscription_id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
           [...set, accountId, subscriptionId],
         );
   return rows.length === 1;
@@ -430,7 +460,7 @@ export async function applyPlan(db: SqlExecutor, accountId: string, subscription
 /** Marks the plan ended once its subscription is cancelled, so a retried
  * deletion skips the cancel. */
 export async function endPlan(db: SqlExecutor, accountId: string): Promise<void> {
-  await db.execute("UPDATE account SET plan = 'free', stripe_subscription_id = NULL WHERE id = ?", [accountId]);
+  await db.execute("UPDATE account SET plan = 'free', plan_tier = NULL, stripe_subscription_id = NULL WHERE id = ?", [accountId]);
 }
 
 // ponytail: stripe_event is never pruned; prune in the cron past ~100k rows.
@@ -659,6 +689,7 @@ export async function deleteAccountRows(db: SqlExecutor, accountId: string): Pro
   // Whimbrel AI credit is forfeited with the account.
   await db.execute("DELETE FROM ai_hold WHERE account_id = ?", [accountId]);
   await db.execute("DELETE FROM ai_ledger WHERE account_id = ?", [accountId]);
+  await db.execute("DELETE FROM ai_allowance_grant WHERE account_id = ?", [accountId]);
 }
 
 /** Accounts from before last-seen existed count as seen now, never as idle. */
@@ -760,6 +791,9 @@ function rowToAccount(row: SqlRow): AccountRecord {
     stripeCustomerId: row.stripe_customer_id == null ? null : (row.stripe_customer_id as string),
     stripeSubscriptionId: row.stripe_subscription_id == null ? null : (row.stripe_subscription_id as string),
     planRenews: row.plan_renews == null ? true : Number(row.plan_renews) !== 0,
+    planTier: row.plan_tier === "cloud" || row.plan_tier === "plus" ? row.plan_tier : null,
+    aiAllowanceMicros: row.ai_allowance_micros == null ? 0 : Number(row.ai_allowance_micros),
+    aiAllowanceExpiresMs: row.ai_allowance_expires_ms == null ? null : Number(row.ai_allowance_expires_ms),
   };
 }
 

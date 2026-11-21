@@ -1,5 +1,6 @@
 package com.mpointer.whimbrel.mobile.sync
 
+import com.mpointer.whimbrel.mobile.R
 import com.mpointer.whimbrel.mobile.auth.GoogleSignInError
 import com.mpointer.whimbrel.mobile.core.AccountPlan
 import com.mpointer.whimbrel.mobile.core.CoreUserMessage
@@ -49,6 +50,16 @@ internal class FakeCoreNative : FakeSyncNative() {
 
     override fun syncDevicePublicKey(secretKeyBase64: String) = publicOf(secretKeyBase64)?.let { """{"public_key_base64":"$it"}""" }
     override fun deviceComparisonCode(publicKeyBase64: String) = "code($publicKeyBase64)"
+
+    /** Set to make the wrap fail (null), or to an empty blob. */
+    var wrapReply: ((String) -> String?)? = null
+    val wraps = mutableListOf<List<String>>()
+
+    override fun syncWrapGroupKey(senderSecretKeyBase64: String, recipientPublicKeyBase64: String, groupKeyBase64: String): String? {
+        wraps += listOf(senderSecretKeyBase64, recipientPublicKeyBase64, groupKeyBase64)
+        val blob = wrap(publicOf(senderSecretKeyBase64)!!, recipientPublicKeyBase64, groupKeyBase64)
+        return (wrapReply ?: { """{"wrapped_group_key_base64":"$it"}""" })(blob)
+    }
 
     override fun syncUnwrapGroupKey(recipientSecretKeyBase64: String, senderPublicKeyBase64: String, wrappedGroupKeyBase64: String): String? {
         val (tag, sender, recipient, groupKey) = wrappedGroupKeyBase64.split("|").takeIf { it.size == 4 } ?: return null
@@ -142,6 +153,17 @@ class FakeBackend : EnrollmentBackend {
         setNameError?.let { throw it }
     }
 
+    var approveError: Exception? = null
+    val approved = mutableListOf<Pair<String, String>>()
+    /** While set, `approve` waits for it before answering (a request in flight). */
+    var approveGate: CompletableDeferred<Unit>? = null
+
+    override suspend fun approve(idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String) {
+        approveGate?.await()
+        approveError?.let { throw it }
+        approved += targetDeviceId to wrappedGroupKey
+    }
+
     var swapError: Exception? = null
     var waitlistError: Exception? = null
     var listDevicesCalls = 0
@@ -212,6 +234,7 @@ class EnrollmentModelTest {
     private fun TestScope.makeModel(
         backend: EnrollmentBackend? = this@EnrollmentModelTest.backend,
         sleep: suspend (Long) -> Unit = { sleeper.sleep(it) },
+        approvalEnabled: Boolean = true,
     ) = EnrollmentModel(
         backend = backend,
         secrets = secrets,
@@ -222,6 +245,7 @@ class EnrollmentModelTest {
         clock = { now },
         sleep = sleep,
         configError = if (backend == null) "Google sign-in is not configured" else null,
+        approvalEnabled = approvalEnabled,
     )
 
     private fun TestScope.makeWipingModel() = makeModel().also { it.onWipe = { wipes += 1 } }
@@ -1008,5 +1032,197 @@ class EnrollmentModelTest {
         backend.authReplies += { _ -> throw desktopRequired }
         model.signIn()
         assertEquals(EnrollmentStatus.NeedsDesktopFirst, model.status.value)
+    }
+
+    // ---- Approving another device from this phone ----
+
+    private fun TestScope.approvedModel(approvalEnabled: Boolean = true): EnrollmentModel {
+        secrets.deviceSecretKey = "sk-me"
+        secrets.groupKey = "group-key"
+        return makeModel(approvalEnabled = approvalEnabled).also { it.onWipe = { wipes += 1 } }
+    }
+
+    private fun pending(id: String, key: String) = device(key, "pending", id)
+
+    @Test
+    fun otherDevicesLeaveOutThisPhoneAndRevokedOnes() = runTest {
+        backend.devices = listOf(device("pk-me", id = "me"), device("pk-mac"), pending("new", "pk-new"), device("pk-old", "revoked", "old"))
+        val model = approvedModel()
+        model.refreshOtherDevices()
+        assertEquals(listOf("mac", "new"), model.otherDevices.value.map { it.device.id })
+        assertEquals("code(pk-new)", model.otherDevices.value[1].code)
+        assertEquals(1, model.pendingDeviceCount.value)
+        assertTrue(model.otherDevices.value[1].canApprove)
+        assertFalse("an approved device has nothing to approve", model.otherDevices.value[0].canApprove)
+    }
+
+    @Test
+    fun approvingWrapsThisPhonesGroupKeyToTheTappedDevicesPublicKey() = runTest {
+        backend.devices = listOf(device("pk-mac"), pending("new", "pk-new"))
+        val model = approvedModel()
+        model.refreshOtherDevices()
+        model.approve("new", "pk-new")
+        assertEquals("sender secret, the tapped row's public key, the group key", listOf(listOf("sk-me", "pk-new", "group-key")), native.wraps)
+        assertEquals(listOf("new" to FakeCoreNative.wrap("pk-me", "pk-new", "group-key")), backend.approved)
+        assertNull(model.approvalError.value)
+        assertFalse(model.approving.value)
+        assertEquals("nothing wiped", 0, wipes)
+    }
+
+    @Test
+    fun devicesThatShowTheSameCodeAreNeverApproved() = runTest {
+        // Two pending rows with one public key show one code: they can't be told apart on screen.
+        backend.devices = listOf(pending("a", "pk-twin"), pending("b", "pk-twin"), pending("c", "pk-other"))
+        val model = approvedModel()
+        model.refreshOtherDevices()
+        assertEquals(listOf(true, true, false), model.otherDevices.value.map { it.collides })
+        model.approve("a", "pk-twin")
+        model.approve("b", "pk-twin")
+        assertTrue(backend.approved.isEmpty())
+        assertTrue("no key is wrapped for a row that can't be approved", native.wraps.isEmpty())
+        model.approve("c", "pk-other")
+        assertEquals(listOf("c"), backend.approved.map { it.first })
+    }
+
+    @Test
+    fun aDeviceWithNoCodeToCompareIsNotApprovedFromThePhone() = runTest {
+        val rows = DeviceRow.rows(listOf(pending("x", "pk-x"), pending("y", "pk-y")), "pk-me") { if (it == "pk-x") null else "" }
+        assertEquals(listOf<String?>(null, null), rows.map { it.code })
+        assertEquals("no code, so no button and no collision", listOf(false, false), rows.map { it.canApprove })
+        assertEquals(listOf(false, false), rows.map { it.collides })
+    }
+
+    @Test
+    fun onlyAPendingDeviceThatIsStillListedIsApproved() = runTest {
+        backend.devices = listOf(device("pk-mac"), pending("new", "pk-new"))
+        val model = approvedModel()
+        model.approve("new", "pk-new")
+        assertTrue("nothing is approved before the list has been read", backend.approved.isEmpty())
+        model.refreshOtherDevices()
+        model.approve("mac", "pk-mac")
+        model.approve("no-such-device", "pk-x")
+        assertTrue(backend.approved.isEmpty())
+    }
+
+    @Test
+    fun aKeyThatChangedAfterItsCodeWasShownIsNotApproved() = runTest {
+        backend.devices = listOf(pending("new", "pk-new"))
+        val model = approvedModel()
+        model.refreshOtherDevices()
+        // The screen showed the code for pk-new; before the tap, the same device id comes back with another key.
+        backend.devices = listOf(pending("new", "pk-swapped"))
+        model.refreshOtherDevices()
+        model.approve("new", "pk-new")
+        assertTrue("the group key is wrapped for nobody", native.wraps.isEmpty())
+        assertTrue(backend.approved.isEmpty())
+        assertEquals(R.string.devices_code_changed, model.approvalError.value?.fallback)
+        // After checking the new code, the same tap approves that key and no other.
+        model.approve("new", "pk-swapped")
+        assertEquals(listOf(listOf("sk-me", "pk-swapped", "group-key")), native.wraps)
+        assertEquals(listOf("new"), backend.approved.map { it.first })
+    }
+
+    @Test
+    fun aFailedWrapSendsNothingAndSaysSo() = runTest {
+        backend.devices = listOf(pending("new", "pk-new"))
+        val model = approvedModel()
+        model.refreshOtherDevices()
+        native.wrapReply = { null }
+        model.approve("new", "pk-new")
+        assertTrue(backend.approved.isEmpty())
+        assertEquals(R.string.devices_wrap_failed, model.approvalError.value?.fallback)
+        native.wrapReply = { """{"wrapped_group_key_base64":""}""" }
+        model.approve("new", "pk-new")
+        assertTrue("an empty blob is not a wrapped key", backend.approved.isEmpty())
+        assertFalse(model.approving.value)
+    }
+
+    @Test
+    fun aDoubleTapSendsOneApproval() = runTest {
+        backend.devices = listOf(pending("new", "pk-new"))
+        val model = approvedModel()
+        model.refreshOtherDevices()
+        backend.approveGate = CompletableDeferred()
+        val first = launch { model.approve("new", "pk-new") }
+        runCurrent()
+        assertTrue(model.approving.value)
+        model.approve("new", "pk-new")
+        backend.approveGate!!.complete(Unit)
+        first.join()
+        assertEquals(1, backend.approved.size)
+        assertFalse(model.approving.value)
+    }
+
+    @Test
+    fun aServerRefusalIsShownAndCanBeRetried() = runTest {
+        backend.devices = listOf(pending("new", "pk-new"))
+        val model = approvedModel()
+        model.refreshOtherDevices()
+        backend.approveError = offline
+        model.approve("new", "pk-new")
+        assertNotNull(model.approvalError.value)
+        assertTrue(backend.approved.isEmpty())
+        backend.approveError = null
+        model.approve("new", "pk-new")
+        assertNull("a new try clears the old error", model.approvalError.value)
+        assertEquals(1, backend.approved.size)
+    }
+
+    @Test
+    fun aPhoneWipedWhileAnApprovalIsInFlightLandsNothing() = runTest {
+        backend.devices = listOf(pending("new", "pk-new"))
+        val model = approvedModel()
+        model.refreshOtherDevices()
+        backend.approveGate = CompletableDeferred()
+        backend.approveError = offline
+        val job = launch { model.approve("new", "pk-new") }
+        runCurrent()
+        // The keypair is gone (revoked or signed out) before the Worker answers.
+        secrets.deviceSecretKey = "sk-someone-else"
+        backend.approveGate!!.complete(Unit)
+        job.join()
+        assertNull("an answer for a keypair this phone no longer holds shows nothing", model.approvalError.value)
+        assertFalse(model.approving.value)
+    }
+
+    @Test
+    fun aPhoneThatIsNotApprovedListsAndApprovesNothing() = runTest {
+        backend.devices = listOf(pending("new", "pk-new"))
+        val model = makeModel()
+        model.refreshOtherDevices()
+        model.approve("new", "pk-new")
+        assertTrue(model.otherDevices.value.isEmpty())
+        assertTrue(backend.approved.isEmpty())
+        assertEquals(0, model.pendingDeviceCount.value)
+    }
+
+    @Test
+    fun approvalGateOffRefusesBeforeAnyKeyIsTouched() = runTest {
+        backend.devices = listOf(device("pk-mac"), pending("new", "pk-new"))
+        val model = approvedModel(approvalEnabled = false)
+        model.refreshOtherDevices()
+        assertEquals("the list is unchanged", 1, model.pendingDeviceCount.value)
+        model.approve("new", "pk-new")
+        assertTrue("no key wrapped", native.wraps.isEmpty())
+        assertTrue("nothing sent", backend.approved.isEmpty())
+        assertFalse(model.approving.value)
+        assertNull(model.approvalError.value)
+        assertEquals(0, wipes)
+    }
+
+    @Test
+    fun approvalGateOnProceeds() = runTest {
+        backend.devices = listOf(device("pk-mac"), pending("new", "pk-new"))
+        val model = approvedModel(approvalEnabled = true)
+        model.refreshOtherDevices()
+        model.approve("new", "pk-new")
+        assertEquals(1, native.wraps.size)
+        assertEquals(1, backend.approved.size)
+    }
+
+    @Test
+    fun deviceApprovalGateFollowsTheBuildFlag() {
+        assertFalse("a release build (flag false)", DeviceApproval.isEnabled(false))
+        assertTrue("a debug build (flag true)", DeviceApproval.isEnabled(true))
     }
 }

@@ -44,9 +44,9 @@ const ATTENDEES = ["Sam Okafor", "Priya Shah", "Dana Whitfield"];
 
 const workspace = (now: number, id: number) => ({
   actionItems: [
-    { completed: false, id: 11, source: "summary", text: "Alex to send Northwind the revised renewal quote by Friday" },
-    { completed: false, id: 12, source: "summary", text: "Sam to confirm the pilot seat count with Northwind's IT lead" },
-    { completed: true, id: 13, source: "summary", text: "Dana to share last quarter's usage report" },
+    { completed: false, id: 11, source: "generated", text: "Alex to send Northwind the revised renewal quote by Friday" },
+    { completed: false, id: 12, source: "generated", text: "Sam to confirm the pilot seat count with Northwind's IT lead" },
+    { completed: true, id: 13, source: "generated", text: "Dana to share last quarter's usage report" },
   ],
   attendees: ATTENDEES,
   canChooseLanguage: true,
@@ -553,13 +553,13 @@ export const helpers = (now: number) => ({
     canName: true,
     invitees: [{ email: "sam@contoso.example.test", name: "Sam Okafor" }, { email: "priya@contoso.example.test", name: "Priya Shah" }, { email: "dana@northwind.example.test", name: "Dana Whitfield" }],
     more: false,
-    source: "whisper",
+    source: "file",
     turns: [
-      { guess: false, label: "Alex Rivera", personKey: null, speaker: "Me", speakerId: 0, text: "Thanks everyone for making time. I want to close out the renewal today if we can.", timestamp: "0:04" },
-      { guess: false, label: "Dana Whitfield", personKey: "p-dana", speaker: "Dana Whitfield", speakerId: 1, text: "We are happy with the pilot. We would like to go to sixty seats, but our security review is still open.", timestamp: "0:19" },
-      { guess: false, label: "Sam Okafor", personKey: "p-sam", speaker: "Sam Okafor", speakerId: 2, text: "Then let's keep the pilot at twenty-five seats until it closes, and offer a twelve-month term with a five percent volume discount.", timestamp: "0:41" },
-      { guess: true, label: "Priya Shah", personKey: "p-priya", speaker: "Speaker 3", speakerId: 3, text: "I can turn around the security answers by Thursday if Dana sends the questionnaire today.", timestamp: "1:08" },
-      { guess: false, label: "Alex Rivera", personKey: null, speaker: "Me", speakerId: 0, text: "Great. I will send the revised quote by Friday and Sam will confirm the seat count with your IT lead.", timestamp: "1:30" },
+      { guess: false, label: "Alex Rivera", personKey: null, speaker: "Me", speakerId: null, text: "Thanks everyone for making time. I want to close out the renewal today if we can.", timestamp: "00:00:04" },
+      { guess: false, label: "Dana Whitfield", personKey: "p-dana", speaker: "Dana Whitfield", speakerId: 1, text: "We are happy with the pilot. We would like to go to sixty seats, but our security review is still open.", timestamp: "00:00:19" },
+      { guess: false, label: "Sam Okafor", personKey: "p-sam", speaker: "Sam Okafor", speakerId: 2, text: "Then let's keep the pilot at twenty-five seats until it closes, and offer a twelve-month term with a five percent volume discount.", timestamp: "00:00:41" },
+      { guess: true, label: "Priya Shah", personKey: "p-priya", speaker: "Speaker 3", speakerId: 3, text: "I can turn around the security answers by Thursday if Dana sends the questionnaire today.", timestamp: "00:01:08" },
+      { guess: false, label: "Alex Rivera", personKey: null, speaker: "Me", speakerId: null, text: "Great. I will send the revised quote by Friday and Sam will confirm the seat count with your IT lead.", timestamp: "00:01:30" },
     ],
   },
 });
@@ -661,4 +661,107 @@ export const livePatch = (now: number, kind: LiveKind = "recording"): Record<str
     out.meeting_live_alerts = [];
   }
   return out;
+};
+
+
+// ---- the finished note (screen 4): the Northwind renewal call, made up -------------------------------------------------
+
+/** What a picture of the finished note needs. `withSources`: the margin's numbered sources (the default). `noSources`: an old
+ *  meeting, plain lines. `processing`: the summary being written. `readOnly`: another device's meeting. `noSummary`: a
+ *  transcript only. `failed`: the summary did not finish. */
+export type NoteKind = "withSources" | "noSources" | "processing" | "readOnly" | "noSummary" | "failed";
+
+type NoteLine = { id: number; startCs: number; endCs: number; speaker: string; label: string; speakerId: number | null; personKey: string | null; guess?: boolean; text: string };
+const ME = { speaker: "Me", label: "Alex Rivera", speakerId: null, personKey: null };
+const JO = { speaker: "Speaker 2", label: "Jo (Northwind)", speakerId: 1, personKey: "p-jo" };
+const DANA = { speaker: "Speaker 3", label: "Dana Whitfield", speakerId: 2, personKey: "p-dana" };
+const SAM = { speaker: "Speaker 4", label: "Sam Okafor", speakerId: 3, personKey: "p-sam" };
+const NOTE_LINES: NoteLine[] = [
+  { id: 101, startCs: 1_200, endCs: 6_800, ...ME, text: "Thanks for making time, everyone. I want to cover the renewal terms first, then seats, then the security questionnaire." },
+  { id: 102, startCs: 37_200, endCs: 40_400, ...JO, text: "If the price holds, we can do two years." },
+  { id: 103, startCs: 41_000, endCs: 44_600, ...ME, text: "Good. Two years at the current price works for us." },
+  { id: 104, startCs: 58_000, endCs: 63_000, ...DANA, text: "We expect fifteen more seats by Q2. I will confirm the date." },
+  { id: 105, startCs: 66_000, endCs: 71_000, ...SAM, guess: true, text: "Then we are at fifty-five. I will note it against the renewal." },
+  { id: 106, startCs: 90_000, endCs: 94_500, ...ME, text: "Jo, anything on your side before we get to security?" },
+  { id: 107, startCs: 110_500, endCs: 114_800, ...JO, text: "There are still a few open items on the questionnaire." },
+  { id: 108, startCs: 120_000, endCs: 126_000, ...DANA, text: "I can pick those up. Who sent them to us in the first place?" },
+  { id: 109, startCs: 140_000, endCs: 145_000, ...ME, text: "That was Priya. I will ask her for the original file." },
+  { id: 110, startCs: 173_000, endCs: 176_000, ...SAM, text: "I will get the quote to you by Thursday." },
+  { id: 111, startCs: 177_100, endCs: 181_000, ...DANA, text: "I will answer the open items by Friday." },
+  { id: 112, startCs: 186_200, endCs: 189_000, ...ME, text: "I will check the seat price before we send it." },
+  { id: 113, startCs: 190_000, endCs: 192_000, ...JO, text: "Thank you all. Talk next week." },
+];
+
+const NOTE_ROW = (now: number, extra: Record<string, unknown> = {}) =>
+  meetingRow(now, 7, 26, "Northwind renewal call", { actionItemCount: 3, attendeeCount: 4, endUnixMs: now - 26 * HOUR + 32 * MIN, ...extra });
+
+/** The finished note for `kind`, as answers for `open()`. Times are centiseconds into the call; the sources point at lines above. */
+export const notePatch = (now: number, kind: NoteKind = "withSources"): Record<string, unknown> => {
+  const row = NOTE_ROW(now, kind === "readOnly" ? { device: MAC } : {});
+  const src = (n: number) => {
+    const l = NOTE_LINES.find((x) => x.id === n)!;
+    return { segmentId: l.id, speaker: l.label, startCs: l.startCs, text: l.text };
+  };
+  const decisions = ["Northwind will renew for two years if the price stays the same.", "Seats grow from 40 to 55 in Q2. Dana will confirm the start date."];
+  const questions = ["Northwind's security questionnaire still has open items, and the renewal date is close."];
+  const items = [
+    { completed: false, id: 21, source: "generated", text: "Send the two-year renewal quote to Jo." },
+    { completed: false, id: 22, source: "generated", text: "Answer the open items on the questionnaire." },
+    { completed: false, id: 23, source: "generated", text: "Check that 55 seats still fits the current price." },
+  ];
+  const written = kind !== "processing" && kind !== "noSummary" && kind !== "failed";
+  const workspace = {
+    actionItems: written ? items : [],
+    attendees: ["Sam Okafor", "Dana Whitfield", "Jo (Northwind)", "Alex Rivera"],
+    canChooseLanguage: true,
+    conferenceLink: null,
+    decisions: written ? decisions : [],
+    decisionsAreEdited: false,
+    elapsedSeconds: null,
+    hasTranscript: true,
+    openQuestions: written ? questions : [],
+    openQuestionsAreEdited: false,
+    personalNotes: "jo ok with 2 yr term if price holds\nsecurity questionnaire?? who owns it\nseats 40 to 55 in Q2",
+    phase: "after",
+    processingStage: kind === "processing" ? "Writing the summary" : null,
+    readOnly: kind === "readOnly",
+    row,
+    spokenLanguage: null,
+    summary: written
+      ? "Alex, Sam and Dana spoke with Jo from Northwind about renewing. Northwind will renew for two years if the price stays the same, and wants to grow from 40 to 55 seats in Q2. The security questionnaire still has open items."
+      : null,
+    summaryFailure: kind === "failed" ? "The model did not answer in time." : null,
+    summaryFallback: null,
+    summaryIsEdited: false,
+    transcription: null,
+    trigger: "calendar",
+  };
+  const sources =
+    kind === "withSources" || kind === "readOnly"
+      ? {
+          decisions: [{ text: decisions[0], source: src(102) }, { text: decisions[1], source: src(104) }],
+          openQuestions: [{ text: questions[0], source: src(107) }],
+          actionItems: [
+            { itemId: 21, text: items[0].text, owner: "Sam Okafor", due: "Thu, Nov 19", source: src(110) },
+            { itemId: 22, text: items[1].text, owner: "Dana Whitfield", due: "Fri, Nov 20", source: src(111) },
+            { itemId: 23, text: items[2].text, owner: "Alex Rivera", due: "Tue, Nov 24", source: src(112) },
+          ],
+        }
+      : null;
+  return {
+    meeting_list: [row, ...meetings(now).slice(0, 4)],
+    meeting_chips: [],
+    meeting_workspace: workspace,
+    meeting_seed_action_items: workspace.actionItems,
+    meeting_note_sources: sources,
+    meeting_trim_info: { lengthMs: 32 * MIN, offered: true },
+    meeting_marker_list: [{ atCs: 61_000, createdUnixMs: now - 26 * HOUR + 11 * MIN, id: 31, label: "security questionnaire?? who owns it", meetingId: 7 }, { atCs: 147_000, createdUnixMs: now - 26 * HOUR + 25 * MIN, id: 32, label: null, meetingId: 7 }],
+    meeting_transcript_lines: {
+      canName: true,
+      invitees: [{ email: "sam@contoso.example.test", name: "Sam Okafor" }, { email: "dana@northwind.example.test", name: "Dana Whitfield" }],
+      total: NOTE_LINES.length,
+      lines: NOTE_LINES.map((l) => ({ ...l, endCs: kind === "noSources" ? null : l.endCs, guess: l.guess === true })),
+    },
+    today_schedule: { events: [], earlierToday: [], recording: false },
+  };
 };

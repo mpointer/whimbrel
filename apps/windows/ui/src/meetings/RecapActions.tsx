@@ -90,7 +90,7 @@ export function RecapActions({ view, summary }: { view: WorkspaceView; summary: 
   );
 }
 
-function RecapSheet({ view, draft, onClose, onSent }: { view: WorkspaceView; draft: RecapDraft; onClose: () => void; onSent: (s: RecapSentView) => void }) {
+export function RecapSheet({ view, draft, onClose, onSent }: { view: WorkspaceView; draft: RecapDraft; onClose: () => void; onSent: (s: RecapSentView) => void }) {
   const { locale } = useL10n();
   const [ticked, setTicked] = useState<string[]>(draft.recipients.map((r) => r.email));
   const [added, setAdded] = useState<string[]>([]);

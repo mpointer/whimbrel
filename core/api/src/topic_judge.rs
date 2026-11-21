@@ -233,7 +233,12 @@ fn candidate_is_excluded(store: &memory::Store, filter: &llm::ContextFilter, c: 
 /// keeps that filing: it only leaves the queue (fix round 1, B1; a verdict of "none" would unfile
 /// it, and sync that). A source newly matched is filed under the first excluded client its words
 /// name, as alias filing does; otherwise it only leaves the queue, and stays excluded through the
-/// shared predicate.
+/// shared predicate. The words are read decoded far past the hosted check's cap
+/// (`ExclusionSet::names_in`), so a source kept from the judge only because it is deeply encoded is
+/// filed by what it really says. One nested past even that cap leaves the queue unfiled (known
+/// limit): it is never sent, and its text stays off hosted models (the fail-closed check). It is
+/// not left queued: the queue is read newest first a page at a time, so a few such sources at the
+/// head would hold up every source behind them.
 fn settle_candidate(
     store: &memory::Store,
     filter: &llm::ContextFilter,
@@ -250,7 +255,9 @@ fn settle_candidate(
         .find(|(_, name, also)| {
             let mut terms = vec![name.clone()];
             terms.extend(also.split(", ").filter(|a| !a.is_empty()).map(str::to_string));
-            llm::ExclusionSet::new(terms).find_in(&c.text)
+            // Filing (synced, and its people become the client's contacts): only text that really
+            // names the client, never text merely undecodable (review 4, I2).
+            llm::ExclusionSet::new(terms).names_in(&c.text)
         })
         .map(|(id, _, _)| *id);
     match named {
@@ -431,6 +438,68 @@ mod tests {
             2,
             "both sources naming the client are filed under it, locally"
         );
+    }
+
+    /// Review 4, I2 and the security review after it: a queued source still encoded past the
+    /// hosted check's cap is never sent, and is filed by what it really says, decoded far deeper
+    /// (`names_in`): under the client when the decoded words name it, unfiled when they do not.
+    #[test]
+    fn a_deeply_encoded_source_is_never_sent_and_is_filed_by_what_it_really_says() {
+        let (_d, s, c, ids) = setup(&["Acme", "Globex", "Initech"], &["Acme and Globex budget", "Globex and Initech budget"]);
+        let acme_key: String = c.query_row("SELECT key FROM topic_seed WHERE topic_id = ?1", [ids[0]], |r| r.get(0)).unwrap();
+        s.set_client_control(&acme_key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        let filter = crate::exclusion::context_filter(&s);
+        let sids: Vec<i64> = c.prepare("SELECT source_id FROM topic_judge_todo ORDER BY source_id").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        let past_cap = |inner: &str| format!("&{}{inner}", "amp;".repeat(memory::words::MAX_DECODE_PASSES + 1));
+        // "Acme" with its m encoded six levels deep, and an unrelated line as deep.
+        let deep_name = format!("Budget from Ac{}e", past_cap("#109;"));
+        let deep_other = format!("Budget from R{}D", past_cap(""));
+        for t in [&deep_name, &deep_other] {
+            assert!(memory::words::readings(t).undecidable, "past the hosted check's cap: {t}");
+        }
+        let candidate = |sid: i64, text: &str| memory::topics::judge::JudgeCandidate {
+            source_id: sid,
+            source_key: format!("k{sid}"),
+            kind: "email".into(),
+            text: text.into(),
+            topics: vec![(ids[0], "Acme".into(), String::new()), (ids[1], "Globex".into(), String::new())],
+            subjects: vec![],
+        };
+        let filed = |sid: i64| c.query_row(&format!("SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND source_id = {sid}", ids[0]), [], |r| r.get::<_, i64>(0)).unwrap();
+        for (sid, text, files) in [(sids[0], &deep_name, 1), (sids[1], &deep_other, 0)] {
+            let cand = candidate(sid, text);
+            assert!(candidate_is_excluded(&s, &filter, &cand), "kept from the judge (fail closed): {text}");
+            settle_candidate(&s, &filter, &cand).unwrap();
+            assert_eq!(filed(sid), files, "{text}");
+        }
+        settle_candidate(&s, &filter, &candidate(sids[0], "Budget from Ac&#109;e")).unwrap();
+        assert_eq!(filed(sids[0]), 1, "an encoded name files it");
+    }
+
+    /// The security review: a source nested past even the filing decoder's cap is never sent, on
+    /// this tick or the next, and does not hold up the plain sources queued behind it.
+    #[test]
+    fn a_source_nested_past_every_cap_makes_no_call_and_does_not_hold_up_the_queue() {
+        let (_d, s, c, ids) = setup(&["Acme", "Globex", "Initech"], &["Lunch plans", "Globex and Initech budget", "Globex and Initech roadmap"]);
+        let acme_key: String = c.query_row("SELECT key FROM topic_seed WHERE topic_id = ?1", [ids[0]], |r| r.get(0)).unwrap();
+        s.set_client_control(&acme_key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        // The newest queued source: past every cap.
+        let absurd = format!("Globex and Initech budget R&{}#64;D", "amp;".repeat(memory::words::MAX_NAMING_DECODE_PASSES + 2));
+        let newest: i64 = c.query_row("SELECT source_id FROM topic_judge_todo j JOIN topic_source s ON s.id = j.source_id ORDER BY s.ts_unix_ms DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+        c.execute("UPDATE topic_source_text SET text = ?1 WHERE source_id = ?2", rusqlite::params![absurd, newest]).unwrap();
+        c.execute("UPDATE topic_source SET title = ?1 WHERE id = ?2", rusqlite::params![absurd, newest]).unwrap();
+        s.start_topic_judging(10_000).unwrap();
+        let j = fake(&[("t1", 0.2), ("none", 0.8)], None, 90);
+        run_topic_judge_batch(&s, &j, 1, 1.0).unwrap();
+        run_topic_judge_batch(&s, &j, 1, 1.0).unwrap();
+        run_topic_judge_batch(&s, &j, 1, 1.0).unwrap();
+        let seen = j.seen.borrow();
+        assert!(seen.iter().all(|i| !i.text.contains("amp;")), "the nested source was never sent");
+        assert!(!seen.is_empty() && seen.iter().all(|i| !i.text.contains("R&")), "the plain sources behind it were judged: {}", seen.len());
+        assert_eq!(n(&c, &format!("SELECT COUNT(*) FROM topic_judge_todo WHERE source_id = {newest}")), 0, "settled, not left at the head");
+        assert_eq!(n(&c, &format!("SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND source_id = {newest}", ids[0])), 0, "not filed");
     }
 
     /// Fix round 1, B1: a source the judge filed under a client before that client was excluded

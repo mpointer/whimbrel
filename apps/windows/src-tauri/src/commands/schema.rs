@@ -29,6 +29,8 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::library::LibrarySettings>();
     generator.subschema_for::<crate::syncing::controller::SyncView>();
     generator.subschema_for::<crate::syncing::billing::WhimbrelAiView>();
+    generator.subschema_for::<crate::plus_prompt::PlusAiPromptView>();
+    generator.subschema_for::<crate::plus_prompt::PlusAiPromptAnswer>();
     generator.subschema_for::<crate::syncing::controller::DeviceView>();
     generator.subschema_for::<super::ai::AiSettings>();
     generator.subschema_for::<super::ai::ProviderKey>();
@@ -70,6 +72,8 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<crate::skin_maker::ChatLine>();
     generator.subschema_for::<super::skins::ImageCandidateView>();
     generator.subschema_for::<super::workspace::TranscriptView>();
+    generator.subschema_for::<super::workspace::TranscriptLinesView>();
+    generator.subschema_for::<super::workspace::NoteSourcesView>();
     generator.subschema_for::<super::workspace::VoicePersonView>();
     generator.subschema_for::<crate::budget_alert::BudgetNoticeView>();
     generator.subschema_for::<super::ai::ProviderBudgetView>();

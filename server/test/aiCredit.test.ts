@@ -3,8 +3,18 @@ import * as accounts from "../src/accounts";
 import {
   STALE_HOLD_MS,
   aiBalance,
+  allowanceView,
   creditPurchase,
+  grantAllowance,
+  readAllowanceSetting,
+  spendable,
+  spendableAllowance,
+  zeroAllowance,
   lastPurchaseMicros,
+  addMonthsUtc,
+  grantDueYearlyMonths,
+  yearlyMonthAt,
+  monthWindowEnd,
   purchaseByStripeRef,
   placeHold,
   refundPurchase,
@@ -82,6 +92,7 @@ it("settleHold_charges_real_cost", async () => {
     stripe_ref: null,
     created_at_unix_ms: NOW + 5,
     shortfall_micros: null,
+    from_allowance_micros: 0,
   });
 });
 
@@ -271,4 +282,210 @@ it("purchaseByStripeRef finds the purchase, null otherwise", async () => {
   await creditPurchase(db, id, 10_000_000, "pi_1", NOW);
   expect(await purchaseByStripeRef(db, "pi_1")).toEqual({ accountId: id, micros: 10_000_000 });
   expect(await purchaseByStripeRef(db, "pi_none")).toBeNull();
+});
+
+// ---- Plus allowance: fake twins of the SQL that aiCredit.realsql.test.ts
+// runs against real SQLite. These keep callers built on the fake honest;
+// the real-SQLite tests are what prove the SQL.
+
+const END = NOW + 30 * 24 * 60 * 60 * 1000;
+
+async function plus(prepaid: number, allowance: number) {
+  const { db, id } = await funded(prepaid);
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_1", micros: allowance, periodEndUnixMs: END }, NOW)).toBe(true);
+  return { db, id };
+}
+
+it("fake: a hold draws the allowance first and the settle charges each bucket", async () => {
+  const { db, id } = await plus(1_000_000, 600_000);
+  const hold = (await placeHold(db, id, 1_000_000, NOW))!;
+  expect(db.rawAccount(id)).toMatchObject({ aiCreditMicros: 600_000, aiAllowanceMicros: 0, aiOpenHolds: 1 });
+  expect(db.rawAiHolds()).toEqual([expect.objectContaining({ id: hold, micros: 1_000_000, from_allowance_micros: 600_000, allowance_expires_ms: END })]);
+  await settleHold(db, hold, { model: "m", inputTokens: 1, outputTokens: 1, costMicros: 700_050 }, NOW);
+  expect(db.rawAccount(id)).toMatchObject({ aiCreditMicros: 899_900, aiAllowanceMicros: 0, aiOpenHolds: 0 });
+  expect(db.rawAiLedger().filter((r) => r.kind === "usage")).toEqual([expect.objectContaining({ micros: -700_100, from_allowance_micros: 600_000 })]);
+  expect(db.rawAiHolds()).toHaveLength(0);
+});
+
+it("fake: a renewal during an open hold is not topped up, and a stale hold charges per bucket", async () => {
+  const { db, id } = await plus(1_000_000, 6_000_000);
+  const hold = (await placeHold(db, id, 1_000_000, NOW))!;
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_2", micros: 6_000_000, periodEndUnixMs: END * 2 }, NOW)).toBe(true);
+  await settleHold(db, hold, { model: "m", inputTokens: 1, outputTokens: 1, costMicros: 0 }, NOW);
+  expect(db.rawAccount(id)).toMatchObject({ aiCreditMicros: 1_000_000, aiAllowanceMicros: 6_000_000, aiAllowanceExpiresMs: END * 2 });
+  const stale = (await placeHold(db, id, 6_500_000, NOW - STALE_HOLD_MS - 1))!;
+  expect(await settleStaleHolds(db, NOW)).toBe(1);
+  expect(db.rawAccount(id)).toMatchObject({ aiCreditMicros: 500_000, aiAllowanceMicros: 0, aiOpenHolds: 0 });
+  expect(db.rawAiLedger().filter((r) => r.kind === "usage").at(-1)).toMatchObject({ micros: -6_500_000, from_allowance_micros: 6_000_000 });
+  expect(stale).toEqual(expect.any(String));
+});
+
+it("fake: grants are once per key, forward only, and never for a deleting account", async () => {
+  const { db, id } = await plus(0, 6_000_000);
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_1", micros: 6_000_000, periodEndUnixMs: END * 2 }, NOW)).toBe(false);
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_old", micros: 1, periodEndUnixMs: END - 1 }, NOW)).toBe(true);
+  expect(db.rawAccount(id)).toMatchObject({ aiAllowanceMicros: 6_000_000, aiAllowanceExpiresMs: END });
+  expect(db.rawAllowanceGrants().map((g) => g.grant_key)).toEqual(["in_1", "in_old"]);
+  expect(await spendableAllowance(db, id, NOW)).toBe(6_000_000);
+  expect(await spendable(db, id, NOW)).toBe(6_000_000);
+  expect(await spendable(db, id, END)).toBe(0);
+  expect(allowanceView(db.rawAccount(id) as { aiAllowanceMicros: number; aiAllowanceExpiresMs: number | null }, NOW)).toEqual({ allowanceMicros: 6_000_000, allowanceExpiresMs: END });
+  await zeroAllowance(db, id, NOW, { subscriptionId: null, mode: "refund" });
+  expect(db.rawAccount(id)).toMatchObject({ aiAllowanceMicros: 0, aiAllowanceExpiresMs: END + 1 });
+  // The refunded period itself cannot be granted again.
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_again", micros: 6_000_000, periodEndUnixMs: END }, NOW)).toBe(true);
+  expect(db.rawAccount(id)).toMatchObject({ aiAllowanceMicros: 0, aiAllowanceExpiresMs: END + 1 });
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_zero", micros: 0, periodEndUnixMs: END }, NOW)).toBe(false);
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_past", micros: 1, periodEndUnixMs: NOW }, NOW)).toBe(false);
+  const other = await accounts.getOrCreateAccount(db, "b@example.com", "sub-b", 1, "db-b", "https://db-b");
+  db.rawAccount(other.id)!.deletingSinceUnixMs = NOW;
+  expect(await grantAllowance(db, { accountId: other.id, grantKey: "in_b", micros: 6_000_000, periodEndUnixMs: END }, NOW)).toBe(false);
+  expect(await grantAllowance(db, { accountId: "nobody", grantKey: "in_c", micros: 6_000_000, periodEndUnixMs: END }, NOW)).toBe(false);
+  expect(db.rawAllowanceGrants().map((g) => g.grant_key)).toEqual(["in_1", "in_old", `zeroed:${id}:${NOW}`, "in_again"]);
+  expect(db.rawAllowanceGrants()[2]).toMatchObject({ account_id: id, micros: 0, period_end_unix_ms: END + 1, created_at_unix_ms: NOW });
+});
+
+it("fake: a cancel zero, another subscription after a refund zero, and a refund tombstone", async () => {
+  const { db, id } = await plus(0, 6_000_000);
+  await zeroAllowance(db, id, NOW, { subscriptionId: "sub_A", mode: "refund", tombstoneKey: "in_A" });
+  expect(db.rawAccount(id)).toMatchObject({ aiAllowanceMicros: 0, aiAllowanceExpiresMs: END + 1 });
+  expect(db.rawAllowanceGrants().slice(1)).toEqual([
+    expect.objectContaining({ grant_key: `zeroed:${id}:${NOW}`, micros: 0, period_end_unix_ms: END + 1, subscription_id: "sub_A" }),
+    expect.objectContaining({ grant_key: "in_A", micros: 0, period_end_unix_ms: 0, subscription_id: "sub_A" }),
+  ]);
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_A", micros: 6_000_000, periodEndUnixMs: END, subscriptionId: "sub_A" }, NOW)).toBe(false);
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_A2", micros: 6_000_000, periodEndUnixMs: END - 1000, subscriptionId: "sub_A" }, NOW)).toBe(true);
+  expect(db.rawAccount(id)).toMatchObject({ aiAllowanceMicros: 0, aiAllowanceExpiresMs: END + 1 });
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_B", micros: 6_000_000, periodEndUnixMs: END - 1000, subscriptionId: "sub_B" }, NOW)).toBe(true);
+  expect(db.rawAccount(id)).toMatchObject({ aiAllowanceMicros: 6_000_000, aiAllowanceExpiresMs: END - 1000 });
+  expect(db.rawAllowanceGrants().at(-1)).toMatchObject({ grant_key: "in_B", subscription_id: "sub_B" });
+  await zeroAllowance(db, id, NOW + 5, { subscriptionId: "sub_B", mode: "cancel" });
+  expect(db.rawAccount(id)).toMatchObject({ aiAllowanceMicros: 0, aiAllowanceExpiresMs: NOW + 6 });
+});
+
+it("fake: the yearly cron's SELECT, scoped to the current subscription and its own markers", async () => {
+  const { db, id } = await funded(0);
+  const start = NOW;
+  const yearEnd = addMonthsUtc(start, 12);
+  const month1End = addMonthsUtc(start, 1);
+  db.setPlan(id, { plan: "cloud", planUntilUnixMs: yearEnd, planInterval: "year", stripeSubscriptionId: "sub_B", planTier: "plus" });
+  // An earlier subscription's row and refund marker, both later than B's month 1: neither counts.
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_A", micros: 6_000_000, periodEndUnixMs: month1End + 1000, subscriptionId: "sub_A" }, NOW)).toBe(true);
+  await zeroAllowance(db, id, NOW, { subscriptionId: "sub_A", mode: "refund" });
+  expect(await grantAllowance(db, { accountId: id, grantKey: "in_B", micros: 6_000_000, periodEndUnixMs: month1End, lineStartUnixMs: start, lineEndUnixMs: yearEnd, subscriptionId: "sub_B" }, NOW + 1)).toBe(true);
+  expect(db.rawAccount(id)).toMatchObject({ aiAllowanceMicros: 6_000_000, aiAllowanceExpiresMs: month1End });
+  expect(await grantDueYearlyMonths(db, month1End + 1000)).toBe(1);
+  expect(db.rawAllowanceGrants().at(-1)).toMatchObject({ grant_key: "in_B:m2", subscription_id: "sub_B", period_end_unix_ms: addMonthsUtc(start, 2) });
+  // B's own cancel marker (written after B's base grant) blocks the next month.
+  await zeroAllowance(db, id, month1End + 2000, { subscriptionId: "sub_B", mode: "cancel" });
+  expect(await grantDueYearlyMonths(db, addMonthsUtc(start, 2) + 1000)).toBe(0);
+});
+
+it("fake: deleting an account removes its allowance grants and only its own", async () => {
+  const { db, id } = await plus(0, 6_000_000);
+  const other = await accounts.getOrCreateAccount(db, "b@example.com", "sub-b", 1, "db-b", "https://db-b");
+  expect(await grantAllowance(db, { accountId: other.id, grantKey: "in_b", micros: 6_000_000, periodEndUnixMs: END }, NOW)).toBe(true);
+  await accounts.deleteAccountRows(db, id);
+  expect(db.rawAllowanceGrants()).toEqual([expect.objectContaining({ grant_key: "in_b", account_id: other.id })]);
+});
+
+it("fake: the allowance setting falls back on missing, invalid or out of range", async () => {
+  const db = new FakeSqlExecutor();
+  expect(await readAllowanceSetting(db)).toBe(6_000_000);
+  db.setSetting("plus_allowance_micros", "6e6");
+  expect(await readAllowanceSetting(db)).toBe(6_000_000);
+  db.setSetting("plus_allowance_micros", "50000001");
+  expect(await readAllowanceSetting(db)).toBe(6_000_000);
+  db.setSetting("plus_allowance_micros", "7500000.0");
+  expect(await readAllowanceSetting(db)).toBe(6_000_000);
+  db.setSetting("plus_allowance_micros", "7500000");
+  expect(await readAllowanceSetting(db)).toBe(7_500_000);
+});
+
+it("fake: a grant batch that fails partway restores the grant rows", async () => {
+  const { db, id } = await plus(0, 6_000_000);
+  await expect(
+    db.batch([
+      { sql: "INSERT INTO ai_allowance_grant (grant_key, account_id, micros, period_end_unix_ms, created_at_unix_ms) SELECT ?, id, ?, ?, ? FROM account WHERE id = ? AND deleting_since_unix_ms IS NULL ON CONFLICT(grant_key) DO NOTHING RETURNING grant_key", params: ["in_x", 1, END * 2, NOW, id] },
+      { sql: "SELECT no_such_thing", params: [] },
+    ]),
+  ).rejects.toThrow(/unrecognized query/);
+  expect(db.rawAllowanceGrants().map((g) => g.grant_key)).toEqual(["in_1"]);
+});
+
+// ---- monthWindowEnd: calendar months in UTC, clamped ----
+const FAR = Date.UTC(2100, 0, 1);
+it("monthWindowEnd_adds_calendar_months_keeping_day_and_time", () => {
+  expect(monthWindowEnd(Date.UTC(2026, 10, 19, 8, 59, 0, 123), 1, FAR)).toBe(Date.UTC(2026, 11, 19, 8, 59, 0, 123));
+  expect(monthWindowEnd(Date.UTC(2026, 11, 15, 23, 30), 1, FAR)).toBe(Date.UTC(2027, 0, 15, 23, 30));
+  expect(monthWindowEnd(Date.UTC(2026, 0, 10), 12, FAR)).toBe(Date.UTC(2027, 0, 10));
+  expect(monthWindowEnd(Date.UTC(2026, 0, 10), 0, FAR)).toBe(Date.UTC(2026, 0, 10));
+});
+it("monthWindowEnd_from_the_31st_clamps_to_the_last_day_of_a_shorter_month", () => {
+  const jan31 = Date.UTC(2026, 0, 31, 10, 0);
+  expect(monthWindowEnd(jan31, 1, FAR)).toBe(Date.UTC(2026, 1, 28, 10, 0));
+  expect(monthWindowEnd(jan31, 2, FAR)).toBe(Date.UTC(2026, 2, 31, 10, 0));
+  expect(monthWindowEnd(jan31, 3, FAR)).toBe(Date.UTC(2026, 3, 30, 10, 0));
+  expect(monthWindowEnd(Date.UTC(2026, 9, 31), 1, FAR)).toBe(Date.UTC(2026, 10, 30));
+});
+it("monthWindowEnd_handles_february_in_a_leap_year", () => {
+  expect(monthWindowEnd(Date.UTC(2028, 0, 31, 6), 1, FAR)).toBe(Date.UTC(2028, 1, 29, 6));
+  expect(monthWindowEnd(Date.UTC(2028, 1, 29), 12, FAR)).toBe(Date.UTC(2029, 1, 28));
+  expect(monthWindowEnd(Date.UTC(2027, 1, 28), 1, FAR)).toBe(Date.UTC(2027, 2, 28));
+});
+it("monthWindowEnd_never_passes_the_period_end", () => {
+  const start = Date.UTC(2026, 2, 31);
+  const yearEnd = Date.UTC(2027, 2, 31);
+  expect(monthWindowEnd(start, 12, yearEnd)).toBe(yearEnd);
+  expect(monthWindowEnd(start, 13, yearEnd)).toBe(yearEnd);
+  expect(monthWindowEnd(Date.UTC(2026, 0, 1), 1, Date.UTC(2026, 0, 20))).toBe(Date.UTC(2026, 0, 20));
+});
+// ---- addMonthsUtc: the yearly cron's start of year (yearEnd - 12 months) ----
+it("addMonthsUtc_matches_monthWindowEnd_going_forward", () => {
+  for (const start of [Date.UTC(2026, 0, 31, 10), Date.UTC(2026, 10, 19, 8, 59, 0, 123), Date.UTC(2028, 1, 29), Date.UTC(2027, 7, 30, 23, 59, 59, 999)]) {
+    for (let n = 0; n <= 13; n++) expect(addMonthsUtc(start, n)).toBe(monthWindowEnd(start, n, FAR));
+  }
+});
+it("addMonthsUtc_back_twelve_months_from_the_31st_30th_and_february", () => {
+  expect(addMonthsUtc(Date.UTC(2027, 0, 31, 10), -12)).toBe(Date.UTC(2026, 0, 31, 10));
+  expect(addMonthsUtc(Date.UTC(2027, 3, 30, 10), -12)).toBe(Date.UTC(2026, 3, 30, 10));
+  expect(addMonthsUtc(Date.UTC(2027, 2, 31), -1)).toBe(Date.UTC(2027, 1, 28));
+  expect(addMonthsUtc(Date.UTC(2028, 2, 31), -1)).toBe(Date.UTC(2028, 1, 29));
+  expect(addMonthsUtc(Date.UTC(2027, 1, 28, 9), -12)).toBe(Date.UTC(2026, 1, 28, 9));
+  expect(addMonthsUtc(Date.UTC(2029, 0, 15), -13)).toBe(Date.UTC(2027, 11, 15));
+});
+it("addMonthsUtc_leap_day_anniversaries_differ_from_stripe_by_a_day", () => {
+  // A year that began on 29 Feb 2028 ends (Stripe clamps) on 28 Feb 2029;
+  // twelve months back from that is 28 Feb 2028, a day before the real start.
+  expect(addMonthsUtc(Date.UTC(2029, 1, 28, 9), -12)).toBe(Date.UTC(2028, 1, 28, 9));
+  // A year that ends on 29 Feb 2028 began on 28 Feb 2027 (anchor day 29 or
+  // later): S + 12 months is 28 Feb 2028, a day before the paid-through
+  // date (which is why yearlyMonthAt ends month 12 at the year end).
+  const start = addMonthsUtc(Date.UTC(2028, 1, 29, 9), -12);
+  expect(start).toBe(Date.UTC(2027, 1, 28, 9));
+  expect(addMonthsUtc(start, 12)).toBe(Date.UTC(2028, 1, 28, 9));
+});
+it("yearlyMonthAt_finds_the_month_and_ends_month_twelve_at_the_year_end", () => {
+  const start = Date.UTC(2027, 0, 31, 10);
+  const end = Date.UTC(2028, 0, 31, 10);
+  expect(yearlyMonthAt(start, end, start - 1)).toEqual({ n: 1, endMs: Date.UTC(2027, 1, 28, 10) });
+  expect(yearlyMonthAt(start, end, start)).toEqual({ n: 1, endMs: Date.UTC(2027, 1, 28, 10) });
+  expect(yearlyMonthAt(start, end, Date.UTC(2027, 1, 28, 10) - 1)).toEqual({ n: 1, endMs: Date.UTC(2027, 1, 28, 10) });
+  expect(yearlyMonthAt(start, end, Date.UTC(2027, 1, 28, 10))).toEqual({ n: 2, endMs: Date.UTC(2027, 2, 31, 10) });
+  expect(yearlyMonthAt(start, end, Date.UTC(2027, 11, 31, 10))).toEqual({ n: 12, endMs: end });
+  expect(yearlyMonthAt(start, end, end - 1)).toEqual({ n: 12, endMs: end });
+  expect(yearlyMonthAt(start, end, end)).toBeNull();
+  // A year paid through 29 Feb: month 12 ends on the 29th, not S + 12 months (the 28th).
+  const leapEnd = Date.UTC(2028, 1, 29, 9);
+  expect(yearlyMonthAt(Date.UTC(2027, 1, 28, 9), leapEnd, Date.UTC(2028, 1, 28, 12))).toEqual({ n: 12, endMs: leapEnd });
+});
+it("addMonthsUtc_refuses_non_whole_inputs", () => {
+  expect(() => addMonthsUtc(1.5, 1)).toThrow(RangeError);
+  expect(() => addMonthsUtc(0, 0.5)).toThrow(RangeError);
+  expect(() => addMonthsUtc(NaN, 1)).toThrow(RangeError);
+});
+it("monthWindowEnd_refuses_non_whole_inputs", () => {
+  expect(() => monthWindowEnd(1.5, 1, FAR)).toThrow(RangeError);
+  expect(() => monthWindowEnd(0, -1, FAR)).toThrow(RangeError);
+  expect(() => monthWindowEnd(0, 1, NaN)).toThrow(RangeError);
 });

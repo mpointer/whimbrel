@@ -1,0 +1,37 @@
+{
+  "$description": "Phone-only values for the Thread design system. Everything shared (colors, spacing, elevation, easing) comes from tokens.json; this file holds only what differs on iOS and Android. build-mobile.mjs reads both.",
+  "radius": {
+    "$description": "iOS corners follow the system's concentric shapes; Android follows Material 3 (full-round controls are the pill value).",
+    "ios": { "control": 10, "card": 14, "surface": 24, "pill": 999 },
+    "android": { "control": 12, "card": 16, "surface": 28, "pill": 999 }
+  },
+  "type": {
+    "$description": "Same roles as tokens.json. ios: [point size, line height, Dynamic Type style the role scales with]. android: [sp, line height in sp]; sp follows the system font scale. Weights come from tokens.json.",
+    "roles": {
+      "caption": { "ios": [12, 16, "caption"], "android": [12, 16] },
+      "secondary": { "ios": [13, 18, "footnote"], "android": [14, 20] },
+      "body": { "ios": [17, 22, "body"], "android": [16, 24] },
+      "bodyStrong": { "ios": [17, 22, "body"], "android": [16, 24] },
+      "time": { "ios": [15, 20, "subheadline"], "android": [14, 20] },
+      "subtitle": { "ios": [17, 22, "headline"], "android": [16, 24] },
+      "title": { "ios": [22, 28, "title2"], "android": [22, 28] },
+      "pageTitle": { "ios": [34, 41, "largeTitle"], "android": [28, 36] },
+      "reading": { "ios": [18, 28, "body"], "android": [17, 28] },
+      "readingTitle": { "ios": [30, 36, "title"], "android": [28, 36] }
+    },
+    "minimumReadable": { "ios": 11, "android": 12 }
+  },
+  "motion": {
+    "$description": "Durations in ms. With Reduce Motion (iOS) or animations off (Android) components use no movement, fades only.",
+    "duration": {
+      "ios": { "fast": 150, "base": 250, "slow": 350 },
+      "android": { "fast": 150, "base": 300, "slow": 450 }
+    }
+  },
+  "size": {
+    "$description": "Minimum tap target per OS (44pt, 48dp), the width of the time column beside the thread, and the widest a column of content gets on a tablet or unfolded phone.",
+    "target": { "ios": 44, "android": 48 },
+    "spine": 72,
+    "contentMax": 640
+  }
+}

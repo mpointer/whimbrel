@@ -19,12 +19,24 @@ struct EnrollmentView: View {
                 // on a theme change. Each screen re-renders its own content (`themed()`).
                 RootView(sync: sync, enrollment: model, router: router)
             } else {
-                VStack(spacing: 20) {
-                    Text("Whimbrel").font(.largeTitle.bold()).foregroundStyle(Color.theme(.textPrimary))
-                    content
+                // Scrolls, so the code and the buttons stay reachable at the largest text sizes;
+                // centered when it fits.
+                GeometryReader { proxy in
+                    ScrollView {
+                        VStack(spacing: WTokens.Space.lg) {
+                            Text("Whimbrel")
+                                .wType(WTokens.TypeScale.pageTitle)
+                                .foregroundStyle(Color.theme(.textPrimary))
+                                .accessibilityAddTraits(.isHeader)
+                            content
+                        }
+                        .padding(WTokens.Space.xl)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 480)
+                        .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+                    }
                 }
-                .padding(24)
-                .multilineTextAlignment(.center)
+                .environment(\.wStrings, .app)
                 .id(themes.revision)
             }
         }
@@ -80,41 +92,49 @@ struct EnrollmentView: View {
             codeBlock(title: String(localized: "Approve this iPhone again"), code: code,
                       detail: String(localized: "This iPhone was approved, but the encryption key didn't arrive in time. Approve it again from Whimbrel Settings → Devices on your Mac. Check this matches the code on your Mac before approving."))
         case .needsDesktopFirst:
-            Text("Set up Whimbrel on your Mac first, then come back and sign in here.").foregroundStyle(Color.theme(.textPrimary))
+            primary(String(localized: "Set up Whimbrel on your Mac first, then come back and sign in here."))
             Button("Try again") { Task { await model.signIn() } }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.theme(.accentPrimary))
+                .buttonStyle(.w(.primary, fill: true))
         case let .deviceLimit(_, holders):
             DeviceLimitView(model: model, holders: holders)
         case .approved:
             EmptyView() // shown full screen by `body` as `RootView`
         case .removed:
-            Text("This iPhone was removed from your Whimbrel account.").foregroundStyle(Color.theme(.textPrimary))
+            primary(String(localized: "This iPhone was removed from your Whimbrel account."))
             signInButton
         case let .error(message):
-            Text(message).foregroundStyle(Color.theme(.textPrimary))
+            primary(message)
             signInButton
         }
     }
 
     private var signInButton: some View {
         Button("Sign in with Google") { Task { await model.signIn() } }
-            .buttonStyle(.borderedProminent)
-            .tint(Color.theme(.accentPrimary))
+            .buttonStyle(.w(.primary, fill: true))
+    }
+
+    private func primary(_ text: String) -> some View {
+        Text(text).wType(WTokens.TypeScale.body).foregroundStyle(Color.theme(.textPrimary))
     }
 
     private func secondary(_ text: String) -> some View {
-        Text(text).foregroundStyle(Color.theme(.textSecondary))
+        Text(text).wType(WTokens.TypeScale.body).foregroundStyle(Color.theme(.textSecondary))
     }
 
     private func codeBlock(title: String, code: String, detail: String) -> some View {
-        VStack(spacing: 16) {
-            Text(title).font(.title2.bold()).foregroundStyle(Color.theme(.textPrimary))
+        VStack(spacing: WTokens.Space.lg) {
+            Text(title).wType(WTokens.TypeScale.title).foregroundStyle(Color.theme(.textPrimary))
+                .accessibilityAddTraits(.isHeader)
+            // The code to compare, set apart on its own card so it is the one thing to look at.
             Text(code)
-                .font(.system(size: 34, weight: .semibold, design: .monospaced))
+                .font(.system(size: 30, weight: .semibold, design: .monospaced))
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
-                .foregroundStyle(Color.theme(.accentPrimary))
+                .foregroundStyle(Color.theme(.textPrimary))
+                .padding(.horizontal, WTokens.Space.md)
+                .padding(.vertical, WTokens.Space.lg)
+                .frame(maxWidth: .infinity)
+                .wCard(tint: Color.theme(.highlight))
                 .accessibilityLabel("Comparison code \(code)")
             secondary(detail)
             ProgressView()
@@ -130,6 +150,8 @@ struct EnrollmentView: View {
 final class DemoSyncedBackend: EnrollmentBackend {
     private let mac = CoreMemoryStore.generateSyncDeviceKeypair()!
     private let groupKey = CoreMemoryStore.generateSyncGroupKey()!
+    private let pendingA = CoreMemoryStore.generateSyncDeviceKeypair()!
+    private let pendingB = CoreMemoryStore.generateSyncDeviceKeypair()!
     func signIn() async throws {}
     func idToken() async throws -> String { "demo" }
     func authenticate(idToken: String, devicePublicKey: String) async throws -> GoogleAuthResult {
@@ -137,7 +159,15 @@ final class DemoSyncedBackend: EnrollmentBackend {
         return .approved(tursoToken: "demo", tursoDatabaseUrl: "demo", wrappedGroupKey: wrapped)
     }
     func listDevices(idToken: String, devicePublicKey: String) async throws -> [SyncDeviceRecord] {
-        [SyncDeviceRecord(id: "mac", accountId: "demo", publicKey: mac.publicKeyBase64, name: "Mac", platform: "macos", status: "approved", enrolledAtUnixMs: 0, revokedAtUnixMs: nil)]
+        var devices = [SyncDeviceRecord(id: "mac", accountId: "demo", publicKey: mac.publicKeyBase64, name: "Mac", platform: "macos", status: "approved", enrolledAtUnixMs: 0, revokedAtUnixMs: nil)]
+        // `-WhimbrelDemoDevices`: a laptop waiting for approval, and two more that show one code
+        // (the same made-up key), so the "don't approve" warning can be seen.
+        if ProcessInfo.processInfo.arguments.contains("-WhimbrelDemoDevices") {
+            devices.append(SyncDeviceRecord(id: "laptop", accountId: "demo", publicKey: pendingA.publicKeyBase64, name: "Work laptop", platform: "windows", status: "pending", enrolledAtUnixMs: 0, revokedAtUnixMs: nil))
+            devices.append(SyncDeviceRecord(id: "twin1", accountId: "demo", publicKey: pendingB.publicKeyBase64, name: "Mac mini", platform: "macos", status: "pending", enrolledAtUnixMs: 0, revokedAtUnixMs: nil))
+            devices.append(SyncDeviceRecord(id: "twin2", accountId: "demo", publicKey: pendingB.publicKeyBase64, name: nil, platform: "macos", status: "pending", enrolledAtUnixMs: 0, revokedAtUnixMs: nil))
+        }
+        return devices
     }
     func revokeDevice(idToken: String, devicePublicKey: String, targetDeviceId: String) async throws {}
     func setDeviceName(idToken: String, devicePublicKey: String, name: String) async throws {}
@@ -179,7 +209,11 @@ final class DemoEnrollmentBackend: EnrollmentBackend {
     func signIn() async throws {}
     func idToken() async throws -> String { "demo" }
     func authenticate(idToken: String, devicePublicKey: String) async throws -> GoogleAuthResult {
-        noDesktop ? .approved(tursoToken: "demo", tursoDatabaseUrl: "demo", wrappedGroupKey: nil) : .pending
+        // `-WhimbrelDemoDeviceLimit`: the free plan's phone slot is taken by another phone.
+        if ProcessInfo.processInfo.arguments.contains("-WhimbrelDemoDeviceLimit") {
+            return .deviceLimit(kind: "phone", holders: [LimitHolder(id: "other-phone", name: "Pixel 9", platform: "android")])
+        }
+        return noDesktop ? .approved(tursoToken: "demo", tursoDatabaseUrl: "demo", wrappedGroupKey: nil) : .pending
     }
     func listDevices(idToken: String, devicePublicKey: String) async throws -> [SyncDeviceRecord] { [] }
     func revokeDevice(idToken: String, devicePublicKey: String, targetDeviceId: String) async throws {}

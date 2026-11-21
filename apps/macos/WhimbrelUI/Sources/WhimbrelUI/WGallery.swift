@@ -1175,3 +1175,210 @@ public enum WLiveGallery {
         return out
     }
 }
+
+// MARK: Finished note
+
+/// The finished note page and its transcript view, with made-up content (a renewal call).
+@MainActor
+public enum WNoteGallery {
+    static let sam = "Sam Okafor", dana = "Dana Whitfield", jo = "Jo (Northwind)", alex = "Alex Rivera", you = "You"
+
+    static func seg(_ id: String, _ sec: Int, _ speaker: String, _ text: String, length: Int? = nil, part: Int = 0, divider: String? = nil) -> WNoteSegment {
+        let start = Int64(sec * 100)
+        return WNoteSegment(
+            id: id, startCs: start, endCs: length.map { Int64((sec + $0) * 100) }, time: WLaneMath.clock(cs: start), speakerKey: speaker,
+            speaker: speaker, text: text, partIndex: part, dividerBefore: divider)
+    }
+
+    static let segments: [WNoteSegment] = [
+        seg("s1", 0, sam, "Thanks for making the time, Jo. I want to walk through the renewal.", length: 20),
+        seg("s2", 23, jo, "Sure. We have been happy with the product since the spring.", length: 80),
+        seg("s3", 372, jo, "If the price holds, we can do two years.", length: 40),
+        seg("s4", 415, sam, "That works for us. We can hold the list price.", length: 120),
+        seg("s5", 580, dana, "We expect fifteen more seats by Q2. I will confirm the date.", length: 60),
+        seg("s6", 650, jo, "Good. Seats matter more to us than the term.", length: 150),
+        seg("s7", 900, you, "Let me note that down.", length: 20),
+        seg("s8", 1105, jo, "There are still a few open items on the questionnaire.", length: 70),
+        seg("s9", 1190, dana, "Who on your side is the owner for that?", length: 40),
+        seg("s10", 1243, jo, "That is our IT lead, and she is out until Monday.", length: 100),
+        seg("s11", 1440, sam, "So the next step is the quote, and then the questionnaire.", length: 280),
+        seg("s12", 1730, sam, "I will get the quote to you by Thursday.", length: 30),
+        seg("s13", 1771, dana, "I will answer the open items by Friday.", length: 25),
+        seg("s14", 1862, alex, "I will check the seat price before we send it.", length: 30),
+        seg("s15", 1900, sam, "Thanks everyone. Talk Thursday.", length: 15),
+    ]
+
+    /// A meeting that was continued: the second part keeps the meeting's clock and starts with its own divider.
+    static let continuedSegments: [WNoteSegment] = Array(segments.prefix(8)) + [
+        seg("c1", 1500, "Speaker 1", "Back again. Where did we leave the seats?", length: 4, part: 1, divider: "\u{2014} rejoined 10:25 \u{2014}"),
+        seg("c2", 1512, "Speaker 2", "At fifty five, if the price holds.", length: 4, part: 1),
+        seg("c3", 1560, "Speaker 1", "Then I will write that up.", length: 3, part: 1),
+        seg("c4", 1690, "Speaker 2", "One more thing on the questionnaire.", length: 5, part: 1),
+    ]
+
+    static func source(_ number: Int, _ id: String, line: String) -> WNoteSource {
+        let seg = segments.first { $0.id == id }!
+        return WNoteSource(number: number, segmentId: id, speaker: seg.speaker, time: seg.time, quote: seg.text, lineText: line)
+    }
+
+    static let marks: [WNoteMark] = [
+        WNoteMark(id: "k1", atCs: 49500, clock: "8:15", label: "Ask Jo about the term"),
+        WNoteMark(id: "k2", atCs: 144200, clock: "24:02", label: "Who owns the questionnaire?"),
+    ]
+
+    /// Moments marked in the silence after the last line and in the gap before a later part.
+    static let outlyingMarks: [WNoteMark] = [
+        WNoteMark(id: "k3", atCs: 125000, clock: "20:50", label: "Gap between the parts"),
+        WNoteMark(id: "k4", atCs: 196000, clock: "32:40", label: "After the last line"),
+    ]
+
+    static let decision1 = "Northwind will renew for two years if the price stays the same."
+    static let decision2 = "Seats grow from 40 to 55 in Q2. Dana will confirm the start date."
+    static let question1 = "Northwind's security questionnaire still has open items, and the renewal date is close."
+    static let action1 = "Send the two-year renewal quote to Jo."
+    static let action2 = "Answer the open items on the questionnaire."
+    static let action3 = "Check that 55 seats still fits the current price."
+
+    static func model(
+        mode: WNoteMode = .note, sources withSources: Bool = true, selected: Int? = 3, state: WNoteState = .ready,
+        highlighted: String? = nil, continued: Bool = false, back: String? = "Meetings", editing: Bool = false,
+        readingScale: CGFloat = 1, marks marked: [WNoteMark]? = nil, segments overrideSegments: [WNoteSegment]? = nil
+    ) -> WNoteModel {
+        func src(_ number: Int, _ id: String, _ line: String) -> WNoteSource? { withSources ? source(number, id, line: line) : nil }
+        let all = [src(1, "s3", decision1), src(2, "s5", decision2), src(3, "s8", question1), src(4, "s12", action1), src(5, "s13", action2), src(6, "s14", action3)]
+        var m = WNoteModel(
+            mode: mode, backTitle: back, title: "Northwind renewal call", eyebrow: "Mon, Nov 16, 10:00 AM \u{00B7} 32 min",
+            attendees: "Sam Okafor, Dana Whitfield, Jo (Northwind), you",
+            yourNotes: "jo ok with 2 yr term if price holds\nsecurity questionnaire?? who owns it\nseats 40 to 55 in Q2",
+            state: state, canEdit: true, isEditing: editing,
+            summary: WNoteLine(id: "summary", text: "Northwind will renew for two years if the price stays the same, with seats growing from 40 to 55 in Q2. The security questionnaire is the open risk."),
+            decisions: [
+                WNoteLine(id: "d1", text: decision1, source: all[0]),
+                WNoteLine(id: "d2", text: decision2, source: all[1]),
+            ],
+            openQuestions: [
+                WNoteLine(id: "q1", text: question1, source: all[2]),
+            ],
+            actionItems: [
+                WNoteActionItem(id: "a1", line: WNoteLine(id: "a1", text: action1, source: all[3]), owner: sam, due: "Thu, Nov 19"),
+                WNoteActionItem(id: "a2", line: WNoteLine(id: "a2", text: action2, source: all[4]), owner: dana, due: "Fri, Nov 20"),
+                WNoteActionItem(id: "a3", line: WNoteLine(id: "a3", text: action3, source: all[5]), owner: alex, due: "Tue, Nov 24"),
+            ],
+            marks: marked ?? marks, provenance: ["Generated by gpt-5 (hosted)"],
+            selectedSource: withSources ? selected.flatMap { n in all.compactMap { $0 }.first { $0.number == n }?.id } : nil,
+            readingScale: readingScale, segments: overrideSegments ?? (continued ? continuedSegments : segments), highlightedSegmentId: highlighted)
+        if case .processing = state {
+            m.summary = nil; m.decisions = []; m.openQuestions = []; m.actionItems = []; m.provenance = []; m.canSendRecap = false
+            m.segments = []; m.transcriptMessage = "Transcribing in the background. Check back shortly."
+        }
+        if case .failed = state { m.summary = nil; m.decisions = []; m.openQuestions = []; m.actionItems = []; m.provenance = [] }
+        return m
+    }
+
+    /// A notice the app owns (the summary fallback, names changed, the device chip), drawn here as a plain line.
+    struct SampleNotice: View {
+        @Environment(\.wTheme) private var theme
+        let text: String
+        var body: some View {
+            HStack(spacing: 8) {
+                WGlyph(name: "info.circle", size: 13).foregroundStyle(theme.textSecondary)
+                Text(text).wFont(.secondary).foregroundStyle(theme.textSecondary)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// The chip the app shows above a meeting another device recorded.
+    struct SampleDeviceChip: View {
+        @Environment(\.wTheme) private var theme
+        let text: String
+        var body: some View {
+            HStack(spacing: 0) {
+                Text(text).wFont(.caption).foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 8).padding(.vertical, 2)
+                    .background(Capsule().fill(theme.selection.opacity(0.6)))
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// Where the app's editors go while editing: a placeholder, so the layout around them shows.
+    struct SampleEditors: View {
+        @Environment(\.wTheme) private var theme
+        var body: some View {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(["Summary", "Decisions", "Action items", "Open questions"], id: \.self) { title in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(title).wFont(.secondary).fontWeight(.semibold).foregroundStyle(theme.textSecondary)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous).fill(theme.backgroundPage)
+                            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(theme.border, lineWidth: 1))
+                            .frame(height: title == "Summary" ? 80 : 44)
+                    }
+                }
+            }
+            .padding(16).frame(maxWidth: .infinity, alignment: .leading).wCard(radius: .card)
+        }
+    }
+
+    static func page(_ model: WNoteModel, notice: String? = nil, device: String? = nil) -> some View {
+        WNoteView(
+            model: model, actions: WNoteActions(),
+            options: { WGlyph(name: "ellipsis.circle", size: 16).frame(width: 28, height: 28) },
+            notices: {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let device { SampleDeviceChip(text: device) }
+                    if let notice { SampleNotice(text: notice) }
+                }
+            },
+            editor: { SampleEditors() }, extras: { EmptyView() },
+            ask: { WLiveGallery.SampleAsk().padding(12) }, speaker: { WNoteSpeakerName($0.speaker) })
+            .environment(\.wScrollsContent, false)
+    }
+
+    static func screen(_ model: WNoteModel, notice: String? = nil, device: String? = nil, height: CGFloat = 1150) -> AnyView {
+        AnyView(
+            WShell(
+                items: WHomeGallery.items, selection: "meetings", onSelect: { _ in },
+                header: WShellHeader(title: "Meetings", ask: .available(placeholder: "Search your work memory")),
+                onSubmit: { _, _ in }, memory: .on, onWhatIsCaptured: {}, recording: nil,
+                pauseChoices: { WPauseChoices(isPaused: false, onPause: { _ in }, onResume: {}) },
+                footer: { Text("This Mac").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 10) },
+                banner: { EmptyView() },
+                content: { page(model, notice: notice, device: device) }
+            )
+            .frame(height: height)
+        )
+    }
+
+    /// A long meeting with many speakers, to show the lanes held to their own height.
+    static let crowdedSegments: [WNoteSegment] = (0..<60).map { i in
+        seg("x\(i)", i * 40, "Speaker \(i % 20 + 1)", "Line \(i + 1) of a long meeting with many people on the call.", length: 30)
+    }
+
+    public static func cases() -> [WHomeGalleryCase] {
+        var out: [WHomeGalleryCase] = []
+        func add(_ id: String, _ view: AnyView, mode: WGalleryMode = .light, scale: CGFloat = 1, width: CGFloat = 1440, height: CGFloat = 1150) {
+            out.append(WHomeGalleryCase(id: id, mode: mode, textScale: scale, width: width, height: height, view: view))
+        }
+        func both(_ name: String, _ view: @autoclosure () -> AnyView, width: CGFloat = 1440, height: CGFloat = 1150) {
+            add("\(name)-light", view(), width: width, height: height)
+            add("\(name)-dark", view(), mode: .dark, width: width, height: height)
+        }
+        both("note-sources", screen(model(), height: 1250), height: 1250)
+        both("note-no-sources", screen(model(sources: false)))
+        both("note-narrow", AnyView(page(model(selected: 3, back: nil)).frame(height: 1500)), width: 600, height: 1500)
+        both("note-processing", screen(model(state: .processing(stage: "Transcribing"))))
+        both("note-regenerating", screen(model(state: .processing(stage: "Regenerating\u{2026}"))))
+        both("note-other-device", screen(model(selected: nil), device: "Dana's MacBook", height: 1250), height: 1250)
+        both("note-editing", screen(model(editing: true), height: 1250), height: 1250)
+        both("transcript-lanes", screen(model(mode: .transcript, highlighted: "s8"), height: 1250), height: 1250)
+        add("note-failed-light", screen(model(state: .failed("Whimbrel could not write the summary. Check your connection and try again."))))
+        add("note-sources-light-2.0", screen(model(), height: 2400), scale: 2, width: 1500, height: 2400)
+        add("note-sources-high-contrast", screen(model(), height: 1250), mode: .highContrastLight, height: 1250)
+        add("note-sources-light-reading-size", screen(model(readingScale: WReadingScale.scale(fontSize: 18)), height: 1500), height: 1500)
+        add("note-editing-high-contrast", screen(model(editing: true), height: 1250), mode: .highContrastLight, height: 1250)
+        add("transcript-continued-light", screen(model(mode: .transcript, highlighted: "c2", continued: true, marks: marks + outlyingMarks), height: 1250), height: 1250)
+        add("transcript-many-speakers-light-2.0", screen(model(mode: .transcript, marks: [], segments: crowdedSegments), height: 1600), scale: 2, width: 1500, height: 1600)
+        return out
+    }
+}

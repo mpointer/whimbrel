@@ -262,7 +262,7 @@ it("a contact after the cron reads the account cancels deletion", async () => {
   const db = new FakeSqlExecutor();
   const { account, device } = await warnedAt(db);
   // The device reconnects between the cron's read and its claim.
-  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE warned_at", () =>
+  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews, plan_tier, ai_allowance_micros, ai_allowance_expires_ms FROM account WHERE warned_at", () =>
     accounts.touchLastSeen(db, account.id, device.id, NOW + 15 * DAY),
   );
   expect((await runInactivity(db, makeEnv(), NOW + 15 * DAY, resend().fetcher)).deleted).toBe(0);
@@ -364,7 +364,7 @@ it("cron skips an account with a reset in progress", async () => {
 });
 
 // ---- Cloud plan ----
-const COLS = "id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews";
+const COLS = "id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews, plan_tier, ai_allowance_micros, ai_allowance_expires_ms";
 
 it("cloud_accounts_are_never_warned", async () => {
   const db = new FakeSqlExecutor();

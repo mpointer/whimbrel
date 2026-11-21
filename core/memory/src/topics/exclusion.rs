@@ -155,8 +155,26 @@ pub fn input_text_ref(text: &str) -> (String, i64, Vec<u32>) {
     (input_ref("text", hash), hash, crate::words::word_fingerprints(text))
 }
 
+/// The first word of a kept fingerprint blob written since the fingerprints are taken over every
+/// reading of the text (`crate::words::readings`; review 4, M4). Rows written before (v0.9.80 and
+/// earlier, fingerprints of the text as written) lack it.
+const FINGERPRINTS_V2: u32 = 0xFFFF_FFFE;
+
+/// A fingerprint blob to keep: [`FINGERPRINTS_V2`], then the fingerprints.
+pub(crate) fn encode_fingerprints(fingerprints: &[u32]) -> Vec<u8> {
+    std::iter::once(FINGERPRINTS_V2).chain(fingerprints.iter().copied()).flat_map(u32::to_le_bytes).collect()
+}
+
+/// The fingerprints a kept blob holds. A blob from before [`FINGERPRINTS_V2`] holds fingerprints of
+/// the text as written only, so what it would say about an encoded name is unknown: it reads as
+/// [`crate::words::UNDECIDABLE_FINGERPRINT`] alone, which names every term (unclean while any
+/// client is excluded, clean while none is).
 fn decode_fingerprints(b: &[u8]) -> Vec<u32> {
-    b.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    let words: Vec<u32> = b.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    match words.split_first() {
+        Some((&FINGERPRINTS_V2, rest)) => rest.to_vec(),
+        _ => vec![crate::words::UNDECIDABLE_FINGERPRINT],
+    }
 }
 
 /// Drops the clean stamps (and the word fingerprints they own) of the answers `select_answers`
@@ -205,7 +223,9 @@ pub(crate) fn purge_event_spans_of_tx(conn: &rusqlite::Connection, key: &str) ->
 
 /// [`Store::purge_input_words_naming`] inside a caller's transaction.
 pub(crate) fn purge_input_words_naming_tx(conn: &rusqlite::Connection, terms: &[String]) -> rusqlite::Result<usize> {
-    let terms: Vec<Vec<String>> = terms.iter().map(|t| crate::words::folded_words(t)).filter(|w| !w.is_empty()).collect();
+    // The spelling without invisible characters, as the exclusion set matches (review 6, M3).
+    let terms: Vec<Vec<String>> =
+        terms.iter().map(|t| crate::words::folded_words(&crate::words::without_invisibles(t))).filter(|w| !w.is_empty()).collect();
     let rows: Vec<(i64, i64, Vec<u8>)> = conn
         .prepare("SELECT stamp, hash, fingerprints FROM input_words")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
@@ -463,7 +483,7 @@ const RULES_TABLES: [(&str, bool, &str, &str); 10] = [
 /// transcript segment is checked alone, as the full scan does. Only the columns the predicates
 /// read are listed: an embedding or sync flag update notes nothing.
 #[allow(clippy::type_complexity)]
-const CONTENT_TABLES: [(&str, &str, &str, &str, Option<&str>, &str); 15] = [
+const CONTENT_TABLES: [(&str, &str, &str, &str, Option<&str>, &str); 16] = [
     (
         "items",
         "items",
@@ -495,6 +515,8 @@ const CONTENT_TABLES: [(&str, &str, &str, &str, Option<&str>, &str); 15] = [
     ("meeting_speaker", "meeting_text", "NEW.meeting_id", "", None, "meeting_id, person_key"),
     ("live_alert", "meeting_text", "NEW.meeting_id", "NEW.meeting_id IS NOT NULL AND ", None, "meeting_id, quote, restatement, asker, draft_json"),
     ("meeting_marker", "meeting_text", "NEW.meeting_id", "", None, "meeting_id, label"),
+    // The owner and due date of an action item and a normalized copy of a transcript line (device-local).
+    ("meeting_line_source", "meeting_text", "NEW.meeting_id", "", None, "meeting_id, line_text, owner, due, anchor"),
     ("live_transcript_segment", "meeting_text", "NEW.meeting_id", "", None, "meeting_id, text"),
     ("meeting_snapshot", "meeting_text", "NEW.meeting_id", "", None, "meeting_id, ocr_text"),
     ("transcript_segment", "transcript_segment", "NEW.id", "", None, "meeting_id, text"),
@@ -731,7 +753,10 @@ impl Store {
     }
 
     /// Addresses of the people mentioned by sources in `topics` and by no source filed under any
-    /// other topic: the client's own contacts, not colleagues who attend everything.
+    /// other topic: the client's own contacts, not colleagues who attend everything. Known limit:
+    /// the user's own addresses are known only from connected accounts (`connector_account`, see
+    /// `index::self_emails`), so with none connected the user's own address, met only in one
+    /// client's material, is counted as that client's contact.
     fn client_only_emails(&self, topics: &HashSet<i64>) -> rusqlite::Result<HashSet<String>> {
         let mut inside: HashSet<(i64, String)> = HashSet::new();
         let mut outside: HashSet<i64> = HashSet::new();
@@ -818,8 +843,9 @@ impl Store {
 
     /// Every text about meeting `meeting_id` that a user or a model wrote beyond the `meeting`
     /// row: the workspace draft, action items, follow-ups, the people named as its speakers, live
-    /// alerts, marker labels, live transcript lines and slide text (fix round 4, S1). The same tables the
-    /// meeting scan in `name_hits_limited` reads.
+    /// alerts, marker labels, the lines, owners, due dates and anchors of a note's line sources, live
+    /// transcript lines and slide text (fix round 4, S1). The same tables the meeting scan in
+    /// `name_hits_limited` reads.
     pub fn meeting_authored_text(&self, meeting_id: i64) -> rusqlite::Result<String> {
         let mut out = self.get_meeting_note_draft(meeting_id)?.map(|d| d.text()).unwrap_or_default();
         for sql in [
@@ -828,6 +854,7 @@ impl Store {
             "SELECT p.name || ' ' || coalesce(p.email, '') FROM meeting_speaker sp JOIN person p ON p.person_key = sp.person_key WHERE sp.meeting_id = ?1",
             "SELECT quote || ' ' || restatement || ' ' || coalesce(asker, '') || ' ' || coalesce(draft_json, '') FROM live_alert WHERE meeting_id = ?1",
             "SELECT label FROM meeting_marker WHERE meeting_id = ?1 AND label IS NOT NULL",
+            "SELECT line_text || ' ' || coalesce(owner, '') || ' ' || coalesce(due, '') || ' ' || coalesce(anchor, '') FROM meeting_line_source WHERE meeting_id = ?1",
             "SELECT text FROM live_transcript_segment WHERE meeting_id = ?1",
             "SELECT ocr_text FROM meeting_snapshot WHERE meeting_id = ?1",
         ] {
@@ -1690,7 +1717,7 @@ impl Store {
         tx.execute("INSERT OR REPLACE INTO clean_text (hash, keys) VALUES (?1, ?2)", params![owner, stamp])?;
         let at = crate::now_unix_ms();
         for (hash, fingerprints) in words {
-            let blob: Vec<u8> = fingerprints.iter().flat_map(|f| f.to_le_bytes()).collect();
+            let blob = encode_fingerprints(fingerprints);
             tx.execute(
                 "INSERT OR REPLACE INTO input_words (stamp, hash, fingerprints, at_unix_ms) VALUES (?1, ?2, ?3, ?4)",
                 params![owner, hash, blob, at],
@@ -1699,11 +1726,18 @@ impl Store {
         tx.commit()
     }
 
-    /// The word fingerprints kept under `hash` by any stamp, sorted.
+    /// The word fingerprints kept under `hash` by any stamp, sorted. A current-version row is read
+    /// before a legacy one (review 5, M1): the same text stamped again since the upgrade is read by
+    /// its new fingerprints, so a legacy row does not keep it unclean until retention.
     pub fn input_words(&self, hash: i64) -> rusqlite::Result<Option<Vec<u32>>> {
         let blob: Option<Vec<u8>> = self
             .conn
-            .query_row("SELECT fingerprints FROM input_words WHERE hash = ?1 LIMIT 1", [hash], |r| r.get(0))
+            .query_row(
+                "SELECT fingerprints FROM input_words WHERE hash = ?1 \
+                 ORDER BY substr(fingerprints, 1, 4) = ?2 DESC, at_unix_ms DESC LIMIT 1",
+                params![hash, FINGERPRINTS_V2.to_le_bytes().to_vec()],
+                |r| r.get(0),
+            )
             .optional()?;
         Ok(blob.map(|b| decode_fingerprints(&b)))
     }
@@ -1831,6 +1865,22 @@ mod tests {
     use crate::tests::FakeEmbedder;
     use crate::topics::client_controls::ClientControl;
     use std::sync::Arc;
+
+    /// Review 4, M4: fingerprints kept by v0.9.80 and earlier (of the text as written, no version
+    /// word) read as unknown: unclean while any client is excluded, clean while none is. New rows
+    /// round-trip.
+    #[test]
+    fn fingerprints_kept_before_readings_read_as_unclean_while_a_client_is_excluded() {
+        let (_d, s) = store();
+        s.mark_clean_text("An answer.", "stamp", &[(42, vec![1, 2, 3])]).unwrap();
+        assert_eq!(s.input_words(42).unwrap(), Some(vec![1, 2, 3]));
+        let old: Vec<u8> = crate::words::word_fingerprints("lunch on friday").iter().flat_map(|f| f.to_le_bytes()).collect();
+        s.conn.execute("INSERT OR REPLACE INTO input_words (stamp, hash, fingerprints, at_unix_ms) VALUES (7, 43, ?1, 1)", [old]).unwrap();
+        let fps = s.input_words(43).unwrap().unwrap();
+        assert_eq!(fps, vec![crate::words::UNDECIDABLE_FINGERPRINT]);
+        assert!(crate::words::fingerprints_name_any(&fps, &[crate::words::folded_words("Acme")]), "unclean while a client is excluded");
+        assert!(!crate::words::fingerprints_name_any(&fps, &[]), "clean while none is");
+    }
 
     fn store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
@@ -2655,6 +2705,185 @@ mod tests {
         s.add_meeting_marker(m, 500, Some("Acme pricing came up"), 2_000).unwrap();
         assert!(s.excluded_material_with(&acme).unwrap().meetings.contains(&m));
         assert_eq!(full_recomputes(), fulls, "no full recompute");
+    }
+
+    /// One `meeting_line_source` row with the text of each of its four columns given.
+    fn line_source(line: &str, owner: Option<&str>, due: Option<&str>, spoken: Option<&str>) -> crate::line_source::NewLineSource {
+        use crate::line_source::{anchor_of, base_fingerprint, LineKind, NewLineSource, SourceLocator};
+        NewLineSource {
+            kind: LineKind::ActionItem,
+            line_text: line.into(),
+            owner: owner.map(Into::into),
+            due: due.map(Into::into),
+            locator: spoken.map(|s| SourceLocator { offset_secs: 0, base: base_fingerprint("first"), anchor: anchor_of(s) }),
+        }
+    }
+
+    /// The four text columns of a line source, one row each: only that column names the client.
+    fn line_source_cases() -> [(&'static str, crate::line_source::NewLineSource); 4] {
+        [
+            ("line_text", line_source("Send Acme the deck", None, None, None)),
+            ("owner", line_source("Send the deck", Some("Acme"), None, None)),
+            ("due", line_source("Send the deck", Some("Ana"), Some("before the Acme call"), None)),
+            ("anchor", line_source("Send the deck", None, None, Some("So, ACME wants the deck by Friday!"))),
+        ]
+    }
+
+    /// A summary line's source (`meeting_line_source`) holds text the note never shows as such: an action
+    /// item's owner and due date, and a normalized copy of a transcript line. Each of the four columns that
+    /// names the client excludes its meeting, without a full recompute; a row that names nobody does not.
+    #[test]
+    fn a_line_source_naming_the_client_excludes_its_meeting() {
+        let (_d, s) = store();
+        let a = s.create_seed_topic("Acme", &[], None).unwrap();
+        exclude(&s, &a.key);
+        let cases = line_source_cases();
+        let ids: Vec<i64> = (0..cases.len()).map(|i| new_meeting(&s, 1_000 + i as i64, "Weekly sync", &[])).collect();
+        let control = new_meeting(&s, 9_000, "Weekly sync", &[]);
+        let before = s.excluded_material_with(&acme).unwrap();
+        assert!(ids.iter().all(|m| !before.meetings.contains(m)));
+        let fulls = full_recomputes();
+        for (m, (_, row)) in ids.iter().zip(cases) {
+            s.replace_meeting_line_sources(*m, &[row], 5).unwrap();
+        }
+        s.replace_meeting_line_sources(control, &[line_source("Send the deck", Some("Ana"), Some("Friday"), Some("so we send the deck"))], 5)
+            .unwrap();
+        let after = s.excluded_material_with(&acme).unwrap();
+        for (m, (column, _)) in ids.iter().zip(line_source_cases()) {
+            assert!(after.meetings.contains(m), "{column} names the client");
+        }
+        assert!(!after.meetings.contains(&control), "a row that names nobody");
+        assert_eq!(full_recomputes(), fulls, "no full recompute");
+    }
+
+    /// An edit of a row that already exists is noted too: a re-summary rewrites it, a prune clears its anchor.
+    #[test]
+    fn a_line_source_edited_to_name_the_client_excludes_its_meeting() {
+        let (_d, s) = store();
+        let a = s.create_seed_topic("Acme", &[], None).unwrap();
+        exclude(&s, &a.key);
+        let columns = ["line_text", "owner", "due", "anchor"];
+        let ids: Vec<i64> = columns.iter().enumerate().map(|(i, _)| new_meeting(&s, 1_000 + i as i64, "Weekly sync", &[])).collect();
+        for m in &ids {
+            s.replace_meeting_line_sources(*m, &[line_source("Send the deck", Some("Ana"), Some("Friday"), Some("send the deck"))], 5).unwrap();
+        }
+        let before = s.excluded_material_with(&acme).unwrap();
+        assert!(ids.iter().all(|m| !before.meetings.contains(m)));
+        let fulls = full_recomputes();
+        for (m, column) in ids.iter().zip(columns) {
+            s.conn.execute(&format!("UPDATE meeting_line_source SET {column} = 'Acme' WHERE meeting_id = ?1"), [m]).unwrap();
+        }
+        let after = s.excluded_material_with(&acme).unwrap();
+        for (m, column) in ids.iter().zip(columns) {
+            assert!(after.meetings.contains(m), "{column} edited");
+        }
+        assert_eq!(full_recomputes(), fulls, "no full recompute");
+    }
+
+    /// The whole-meeting scan (client inventory, the full recompute) and the text checked before a summary or
+    /// an MCP answer both read every column.
+    #[test]
+    fn a_line_source_is_read_by_the_full_scan_and_by_the_authored_text() {
+        let (_d, s) = store();
+        for (column, row) in line_source_cases() {
+            let m = new_meeting(&s, 1_000, &format!("Sync {column}"), &[]);
+            assert!(!s.meeting_text_hits(&acme, None).unwrap().iter().any(|(id, _)| *id == m));
+            s.replace_meeting_line_sources(m, &[row], 5).unwrap();
+            let hits = s.meeting_text_hits(&acme, None).unwrap();
+            assert!(hits.iter().any(|(id, _)| *id == m), "{column}: the full meeting scan");
+            let text = s.meeting_authored_text(m).unwrap();
+            assert!(acme(&text), "{column}: the text a summary or an MCP answer is checked against: {text}");
+        }
+        let plain = new_meeting(&s, 2_000, "Lunch", &[]);
+        s.replace_meeting_line_sources(plain, &[line_source("Order lunch", Some("Ana"), Some("noon"), Some("who is ordering lunch"))], 5).unwrap();
+        assert!(!s.meeting_text_hits(&acme, None).unwrap().iter().any(|(id, _)| *id == plain));
+        assert!(!acme(&s.meeting_authored_text(plain).unwrap()));
+    }
+
+    /// The matcher finds a client's name inside a stored anchor, which is normalized text (lowercased, every
+    /// run of punctuation one space): names with an apostrophe, an ampersand, a hyphen, an accent, a sharp s.
+    #[test]
+    fn a_client_name_is_found_inside_a_normalized_anchor() {
+        for (spoken, term) in [
+            ("So, ACME wants the deck!", "Acme"),
+            ("We spoke to O'Brien & Sons today.", "O'Brien & Sons"),
+            ("We spoke to O'Brien & Sons today.", "O'Brien"),
+            ("AT&T called back.", "AT&T"),
+            ("Smith-Jones signed off.", "Smith-Jones"),
+            ("Smith-Jones signed off.", "Smith Jones"),
+            ("Ask José about it.", "Jose"),
+            ("Ask JOSÉ about it.", "José"),
+            ("Strauß wants a quote.", "Strauss"),
+            ("Acme, Inc. wants a quote.", "Acme, Inc."),
+            ("The 3M deal slipped.", "3M"),
+        ] {
+            let anchor = crate::line_source::anchor_of(spoken);
+            assert!(crate::words::names_any(&anchor, &[term.to_string()]), "{term} in {anchor:?}");
+            assert!(crate::words::names_any(spoken, &[term.to_string()]), "control: {term} in the spoken line");
+        }
+        // The one shape that does not survive: an accent written as a separate combining mark inside a
+        // word. Normalizing makes the mark a separator ("jose phine"), so a term "Josephine" no longer
+        // matches the anchor. The same line in `transcript_segment` carries the original characters and
+        // is scanned by its own trigger, so the meeting is still found there.
+        let decomposed = "Jose\u{301}phine called";
+        assert!(crate::words::names_any(decomposed, &["Josephine".to_string()]), "the original line matches");
+        assert!(!crate::words::names_any(&crate::line_source::anchor_of(decomposed), &["Josephine".to_string()]));
+    }
+
+    /// Every table with a `meeting_id` column and a text column either has triggers noting its writes
+    /// (`CONTENT_TABLES`) or is named below with the reason the meeting scan does not read it. A table that is
+    /// neither fails here, so a new one cannot be missed because no fixture happens to fill it (`meeting_marker`
+    /// and `meeting_line_source` both went unlisted that way).
+    #[test]
+    fn every_table_with_meeting_text_is_registered_or_exempt() {
+        // (table, why the exclusion scan does not read it)
+        const EXEMPT: &[(&str, &str)] = &[
+            ("forgotten_meeting", "a tombstone: device id and meeting id, no text"),
+            ("meeting_part", "audio and transcript file paths and times of a recording's parts"),
+            ("meeting_speaker_pending", "a synced voice row waiting for its meeting: ids, a person key and a status"),
+            ("meeting_summary_fallback", "content-free by design: provider ids, a model id and a reason code"),
+            ("profile_suggestion", "a profile fact, not meeting text; `purge_client_text` scrubs it by name"),
+            ("pushed_meeting_row", "which server rows a meeting was pushed under: ids and a row type"),
+            ("sync_meeting_map", "the sync pairing of meeting ids with a peer device id"),
+        ];
+        let (_d, s) = store();
+        let tables: Vec<String> = s
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let mut unregistered = Vec::new();
+        for t in tables {
+            if t.contains("_fts") || t.contains("_vec") {
+                continue;
+            }
+            let cols: Vec<(String, String)> = s
+                .conn
+                .prepare(&format!("SELECT name, upper(type) FROM pragma_table_info('{t}')"))
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let about_a_meeting = cols.iter().any(|(n, _)| n.contains("meeting_id"));
+            let holds_text = cols.iter().any(|(_, ty)| ty.contains("TEXT"));
+            if !about_a_meeting || !holds_text {
+                continue;
+            }
+            let registered = CONTENT_TABLES.iter().any(|(c, ..)| *c == t);
+            let exempt = EXEMPT.iter().any(|(c, _)| *c == t);
+            if !registered && !exempt {
+                unregistered.push(t);
+            }
+        }
+        assert!(unregistered.is_empty(), "a table with text about a meeting is neither a content table nor exempt: {unregistered:?}");
+        for (t, why) in EXEMPT {
+            assert!(!why.is_empty());
+            assert!(!CONTENT_TABLES.iter().any(|(c, ..)| c == t), "{t} is exempt and registered");
+        }
     }
 
     /// Screen capture inserts that name nobody cost no recompute, and what was read is not read

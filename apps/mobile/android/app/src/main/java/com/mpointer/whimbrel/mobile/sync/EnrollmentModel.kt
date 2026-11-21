@@ -1,6 +1,7 @@
 package com.mpointer.whimbrel.mobile.sync
 
 import androidx.annotation.StringRes
+import com.mpointer.whimbrel.mobile.BuildConfig
 import com.mpointer.whimbrel.mobile.R
 import com.mpointer.whimbrel.mobile.auth.GoogleSignInError
 import com.mpointer.whimbrel.mobile.core.AccountPlan
@@ -10,6 +11,7 @@ import com.mpointer.whimbrel.mobile.core.GoogleAuthResult
 import com.mpointer.whimbrel.mobile.core.GroupKeyDecision
 import com.mpointer.whimbrel.mobile.core.LimitHolder
 import com.mpointer.whimbrel.mobile.core.SyncApiError
+import com.mpointer.whimbrel.mobile.core.SyncDeviceRecord
 import com.mpointer.whimbrel.mobile.core.coreUserMessage
 import com.mpointer.whimbrel.mobile.secrets.SyncSecrets
 import com.mpointer.whimbrel.mobile.secrets.TursoSession
@@ -73,6 +75,34 @@ data class ActionError(val core: CoreUserMessage?, @StringRes val fallback: Int 
     fun localized(context: (Int, Array<Any>) -> String): String = core?.localized(context) ?: context(fallback, emptyArray())
 }
 
+/**
+ * Another device on the account, as the Devices screen shows it. [code] is the comparison code for its public
+ * key (null when the core cannot derive one); [collides] means another pending device shows the same code.
+ */
+data class DeviceRow(val device: SyncDeviceRecord, val code: String?, val collides: Boolean) {
+    val isPending: Boolean get() = device.status == "pending"
+
+    /**
+     * Only a pending device whose code can be shown and compared, and is not shared with another pending device.
+     * Stricter than the iPhone, which still offers Approve when no code can be derived.
+     */
+    val canApprove: Boolean get() = isPending && code != null && !collides
+
+    companion object {
+        /** The other devices (not this phone, not revoked ones), each with its code, marking shared codes. */
+        fun rows(records: List<SyncDeviceRecord>, ownPublicKey: String, code: (String) -> String?): List<DeviceRow> {
+            val others = records.filter { it.publicKey != ownPublicKey && it.status != "revoked" }
+            val codes = others.map { code(it.publicKey)?.takeIf(String::isNotEmpty) }
+            val shared = others.zip(codes).filter { (d, c) -> d.status == "pending" && c != null }
+                .groupBy({ it.second }, { it.first.id }).values.filter { it.size > 1 }.flatten().toSet()
+            return others.zip(codes).map { (d, c) -> DeviceRow(d, c, d.id in shared) }
+        }
+
+        fun pendingCount(records: List<SyncDeviceRecord>, ownPublicKey: String): Int =
+            records.count { it.status == "pending" && it.publicKey != ownPublicKey }
+    }
+}
+
 data class SyncCredentials(val tursoToken: String, val tursoDatabaseUrl: String, val groupKeyBase64: String, val deviceId: String) {
     override fun toString() = "SyncCredentials(redacted)"
 }
@@ -101,6 +131,8 @@ class EnrollmentModel(
     configError: String? = null,
     /** Diagnostics for why sync stopped or sign-in is asked for. Never given a token or an email. */
     private val log: (String) -> Unit = {},
+    /** Whether this build may approve a device; see [DeviceApproval]. Tests pass both values. */
+    private val approvalEnabled: Boolean = DeviceApproval.enabled,
 ) : SyncCredentialSource {
     private val _status = MutableStateFlow(
         when {
@@ -127,6 +159,23 @@ class EnrollmentModel(
     /** Names of the account's devices and this phone's own id, for labelling where a meeting was recorded. Best effort: empty until the first refresh. */
     val deviceLabels: StateFlow<DeviceLabels> = _deviceLabels.asStateFlow()
     private var lastDeviceRefreshAtMs: Long? = null
+
+    private val _otherDevices = MutableStateFlow<List<DeviceRow>>(emptyList())
+
+    /** The account's other devices, for the Devices screen. Empty until [refreshOtherDevices] has run. */
+    val otherDevices: StateFlow<List<DeviceRow>> = _otherDevices.asStateFlow()
+    private val _pendingDeviceCount = MutableStateFlow(0)
+
+    /** Devices waiting for this phone's (or a computer's) approval: the Settings badge and the Today banner. */
+    val pendingDeviceCount: StateFlow<Int> = _pendingDeviceCount.asStateFlow()
+    private val _approving = MutableStateFlow(false)
+
+    /** An approval is in flight: the button is disabled so a double tap sends one. */
+    val approving: StateFlow<Boolean> = _approving.asStateFlow()
+    private val _approvalError = MutableStateFlow<ActionError?>(null)
+
+    /** A failed approval, for the Devices screen. */
+    val approvalError: StateFlow<ActionError?> = _approvalError.asStateFlow()
 
     /** Called once per wipe, after the secrets are cleared: clears synced prefs and keys, the store and the sync model. */
     var onWipe: (() -> Unit)? = null
@@ -257,7 +306,8 @@ class EnrollmentModel(
             throw e
         } catch (e: Exception) {
             // Offline or a passing failure: the user keeps what they see (approved stays approved).
-            log("renewal failed: ${e.javaClass.simpleName}${(e as? GoogleSignInError.Failed)?.let { " (${it.reason})" } ?: ""}")
+            // Debug builds add the HTTP status and the core's error code, which say why the Worker refused. Never the body.
+            log("renewal failed: ${e.javaClass.simpleName}${(e as? GoogleSignInError.Failed)?.let { " (${it.reason})" } ?: ""}${(e as? SyncApiError.Http)?.takeIf { BuildConfig.DEBUG }?.let { " status=${it.status} code=${coreMessageFor(it)?.code}" } ?: ""}")
             when {
                 isRevoked(e) -> wipeRevoked(publicKey)
                 // The keypair was wiped meanwhile: land nothing.
@@ -325,6 +375,9 @@ class EnrollmentModel(
         _swapRequested.value = false
         _actionError.value = null
         _deviceLabels.value = DeviceLabels()
+        _otherDevices.value = emptyList()
+        _pendingDeviceCount.value = 0
+        _approvalError.value = null
         lastDeviceRefreshAtMs = null
         runCatching { secrets.deleteGroupKey() }
         runCatching { secrets.deleteDeviceSecretKey() }
@@ -509,6 +562,74 @@ class EnrollmentModel(
         if (currentPublicKey() != publicKey) return
         lastDeviceRefreshAtMs = clock()
         _deviceLabels.value = DeviceLabels(DeviceLabels.names(records), publicKey)
+        _pendingDeviceCount.value = DeviceRow.pendingCount(records, publicKey)
+    }
+
+    /**
+     * The Devices screen's list: every other device with its comparison code. Not throttled (the screen polls
+     * while it shows). Silent on failure: what is shown stays, and the next tick retries.
+     */
+    suspend fun refreshOtherDevices() {
+        val backend = backend ?: return
+        if (_status.value != EnrollmentStatus.Approved) return
+        val publicKey = currentPublicKey() ?: return
+        val records = try {
+            backend.listDevices(backend.idToken(), publicKey)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return
+        }
+        // Wiped or replaced while the list was in flight: land nothing.
+        if (currentPublicKey() != publicKey) return
+        _otherDevices.value = DeviceRow.rows(records, publicKey, native::deviceComparisonCode)
+        _pendingDeviceCount.value = DeviceRow.pendingCount(records, publicKey)
+        _deviceLabels.value = DeviceLabels(DeviceLabels.names(records), publicKey)
+    }
+
+    /**
+     * Approves the pending device [deviceId]. [shownPublicKey] is the public key of the row the user tapped, the
+     * one whose code was on screen: the list is re-read while the screen shows, so if that device's key has
+     * changed since, nothing is approved and the screen says to check the new code. The group key is wrapped to
+     * [shownPublicKey] and nothing else. Does nothing for a row that is not pending, has no code, or shares its
+     * code with another pending device. The phone never makes a group
+     * key, so it never resets an account. Neither key nor the wrapped blob is ever logged.
+     */
+    suspend fun approve(deviceId: String, shownPublicKey: String) {
+        // Gated off in release builds until a real two-device test: refuse before any key is read.
+        if (!approvalEnabled) return
+        val backend = backend ?: return
+        if (_status.value != EnrollmentStatus.Approved || _approving.value) return
+        val row = _otherDevices.value.firstOrNull { it.device.id == deviceId } ?: return
+        if (row.device.publicKey != shownPublicKey) {
+            // The key behind this device changed after its code was shown: the user compared a different code.
+            _approvalError.value = ActionError(null, R.string.devices_code_changed)
+            return
+        }
+        if (!row.canApprove) return
+        val publicKey = currentPublicKey() ?: return
+        _approving.value = true
+        _approvalError.value = null
+        try {
+            val secretKey = secrets.deviceSecretKey
+            val groupKey = secrets.groupKey
+            val wrapped = if (secretKey == null || groupKey == null) null
+            else jsonField(native.syncWrapGroupKey(secretKey, shownPublicKey, groupKey), "wrapped_group_key_base64")?.takeIf { it.isNotEmpty() }
+            if (wrapped == null) {
+                // Nothing is sent without a wrapped key.
+                _approvalError.value = ActionError(null, R.string.devices_wrap_failed)
+                return
+            }
+            backend.approve(backend.idToken(), publicKey, row.device.id, wrapped)
+            if (currentPublicKey() != publicKey) return
+            refreshOtherDevices()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (currentPublicKey() == publicKey) _approvalError.value = ActionError(coreMessageFor(e))
+        } finally {
+            _approving.value = false
+        }
     }
 
     /** Names this phone's row (while pending, for the Mac's approve prompt; again once approved). Best effort. */

@@ -402,6 +402,39 @@ pub fn limited_use_settings() -> LimitedUseSettings {
     LIMITED_USE.with(|s| s.borrow().clone().unwrap_or_default())
 }
 
+// This crate's tests only: a transport that makes the client of every chain link routing builds,
+// so a test drives a public entry point (`ask::answer_detailed`) with recording clients. The
+// links, their order, the budgets and the exclusion gate are still routing's. Per test thread.
+#[cfg(test)]
+thread_local! {
+    static TEST_TRANSPORT: std::cell::RefCell<Option<std::rc::Rc<Transport>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with every chain link's client on this thread made by `transport` (tests only).
+#[cfg(test)]
+pub(crate) fn with_test_transport<R>(transport: impl Fn(llm::Provider, &str) -> Box<dyn llm::LlmClient> + 'static, f: impl FnOnce() -> R) -> R {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_TRANSPORT.with(|t| *t.borrow_mut() = None);
+        }
+    }
+    TEST_TRANSPORT.with(|t| *t.borrow_mut() = Some(std::rc::Rc::new(transport)));
+    let _reset = Reset;
+    f()
+}
+
+/// The client a chain link talks through: `client`, or in this crate's tests the one the test's
+/// transport makes ([`with_test_transport`]). Outside tests it is `client`, unchanged.
+fn link_client(provider: llm::Provider, model: &str, client: Box<dyn llm::LlmClient>) -> Box<dyn llm::LlmClient> {
+    #[cfg(test)]
+    if let Some(transport) = TEST_TRANSPORT.with(|t| t.borrow().clone()) {
+        return transport(provider, model);
+    }
+    let _ = (provider, model);
+    client
+}
+
 /// Assembles today's provider chain from `routing`. `ollama_model` is always used for
 /// Ollama's own link — Ollama has no separate "preferred model" concept, since there's
 /// only one Ollama model configured in Settings at a time. When
@@ -579,7 +612,7 @@ fn ollama_link(ollama_model: &str, gate: &Arc<dyn HostedGate>) -> llm::ChainLink
     let link = llm::ChainLink {
         provider: llm::Provider::Ollama,
         model: ollama_model.to_string(),
-        client: Box::new(llm::OllamaClient::new(ollama_model)),
+        client: link_client(llm::Provider::Ollama, ollama_model, Box::new(llm::OllamaClient::new(ollama_model))),
     };
     if llm::is_ollama_cloud_model(ollama_model) {
         llm::guard_hosted(link, gate.clone())
@@ -593,7 +626,7 @@ fn on_device_ollama_link(ollama_model: &str) -> Option<llm::ChainLink> {
     (!llm::is_ollama_cloud_model(ollama_model)).then(|| llm::ChainLink {
         provider: llm::Provider::Ollama,
         model: ollama_model.to_string(),
-        client: Box::new(llm::OllamaClient::new(ollama_model)),
+        client: link_client(llm::Provider::Ollama, ollama_model, Box::new(llm::OllamaClient::new(ollama_model))),
     })
 }
 
@@ -641,6 +674,7 @@ fn hosted_link(
         )),
         llm::Provider::Ollama | llm::Provider::Local => return None,
     };
+    let client = link_client(provider, model, client);
     Some(llm::guard_hosted(llm::ChainLink { provider, model: model.to_string(), client }, gate.clone()))
 }
 

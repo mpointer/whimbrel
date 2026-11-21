@@ -25,7 +25,10 @@
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden|uiMode"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <!-- adjustResize: the keyboard is reported as an inset and the window is not panned, so Ask keeps its
+                 question field just above the keyboard and nothing slides under the status bar. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

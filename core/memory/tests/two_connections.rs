@@ -309,11 +309,18 @@ fn the_push_cursor_never_skips_a_row_another_connection_commits_late() {
     let (_dir, path) = temp_db("push-gap.sqlite");
     drop(open_with_device(&path));
     let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Every connection is open, with the apps' lock wait, before any writer starts. An open takes
+    // the write lock, and on a loaded Windows runner one that raced the tight insert loops below
+    // waited past the default five seconds ("database is locked"). Opens under load are covered by
+    // `simultaneous_opens_of_one_database_all_succeed`; this test is about the cursor.
+    let ready = Arc::new(Barrier::new(3));
 
     let writer = |offset: i64| {
-        let (path, done) = (path.clone(), done.clone());
+        let (path, done, ready) = (path.clone(), done.clone(), ready.clone());
         std::thread::spawn(move || {
             let s = open_with_device(&path);
+            s.set_busy_timeout(Duration::from_secs(30)).unwrap();
+            ready.wait();
             for i in 0..ROWS {
                 let n = offset + i;
                 s.insert_capture_item(&capture(n, &format!("row {n}"))).unwrap();
@@ -326,9 +333,11 @@ fn the_push_cursor_never_skips_a_row_another_connection_commits_late() {
 
     // The background lane's round, as `sync_engine::content::push_content` runs it.
     let pusher = {
-        let (path, done) = (path.clone(), done.clone());
+        let (path, done, ready) = (path.clone(), done.clone(), ready.clone());
         std::thread::spawn(move || {
             let s = open_with_device(&path);
+            s.set_busy_timeout(Duration::from_secs(30)).unwrap();
+            ready.wait();
             let mut pushed: HashSet<i64> = HashSet::new();
             let mut final_pass = false;
             loop {

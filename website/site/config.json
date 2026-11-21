@@ -21,6 +21,15 @@
     "uploadDate": "2026-11-11T00:00:00-05:00",
     "duration": "PT66S"
   },
+  "whatsNewVideo": {
+    "title": "What's new in Whimbrel 0.9.80",
+    "description": "A one-minute walkthrough of what's new in Whimbrel 0.9.80: the four controls on a client's page (delete, keep, export, exclude from hosted models) and encrypting the memory database. Shown in the Windows app with fictional demo data; the controls and the encryption are on Mac and Windows.",
+    "mp4": "/media/whimbrel-whats-new.mp4",
+    "webm": "/media/whimbrel-whats-new.webm",
+    "poster": "/media/whimbrel-whats-new-poster.jpg",
+    "uploadDate": "2026-11-19T00:00:00-05:00",
+    "duration": "PT64S"
+  },
   "contactEmail": "hello@whimbrelapp.com",
   "discordUrl": "https://discord.gg/fetZZA8Ax",
   "salesEmail": "mike@futuremeanswered.com",

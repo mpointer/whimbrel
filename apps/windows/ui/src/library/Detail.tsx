@@ -4,6 +4,8 @@ import { describeError, isCommandError } from "../errors";
 import type { CaptureDetail, EpisodeRow } from "../generated/types";
 import { t, useL10n } from "../l10n";
 import { Workspace } from "../meetings/Workspace";
+import { MeetingPane } from "../meetings/redesign/LiveGate";
+import { useRedesign } from "../redesign";
 import { DeviceChip } from "./LibraryView";
 import { episodeSummaryText, fullDateTimeLabel, spanLabel } from "./rows";
 
@@ -17,6 +19,8 @@ export function Detail({ selection, onBack }: { selection: Selection; onBack: ()
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { locale } = useL10n();
+  // The hidden redesign switch: with it off a meeting opens the old workspace, as before.
+  const redesign = useRedesign();
 
   useEffect(() => {
     // A meeting opens its workspace, which loads itself.
@@ -29,6 +33,17 @@ export function Detail({ selection, onBack }: { selection: Selection; onBack: ()
   }, [selection]);
 
   // The Meetings tab's view: its stage, why it has no transcript (with Transcribe again), the summary.
+  if (selection.kind === "meeting" && redesign) {
+    // The same pane the Meetings tab shows: the live screen, the finished note, or the old workspace for what neither covers.
+    const forgotten = () => meetingWorkspace(selection.id).then((view) => view ?? onBack(), () => {});
+    return (
+      <article className="detail">
+        <MeetingPane meetingId={selection.id} onBack={onBack} onChanged={forgotten}>
+          <Workspace meetingId={selection.id} onChanged={forgotten} />
+        </MeetingPane>
+      </article>
+    );
+  }
   if (selection.kind === "meeting")
     return (
       <article className="detail">

@@ -4207,6 +4207,65 @@
       ],
       "type": "object"
     },
+    "NoteSourceView": {
+      "description": "The transcript line a note line came from, as the meeting holds it now.",
+      "properties": {
+        "segmentId": {
+          "description": "The id `meeting_transcript_lines` gives that line.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "speaker": {
+          "description": "The speaker as shown (a name when one is assigned).",
+          "type": "string"
+        },
+        "startCs": {
+          "description": "Centiseconds from the start of the recording.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "text": {
+          "description": "The line's own stored words, never the model's wording.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segmentId",
+        "startCs",
+        "speaker",
+        "text"
+      ],
+      "type": "object"
+    },
+    "NoteSourcesView": {
+      "description": "The note's lines with the sources that still hold (redesign only); device-local, never synced.",
+      "properties": {
+        "actionItems": {
+          "items": {
+            "$ref": "#/definitions/SourcedActionItemView"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "$ref": "#/definitions/SourcedLineView"
+          },
+          "type": "array"
+        },
+        "openQuestions": {
+          "items": {
+            "$ref": "#/definitions/SourcedLineView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "decisions",
+        "openQuestions",
+        "actionItems"
+      ],
+      "type": "object"
+    },
     "NoteView": {
       "description": "A coordinator note, typed (no diagnostic text reaches the webview).",
       "oneOf": [
@@ -4521,8 +4580,19 @@
           ]
         },
         "plan": {
-          "description": "`free` or `cloud`.",
+          "description": "`free` or `cloud` (a Plus plan is `cloud` with `plan_tier` `plus`).",
           "type": "string"
+        },
+        "planTier": {
+          "description": "`cloud` or `plus` on a paid plan; None on free and from an older server.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plusAvailable": {
+          "description": "The server sells Plus: the free plan's buttons are the Plus ones, in place of Cloud's.",
+          "type": "boolean"
         },
         "renews": {
           "description": "False once a Cloud subscription is cancelled (\"Cloud ends …\"); None on free, or from an older\nserver, which the UI reads as renewing.",
@@ -4542,7 +4612,72 @@
       },
       "required": [
         "plan",
-        "billing"
+        "billing",
+        "plusAvailable"
+      ],
+      "type": "object"
+    },
+    "PlusAiPromptAnswer": {
+      "description": "The three ways out of the question.",
+      "oneOf": [
+        {
+          "const": "use_whimbrel",
+          "description": "\"Use Whimbrel AI\": prefer Whimbrel AI, and remember the answer.",
+          "type": "string"
+        },
+        {
+          "const": "keep",
+          "description": "\"Keep my current setup\": remember the answer only.",
+          "type": "string"
+        },
+        {
+          "const": "not_now",
+          "description": "\"Not now\", Esc, or the window closed: nothing is stored; not asked again this session.",
+          "type": "string"
+        }
+      ]
+    },
+    "PlusAiPromptState": {
+      "description": "What the window does next.",
+      "oneOf": [
+        {
+          "const": "show",
+          "description": "Ask now.",
+          "type": "string"
+        },
+        {
+          "const": "wait",
+          "description": "Not now (no plan read yet, signing in, a recording, Local-only…): check again in a while.",
+          "type": "string"
+        },
+        {
+          "const": "not_plus",
+          "description": "This session's plan read says not Plus: check again rarely, and when the window regains focus.",
+          "type": "string"
+        },
+        {
+          "const": "done",
+          "description": "Answered on this PC, or dismissed for this session: stop checking.",
+          "type": "string"
+        }
+      ]
+    },
+    "PlusAiPromptView": {
+      "description": "The question's state and, while it shows, core's data note.",
+      "properties": {
+        "note": {
+          "description": "Core's `whimbrel_ai_passthrough` text, while `state` is `show`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/definitions/PlusAiPromptState"
+        }
+      },
+      "required": [
+        "state"
       ],
       "type": "object"
     },
@@ -4972,15 +5107,19 @@
           "type": "object"
         },
         {
-          "description": "Whimbrel's server answered 402: the prepaid Whimbrel AI credit can't cover the request.",
+          "description": "Whimbrel's server answered 402: the prepaid Whimbrel AI credit (and, on Plus, the month's\nallowance) can't cover the request. `plus`: the account is on Plus, so the message names the\nallowance too (`billing::plus_flag`).",
           "properties": {
             "kind": {
               "const": "credit_exhausted",
               "type": "string"
+            },
+            "plus": {
+              "type": "boolean"
             }
           },
           "required": [
-            "kind"
+            "kind",
+            "plus"
           ],
           "type": "object"
         },
@@ -6300,6 +6439,70 @@
       ],
       "type": "object"
     },
+    "SourcedActionItemView": {
+      "description": "An action item with the owner and due the model gave and its source, each only when stored and still valid.",
+      "properties": {
+        "due": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "itemId": {
+          "description": "The `ActionItemView` id; null before the items are seeded from the summary.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NoteSourceView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "SourcedLineView": {
+      "description": "A decision or open question, with its source when one still holds.",
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NoteSourceView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
     "SpeedCheckResult": {
       "oneOf": [
         {
@@ -7552,6 +7755,101 @@
       ],
       "type": "object"
     },
+    "TranscriptLineView": {
+      "description": "One line of a meeting's transcript with its id and numeric times, for the redesigned note (redesign only).",
+      "properties": {
+        "endCs": {
+          "description": "Centiseconds from the start of the recording, when this device stored the line's end.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "guess": {
+          "description": "The name is a guess, shown as \"Name?\".",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "The stored line's id: what a note source and the speaker lanes point at.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "label": {
+          "description": "What to show: the speaker's name when one is assigned, else `speaker`.",
+          "type": "string"
+        },
+        "personKey": {
+          "description": "The named person, for \"Yes, that's {name}\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "speaker": {
+          "description": "The label as stored: \"Me\", \"Others\", \"Speaker 2\".",
+          "type": "string"
+        },
+        "speakerId": {
+          "description": "The diarized speaker (\"Speaker 2\" is 1), the ones the speaker menu can name.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "startCs": {
+          "description": "Centiseconds from the start of the recording.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "startCs",
+        "speaker",
+        "label",
+        "guess",
+        "text"
+      ],
+      "type": "object"
+    },
+    "TranscriptLinesView": {
+      "description": "A page of a meeting's transcript lines, none merged, in order.",
+      "properties": {
+        "canName": {
+          "description": "The speaker menu is offered: see [`can_name_speakers`].",
+          "type": "boolean"
+        },
+        "invitees": {
+          "items": {
+            "$ref": "#/definitions/InviteeView"
+          },
+          "type": "array"
+        },
+        "lines": {
+          "items": {
+            "$ref": "#/definitions/TranscriptLineView"
+          },
+          "type": "array"
+        },
+        "total": {
+          "description": "How many lines the meeting has in all.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "lines",
+        "total",
+        "canName",
+        "invitees"
+      ],
+      "type": "object"
+    },
     "TranscriptRow": {
       "description": "A transcript search hit. Transcript segments carry no device of their own.",
       "properties": {
@@ -8101,8 +8399,21 @@
     "WhimbrelAiView": {
       "description": "Settings → AI's Whimbrel AI card (the Mac's `whimbrelAICard`).",
       "properties": {
+        "allowanceMicros": {
+          "description": "The Plus allowance left this month, in micro-dollars; 0 when none or expired.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "allowanceResetsUnixMs": {
+          "description": "When the allowance resets, only while some is left and the date is still ahead.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "balanceMicros": {
-          "description": "The credit left, in micro-dollars (1,000,000 = $1); None until a read succeeds.",
+          "description": "The prepaid credit left, in micro-dollars (1,000,000 = $1); None until a read succeeds.",
           "format": "int64",
           "type": [
             "integer",
@@ -8110,8 +8421,19 @@
           ]
         },
         "low": {
-          "description": "Under 10% of the newest purchase is left: \"Credit is running low.\"",
+          "description": "Under 10% of the newest purchase is left and no Plus allowance is: \"Credit is running low.\"",
           "type": "boolean"
+        },
+        "plus": {
+          "description": "The balance read says this is a Plus account: the allowance lines show.",
+          "type": "boolean"
+        },
+        "renews": {
+          "description": "The plan renews (None on free and from an older server, read as renewing): a used-up\nallowance \"renews with your plan\" only then.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "signedIn": {
           "description": "Sync is ready: the balance and the Add buttons show. Otherwise \"Sign in to sync to use Whimbrel AI\".",
@@ -8120,7 +8442,9 @@
       },
       "required": [
         "signedIn",
-        "low"
+        "low",
+        "plus",
+        "allowanceMicros"
       ],
       "type": "object"
     },

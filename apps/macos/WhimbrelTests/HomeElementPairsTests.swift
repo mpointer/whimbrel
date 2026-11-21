@@ -28,9 +28,18 @@ final class HomeElementPairsTests: XCTestCase {
     }
 
     func testTodaysPairTablesAreNotTouched() {
-        // Adding the opt-in entry point must not add to the tables every archetype test and repair read.
-        let names = Set(ArchetypeContrast.all.map { "\($0.text.rawValue) on \($0.name)" })
-        XCTAssertFalse(names.contains("textOnAccent on accentPrimary"))
+        // Adding the opt-in entry point must not add to the tables every archetype test and repair read:
+        // `all` is exactly the archetypes' own pairs, once each, and an element-only surface is not in it.
+        func key(_ p: ArchetypeContrast.Pair) -> String { "\(p.text.rawValue) on \(p.name)" }
+        let fromArchetypes = Set(SkinArchetype.allCases.flatMap(ArchetypeContrast.pairs(for:)).map(key))
+        let all = ArchetypeContrast.all.map(key)
+        XCTAssertEqual(Set(all), fromArchetypes)
+        XCTAssertEqual(all.count, fromArchetypes.count, "each pair once")
+        // `textOnAccent on accentPrimary` has always been required of every palette (`ThemeContrast.requiredPairs`),
+        // so the scoreboard's pair adds nothing new; the text link on the page is the standard archetype's only
+        // element-only pair.
+        XCTAssertTrue(all.contains("textOnAccent on accentPrimary"))
+        XCTAssertFalse(Set(ArchetypeContrast.pairs(for: .standard).map(key)).contains("link on backgroundPage"))
     }
 
     func testElementPairsFollowTheChoices() {

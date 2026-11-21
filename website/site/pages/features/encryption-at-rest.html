@@ -1,0 +1,82 @@
+<!--
+{
+  "title": "Encrypt Whimbrel's memory database on your computer",
+  "description": "On Mac and Windows, the Whimbrel memory database can be encrypted on your computer, with a key kept in the Keychain or Credential Manager.",
+  "schema": ["software", "whats-new-video"],
+  "priority": 0.6,
+  "ogType": "article",
+  "crumbs": [{ "name": "Features", "path": "/#features" }, { "name": "Encrypt the memory database", "path": "/features/encryption-at-rest/" }],
+  "faq": [
+    { "q": "What is encrypted?", "a": "Only the memory database, on Mac and Windows. Audio and other files are not encrypted. Phones are not covered." },
+    { "q": "Do I have to turn it on?", "a": "On Mac and Windows, new installs are encrypted from the first launch. An existing install stays as it is until you choose Settings → Capture & Privacy → \"Encrypt the database\". It encrypts at the next launch. On the Mac it first offers Export everything." },
+    { "q": "What is the recovery key?", "a": "Encrypting asks you to create a recovery key: a recovery file with a passphrase, plus 24 words. Keep them somewhere other than this computer. If the key is lost (a new computer, a reset Mac Keychain, or a new Windows profile), a recovery screen opens the database with either one. Whimbrel never deletes or replaces a database it can't open." },
+    { "q": "Does it protect me if someone uses my unlocked computer?", "a": "On Mac and Windows, no. Whimbrel can read the key, so anything running as you, or anyone at your unlocked computer, can read the database too." },
+    { "q": "What does Delete everything do?", "a": "On Mac and Windows, Delete everything also removes the database keys. API keys and sign-ins are kept." }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Mac and Windows</p>
+    <h1>Encrypt Whimbrel's memory database on your computer.</h1>
+    <p class="lede">The memory database can be encrypted on your computer. A copy of the database file (one in a backup, a synced folder, or another account on the same computer) can't be read without its key. Only the database is encrypted: audio and other files are not, so a backup of the whole folder still holds them. Copies made before you turned it on are not covered; see below.</p>
+    <div class="hero-actions" style="justify-content:center">
+      <a class="btn btn-primary btn-lg" href="/download/?platform=mac#register" data-platform-link="mac">Download for Mac</a>
+      <a class="btn btn-ghost btn-lg" href="/download/?platform=windows#register" data-platform-link="windows">Download for Windows</a>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-head center">
+      <h2>What's new in 0.9.80, in about a minute.</h2>
+    </div>
+    <div class="narrow video-wrap">
+      {{> whats-new-video}}
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>What it does.</h2>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>The key is kept in the Keychain or Credential Manager</h3><p>Whimbrel keeps the key in the Keychain on the Mac and in Credential Manager on Windows. The key is not in the database file.</p></article>
+      <article class="card feature"><h3>Opt-in for an existing install</h3><p>New installs are encrypted from the first launch. An existing install stays as it is until you choose Settings → Capture &amp; Privacy → "Encrypt the database". It encrypts at the next launch. On the Mac it first offers Export everything.</p></article>
+      <article class="card feature"><h3>A recovery key you keep elsewhere</h3><p>Encrypting asks you to create a recovery key: a recovery file with a passphrase, plus 24 words. Keep them somewhere other than this computer.</p></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2>If the key is lost.</h2>
+    <p>If the key is lost (a new computer, a reset Mac Keychain, or a new Windows profile), a recovery screen opens the database with either the recovery file and its passphrase, or the 24 words. Whimbrel never deletes or replaces a database it can't open. The 24 words are the key itself: your passphrase does not protect them, and anyone who has them can read the memory database, so keep them offline. If the key is lost and you have neither the words nor the recovery file and its passphrase, the database cannot be opened, by you or by Whimbrel.</p>
+
+    <h2>What is not encrypted.</h2>
+    <p>Only the memory database is encrypted. Recordings, slide images, exports, the Obsidian vault, captured screen text files, settings, logs and diagnostics stay ordinary files. Audio and other files are not encrypted. Each computer encrypts its own database, so turning it on here does not turn it on for your other computers. Phones are not covered: a phone keeps what syncs to it in its own database, which this does not encrypt. Sync itself is unchanged and stays end-to-end encrypted.</p>
+    <p>To cover recordings and the other files as well, turn on FileVault on a Mac or BitLocker on Windows, which encrypts the whole disk.</p>
+
+    <h2>What it does not do.</h2>
+    <p>It does not protect against someone using your unlocked computer, or other software running as you: Whimbrel can read the key, so they can too. Backups made before you turned it on still hold a readable copy, and after an existing install is encrypted Whimbrel keeps an unencrypted copy until it has started normally three times, then deletes it. A full-machine backup or move that includes your Mac's login keychain (Time Machine, Migration Assistant) carries the key, and on a work PC with a roaming Windows profile the key can travel with the profile.</p>
+    <p>If you use a hosted AI model, the text of that request goes to the provider you chose. With Whimbrel AI, it goes through Whimbrel's server to Anthropic; Whimbrel keeps a token count, not what you asked. Recordings, transcripts and history are stored on your computer, not on our servers.</p>
+
+    <h2>Search speed and Delete everything.</h2>
+    <p>"Faster search (uses more memory)" gives search up to 1 GB more memory on a computer with at least 16 GB. "Check encryption speed" times search on your own data and keeps the report on your computer.</p>
+    <p>Delete everything also removes the database keys. API keys and sign-ins are kept.</p>
+    <p><a href="/for/client-controls/">Client controls: delete, keep, export, exclude →</a> &nbsp; <a href="/for/confidential-work/">More on confidential client work →</a></p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <h2 class="center">Questions about encryption</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>

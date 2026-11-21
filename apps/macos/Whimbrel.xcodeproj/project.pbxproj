@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		AEBE4F6A1B81E4A827B5FA8A /* LiveAskHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0423F4494B59C7F5184C67C /* LiveAskHandoffTests.swift */; };
 		567C6BFBD3829FADABB656F4 /* LiveAskHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = F810CE721E089F1680E6CD7E /* LiveAskHandoff.swift */; };
+		3C1A9E0B52D74F68A1B2C3D5 /* MeetingNoteRedesignTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C1A9E0B52D74F68A1B2C3D4 /* MeetingNoteRedesignTests.swift */; };
+		3C1A9E0B52D74F68A1B2C3D7 /* MeetingNoteRedesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C1A9E0B52D74F68A1B2C3D6 /* MeetingNoteRedesign.swift */; };
 		AF79ADF23D6AF25C8491A433 /* LiveMeetingRedesignTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD337C7430A4C60A0CB9BAB /* LiveMeetingRedesignTests.swift */; };
 		8ED22686C7656E84F5A7BE15 /* LiveMeetingRedesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9372BAAD0FF37D3B571A3BA /* LiveMeetingRedesign.swift */; };
 		8C3F9A82FB797CA7523D9FAC /* MeetingBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAA56136FE504FFBCEAF682F /* MeetingBarController.swift */; };
@@ -173,6 +175,7 @@
 		4E75CE575A8D9B43204C37C7 /* Outlook365ConnectorState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658566B62CB80C61F3740BE0 /* Outlook365ConnectorState.swift */; };
 		4F6885CD2D714010988B13DF /* MicrosoftOAuthHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD8393F2246892A407671B3 /* MicrosoftOAuthHelper.swift */; };
 		4FFCEAB54516DEAE19024750 /* SyncAccountActionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE22068991DD839EC98D3483 /* SyncAccountActionsTests.swift */; };
+		C1A55A1F0000000000000004 /* PlusAiPromptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A55A1F0000000000000003 /* PlusAiPromptTests.swift */; };
 		503CD5A50CE70E9DF7CCB000 /* node_modules in Resources */ = {isa = PBXBuildFile; fileRef = 2314885FFC8F2FDAF52A5E80 /* node_modules */; };
 		504D770FC02256C31249CB0F /* almanac-worstcase-light.png in Resources */ = {isa = PBXBuildFile; fileRef = AB82BBB1D1145753CC9F94F1 /* almanac-worstcase-light.png */; };
 		515BDCDFB8A20E28BC85AF84 /* TimelineView+Ask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83DBD8E9FE033CA796FE8C72 /* TimelineView+Ask.swift */; };
@@ -357,6 +360,7 @@
 		A4E1FD7C7B3B0530F759BE9C /* ConversationSidebarSortTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A517C3E906C9EF9CB14D47 /* ConversationSidebarSortTests.swift */; };
 		A526C0079F7A48B634669EB7 /* LiveTranscriptSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C928B914A17F9193342A8C52 /* LiveTranscriptSettingsTests.swift */; };
 		A5E3CCFDD958EC2BC92BC34D /* WhimbrelShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 727EBA34AE91DD3F8903C436 /* WhimbrelShellView.swift */; };
+		C1A55A1F0000000000000002 /* PlusAiPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A55A1F0000000000000001 /* PlusAiPrompt.swift */; };
 		A62A93EF78A9FC23BAAF819E /* SyncedCalendarMeetingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 971CF19DC8B9839DE7C40FE1 /* SyncedCalendarMeetingsTests.swift */; };
 		A6B490AFAB5C1406A6A616C6 /* ReferenceTodayLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F652087975FC73572C268845 /* ReferenceTodayLayout.swift */; };
 		A6BBDF306C45460690B3F6AD /* McpClientScopesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E440684C04783EA63A7003 /* McpClientScopesTests.swift */; };
@@ -567,6 +571,8 @@
 /* Begin PBXFileReference section */
 		D0423F4494B59C7F5184C67C /* LiveAskHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAskHandoffTests.swift; sourceTree = "<group>"; };
 		F810CE721E089F1680E6CD7E /* LiveAskHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAskHandoff.swift; sourceTree = "<group>"; };
+		3C1A9E0B52D74F68A1B2C3D4 /* MeetingNoteRedesignTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingNoteRedesignTests.swift; sourceTree = "<group>"; };
+		3C1A9E0B52D74F68A1B2C3D6 /* MeetingNoteRedesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingNoteRedesign.swift; sourceTree = "<group>"; };
 		9BD337C7430A4C60A0CB9BAB /* LiveMeetingRedesignTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveMeetingRedesignTests.swift; sourceTree = "<group>"; };
 		F9372BAAD0FF37D3B571A3BA /* LiveMeetingRedesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveMeetingRedesign.swift; sourceTree = "<group>"; };
 		AAA56136FE504FFBCEAF682F /* MeetingBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingBarController.swift; sourceTree = "<group>"; };
@@ -810,6 +816,7 @@
 		722BFFADE1EA406D4C04D4B6 /* PowerIdleGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerIdleGate.swift; sourceTree = "<group>"; };
 		72360D80C83E480CFD50B23A /* MeetingEndDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEndDetector.swift; sourceTree = "<group>"; };
 		727EBA34AE91DD3F8903C436 /* WhimbrelShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhimbrelShellView.swift; sourceTree = "<group>"; };
+		C1A55A1F0000000000000001 /* PlusAiPrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusAiPrompt.swift; sourceTree = "<group>"; };
 		72C146A95AAFDDFC0135A721 /* WhimbrelTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WhimbrelTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		72D2BEB27732AF3D9DCD9DE9 /* RecapSend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecapSend.swift; sourceTree = "<group>"; };
 		74A49C75E389304650675E69 /* MediaRetentionCopyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaRetentionCopyTests.swift; sourceTree = "<group>"; };
@@ -1061,6 +1068,7 @@
 		EDB42651AFD8E079CBEEEC62 /* SkinStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkinStoreTests.swift; sourceTree = "<group>"; };
 		EE097CEA0231B1CD76AA48F6 /* MeetingCardModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingCardModel.swift; sourceTree = "<group>"; };
 		EE22068991DD839EC98D3483 /* SyncAccountActionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncAccountActionsTests.swift; sourceTree = "<group>"; };
+		C1A55A1F0000000000000003 /* PlusAiPromptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusAiPromptTests.swift; sourceTree = "<group>"; };
 		EEF5BF82EBB238A7BA4A51E1 /* CaptureExclusionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureExclusionsTests.swift; sourceTree = "<group>"; };
 		EF1E8F7EC2A99698A31A126F /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		EFE6FEA2149FB277A870C9E1 /* FieldTodayLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FieldTodayLayout.swift; sourceTree = "<group>"; };
@@ -1371,6 +1379,7 @@
 				A3EA1263A319FC5CE5F65CD8 /* RecordingNoticeTests.swift */,
 				D0423F4494B59C7F5184C67C /* LiveAskHandoffTests.swift */,
 				9BD337C7430A4C60A0CB9BAB /* LiveMeetingRedesignTests.swift */,
+				3C1A9E0B52D74F68A1B2C3D4 /* MeetingNoteRedesignTests.swift */,
 				0711354E963CD5CA6BB4AC1B /* RecordingPauseWiringTests.swift */,
 				4190EA7F2A0DF1A9B270176F /* RecordingWriterTests.swift */,
 				DAE04397B5D1EB2BF0C0AB39 /* RedesignOnboardingAdapterTests.swift */,
@@ -1407,6 +1416,7 @@
 				CEF908476DCD9B1A4F68B43B /* StorageFootprintTests.swift */,
 				9C1AAC7D62F15D4C51EA5361 /* StrandedAudioMatchTests.swift */,
 				EE22068991DD839EC98D3483 /* SyncAccountActionsTests.swift */,
+				C1A55A1F0000000000000003 /* PlusAiPromptTests.swift */,
 				971CF19DC8B9839DE7C40FE1 /* SyncedCalendarMeetingsTests.swift */,
 				F4502477469155BACF7B99FD /* SyncEnrollmentBridgeTests.swift */,
 				D17CE03038C9D5B4A2C7C68E /* SyncStallRecoveryTests.swift */,
@@ -1676,6 +1686,7 @@
 				95AAD3B1F4CD99645E1ACEB8 /* FirstRunRedesign.swift */,
 				ADBAD6D2FE703007A9680090 /* HomeRedesign.swift */,
 				F9372BAAD0FF37D3B571A3BA /* LiveMeetingRedesign.swift */,
+				3C1A9E0B52D74F68A1B2C3D6 /* MeetingNoteRedesign.swift */,
 				63ED77C3232C5888CC02290E /* KeySetupRedesign.swift */,
 				270844919ABE963EBFFCA7E2 /* KeyUnavailableRedesign.swift */,
 				82CB88E99B24928A790069F3 /* LaunchBlockingRedesign.swift */,
@@ -1759,6 +1770,7 @@
 				D6BAC9E7BD17A0B5B039FCAA /* TopicChip.swift */,
 				FE55F14C555ECC4C2C94F316 /* TopicsView.swift */,
 				727EBA34AE91DD3F8903C436 /* WhimbrelShellView.swift */,
+				C1A55A1F0000000000000001 /* PlusAiPrompt.swift */,
 				60C1EFBA2EBD11F231E2CAE9 /* WhimbrelUIStrings.swift */,
 				9528DC256F1B345093159B0F /* MeetingWorkspace */,
 				DD1A17184D6DD61647E7E2D8 /* Redesign */,
@@ -2147,6 +2159,7 @@
 				619025AFEAC8D89801838BA2 /* FirstRunRedesign.swift in Sources */,
 				758AA5FBA48309F870773D07 /* HomeRedesign.swift in Sources */,
 				8ED22686C7656E84F5A7BE15 /* LiveMeetingRedesign.swift in Sources */,
+				3C1A9E0B52D74F68A1B2C3D7 /* MeetingNoteRedesign.swift in Sources */,
 				4A8923E7F3DA08C3950E31DA /* FocusedWindowReader.swift in Sources */,
 				D26C1BAE5CF188462B460117 /* FreeUpSpaceSheet.swift in Sources */,
 				38D2486AD8F3593813FECDF3 /* GeneralSettingsPane.swift in Sources */,
@@ -2351,6 +2364,7 @@
 				34973F459E288B47AFD062F4 /* WeeklyClientId.swift in Sources */,
 				948A1AC5A69A727FEE98C793 /* WhimbrelApp.swift in Sources */,
 				A5E3CCFDD958EC2BC92BC34D /* WhimbrelShellView.swift in Sources */,
+				C1A55A1F0000000000000002 /* PlusAiPrompt.swift in Sources */,
 				D05E7DA1888CAFE7D2B89A51 /* WhimbrelUIStrings.swift in Sources */,
 				B0611CC472D018F47A649060 /* WindowContext.swift in Sources */,
 				77D4E467849C6ABE36A60C64 /* YourData.swift in Sources */,
@@ -2486,6 +2500,7 @@
 				1489A300644EF3DB477023F9 /* RecordingNoticeTests.swift in Sources */,
 				AEBE4F6A1B81E4A827B5FA8A /* LiveAskHandoffTests.swift in Sources */,
 				AF79ADF23D6AF25C8491A433 /* LiveMeetingRedesignTests.swift in Sources */,
+				3C1A9E0B52D74F68A1B2C3D5 /* MeetingNoteRedesignTests.swift in Sources */,
 				8BB4C6B15867EA73F7A41A27 /* RecordingPauseWiringTests.swift in Sources */,
 				45502FE6F681646203E5F7F2 /* RecordingWriterTests.swift in Sources */,
 				2A4690392FD2C28BA91352EA /* RedesignOnboardingAdapterTests.swift in Sources */,
@@ -2525,6 +2540,7 @@
 				80942AFD56704A49D7736ECD /* StorageFootprintTests.swift in Sources */,
 				48253914CCFD3F122C5101D0 /* StrandedAudioMatchTests.swift in Sources */,
 				4FFCEAB54516DEAE19024750 /* SyncAccountActionsTests.swift in Sources */,
+				C1A55A1F0000000000000004 /* PlusAiPromptTests.swift in Sources */,
 				3F1AB8525FEA52EF7C710254 /* SyncEnrollmentBridgeTests.swift in Sources */,
 				AAEAA128A7FE191EEC10BD20 /* SyncStallRecoveryTests.swift in Sources */,
 				A62A93EF78A9FC23BAAF819E /* SyncedCalendarMeetingsTests.swift in Sources */,
@@ -2586,7 +2602,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.80;
+				MARKETING_VERSION = 0.9.81;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;
@@ -2786,7 +2802,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.80;
+				MARKETING_VERSION = 0.9.81;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;

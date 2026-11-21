@@ -7,7 +7,12 @@ export interface GoogleIdentity {
   audience: string;
 }
 
-const GOOGLE_ISSUER = "https://accounts.google.com";
+/** Google signs ID tokens with either of these issuers, and its own guidance is to accept both.
+ * Which one a token carries depends on the client library: Play services' account token API on
+ * Android (the silent renewal path) issues the form without a scheme, while Credential Manager and
+ * the desktop and iOS flows issue the `https` form. Accepting only the `https` form made the
+ * Worker answer 401 to every silently renewed Android token, so the phone asked to sign in again. */
+export const GOOGLE_ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 
 let cachedJwks: JWTVerifyGetKey | undefined;
@@ -51,7 +56,7 @@ export async function verifyGoogleIdToken(
   jwks: JWTVerifyGetKey,
 ): Promise<GoogleIdentity> {
   const { payload } = await jwtVerify(idToken, jwks, {
-    issuer: GOOGLE_ISSUER,
+    issuer: GOOGLE_ISSUERS,
     audience: expectedAudience,
     algorithms: ["RS256"],
   });

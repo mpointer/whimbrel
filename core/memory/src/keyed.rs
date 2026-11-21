@@ -319,6 +319,7 @@ fn open_existing_keyed_inner(
     } else {
         Connection::open(path).map_err(other)?
     };
+    conn.busy_timeout(crate::OPEN_BUSY_TIMEOUT).map_err(other)?;
     registration = if register {
         crate::open_registry::register(path, DbFileState::NotPlain).map_err(other)?
     } else {
@@ -326,6 +327,7 @@ fn open_existing_keyed_inner(
     };
     apply_key_with(&conn, key, opts, extra)?;
     Store::init(&conn).map_err(other)?;
+    conn.busy_timeout(crate::DEFAULT_BUSY_TIMEOUT).map_err(other)?;
     Ok((registration, conn))
 }
 

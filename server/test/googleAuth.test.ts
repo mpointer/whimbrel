@@ -1,6 +1,6 @@
 import { generateKeyPair, SignJWT, exportJWK, createLocalJWKSet, type JWTVerifyGetKey } from "jose";
 import { it, expect, beforeAll } from "vitest";
-import { verifyGoogleIdToken, allowedAudiences } from "../src/googleAuth";
+import { verifyGoogleIdToken, allowedAudiences, GOOGLE_ISSUERS } from "../src/googleAuth";
 
 const AUDIENCE = "test-client-id";
 const ISSUER = "https://accounts.google.com";
@@ -47,6 +47,35 @@ it("rejects a token with the wrong audience", async () => {
 it("rejects a token with the wrong issuer", async () => {
   const token = await signToken({ issuer: "https://evil.example.com" });
   await expect(verifyGoogleIdToken(token, AUDIENCE, jwks)).rejects.toThrow();
+});
+
+it("accepts Google's issuer without a scheme, as Android's silent renewal returns it", async () => {
+  const token = await signToken({ issuer: "accounts.google.com" });
+  const identity = await verifyGoogleIdToken(token, AUDIENCE, jwks);
+  expect(identity).toEqual({ email: "user@example.com", googleSub: "google-sub-123", audience: AUDIENCE });
+});
+
+it("accepts exactly Google's two issuer forms and nothing that only resembles them", async () => {
+  expect(GOOGLE_ISSUERS).toEqual(["https://accounts.google.com", "accounts.google.com"]);
+  for (const issuer of [
+    "http://accounts.google.com",
+    "https://accounts.google.com/",
+    "accounts.google.com.evil.example.com",
+    "https://accounts.google.com.evil.example.com",
+    "evil.example.com/accounts.google.com",
+    "ACCOUNTS.GOOGLE.COM",
+    "",
+  ]) {
+    const token = await signToken({ issuer });
+    await expect(verifyGoogleIdToken(token, AUDIENCE, jwks), issuer).rejects.toThrow();
+  }
+});
+
+it("still checks audience, expiry and verified email on a token with the scheme-less issuer", async () => {
+  const issuer = "accounts.google.com";
+  await expect(verifyGoogleIdToken(await signToken({ issuer, audience: "wrong-client-id" }), AUDIENCE, jwks)).rejects.toThrow();
+  await expect(verifyGoogleIdToken(await signToken({ issuer, expiresIn: "-1h" }), AUDIENCE, jwks)).rejects.toThrow();
+  await expect(verifyGoogleIdToken(await signToken({ issuer, email_verified: false }), AUDIENCE, jwks)).rejects.toThrow();
 });
 
 it("rejects an expired token", async () => {

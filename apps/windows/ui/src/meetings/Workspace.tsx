@@ -515,7 +515,7 @@ export function Workspace({ meetingId, onChanged, onOpenSettings }: { meetingId:
 
 /** The line under a summary Whimbrel AI was meant to write but another model did (PR 805), with the
  *  way back: "Re-summarize with Whimbrel", or "Sign in to Whimbrel" while this PC is signed out. */
-function FallbackNotice({
+export function FallbackNotice({
   line,
   signedIn,
   onSignedIn,

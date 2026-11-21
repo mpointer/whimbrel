@@ -225,6 +225,89 @@ pub(crate) fn meeting_markdown(store: &Store, m: &memory::Meeting) -> ApiResult<
         }
         md.push('\n');
     }
+    // Where the note's lines came from, and the owner and due date of its action items (device-local,
+    // so only a summary generated here with sources asked for has any). Every stored row is exported:
+    // the ones the note shows now first, then the rest (a line the person edited or that a newer summary
+    // replaced, a source whose transcript line no longer matches), so nothing held is left out.
+    // Two sets of what the lists below print: lines with a source, and action items with an owner or due.
+    let mut sourced: std::collections::HashSet<(&'static str, String)> = std::collections::HashSet::new();
+    let mut detailed: std::collections::HashSet<(&'static str, String)> = std::collections::HashSet::new();
+    let mut out = String::new();
+    if let Some(notes) = store.meeting_note_sources(m.id).map_err(db)? {
+        let at = |s: &memory::line_source::LineSource| {
+            let secs = s.start_cs / 100;
+            format!("[{}:{:02}] {}", secs / 60, secs % 60, s.speaker_label)
+        };
+        for (kind, key, line, source) in notes
+            .decisions
+            .iter()
+            .map(|l| ("Decision", "decision", l.text.as_str(), l.source.as_ref()))
+            .chain(notes.open_questions.iter().map(|l| ("Open question", "open_question", l.text.as_str(), l.source.as_ref())))
+            .chain(notes.action_items.iter().map(|l| ("Action item", "action_item", l.text.as_str(), l.source.as_ref())))
+        {
+            if let Some(source) = source {
+                out.push_str(&format!("- {kind}: {} (from {})\n", escape_md(line).replace('\n', " "), at(source)));
+                sourced.insert((key, line.to_string()));
+            }
+        }
+        for item in notes.action_items.iter().filter(|i| i.owner.is_some() || i.due.is_some()) {
+            let field = |v: &Option<String>| v.as_deref().map_or("none".to_string(), |v| escape_md(v).replace('\n', " "));
+            out.push_str(&format!(
+                "- Action item: {} (owner: {}, due: {})\n",
+                escape_md(&item.text).replace('\n', " "),
+                field(&item.owner),
+                field(&item.due)
+            ));
+            detailed.insert(("action_item", item.text.clone()));
+        }
+    }
+    // The note view shows the first row of each (kind, line). A held row is left out below only when what
+    // it holds was printed above: its source when it has transcript words, its owner and due when it has
+    // those and no words.
+    let mut seen: std::collections::HashSet<(&'static str, String)> = std::collections::HashSet::new();
+    let mut rest = String::new();
+    for held in store.meeting_line_source_rows(m.id).map_err(db)? {
+        let key = match held.kind.as_str() {
+            "decision" => "decision",
+            "open_question" => "open_question",
+            _ => "action_item",
+        };
+        let first = seen.insert((key, held.line_text.clone()));
+        let printed = first
+            && match &held.anchor {
+                Some(_) => sourced.contains(&(key, held.line_text.clone())),
+                None => held.owner.is_none() && held.due.is_none() || detailed.contains(&(key, held.line_text.clone())),
+            };
+        if printed {
+            continue;
+        }
+        let kind = match key {
+            "decision" => "Decision",
+            "open_question" => "Open question",
+            _ => "Action item",
+        };
+        let mut details = Vec::new();
+        if let Some(owner) = &held.owner {
+            details.push(format!("owner: {}", escape_md(owner).replace('\n', " ")));
+        }
+        if let Some(due) = &held.due {
+            details.push(format!("due: {}", escape_md(due).replace('\n', " ")));
+        }
+        if let (Some(anchor), Some(offset)) = (&held.anchor, held.offset_secs) {
+            details.push(format!("located by the words \"{}\", about {}:{:02} in", escape_md(anchor).replace('\n', " "), offset / 60, offset % 60));
+        }
+        rest.push_str(&format!("- {kind}: {} ({})\n", escape_md(&held.line_text).replace('\n', " "), details.join("; ")));
+    }
+    if !out.is_empty() {
+        md.push_str("## Where the note's lines came from\n\n");
+        md.push_str(&out);
+        md.push('\n');
+    }
+    if !rest.is_empty() {
+        md.push_str("## Other source details held on this device\n\nNot shown in the note now: a line that was edited or replaced, or one whose transcript line no longer matches.\n\n");
+        md.push_str(&rest);
+        md.push('\n');
+    }
     if lines > 0 {
         md.push_str("## Transcript\n\n");
         md.push_str(&transcript);
@@ -386,6 +469,32 @@ mod tests {
                 NewTranscriptSegment { meeting_id: id, start_cs: 6_500, speaker_label: "SPEAKER_01".into(), text: "# not a heading".into() },
             ])
             .unwrap();
+        // A summary line with a source, and an action item with an owner and due date.
+        store
+            .update_meeting_summary(id, "t", &["Ship it".to_string()], &["Ana: send the deck (Monday)".to_string()], &[], "p", "m")
+            .unwrap();
+        let locator = Some(memory::line_source::SourceLocator {
+            offset_secs: 65,
+            base: memory::line_source::base_fingerprint("Hello."),
+            anchor: memory::line_source::anchor_of("# not a heading"),
+        });
+        let row = |kind, line: &str, owner: Option<&str>, due: Option<&str>, locator| memory::line_source::NewLineSource {
+            kind,
+            line_text: line.into(),
+            owner: owner.map(Into::into),
+            due: due.map(Into::into),
+            locator,
+        };
+        store
+            .replace_meeting_line_sources(
+                id,
+                &[
+                    row(memory::line_source::LineKind::Decision, "Ship it", None, None, locator.clone()),
+                    row(memory::line_source::LineKind::ActionItem, "Ana: send the deck (Monday)", Some("Ana"), Some("Monday"), None),
+                ],
+                1,
+            )
+            .unwrap();
         store.add_meeting_marker(id, 12_500, Some("budget decision\n# not a heading"), 1).unwrap();
         store.add_meeting_marker(id, 300, None, 2).unwrap();
         store
@@ -430,6 +539,9 @@ mod tests {
         assert!(md.contains("## Transcript\n\n[0:00] SPEAKER_00: Hello."));
         // The moments the user marked, in time order, one line each.
         assert!(md.contains("## Marked moments\n\n- [0:03]\n- [2:05] budget decision \\# not a heading\n"), "{md}");
+        // Where the note's lines came from, and an action item's owner and due date.
+        assert!(md.contains("## Where the note's lines came from\n\n- Decision: Ship it (from [1:05] SPEAKER_01)\n"), "{md}");
+        assert!(md.contains("- Action item: Ana: send the deck (Monday) (owner: Ana, due: Monday)\n"), "{md}");
         assert!(md.contains("attendees: [\"Priya <priya@example.test>\"]"));
         let captures = fs::read_to_string(folder.join("captures.jsonl")).unwrap();
         assert!(captures.contains("\"url\":\"https://example.test/falcon\""));
@@ -439,6 +551,69 @@ mod tests {
         assert!(folder.join("routines.json").exists() && folder.join("conversations.jsonl").exists());
         assert!(!folder.join("topics").exists());
         assert!(report.files >= 7 && report.bytes > 0);
+    }
+
+    #[test]
+    fn the_export_lists_every_held_source_row_even_one_the_note_no_longer_shows() {
+        let store = seeded();
+        let export = |store: &Store| {
+            let dir = tempfile::tempdir().unwrap();
+            let report = export_all(store, dir.path(), 1_700_000_000_000).unwrap();
+            let folder = Path::new(&report.folder).to_path_buf();
+            let name = fs::read_dir(folder.join("meetings")).unwrap().next().unwrap().unwrap().file_name();
+            fs::read_to_string(folder.join("meetings").join(name)).unwrap()
+        };
+        let id = store.get_meeting(1).unwrap().unwrap().id;
+        // The person edits the line: its row no longer matches, but it is still held, words and all.
+        store.save_meeting_note_overrides(id, None, Some(&["Ship it on Friday".to_string()]), None, 9).unwrap();
+        let md = export(&store);
+        assert!(!md.contains("Decision: Ship it (from"), "{md}");
+        assert!(
+            md.contains("## Other source details held on this device") && md.contains("- Decision: Ship it (located by the words \"not a heading\", about 1:05 in)"),
+            "{md}"
+        );
+        // Reset: the source is back in the first section and the row is not listed twice.
+        store.reset_meeting_note_draft(id, 10).unwrap();
+        let md = export(&store);
+        assert!(md.contains("- Decision: Ship it (from [1:05] SPEAKER_01)\n"), "{md}");
+        assert!(!md.contains("located by the words"), "{md}");
+    }
+
+    #[test]
+    fn the_export_prints_the_anchor_of_an_owner_row_whose_source_did_not_resolve_and_of_a_second_row() {
+        let store = seeded();
+        let id = store.get_meeting(1).unwrap().unwrap().id;
+        let row = |kind, line: &str, owner: Option<&str>, words: &str| memory::line_source::NewLineSource {
+            kind,
+            line_text: line.into(),
+            owner: owner.map(Into::into),
+            due: None,
+            locator: Some(memory::line_source::SourceLocator {
+                offset_secs: 65,
+                base: memory::line_source::base_fingerprint("Hello."),
+                anchor: memory::line_source::anchor_of(words),
+            }),
+        };
+        use memory::line_source::LineKind;
+        store
+            .replace_meeting_line_sources(
+                id,
+                &[
+                    row(LineKind::ActionItem, "Ana: send the deck (Monday)", Some("Ana"), "words that no line of the meeting holds"),
+                    row(LineKind::Decision, "Ship it", None, "# not a heading"),
+                    row(LineKind::Decision, "Ship it", None, "second row same line text"),
+                ],
+                1,
+            )
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let report = export_all(&store, dir.path(), 1_700_000_000_000).unwrap();
+        let folder = Path::new(&report.folder).to_path_buf();
+        let name = fs::read_dir(folder.join("meetings")).unwrap().next().unwrap().unwrap().file_name();
+        let md = fs::read_to_string(folder.join("meetings").join(name)).unwrap();
+        assert!(md.contains("words that no line of the meeting holds"), "{md}");
+        assert!(md.contains("second row same line text"), "{md}");
+        assert!(!md.contains("located by the words \"not a heading\""), "the shown row is not listed twice: {md}");
     }
 
     #[cfg(unix)]

@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "agent"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "serde",
  "serde_json",
@@ -104,7 +104,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "api"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "agent",
  "api",
@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "cloud-runner"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "api",
  "base64 0.22.1",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "diarize"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "hound",
  "serde",
@@ -1081,7 +1081,7 @@ dependencies = [
 
 [[package]]
 name = "eval"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "api",
  "chrono",
@@ -1144,7 +1144,7 @@ dependencies = [
 
 [[package]]
 name = "ffi"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "agent",
  "api",
@@ -2009,7 +2009,7 @@ dependencies = [
 
 [[package]]
 name = "ingest"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "chrono",
  "memory",
@@ -2296,7 +2296,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "llm"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2361,7 +2361,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp-host"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "rmcp",
  "serde_json",
@@ -2371,7 +2371,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-server"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "axum",
  "chrono",
@@ -2407,7 +2407,7 @@ dependencies = [
 
 [[package]]
 name = "memory"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "base64 0.22.1",
  "candle-core",
@@ -2723,7 +2723,7 @@ dependencies = [
 
 [[package]]
 name = "phone-tests"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "api",
  "libsql",
@@ -3356,7 +3356,7 @@ dependencies = [
 
 [[package]]
 name = "routines"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "agent",
  "chrono",
@@ -3629,7 +3629,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sealed"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -3861,7 +3861,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skins"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -3987,7 +3987,7 @@ dependencies = [
 
 [[package]]
 name = "sync"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
@@ -4000,7 +4000,7 @@ dependencies = [
 
 [[package]]
 name = "sync-engine"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "base64 0.22.1",
  "hyper 0.14.32",
@@ -4374,7 +4374,7 @@ dependencies = [
 
 [[package]]
 name = "transcribe"
-version = "0.9.80"
+version = "0.9.81"
 dependencies = [
  "hound",
  "serde",

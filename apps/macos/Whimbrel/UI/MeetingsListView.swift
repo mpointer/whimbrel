@@ -17,6 +17,31 @@ enum ImportSummary {
     }
 }
 
+/// The Meetings list loads a page at a time: the newest `pageSize`, then `pageSize` more each
+/// time the bottom is reached. Without this, everything older than the newest 200 was
+/// unreachable (Nov 20: 273 meetings, the list stopped at Sep 17).
+enum MeetingsListPaging {
+    static let pageSize = 200
+
+    static func nextLimit(current: Int) -> Int { current + pageSize }
+
+    /// True when the store holds meetings the list has not loaded. An unknown total (the count
+    /// failed) means more only when the page came back full.
+    static func hasMore(loaded: Int, limit: Int, total: Int?) -> Bool {
+        guard let total else { return loaded >= limit }
+        return total > loaded
+    }
+
+    /// The line under the list; nil while it all fits on the first page.
+    static func footer(loaded: Int, total: Int?, hasMore: Bool) -> String? {
+        if hasMore {
+            guard let total else { return nil }
+            return String(localized: "Showing \(loaded) of \(total) meetings")
+        }
+        return loaded > pageSize ? String(localized: "Showing all \(loaded) meetings") : nil
+    }
+}
+
 /// A reload counter the store queue can read without hopping to the main thread.
 final class LoadGeneration {
     private let lock = NSLock()
@@ -40,6 +65,14 @@ struct MeetingsListView: View {
     /// False until the first fetch returns, so a slow fetch (it queues behind a content sync)
     /// shows a spinner instead of "No meetings yet".
     @State private var hasLoaded = false
+    /// How many meetings the list asks for; grows by a page each time the bottom is reached.
+    @State private var fetchLimit = MeetingsListPaging.pageSize
+    /// Every meeting after grouping copies; nil until counted or when the count failed.
+    @State private var totalMeetings: Int?
+    @State private var isLoadingMore = false
+    /// Set when a bigger page brought nothing new, so a count that never matches cannot keep the
+    /// "Show older meetings" button up forever.
+    @State private var exhausted = false
     @State private var searchText: String = ""
     @State private var selectedMeetingId: Int64?
     @State private var selectedDraft: CoreMeetingNoteDraft?
@@ -186,6 +219,7 @@ struct MeetingsListView: View {
                         }
                     }
                 }
+                if hasLoaded, !meetings.isEmpty { listFooter }
                 if groups.isEmpty, !hasLoaded {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 240)
                 } else if groups.isEmpty {
@@ -197,6 +231,42 @@ struct MeetingsListView: View {
             .frame(maxWidth: .infinity)
         }
         .searchable(text: $searchText, prompt: "Search meetings")
+    }
+
+    private var hasMore: Bool {
+        !exhausted && MeetingsListPaging.hasMore(loaded: meetings.count, limit: fetchLimit, total: totalMeetings)
+    }
+
+    /// Loads the next page on its own when scrolled into view; the button covers a window tall
+    /// enough that the footer never leaves the screen.
+    @ViewBuilder
+    private var listFooter: some View {
+        let more = hasMore
+        VStack(spacing: Spacing.xs) {
+            if let text = MeetingsListPaging.footer(loaded: meetings.count, total: totalMeetings, hasMore: more) {
+                Text(text)
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+            }
+            if more {
+                if isLoadingMore {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(String(localized: "Show older meetings"), action: loadMore)
+                        .buttonStyle(.whimbrelQuiet)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, Spacing.md)
+        .onAppear { if more { loadMore() } }
+    }
+
+    private func loadMore() {
+        guard hasMore, !isLoadingMore else { return }
+        isLoadingMore = true
+        fetchLimit = MeetingsListPaging.nextLimit(current: fetchLimit)
+        refresh()
     }
 
     private func meetingRow(_ meeting: CoreMeeting) -> some View {
@@ -217,22 +287,38 @@ struct MeetingsListView: View {
     @ViewBuilder
     private func meetingPage(_ meeting: CoreMeeting, id: Int64) -> some View {
         if loadedMeetingId == id {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Button { selectedMeetingId = nil } label: { Label("Meetings", systemImage: "chevron.left") }
-                        .buttonStyle(.whimbrelQuiet)
-                        .keyboardShortcut("[", modifiers: .command)
-                    Spacer()
-                    MeetingOptionsMenu(meeting: meeting, appState: appState, onForgotten: {
-                        self.selectedMeetingId = nil
-                        refresh()
-                    })
+            RedesignSwitch(enabled: appState.redesignEnabled) {
+                // The redesigned page has the back control and the options menu in its own header.
+                VStack(alignment: .leading, spacing: 0) {
+                    if let copies = meeting.alsoRecorded, !copies.isEmpty {
+                        AlsoRecordedRow(copies: copies, ownDeviceId: appState.deviceId).padding(.horizontal, Spacing.md).padding(.top, Spacing.md)
+                    }
+                    MeetingDetailContentView(
+                        meeting: meeting, initialDraft: selectedDraft, initialActionItems: selectedActionItems, topic: selectedTopic,
+                        onBack: { selectedMeetingId = nil },
+                        onForgotten: {
+                            self.selectedMeetingId = nil
+                            refresh()
+                        })
                 }
-                .padding([.horizontal, .top], Spacing.md)
-                if let copies = meeting.alsoRecorded, !copies.isEmpty {
-                    AlsoRecordedRow(copies: copies, ownDeviceId: appState.deviceId).padding(.horizontal, Spacing.md)
+            } old: {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Button { selectedMeetingId = nil } label: { Label("Meetings", systemImage: "chevron.left") }
+                            .buttonStyle(.whimbrelQuiet)
+                            .keyboardShortcut("[", modifiers: .command)
+                        Spacer()
+                        MeetingOptionsMenu(meeting: meeting, appState: appState, onForgotten: {
+                            self.selectedMeetingId = nil
+                            refresh()
+                        })
+                    }
+                    .padding([.horizontal, .top], Spacing.md)
+                    if let copies = meeting.alsoRecorded, !copies.isEmpty {
+                        AlsoRecordedRow(copies: copies, ownDeviceId: appState.deviceId).padding(.horizontal, Spacing.md)
+                    }
+                    MeetingDetailContentView(meeting: meeting, initialDraft: selectedDraft, initialActionItems: selectedActionItems, topic: selectedTopic)
                 }
-                MeetingDetailContentView(meeting: meeting, initialDraft: selectedDraft, initialActionItems: selectedActionItems, topic: selectedTopic)
             }
             .id(id)
         } else {
@@ -244,18 +330,24 @@ struct MeetingsListView: View {
         guard let store = appState.coreStore else {
             Self.log.error("refresh: appState.coreStore is nil, cannot load meetings")
             hasLoaded = true
+            isLoadingMore = false
             return
         }
-        Self.log.log("refresh: starting recentMeetings(limit: 200) fetch")
+        let limit = fetchLimit
+        Self.log.log("refresh: starting recentMeetings(limit: \(limit, privacy: .public)) fetch")
         let generation = loadGeneration.bump()
         let counter = loadGeneration
         let lastBatched = lastBatchedIds
         CoreMemoryStore.accessQueue.async {
-            let result = store.recentMeetingsGrouped(limit: 200)
+            let result = store.recentMeetingsGrouped(limit: limit)
+            let total = store.groupedMeetingCount()
             DispatchQueue.main.async {
                 Self.log.log("refresh: assigning \(result.count, privacy: .public) meetings to state")
+                if isLoadingMore, limit == fetchLimit, result.count <= meetings.count { exhausted = true }
                 meetings = result
+                totalMeetings = total
                 hasLoaded = true
+                if limit == fetchLimit { isLoadingMore = false }
             }
             // One batch for the chips, on the same queue turn; rows are already showing. Skip it when a
             // newer reload is already queued, or when the same meetings were batched last time.

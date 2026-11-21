@@ -157,8 +157,9 @@ pub extern "C" fn whimbrel_meeting_parts(handle: *mut StoreHandle, meeting_id: i
     json_out(unsafe { &(*handle).0 }.meeting_parts(meeting_id))
 }
 
-/// `segments_json` is `[{"start_cs","speaker_label","text"}]` with part-relative `start_cs`.
-/// Returns `{"inserted":N}`.
+/// `segments_json` is `[{"start_cs","speaker_label","text"}]` with part-relative `start_cs`, each
+/// optionally with `"end_cs"` (the line's end on the same part-relative clock; kept on this
+/// device only, never synced). Returns `{"inserted":N}`.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_meeting_replace_part_segments(
     handle: *mut StoreHandle,
@@ -176,6 +177,7 @@ pub extern "C" fn whimbrel_meeting_replace_part_segments(
         return ptr::null_mut();
     };
     let mut segments = Vec::with_capacity(raw.len());
+    let mut ends = Vec::with_capacity(raw.len());
     for v in &raw {
         let (Some(start_cs), Some(speaker), Some(text)) = (
             v.get("start_cs").and_then(|x| x.as_i64()),
@@ -190,11 +192,12 @@ pub extern "C" fn whimbrel_meeting_replace_part_segments(
             speaker_label: speaker.to_string(),
             text: text.to_string(),
         });
+        ends.push(v.get("end_cs").and_then(|x| x.as_i64()));
     }
     let store = unsafe { &(*handle).0 };
     json_out(
         store
-            .replace_part_transcript_segments(meeting_id, part_index, &segments)
+            .replace_part_transcript_segments_with_ends(meeting_id, part_index, &segments, &ends)
             .map(|n| serde_json::json!({ "inserted": n })),
     )
 }

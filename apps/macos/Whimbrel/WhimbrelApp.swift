@@ -8,6 +8,8 @@ import os
 enum WhimbrelMain {
     static func main() {
         if KeychainAccess.isTestHost { TestHostApp.main(); return }
+        // A second copy must not delete, migrate or open anything the running one uses.
+        guard SingleInstance.mayStart() else { exit(0) }
         // "Delete everything" removes the data here, before anything opens the database.
         if let result = YourData.runPendingDelete(in: SpikePaths.root, steps: .live()), result.incomplete {
             YourData.reportIncompleteDelete(result)

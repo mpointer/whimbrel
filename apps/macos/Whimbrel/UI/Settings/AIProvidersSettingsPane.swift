@@ -559,10 +559,22 @@ struct AIProvidersSettingsPane: View {
             Text("Whimbrel AI").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary)
             if case .ready = syncState.status {
                 if let balance = syncState.aiBalance {
-                    Text("\(Self.dollars(micros: balance.balanceMicros)) left")
-                        .font(.whimbrelBody(.callout).bold())
-                        .foregroundStyle(Color.whimbrelTextPrimary)
-                    if balance.isLow {
+                    if let allowance = PlusCopy.allowanceLine(balance, renews: syncState.plan?.renews) {
+                        Text(allowance)
+                            .font(.whimbrelBody(.callout).bold())
+                            .foregroundStyle(Color.whimbrelTextPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let prepaid = PlusCopy.prepaidLine(balance) {
+                        Text(prepaid)
+                            .font(.whimbrelBody(.callout).bold())
+                            .foregroundStyle(Color.whimbrelTextPrimary)
+                    } else if PlusCopy.showsPlainBalanceLine(balance) {
+                        Text("\(Self.dollars(micros: balance.balanceMicros)) left")
+                            .font(.whimbrelBody(.callout).bold())
+                            .foregroundStyle(Color.whimbrelTextPrimary)
+                    }
+                    if PlusCopy.showsLowWarning(balance) {
                         Text("Credit is running low.")
                             .font(.whimbrelBody(.caption))
                             .foregroundStyle(Color.whimbrelWarning)
@@ -993,4 +1005,71 @@ struct AIProvidersSettingsPane: View {
             }
         }
     }
+}
+
+/// Plus plan copy. Mac-only on purpose: `SyncBilling.swift` is shared with the iPhone app, whose
+/// string catalog must not gain these keys.
+enum PlusCopy {
+    /// The plan row: the Plus wording on a Plus account, `PlanCopy.line` otherwise.
+    static func planLine(_ plan: AccountPlan) -> String {
+        guard plan.isPlus else { return PlanCopy.line(plan) }
+        // A Plus plan with no end date still says Plus, never Cloud or Free.
+        guard let until = plan.until else { return String(localized: "Plus") }
+        let date = Date(timeIntervalSince1970: Double(until) / 1000).formatted(.dateTime.month(.wide).day().year())
+        if plan.renews == false { return String(localized: "Plus ends \(date). It won't renew.") }
+        return String(localized: "Plus until \(date)")
+    }
+
+    /// The Plus allowance line under the Whimbrel AI card's title, or nil off Plus. The date shows
+    /// only while allowance is left and only if it is still in the future.
+    static func allowanceLine(_ balance: AIBalance, renews: Bool? = nil, now: Date = Date()) -> String? {
+        guard balance.isPlus else { return nil }
+        if balance.allowanceMicros > 0 {
+            let amount = AIProvidersSettingsPane.dollars(micros: balance.allowanceMicros)
+            if let reset = balance.allowanceResetDate(now: now) {
+                let date = reset.formatted(.dateTime.month(.wide).day().year())
+                return String(localized: "Plus: \(amount) of this month's AI allowance left, resets \(date)")
+            }
+            return String(localized: "Plus: \(amount) of this month's AI allowance left")
+        }
+        if balance.balanceMicros == 0 {
+            return String(localized: "This month's AI allowance is used up. Add credit or choose another model in Settings.")
+        }
+        // Prepaid credit still works. The allowance comes back only while the plan renews.
+        if renews == false { return String(localized: "This month's AI allowance is used up.") }
+        return String(localized: "This month's AI allowance is used up. Your allowance renews with your plan.")
+    }
+
+    /// On Plus the prepaid figure is labelled, so it is not read as the allowance. Nil off Plus
+    /// (the old "$X left" line stays) and on Plus with no prepaid credit.
+    static func prepaidLine(_ balance: AIBalance) -> String? {
+        guard balance.isPlus, balance.balanceMicros > 0 else { return nil }
+        return String(localized: "Prepaid credit: \(AIProvidersSettingsPane.dollars(micros: balance.balanceMicros)) left")
+    }
+
+    /// The unlabelled "$X left" line is for accounts that are not on Plus; a Plus account with no
+    /// prepaid credit shows no prepaid figure at all.
+    static func showsPlainBalanceLine(_ balance: AIBalance) -> Bool { !balance.isPlus }
+
+    /// "Credit is running low." is about prepaid credit; a Plus user with allowance left is not low.
+    static func showsLowWarning(_ balance: AIBalance) -> Bool {
+        balance.isLow && balance.allowanceMicros == 0
+    }
+
+    /// Whether this is a Plus account, for the "credit used up" message the Ask and summary
+    /// surfaces show. Kept in UserDefaults so the first 402 of a session already knows; set from
+    /// plan and balance reads, cleared on a non-Plus read and on sign-out or reset.
+    static let isPlusAccount = PlusFlag()
+
+    final class PlusFlag: @unchecked Sendable {
+        static let key = "com.mpointer.whimbrel.isPlusAccount"
+        private let defaults: UserDefaults
+        init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+        var isOn: Bool {
+            get { defaults.bool(forKey: Self.key) }
+            set { defaults.set(newValue, forKey: Self.key) }
+        }
+    }
+
+    static let creditExhaustedMessage = String(localized: "Your Whimbrel AI credit or monthly allowance is used up. Add credit in Settings, or choose another model in Settings → AI Providers.")
 }

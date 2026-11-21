@@ -36,9 +36,10 @@ function everything(html: string): string {
 }
 
 describe("client controls page", () => {
-  it("is kept out of search until the results matrix is measured", async () => {
+  it("is indexable and in the sitemap, once the results matrix is measured", async () => {
     const { text } = await page("/for/client-controls/");
-    expect(text).toMatch(/<meta name="robots" content="noindex/);
+    expect(text).not.toMatch(/<meta name="robots" content="noindex/);
+    expect((await page("/sitemap.xml")).text).toContain("/for/client-controls/");
   });
 
   it("makes no forbidden claim anywhere on the page: title, description, FAQ data and chrome included", async () => {

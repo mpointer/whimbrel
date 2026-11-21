@@ -1093,6 +1093,25 @@ char *whimbrel_llm_summarize_meeting_preferred(
     const char *slides, const char *model, const char *routing_config_json,
     const char *custom_instructions);
 
+/* The two summary calls above with a "want sources" choice (the finished note's source marks).
+ * want_sources false: the same call as the one without the suffix, request for request. true: the
+ * model is also asked, for each decision, open question and action item, which line of
+ * `transcript` supports it, and once the summary is stored this device's line sources for the
+ * meeting are replaced as a set (see whimbrel_meeting_note_sources). A reference is kept only if
+ * it points at a real line of `transcript`, which must be the "[HH:mm:ss] Speaker: text" text
+ * the shell already passes; the model's own quote is never stored. An action item's owner and
+ * due are stored with it. The returned envelope is the same either way, and the summary's own
+ * string lists are unchanged. Sources are local: never synced. Same arguments and NULL cases as
+ * the call each extends. */
+char *whimbrel_llm_summarize_meeting_sourced(
+    StoreHandle *handle, int64_t meeting_id, const char *notes, const char *transcript,
+    const char *slides, const char *model, const char *routing_config_json,
+    const char *custom_instructions, bool want_sources);
+char *whimbrel_llm_summarize_meeting_preferred_sourced(
+    StoreHandle *handle, int64_t meeting_id, const char *notes, const char *transcript,
+    const char *slides, const char *model, const char *routing_config_json,
+    const char *custom_instructions, bool want_sources);
+
 /* 1 when a summary of the meeting would be refused right now: it names a client excluded from
  * hosted models and no on-device model is available, so whimbrel_llm_summarize_meeting sends
  * nothing. Takes that call's model and routing_config_json. 0 otherwise, and on a null handle
@@ -1180,7 +1199,8 @@ char *whimbrel_transcript_parse_turns(const char *raw);
 char *whimbrel_memory_insert_meeting(StoreHandle *handle, const char *meeting_json);
 
 /* Inserts a batch of transcript segments for one meeting. segments_json is a JSON array
- * of {"start_cs": int, "speaker_label": string, "text": string}. Returns true on
+ * of {"start_cs": int, "speaker_label": string, "text": string} and optionally "end_cs": int (the
+ * line's end on the same clock, kept on this device only, never synced). Returns true on
  * success, false on a null/invalid handle, malformed JSON, or a DB error. */
 bool whimbrel_memory_insert_transcript_segments(StoreHandle *handle, int64_t meeting_id, const char *segments_json);
 
@@ -1476,7 +1496,10 @@ char *whimbrel_citations_resolve(StoreHandle *handle, const char *refs_json);
  * transcript display on any device, since transcript_segment rows sync independently
  * of the meeting row's own transcript_path (a local file path that never transfers
  * between devices). Returns JSON {"segments": [MeetingTranscriptSegment...], "total":
- * <n>}, or NULL on a null/invalid handle or a DB error. */
+ * <n>}, or NULL on a null/invalid handle or a DB error. A segment is {"id","meeting_id",
+ * "meeting_title","start_cs","end_cs"?,"speaker_label","text"}: end_cs is the line's end
+ * on the clock of start_cs, present only for a line stored with one (new recordings), and
+ * id is the segment_id of whimbrel_meeting_note_sources. */
 char *whimbrel_memory_get_transcript_segments_page(
     StoreHandle *handle, int64_t meeting_id, size_t offset, size_t limit);
 
@@ -1571,9 +1594,24 @@ bool whimbrel_meeting_marker_delete(StoreHandle *handle, int64_t id);
 /* Sets a marker's label (NULL or blank clears it). true when the marker exists. */
 bool whimbrel_meeting_marker_set_label(StoreHandle *handle, int64_t id, const char *label);
 
-/* segments_json: [{"start_cs","speaker_label","text"}] with part-relative start_cs.
- * Returns {"inserted":N}. */
+/* segments_json: [{"start_cs","speaker_label","text"}] with part-relative start_cs, each
+ * optionally with "end_cs" (the line's end on the same part-relative clock, kept on this device
+ * only, never synced). Returns {"inserted":N}. */
 char *whimbrel_meeting_replace_part_segments(StoreHandle *handle, int64_t meeting_id, int64_t part_index, const char *segments_json);
+
+/* The meeting's current decisions, open questions and action items with the sources that still
+ * hold on this device: {"decisions":[{"text","source"?}],"open_questions":[{"text","source"?}],
+ * "action_items":[{"item_id"|null,"text","owner"?,"due"?,"source"?}]}, where source is
+ * {"segment_id","start_cs","speaker_label","text"} (segment_id is the id in
+ * whimbrel_memory_get_transcript_segments_page; text is the line's own stored words). A source
+ * shows only for a line exactly equal to the one it was stored for, so an edited line, or a
+ * summary regenerated on another device, has none, and only while the transcript line is still
+ * in the meeting. Lines are the edited ones when edited, else the generated ones. Action items
+ * come from the meeting's action item rows once seeded (item_id is the row id; owner, due and
+ * source attach by the item's exact text; a person's own item gets none), else from the generated
+ * strings with item_id null. Absent keys mean none. NULL on a null handle, an error or a missing
+ * meeting. Local: never synced, exported and deleted with the meeting. */
+char *whimbrel_meeting_note_sources(StoreHandle *handle, int64_t meeting_id);
 
 /* The whole-meeting transcript as plain text (not JSON). */
 char *whimbrel_meeting_transcript_text(StoreHandle *handle, int64_t meeting_id);

@@ -15,11 +15,14 @@ export function ActionItems({
   items,
   onItems,
   readOnly,
+  hideHeading,
 }: {
   meetingId: number;
   items: ActionItemView[];
   onItems: (items: ActionItemView[]) => void;
   readOnly: boolean;
+  /** The page already has an "Action items" heading above this (the redesigned note). */
+  hideHeading?: boolean;
 }) {
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +49,7 @@ export function ActionItems({
 
   return (
     <div className="field">
-      <span>{t("Action items")}</span>
+      {hideHeading ? null : <span>{t("Action items")}</span>}
       {items.length === 0 ? (
         <p className="muted small">{t("None yet.")}</p>
       ) : (

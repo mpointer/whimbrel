@@ -170,7 +170,8 @@ pub(crate) fn request_carries(
 /// Whether an earlier turn may not ride to a hosted model: an answer made on this computer from
 /// an excluded client's material, or any answer not marked clean for every client excluded now
 /// (fix round 2, N7: an answer from before a client was excluded is not clean, whatever made
-/// it). The user's own words carry only by naming a client (checked with the question).
+/// it). The user's own words carry only by naming a client or holding a known contact's address
+/// (checked with the question).
 fn turn_carries(store: &memory::Store, filter: &llm::ContextFilter, turn: &llm::ChatTurn) -> bool {
     if store.is_local_only_text(&turn.text).unwrap_or(true) {
         return true;
