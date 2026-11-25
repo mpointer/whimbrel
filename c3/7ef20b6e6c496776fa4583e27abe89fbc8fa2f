@@ -1,0 +1,1391 @@
+.github/workflows/quick-checks.yml
+  s_6d5f75bae01ef0::t_ab2b167fc79265 16-20,44-45,58-65
+.github/workflows/release-integrity.yml
+  s_6d5f75bae01ef0::t_6c9da8af699b0b 25-26,65-66,98-101,103,106-107,144-145,159-164,167-176,179-189,237-240,243
+.github/workflows/release-windows.yml
+  s_6d5f75bae01ef0::t_e7e9ae17368bab 32-35
+.github/workflows/rust-tests.yml
+  s_6d5f75bae01ef0::t_faa5c57859d7b7 40-41,48,89-102,241,327-336,339-346,349-359,361-363,365,369-381,390,395-396,398-400,402-405,408-446,460-462,470-474,478-485,489-490,497-499,507-509,525-535,640-641,701-703,743-746,749-759
+CHANGELOG.md
+  s_6d5f75bae01ef0::t_a48dffc79b1a7c 5-42
+CONTRIBUTING.md
+  s_6d5f75bae01ef0::t_4f2cc6eab946fe 33-41
+README.md
+  s_6d5f75bae01ef0::t_0c8156bfe26a79 43-45
+VERSION
+  s_6d5f75bae01ef0::t_80dc50ed06979d 1
+apps/macos/Whimbrel.xcodeproj/project.pbxproj
+  s_6d5f75bae01ef0::t_2c71d0db70d19f 10-29,33,35-39,41-43,78-79,88,90,200,213-221,261-263,618-637,641,643-647,649-651,738,893-894,911,913,963-965,1155-1163,1225,1227,1296,1467,1477-1478,1481,1485-1488,1523-1526,1662-1666,1795-1817,1822-1824,1826-1828,1831-1833,1844,1846,2247,2249,2303-2307,2313-2315,2317-2319,2322-2324,2420,2442,2496-2511,2673,2683-2684,2687,2691-2694,2732-2735,2797,2997
+apps/macos/Whimbrel/AppState.swift
+  s_6d5f75bae01ef0::t_bd701adf8f7182 31-38,155-172,199-249,705-711,797,1050-1053,1128-1131,1761-1764,1766-1777,1781-1821,1891,3498-3511,3581,3635-3664,3666-3672,3684,3686-3687,3691-3716,3724,3726,3740-3746
+apps/macos/Whimbrel/Capture/AudioCaptureService.swift
+  s_6d5f75bae01ef0::t_84aa969f1c0da6 94-110,112,131-134,150,309,315-316,350-360,371-376
+apps/macos/Whimbrel/Localizable.xcstrings
+  s_6d5f75bae01ef0::t_9dbc1cddc7bab6 201-270,710-779,888-957,1032-1101,1303-1407,1409,1456-1490,2302-2335,3266-3378,4697-4731,4800-4838,4840,4942-4945,5186-5220,5255-5289,5358-5392,5767-5801,5938-5972,6041-6044,6113-6147,6182-6224,6465-6499,6534-6603,6639-6673,6914-6948,6983-7056,7126-7160,7229-7263,7366-7575,7614-7683,7688-7722,7964-7998,8137,8308-8377,8381-8415,8450-8484,8553-8556,8900-8934,8969-8976,9049-9083,9255-9402,9438-9698,9870-9904,10045-10079,10228-10296,10331-10365,10673-10707,10814-10847,11229-11263,11332-11335,11370-11404,11439-11473,11714-11717,12060-12094,12164-12198,12372,12611-12645,13061-13173,13242-13354,13865-13868,13937-13971,14074-14447,14586-14620,15066-15135,16122-16125,16700-16703,17326-17360,17509,17606-17640,17675-17709,17744-17778,17813-17847,18120-18232,18268-18415,18552-18586,18689-18723,18758-18870,18905-18974,19077-19189,19224-19258,19465-19468,19889-19923,20267-20301,20540-20574,20644-20678,21327-21361,21500-21534,21979-22048,22219-22358,22563-22597,22768-22942,23079-23148,23287-23356,24048-24082,24118-24222,24291-24325,24360-24363,24466-24500,25046-25115,25402-25436,25506-25540,25881-25915,26634-26668,26975-27009,27112-27146,27181-27328,27635-27669,28396-28508,28578-28690,28725-28759,28794-28828,29139-29173,29242-29276,29727-29796,29967-30036,30244-30278,30653-30792,31068-31102,31210-31244,31317-31350,31589-31596,31631-31665,31700-31734,32079-32113,32318-32352,32421-32455,32598-32893,32962-33074,33110-33179,33283-33317,33421-33455,33561-33700,33769-33803,33974-34043,34663-34697,35210-35244,35382-35420,35835-35904,36008-36042,36077-36146,36318-36387,36559-36593,36730-36767,36972-37076,37282-37316,37589-37623,37964-38033,38624-38658,38764-38798,39080-39188,39224-39258,39294-39363,39637-39671,40229-40263,40477-40510,40613-40647,41030-41064,41207-41210,41554-41588,41863-41897,42000-42034,42103-42137,42173-42347,42383-42417,42566-42600,42839-42872,42907-42941,42976-43010,43183-43217,43493-43496,43634-43637,44297-44331,44434-44468,44810-44844,44981-44984,45575-45608,45779-45848,45917-45986,46021-46055,46057,46091-46160,46201-46235,46550-46584,46757-46791,46894-46928,46998-47001,47175-47244,47353-47387,47524-47558,48138-48172,48242-48276,48312-48346,48587-48621,48758-48761,49274-49343,49549-49618,49799-49868,50039-50073,50346-50380,50484-50518,50527-50561,50632-51040,51286-51320,51355-51358,51394-51428,51463-51497,51670-51739,52456-52490,52593-52627,53051-53085,53090-53124,53270-53382,53417-53529,53570-53577,53612-53681,53921-53955,53990-54102,54205-54239,54275-54309,54864-54898,55076-55110,55247-55316,55903-55937,56348-56382,56417-56451,56486-56520,56657-56691,57406-57440,57442,57510-57544,57681-57715,58230-58268,58303-58372,58850-58919,59056-59090,59131-59397,59432-59466,59535-59569,60085-60119,60154-60188,61146-61363,62046-62080,62184-62253,62288-62322,62493-62562,62773-62807,62945-62979,63258-63292,63395-63429,63601-63635,63819-63830,64110-64144,64452-64486,64521-64555,64659-64693,64994-65028,65830-65864,66546-66650,66686-66720,66755-66789,66995-67029,67372-67406,67679-67713,67748-67781,68123,68263-68558,68593-68670,68705-68739,68945-68979,69119-69153,69188-69222,69572-69606,70259-70327,70397-70466,70535-70569,70638-70672,70878-70912,71083-71117,71533-71567,71670-71704,71773-71807,71876-71910,71949-72017,72052-72086,72155-72189,72224-72258,72328-72362,72533-72567,72670-72704,73047-73081,73116-73150,73219-73253,73288-73322,73563-73597,73632-73666,73914-73987,74198-74201,74241-74275,74310-74344,74624-74627,74764-74798,74833-74937,74972-75216,75251-75355,75425-75494,75529-75563,75700-75804,76545-76655,76724-76758,76793-76826,76963-76996,77031-77064,77543-77576
+apps/macos/Whimbrel/Support/AppearanceSettings.swift
+  s_6d5f75bae01ef0::t_785c0c1eea61a2 35,50-54,59-73
+apps/macos/Whimbrel/Support/AskRunner.swift
+  s_6d5f75bae01ef0::t_24be2d1aa342e5 1-895
+apps/macos/Whimbrel/Support/CoreBridge.swift
+  s_6d5f75bae01ef0::t_587fd6c8523c0b 187-188,254,260-262,267-331,335-341,1025-1042,1313-1316,1438-1439,1515-1535,2908-2928,4577-4587,4633-4728,5589-5594,5606-5608,5613,5628-5629,5631-5632,6491-6492,7147-7266
+apps/macos/Whimbrel/Support/CoreFind.swift
+  s_6d5f75bae01ef0::t_f16f688f58cefd 1-293
+apps/macos/Whimbrel/Support/HotkeyPanelController.swift
+  s_6d5f75bae01ef0::t_ee6aa7a276d577 30-33,40-42,59-68,84-87,89-99,133-149
+apps/macos/Whimbrel/Support/LiveAlertDelivery.swift
+  s_6d5f75bae01ef0::t_878f354294f48e 235
+apps/macos/Whimbrel/Support/McpClientScopes.swift
+  s_6d5f75bae01ef0::t_34130e820466ce 9-11,13,16-18,23,34-35,38,41,43
+apps/macos/Whimbrel/Support/MeetingAlertPanelController.swift
+  s_6d5f75bae01ef0::t_75bb6e89fad0d8 31-32,168-191,216-219
+apps/macos/Whimbrel/Support/MeetingBarController.swift
+  s_6d5f75bae01ef0::t_660ca778ee730a 22-24,82
+apps/macos/Whimbrel/Support/NoStoreMode.swift
+  s_6d5f75bae01ef0::t_79d041e0bf562d 45,47,72-73,243
+apps/macos/Whimbrel/Support/RecordingCheckInPanelController.swift
+  s_6d5f75bae01ef0::t_1b6612a629cbdf 22-23,102-126,149-152
+apps/macos/Whimbrel/Support/RecordingNotice.swift
+  s_6d5f75bae01ef0::t_15028de510d237 3-4,24,27
+apps/macos/Whimbrel/Support/RoutingSettings.swift
+  s_6d5f75bae01ef0::t_dbe72ba2a96a6b 759-785,794-812,817-819,832
+apps/macos/Whimbrel/Support/Skin.swift
+  s_6d5f75bae01ef0::t_7e4c8eecabf411 224
+apps/macos/Whimbrel/Support/SkinStore.swift
+  s_6d5f75bae01ef0::t_1eade5e1fd386d 9,22-25,42-51,181-184,186,189,192-193,201-215,217,221
+apps/macos/Whimbrel/Support/StartStopRules.swift
+  s_6d5f75bae01ef0::t_6b52a0969d4f17 1-116
+apps/macos/Whimbrel/Support/ThemeStore.swift
+  s_6d5f75bae01ef0::t_9a3a501a5515cf 7-9,100-110
+apps/macos/Whimbrel/UI/AskAnswerText.swift
+  s_6d5f75bae01ef0::t_18ca5b6b8af002 8-22,40,54,67,79-80,101-104
+apps/macos/Whimbrel/UI/AutomationsView.swift
+  s_6d5f75bae01ef0::t_8e437448d26a39 10-11,22
+apps/macos/Whimbrel/UI/CaptureDetailView.swift
+  s_6d5f75bae01ef0::t_277d58da93c39a 22,26,39,47,77,81,85,91,96,102
+apps/macos/Whimbrel/UI/ClientControlsModel.swift
+  s_6d5f75bae01ef0::t_f056f8c5220f34 815,845
+apps/macos/Whimbrel/UI/ClientControlsView.swift
+  s_6d5f75bae01ef0::t_84c6137971ac5e 21,23,33,42,45,65,80,89,94,107,111,116,120,141,145-146,173,178,180,186
+apps/macos/Whimbrel/UI/DesignSystem.swift
+  s_6d5f75bae01ef0::t_69a97934397688 2,284,291-300,328-337,339,387
+apps/macos/Whimbrel/UI/EncryptionSetupView.swift
+  s_6d5f75bae01ef0::t_a384beae15f270 341,366-371
+apps/macos/Whimbrel/UI/EpisodeDetailView.swift
+  s_6d5f75bae01ef0::t_f7dcd2f8af38e6 23,27,50,59,96,98,102,109,113,118,122
+apps/macos/Whimbrel/UI/MeetingAskBar.swift
+  s_6d5f75bae01ef0::t_c090e8064c586e 13-22,156,158,197-225,240-241,252,254,383-389
+apps/macos/Whimbrel/UI/MeetingCard.swift
+  s_6d5f75bae01ef0::t_7c3ee4ed243aec 124,180,186,191,225,229,242,249,254
+apps/macos/Whimbrel/UI/MeetingRowView.swift
+  s_6d5f75bae01ef0::t_09f3eb2777857b 33,38,43,47
+apps/macos/Whimbrel/UI/MeetingWorkspace/LiveAlertsSection.swift
+  s_6d5f75bae01ef0::t_881495eabdad97 16-17,55,123,125,127
+apps/macos/Whimbrel/UI/MeetingsListView.swift
+  s_6d5f75bae01ef0::t_5010e9171f6c46 198,212,224,234,249,257,309,408,414
+apps/macos/Whimbrel/UI/MenuBarContentView.swift
+  s_6d5f75bae01ef0::t_35b7578cfaefdc 117-127
+apps/macos/Whimbrel/UI/PendingApprovalsView.swift
+  s_6d5f75bae01ef0::t_e05132fc1106c2 29,32,39,45,50,55,57,75,78,83,86
+apps/macos/Whimbrel/UI/Redesign/AlertPanelsRedesign.swift
+  s_6d5f75bae01ef0::t_10175e88b9ea79 1-228
+apps/macos/Whimbrel/UI/Redesign/AskAnswerRedesign.swift
+  s_6d5f75bae01ef0::t_416cc1ab8167b8 1-544
+apps/macos/Whimbrel/UI/Redesign/ConversationRedesign.swift
+  s_6d5f75bae01ef0::t_d5b41e8576281d 1-917
+apps/macos/Whimbrel/UI/Redesign/ConversationsListRedesign.swift
+  s_6d5f75bae01ef0::t_f2d339c9280b3c 1-255
+apps/macos/Whimbrel/UI/Redesign/FindController.swift
+  s_6d5f75bae01ef0::t_790dc10b238b6b 1-1035
+apps/macos/Whimbrel/UI/Redesign/FindRedesign.swift
+  s_6d5f75bae01ef0::t_3c73d7b559c5e9 1-452
+apps/macos/Whimbrel/UI/Redesign/HomeRedesign.swift
+  s_6d5f75bae01ef0::t_478fbccce626f3 129-134,136,145,147,155,337,357-365,368,372,377-379
+apps/macos/Whimbrel/UI/Redesign/HotkeyPanelRedesign.swift
+  s_6d5f75bae01ef0::t_14d3161e462f32 1-73
+apps/macos/Whimbrel/UI/Redesign/KeySetupRedesign.swift
+  s_6d5f75bae01ef0::t_84a4cc37fa5f47 6-25,28-29,43,56,59,77,80,95,99
+apps/macos/Whimbrel/UI/Redesign/KeyUnavailableRedesign.swift
+  s_6d5f75bae01ef0::t_b931b3848e0532 17
+apps/macos/Whimbrel/UI/Redesign/LaunchBlockingRedesign.swift
+  s_6d5f75bae01ef0::t_4fe7ca874c0cb0 23,29,37-40,43
+apps/macos/Whimbrel/UI/Redesign/LaunchMigrationRedesign.swift
+  s_6d5f75bae01ef0::t_83ac7ac68e8bef 14-15
+apps/macos/Whimbrel/UI/Redesign/LibraryRedesign.swift
+  s_6d5f75bae01ef0::t_dae19192043a26 1-415
+apps/macos/Whimbrel/UI/Redesign/MenuBarRedesign.swift
+  s_6d5f75bae01ef0::t_4c548f1a3f19fb 1-406
+apps/macos/Whimbrel/UI/Redesign/RecoveryRedesign.swift
+  s_6d5f75bae01ef0::t_02acf8bfcb2c2c 23-24,37-39
+apps/macos/Whimbrel/UI/Redesign/RedesignBridge.swift
+  s_6d5f75bae01ef0::t_3233a417ed9f7c 48-50,52
+apps/macos/Whimbrel/UI/Redesign/Restyle.swift
+  s_6d5f75bae01ef0::t_6e38abae8dd497 1-270
+apps/macos/Whimbrel/UI/Redesign/Settings/AISettingsRedesign.swift
+  s_6d5f75bae01ef0::t_9f085e3a6c4e8a 1-608
+apps/macos/Whimbrel/UI/Redesign/Settings/AutomationsSettingsRedesign.swift
+  s_6d5f75bae01ef0::t_4e30cfe079a5fd 1-256
+apps/macos/Whimbrel/UI/Redesign/Settings/ConnectorsSettingsRedesign.swift
+  s_6d5f75bae01ef0::t_9101ec26e2cfbf 1-327
+apps/macos/Whimbrel/UI/Redesign/Settings/DiagnosticsSettingsRedesign.swift
+  s_6d5f75bae01ef0::t_564cef980628e2 1-12
+apps/macos/Whimbrel/UI/Redesign/Settings/GeneralSettingsRedesign.swift
+  s_6d5f75bae01ef0::t_bbff0e93e7d9b8 1-164
+apps/macos/Whimbrel/UI/Redesign/Settings/MeetingsSettingsRedesign.swift
+  s_6d5f75bae01ef0::t_42ba23a46829c8 1-297
+apps/macos/Whimbrel/UI/Redesign/Settings/MemoryPrivacySettingsRedesign.swift
+  s_6d5f75bae01ef0::t_20b1863950673c 1-1344
+apps/macos/Whimbrel/UI/Redesign/Settings/PlanSettingsRedesign.swift
+  s_6d5f75bae01ef0::t_82a4f3607aaa80 1-116
+apps/macos/Whimbrel/UI/Redesign/Settings/ProfileSettingsRedesign.swift
+  s_6d5f75bae01ef0::t_b58973a3d401b5 1-105
+apps/macos/Whimbrel/UI/Redesign/Settings/SettingsAnchorID.swift
+  s_6d5f75bae01ef0::t_96cd95947a13ed 1-122
+apps/macos/Whimbrel/UI/Redesign/Settings/SettingsRedesignModel.swift
+  s_6d5f75bae01ef0::t_9647db42471cc8 1-120
+apps/macos/Whimbrel/UI/Redesign/Settings/SettingsRedesignView.swift
+  s_6d5f75bae01ef0::t_c23549c5746eca 1-143
+apps/macos/Whimbrel/UI/Redesign/Settings/SettingsStringsRedesign.swift
+  s_6d5f75bae01ef0::t_3a39670f077602 1-72
+apps/macos/Whimbrel/UI/Redesign/Settings/SkinGalleryRedesign.swift
+  s_6d5f75bae01ef0::t_d1c0ff4ef24339 1-181
+apps/macos/Whimbrel/UI/Redesign/Settings/SyncDevicesSettingsRedesign.swift
+  s_6d5f75bae01ef0::t_0277262bf5caa9 1-381
+apps/macos/Whimbrel/UI/Redesign/Settings/TopicsSettingsRedesign.swift
+  s_6d5f75bae01ef0::t_3a29d3c1df7e8e 1-224
+apps/macos/Whimbrel/UI/RoutinesInboxView.swift
+  s_6d5f75bae01ef0::t_b16a0d7bd4ae45 2,16-17,26,29,36,46,49-50,58,64,104-111
+apps/macos/Whimbrel/UI/Settings/AIProvidersSettingsPane.swift
+  s_6d5f75bae01ef0::t_b400aaae00d557 39-51,93,137,181,232,280,357,466,472,491,506,568,876
+apps/macos/Whimbrel/UI/Settings/AppearanceThemeSettings.swift
+  s_6d5f75bae01ef0::t_dd4304723fa1b0 12,25
+apps/macos/Whimbrel/UI/Settings/CaptureSettingsPane.swift
+  s_6d5f75bae01ef0::t_892add823fbcd0 17,30,62,122
+apps/macos/Whimbrel/UI/Settings/ConnectorsSettingsPane.swift
+  s_6d5f75bae01ef0::t_3c95d5db95cf9c 30,42,54,108
+apps/macos/Whimbrel/UI/Settings/DevicesSettingsPane.swift
+  s_6d5f75bae01ef0::t_c397bbc89c40ef 19,25-35,43,173,230,363
+apps/macos/Whimbrel/UI/Settings/EncryptionSettingsPane.swift
+  s_6d5f75bae01ef0::t_f34cf1f04a0e27 227
+apps/macos/Whimbrel/UI/Settings/GeneralSettingsPane.swift
+  s_6d5f75bae01ef0::t_9f951f835a6dc7 41,54,83
+apps/macos/Whimbrel/UI/Settings/LocalOnlyLine.swift
+  s_6d5f75bae01ef0::t_aaf5c61110f83c 1-8
+apps/macos/Whimbrel/UI/Settings/MCPClientsSettingsPane.swift
+  s_6d5f75bae01ef0::t_64205aabea67e1 34
+apps/macos/Whimbrel/UI/Settings/MeetingsSettingsPane.swift
+  s_6d5f75bae01ef0::t_3b497172974bfc 9,62,121,147,186,234
+apps/macos/Whimbrel/UI/Settings/PhoneCardState.swift
+  s_6d5f75bae01ef0::t_95f803b263166a 1-13
+apps/macos/Whimbrel/UI/Settings/PlanControls.swift
+  s_6d5f75bae01ef0::t_2ae0044e6300c5 1-119
+apps/macos/Whimbrel/UI/Settings/PlanSettingsPane.swift
+  s_6d5f75bae01ef0::t_b7172ce1c84a20 1-108
+apps/macos/Whimbrel/UI/Settings/ProfileSettingsPane.swift
+  s_6d5f75bae01ef0::t_a935397c73a0b0 22,25,32,67
+apps/macos/Whimbrel/UI/Settings/PromptsSettingsPane.swift
+  s_6d5f75bae01ef0::t_5eb4364e044feb 16
+apps/macos/Whimbrel/UI/Settings/RetentionSettingsPane.swift
+  s_6d5f75bae01ef0::t_10dde11d83471b 36,101,291
+apps/macos/Whimbrel/UI/Settings/SettingsSearch.swift
+  s_6d5f75bae01ef0::t_795f3a27221932 1-165
+apps/macos/Whimbrel/UI/Settings/SkinGallery.swift
+  s_6d5f75bae01ef0::t_f95234e332f4ee 139-140
+apps/macos/Whimbrel/UI/Settings/TopicsSettingsPane.swift
+  s_6d5f75bae01ef0::t_fde1641ba885b0 63,97,189
+apps/macos/Whimbrel/UI/Settings/TranscriptionSettingsPane.swift
+  s_6d5f75bae01ef0::t_30dd01ad602c76 22,51
+apps/macos/Whimbrel/UI/Settings/YourDataSettingsPane.swift
+  s_6d5f75bae01ef0::t_fd7d7dd62d53ed 17,46,52,75-91,238,271,277
+apps/macos/Whimbrel/UI/SettingsView.swift
+  s_6d5f75bae01ef0::t_b991c124374097 10,35,51,67-73,76-84,86-88,104-119,122,128-192,197,213,217-218
+apps/macos/Whimbrel/UI/ThreadDetailView.swift
+  s_6d5f75bae01ef0::t_9b8bf12c74f75c 23,27,40,48,77,79,82,87,91,96,100
+apps/macos/Whimbrel/UI/TimelineView+Ask.swift
+  s_6d5f75bae01ef0::t_9c97155a466c7d 756-758,784-787
+apps/macos/Whimbrel/UI/TimelineView.swift
+  s_6d5f75bae01ef0::t_b6e9c1a6917d68 165
+apps/macos/Whimbrel/UI/TopicChip.swift
+  s_6d5f75bae01ef0::t_8595718d94409d 34,90
+apps/macos/Whimbrel/UI/TopicsView.swift
+  s_6d5f75bae01ef0::t_78f4d3dc9b3b38 10-11,66,79,88,95,110,114,119,124,131,174,181-182,199,295-297,313,315,320,325,340-342,364-385,407-411,421,425,444,460,474,477,480,498-499,513,519,523,527,530,569,587-589,592,597,624-625,632,637
+apps/macos/Whimbrel/UI/WhimbrelShellView.swift
+  s_6d5f75bae01ef0::t_f31f62bf9b56d2 6,14-15,27,42-79,90,105-106,138,162-163,214,217,219,235,243,245,249-254,260-265,269,278-280,297-337,365-370,451,517-529,589
+apps/macos/Whimbrel/UI/WhimbrelUIStrings.swift
+  s_6d5f75bae01ef0::t_aeab34ea9a9d70 25,46,48,73-74,142,196-249,252-342
+apps/macos/Whimbrel/WhimbrelApp.swift
+  s_6d5f75bae01ef0::t_a7ebcf4ad54157 224-225,309-317,320-326
+apps/macos/WhimbrelTests/AlertPanelRedesignTests.swift
+  s_6d5f75bae01ef0::t_f5fff08de11f5b 1-272
+apps/macos/WhimbrelTests/AskHelpersBridgeTests.swift
+  s_6d5f75bae01ef0::t_251e9e6f3af9d2 28-34
+apps/macos/WhimbrelTests/ClientControlsModelTests.swift
+  s_6d5f75bae01ef0::t_880fefec6243d6 426-435,997-1002
+apps/macos/WhimbrelTests/FindRedesignTests.swift
+  s_6d5f75bae01ef0::t_988d0a454cb98d 1-519
+apps/macos/WhimbrelTests/LiveMeetingRedesignTests.swift
+  s_6d5f75bae01ef0::t_e7fcb26b78c654 19-25
+apps/macos/WhimbrelTests/LocalOnlyLineTests.swift
+  s_6d5f75bae01ef0::t_de788801290e8e 1-12
+apps/macos/WhimbrelTests/McpClientScopesTests.swift
+  s_6d5f75bae01ef0::t_c1bdcf814262ba 34-53,55
+apps/macos/WhimbrelTests/MeetingAskFormattingTests.swift
+  s_6d5f75bae01ef0::t_e870837757dde6 28-52
+apps/macos/WhimbrelTests/MenuBarRedesignTests.swift
+  s_6d5f75bae01ef0::t_3855ea304ec8ca 1-320
+apps/macos/WhimbrelTests/NoStoreModeTests.swift
+  s_6d5f75bae01ef0::t_b4eda830b696fb 15,19-23,80,85-87,98-99,101,178-179,183,185-186
+apps/macos/WhimbrelTests/PhoneCardStateTests.swift
+  s_6d5f75bae01ef0::t_d15e6851328872 1-33
+apps/macos/WhimbrelTests/PlanControlsTests.swift
+  s_6d5f75bae01ef0::t_5f8207a4ab0e4a 1-85
+apps/macos/WhimbrelTests/RecordingCheckInTests.swift
+  s_6d5f75bae01ef0::t_fd8723bd580520 138
+apps/macos/WhimbrelTests/RecordingNoticeTests.swift
+  s_6d5f75bae01ef0::t_08283c3bb099c9 16-20
+apps/macos/WhimbrelTests/RedesignHomeAdapterTests.swift
+  s_6d5f75bae01ef0::t_c5f45cd7781620 123-510
+apps/macos/WhimbrelTests/SettingsRedesignMeetingsAITests.swift
+  s_6d5f75bae01ef0::t_b71e01bda2f023 1-184
+apps/macos/WhimbrelTests/SettingsRedesignMemoryTests.swift
+  s_6d5f75bae01ef0::t_5e069498fd7187 1-328
+apps/macos/WhimbrelTests/SettingsRedesignSyncConnectorsTests.swift
+  s_6d5f75bae01ef0::t_7a70591d5fad10 1-226
+apps/macos/WhimbrelTests/SettingsRedesignTests.swift
+  s_6d5f75bae01ef0::t_5e84dde46841b1 1-396
+apps/macos/WhimbrelTests/SettingsSearchTests.swift
+  s_6d5f75bae01ef0::t_163dfdcfd9ea70 1-88
+apps/macos/WhimbrelTests/SkinChatViewTests.swift
+  s_6d5f75bae01ef0::t_12ae052e1ea4a8 95-100,109-111,114
+apps/macos/WhimbrelTests/SkinStoreTests.swift
+  s_6d5f75bae01ef0::t_df91e2d0bcb599 83-159,283-293
+apps/macos/WhimbrelTests/StartStopRulesTests.swift
+  s_6d5f75bae01ef0::t_5da20b9adf3c01 1-136
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/AlertPanels.swift
+  s_6d5f75bae01ef0::t_836e527607fd27 1-151
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/AskRules.swift
+  s_6d5f75bae01ef0::t_6ce3b0334ad6a2 1-158
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/ContrastPalette.swift
+  s_6d5f75bae01ef0::t_8a19ca8d0c6b73 1-25
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/ControlBorder.swift
+  s_6d5f75bae01ef0::t_55c41b3ebf7ad1 1-69
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/ConversationViews.swift
+  s_6d5f75bae01ef0::t_3c304ee3e54f4f 1-56
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/FindAnswer.swift
+  s_6d5f75bae01ef0::t_dbc8dd0eaca1bc 1-295
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/FindLibrary.swift
+  s_6d5f75bae01ef0::t_b2f91f51e0ace4 1-214
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/FindModel.swift
+  s_6d5f75bae01ef0::t_f58827386baedf 1-664
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/FindQuestionWords.swift
+  s_6d5f75bae01ef0::t_7d80234ea1e3ff 1-6
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/FindViews.swift
+  s_6d5f75bae01ef0::t_9ef6ea77bee2d1 1-830
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/HomeModel.swift
+  s_6d5f75bae01ef0::t_2c7c63078942ee 90-92,105
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/HomeShell.swift
+  s_6d5f75bae01ef0::t_4d0704c5e37a99 28-30,33,61-72,140,142-146,161,163,170-178,195-197,221-238,249-253,255-265,291-293,320,328-330,341-362
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/HomeViews.swift
+  s_6d5f75bae01ef0::t_1a6db4a4eb693d 206,217,224,236-237,255,260,268-275
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/HotkeyPanel.swift
+  s_6d5f75bae01ef0::t_fa96ecab29df79 1-142
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/MenuModel.swift
+  s_6d5f75bae01ef0::t_26522ac6339c84 1-617
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/MenuViews.swift
+  s_6d5f75bae01ef0::t_3a4d8e2cef5818 1-604
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/Navigation.swift
+  s_6d5f75bae01ef0::t_5309b33c1fb17d 120,122-124,141,161,390-397
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/Notes.swift
+  s_6d5f75bae01ef0::t_4aa13196bb097d 138-143,149-153,180-181,183,233
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/Primitives.swift
+  s_6d5f75bae01ef0::t_f23dbbd5246006 155-169,175,177-180,185-188,190,194,199-200,205,215-216,221-222,229-230,232,243-244,247-248,265,267-275
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/Recording.swift
+  s_6d5f75bae01ef0::t_da21b6c3077b16 104-107,116-117,119,210-212,217,309-311,319,331,346-347,349,351,372,379
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/Restyle.swift
+  s_6d5f75bae01ef0::t_760df35f8f3d78 1-320
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/Settings.swift
+  s_6d5f75bae01ef0::t_421db7876f7528 5-10,17-21,24-28,32-34,39-42,45-46,48,51,53,60,63,65-72,74-79,95-103,105-106,111-112,119-120,202-203,206,216-218
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsAIPanes.swift
+  s_6d5f75bae01ef0::t_e20137d434ee4d 1-340
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsAutomationsPanes.swift
+  s_6d5f75bae01ef0::t_ce4077c73cad9a 1-157
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsConnectorsPanes.swift
+  s_6d5f75bae01ef0::t_1ffb8e00189ddd 1-205
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsLogic.swift
+  s_6d5f75bae01ef0::t_ca977dad316a99 1-440
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMeetingsAIGallery.swift
+  s_6d5f75bae01ef0::t_cf22fa859b7429 1-303
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMeetingsAILogic.swift
+  s_6d5f75bae01ef0::t_0ce05511e36f7d 1-230
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMeetingsAIModel.swift
+  s_6d5f75bae01ef0::t_0f01c4df18ec4e 1-750
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMeetingsAIStrings.swift
+  s_6d5f75bae01ef0::t_be9893bc827a7f 1-222
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMeetingsPanes.swift
+  s_6d5f75bae01ef0::t_f09c9a6d2fc16d 1-296
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMemoryGallery.swift
+  s_6d5f75bae01ef0::t_090bbf410cd366 1-252
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMemoryLogic.swift
+  s_6d5f75bae01ef0::t_fe3f59522bc522 1-176
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMemoryModel.swift
+  s_6d5f75bae01ef0::t_03e88ddf620ee2 1-569
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMemoryPanes.swift
+  s_6d5f75bae01ef0::t_50598deea6b86e 1-651
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsMemoryStrings.swift
+  s_6d5f75bae01ef0::t_60278fe9fac872 1-255
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsNav.swift
+  s_6d5f75bae01ef0::t_dc6e9597eb95f6 1-251
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsPaneStrings.swift
+  s_6d5f75bae01ef0::t_65f3a0fb3d8b63 1-90
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsPanes.swift
+  s_6d5f75bae01ef0::t_d53e3eb93862f4 1-570
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsParts.swift
+  s_6d5f75bae01ef0::t_82ff77479d47c6 1-900
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsPartsGallery.swift
+  s_6d5f75bae01ef0::t_59d54defa9b6d3 1-392
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsRows.swift
+  s_6d5f75bae01ef0::t_8d0712aa536863 1-1210
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsSheet.swift
+  s_6d5f75bae01ef0::t_7f5404cc61c043 1-513
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsSkins.swift
+  s_6d5f75bae01ef0::t_4d104d7678115b 1-222
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsStrings.swift
+  s_6d5f75bae01ef0::t_908b4167c65009 1-114
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsSyncGallery.swift
+  s_6d5f75bae01ef0::t_d09b7bb81baa3f 1-363
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsSyncModel.swift
+  s_6d5f75bae01ef0::t_fbcdc8da07f4bf 1-679
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsSyncPanes.swift
+  s_6d5f75bae01ef0::t_5a51ab003115e7 1-443
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsSyncStrings.swift
+  s_6d5f75bae01ef0::t_65718bfc0e1f49 1-146
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsTopicsPanes.swift
+  s_6d5f75bae01ef0::t_61a1a5c5840406 1-261
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsWindow.swift
+  s_6d5f75bae01ef0::t_69e944fc0ff97b 1-161
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SettingsWindowGallery.swift
+  s_6d5f75bae01ef0::t_b893b37c6fd349 1-208
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SetupComponents.swift
+  s_6d5f75bae01ef0::t_201569561626ac 243,255
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/SetupScreens.swift
+  s_6d5f75bae01ef0::t_0dd4245720c175 555
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/Surfaces.swift
+  s_6d5f75bae01ef0::t_4e423e1c239779 129-142,147,163,169-171
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/Theme.swift
+  s_6d5f75bae01ef0::t_1e0a5274c38a1e 221-223
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/Tokens.generated.swift
+  s_6d5f75bae01ef0::t_11ed05f43487ac 105-109
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/WGallery.swift
+  s_6d5f75bae01ef0::t_d25d69c15ac44a 884,1011-1014,1389-1934
+apps/macos/WhimbrelUI/Sources/WhimbrelUI/WStrings.swift
+  s_6d5f75bae01ef0::t_6c671908d843c6 194-310,426-429,459-462,494-502,511,520-521,529-532,534-536,556,576-577,604-605,615,625-753
+apps/macos/WhimbrelUI/Sources/WhimbrelUIGallery/main.swift
+  s_6d5f75bae01ef0::t_7d382e8f517545 17-34,56-60,71-75,166-208,226-260
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/AskRulesTests.swift
+  s_6d5f75bae01ef0::t_039ddbceb44402 1-167
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/FindTests.swift
+  s_6d5f75bae01ef0::t_8e6ffdc275955a 1-499
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/MenuTests.swift
+  s_6d5f75bae01ef0::t_0902ec58ac8248 1-440
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/RestyleTests.swift
+  s_6d5f75bae01ef0::t_4d8517352873df 1-281
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/SettingsMeetingsAITests.swift
+  s_6d5f75bae01ef0::t_681faf59283d96 1-186
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/SettingsMemoryTests.swift
+  s_6d5f75bae01ef0::t_03c35be780835b 1-205
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/SettingsPartsTests.swift
+  s_6d5f75bae01ef0::t_c771db3c704898 1-347
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/SettingsSyncTests.swift
+  s_6d5f75bae01ef0::t_b0671d9a474f32 1-171
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/SettingsWindowTests.swift
+  s_6d5f75bae01ef0::t_31868a5839907f 1-75
+apps/macos/WhimbrelUI/Tests/WhimbrelUITests/WhimbrelUITests.swift
+  s_6d5f75bae01ef0::t_6b90b542d49d6a 31,78-79,220,222
+apps/macos/project.yml
+  s_6d5f75bae01ef0::t_28d4cbf64faee4 222
+apps/mobile/android/app/src/main/java/com/mpointer/whimbrel/mobile/MainActivity.kt
+  s_6d5f75bae01ef0::t_ec1c3fef925b67 82
+apps/mobile/android/app/src/main/java/com/mpointer/whimbrel/mobile/WhimbrelApplication.kt
+  s_6d5f75bae01ef0::t_d416b113ab4fb8 28,151,160,258,262
+apps/mobile/android/app/src/main/java/com/mpointer/whimbrel/mobile/reminders/Reminders.kt
+  s_6d5f75bae01ef0::t_2f8e031cc46ea5 7,14-16,47-51,76,78-79,93,98,108,114-115,117-119,123-125,128,133-134,138,147-148,150,156,163,165,175,203-210
+apps/mobile/android/app/src/main/java/com/mpointer/whimbrel/mobile/ui/SettingsSheet.kt
+  s_6d5f75bae01ef0::t_0c7f9fcc7160b2 238
+apps/mobile/android/app/src/test/java/com/mpointer/whimbrel/mobile/reminders/ReminderPlannerTest.kt
+  s_6d5f75bae01ef0::t_9e7dd835c0190e 41,127-128,130-131
+apps/mobile/android/app/src/test/java/com/mpointer/whimbrel/mobile/reminders/RemindersTest.kt
+  s_6d5f75bae01ef0::t_0dde4244da292d 32,39,43,45,58-62,83-86,88-89,91,96,102-103,105,112,114,116,119,121,127-128,134-144,147,150,155,160-161,163-165,169-170,177,192,194,197,200,206,218,221,235,237,239,244,250,309-312,317,324-326
+apps/mobile/ios/Whimbrel.xcodeproj/project.pbxproj
+  s_6d5f75bae01ef0::t_404f5247508d35 597,787
+apps/mobile/ios/Whimbrel/EnrollmentView.swift
+  s_6d5f75bae01ef0::t_ad66f4c4701e9b 47,49
+apps/mobile/ios/Whimbrel/Localizable.xcstrings
+  s_6d5f75bae01ef0::t_6b28637f72e8df 2626
+apps/mobile/ios/Whimbrel/ReminderPlanner.swift
+  s_6d5f75bae01ef0::t_30467dd2edd461 36
+apps/mobile/ios/Whimbrel/Reminders.swift
+  s_6d5f75bae01ef0::t_87a257c2e1fb2b 3-4,39-41,69,72,87,89-90,95,97,101,103,110-114,118-120,122,130-131,135-137,150-157
+apps/mobile/ios/Whimbrel/SettingsSheet.swift
+  s_6d5f75bae01ef0::t_5a19e0adfddae2 159
+apps/mobile/ios/Whimbrel/WhimbrelApp.swift
+  s_6d5f75bae01ef0::t_66482cec406e8f 33
+apps/mobile/ios/WhimbrelTests/ReminderPlannerTests.swift
+  s_6d5f75bae01ef0::t_f4f080c8d810a5 32-33,123-124,126-127
+apps/mobile/ios/WhimbrelTests/RemindersTests.swift
+  s_6d5f75bae01ef0::t_f4f6f3f9b8f9f7 12-17,47-49,57-58,61-65,68-71,74,77-81,83,85-86,89-91,95,97,99-100,102,105,110,114,121-122,129-138,141-153,159,175-176,181,188,196,202-203
+apps/mobile/ios/project.yml
+  s_6d5f75bae01ef0::t_500471bcad2e2d 120
+apps/windows/design/tray-glyph-recording-paused.svg
+  s_6d5f75bae01ef0::t_5b9a45d1467bba 1-22
+apps/windows/package-lock.json
+  s_6d5f75bae01ef0::t_436448df583cc1 3,9
+apps/windows/package.json
+  s_6d5f75bae01ef0::t_b82adc0d2bdbd4 3
+apps/windows/scripts/render-icons.mjs
+  s_6d5f75bae01ef0::t_43527cdd06a70a 18,43-44,46-53,56-60,62,92-95,97-100,102-104,108,111-112,115
+apps/windows/src-tauri/Cargo.lock
+  s_6d5f75bae01ef0::t_b1c71bed50c673 55,172,1427,2983,3434,3444,3514,3548,3556,5095,5412,5779,6002,6015,7017,7529
+apps/windows/src-tauri/Cargo.toml
+  s_6d5f75bae01ef0::t_e39fa0d0766166 3
+apps/windows/src-tauri/src/alert.rs
+  s_6d5f75bae01ef0::t_e329c77a50f4fe 20-35,65-67,78-82,148-155
+apps/windows/src-tauri/src/app/mod.rs
+  s_6d5f75bae01ef0::t_490262664e6095 199,300,429-439,485
+apps/windows/src-tauri/src/budget_alert.rs
+  s_6d5f75bae01ef0::t_a14fb6d2850e0c 118-119,130-134,144
+apps/windows/src-tauri/src/capture/audio.rs
+  s_6d5f75bae01ef0::t_e5d347d3b09721 121-123,165-171,176-177,179,182-184,186-196,663-664,669-672,690,711-714,725-727,788,826-830
+apps/windows/src-tauri/src/capture/service.rs
+  s_6d5f75bae01ef0::t_54471747bce893 43-46,51-88,320-322,332-345,394-425
+apps/windows/src-tauri/src/chat/mod.rs
+  s_6d5f75bae01ef0::t_13d1a79dd4ebfa 72-95,424-440
+apps/windows/src-tauri/src/commands/chat.rs
+  s_6d5f75bae01ef0::t_5eb787427483b7 202
+apps/windows/src-tauri/src/commands/conversations.rs
+  s_6d5f75bae01ef0::t_7f61be422f63da 1-910
+apps/windows/src-tauri/src/commands/find.rs
+  s_6d5f75bae01ef0::t_6650236e1f6ec6 1-1010
+apps/windows/src-tauri/src/commands/launch.rs
+  s_6d5f75bae01ef0::t_464c26f3ececcc 377-379
+apps/windows/src-tauri/src/commands/mcp.rs
+  s_6d5f75bae01ef0::t_69f7dab70e3d73 21-24,88-90,106-111,194-197,201-214,236,250,258-270,272-275,281-282,290-313,317-318
+apps/windows/src-tauri/src/commands/meetings.rs
+  s_6d5f75bae01ef0::t_b3ea5fbab97012 54-60,288,293,296,298-299,301
+apps/windows/src-tauri/src/commands/mod.rs
+  s_6d5f75bae01ef0::t_d3cb1742a31095 11,15
+apps/windows/src-tauri/src/commands/schema.rs
+  s_6d5f75bae01ef0::t_d291470759792f 163-173
+apps/windows/src-tauri/src/commands/skins.rs
+  s_6d5f75bae01ef0::t_2ad03d29c40a83 162,175,203,209-211,213-214,658-659,662-664,670,673-682,696,717,768
+apps/windows/src-tauri/src/connectors/accounts.rs
+  s_6d5f75bae01ef0::t_870d1c5619b29b 163-173,295-296,349-357
+apps/windows/src-tauri/src/disk_alert.rs
+  s_6d5f75bae01ef0::t_123c33e94e118b 84-85,96-100,110
+apps/windows/src-tauri/src/error.rs
+  s_6d5f75bae01ef0::t_a9f4bd0d034382 227-230,323-336
+apps/windows/src-tauri/src/hotkey_panel/window.rs
+  s_6d5f75bae01ef0::t_6ad3e5cda24b5a 5-7,13-14,25-31,44-46,54,65-82,99-104
+apps/windows/src-tauri/src/l10n.rs
+  s_6d5f75bae01ef0::t_5e4f2e6cbad353 198-222
+apps/windows/src-tauri/src/launch/app_tests.rs
+  s_6d5f75bae01ef0::t_ac185d79b870d9 576-583
+apps/windows/src-tauri/src/lib.rs
+  s_6d5f75bae01ef0::t_4aac8a72d79093 61
+apps/windows/src-tauri/src/live_alerts.rs
+  s_6d5f75bae01ef0::t_523c170acda530 82-88
+apps/windows/src-tauri/src/mcp_server.rs
+  s_6d5f75bae01ef0::t_6392bd27b4f4a3 573
+apps/windows/src-tauri/src/meetings/controller.rs
+  s_6d5f75bae01ef0::t_4bcbace92ed432 7-8,422,424-428,449-476,637-643,809-814,840-948
+apps/windows/src-tauri/src/meetings/meeting_bar.rs
+  s_6d5f75bae01ef0::t_8927e113424283 12,14,21-22,35-54,81-89,97,102-105,113-131,158-159,186-190,200-201,209-211,213-215,243-250
+apps/windows/src-tauri/src/meetings/pause_clock.rs
+  s_6d5f75bae01ef0::t_7fe33597aabbdd 16-20,77,82-128,197-230,232,236-243,329-384,404-460
+apps/windows/src-tauri/src/meetings/pipeline.rs
+  s_6d5f75bae01ef0::t_781e8e25c03454 222-223,228-234,1570-1583
+apps/windows/src-tauri/src/meetings/recorder.rs
+  s_6d5f75bae01ef0::t_bec264424ff567 118,282-284
+apps/windows/src-tauri/src/meetings/still_here.rs
+  s_6d5f75bae01ef0::t_cd506c844d0f04 195-196,207-211,220,244-250
+apps/windows/src-tauri/src/question_alert.rs
+  s_6d5f75bae01ef0::t_82a3dc2d8a5e8c 47-48,59-63,73-74
+apps/windows/src-tauri/src/settings.rs
+  s_6d5f75bae01ef0::t_57248a75eed652 177-178,330-335,636-637,679-680,682,858,1338,1341,1343-1346,1349
+apps/windows/src-tauri/src/text_scale.rs
+  s_6d5f75bae01ef0::t_116c7826980540 1-260
+apps/windows/src-tauri/src/tray.rs
+  s_6d5f75bae01ef0::t_d9be08cce64848 12,16,18,20,30-42,61-93,121-122,140-151,194-397,411-426,488-489,501-502,504-509,511-515,517,541-599,609-652,656-667,670-681,688,690-714,725-732,734-739,759-766,784-785,788-794,806-864,879-881,898-925,987-995,1049-1075,1080-1341
+apps/windows/src-tauri/tauri.conf.json
+  s_6d5f75bae01ef0::t_74b4191f5572a2 4
+apps/windows/ui/e2e/audit/fixtures.ts
+  s_6d5f75bae01ef0::t_30f1e8da635ba5 383-386,423-424,471,505,521-522,596-636,720,760,769,810-811,816-1140
+apps/windows/ui/e2e/audit/screens.shots.ts
+  s_6d5f75bae01ef0::t_91d533702b25cc 2,7,9-10,12-19,35-39,41-50,52-56,62-67,76,81,97-111,117-131,179-180,182,196-198,200-201,203,205-206,209-210,218-223,227-241,257,263,276,278,286,518-575,602,693,698,703-1036,1067-1142,1198-1201,1210-2194
+apps/windows/ui/e2e/fakeBridge.ts
+  s_6d5f75bae01ef0::t_6c7629493e0150 181-185,188,190-192,194-196,208
+apps/windows/ui/e2e/gallery.shots.ts
+  s_6d5f75bae01ef0::t_692768508adb7a 5,31-157
+apps/windows/ui/e2e/matrix.spec.ts
+  s_6d5f75bae01ef0::t_67ce43cff70337 4,7-11,20,81-82,193-200,206-211,216-222,228,237,239-241
+apps/windows/ui/package-lock.json
+  s_6d5f75bae01ef0::t_47c99c118ddc36 3,9
+apps/windows/ui/package.json
+  s_6d5f75bae01ef0::t_392abedcbe0bb8 3
+apps/windows/ui/playwright.config.ts
+  s_6d5f75bae01ef0::t_944112a9c728af 14-23
+apps/windows/ui/src/App.tsx
+  s_6d5f75bae01ef0::t_32ae3c1b76d1e0 13,21,32-38,121-126,129-131,145-159,163-166,174-175,186-187,198-208,213,218-219,236,238
+apps/windows/ui/src/SkinIcon.tsx
+  s_6d5f75bae01ef0::t_6a183d7ba24d9e 13,22
+apps/windows/ui/src/alert/AlertView.tsx
+  s_6d5f75bae01ef0::t_16717b867b2159 5-7,16,36-65
+apps/windows/ui/src/alert/BudgetAlertView.tsx
+  s_6d5f75bae01ef0::t_104880020b1373 5-6,38,48-66
+apps/windows/ui/src/alert/DiskAlertView.tsx
+  s_6d5f75bae01ef0::t_f1153a3b5f3854 5-6,14,24,26-43
+apps/windows/ui/src/alert/QuestionAlertView.tsx
+  s_6d5f75bae01ef0::t_12ecf3185a5540 5-6,15,26,28-49
+apps/windows/ui/src/alert/StillHereView.tsx
+  s_6d5f75bae01ef0::t_267b78cd2f4b80 3-4,6,14,19,21-28,34-75
+apps/windows/ui/src/alert/meetingAlertModel.test.ts
+  s_6d5f75bae01ef0::t_e437250290f05b 1-16
+apps/windows/ui/src/alert/meetingAlertModel.ts
+  s_6d5f75bae01ef0::t_0d29768554530d 1-13
+apps/windows/ui/src/api.ts
+  s_6d5f75bae01ef0::t_f679c9e4503e51 4,177-178,418-419,596-597,679-703,771-795
+apps/windows/ui/src/app.css
+  s_6d5f75bae01ef0::t_47c83eeb6fac87 1288,1290-1291,1331,2442-2456
+apps/windows/ui/src/automations/AutomationsView.tsx
+  s_6d5f75bae01ef0::t_29654476a7b8d7 22-23,83-84,198,200,210,214,241-245,267,283-289,301-306,343-361
+apps/windows/ui/src/chat/AskView.tsx
+  s_6d5f75bae01ef0::t_f0258b146803e8 33,385,391,394
+apps/windows/ui/src/chat/chatModel.ts
+  s_6d5f75bae01ef0::t_424f56d7ca85e4 3,88-92,159-169
+apps/windows/ui/src/clientControls.ts
+  s_6d5f75bae01ef0::t_b1250ecbb68d3e 38-40
+apps/windows/ui/src/conversations/ConversationPage.tsx
+  s_6d5f75bae01ef0::t_077e5fd28fcc57 1-393
+apps/windows/ui/src/conversations/ConversationsView.tsx
+  s_6d5f75bae01ef0::t_5ffffc5e7d9015 1-225
+apps/windows/ui/src/conversations/ExchangeView.tsx
+  s_6d5f75bae01ef0::t_86dc6c59c1eea5 1-81
+apps/windows/ui/src/conversations/TodayAnswer.tsx
+  s_6d5f75bae01ef0::t_0aaac31c4e7c3c 1-87
+apps/windows/ui/src/conversations/TopicConversations.tsx
+  s_6d5f75bae01ef0::t_14edee3f598e00 1-74
+apps/windows/ui/src/conversations/conversations.css
+  s_6d5f75bae01ef0::t_91a371ae2c7aed 1-428
+apps/windows/ui/src/conversations/model.test.ts
+  s_6d5f75bae01ef0::t_e7fa531192e49c 1-161
+apps/windows/ui/src/conversations/model.ts
+  s_6d5f75bae01ef0::t_d807768013e9e4 1-167
+apps/windows/ui/src/conversations/nav.ts
+  s_6d5f75bae01ef0::t_8b6c72472378c0 1-84
+apps/windows/ui/src/conversations/pageController.test.ts
+  s_6d5f75bae01ef0::t_fe2b921a83c8d4 1-453
+apps/windows/ui/src/conversations/pageController.ts
+  s_6d5f75bae01ef0::t_09b9254b1db865 1-407
+apps/windows/ui/src/conversations/runTurn.ts
+  s_6d5f75bae01ef0::t_7a6296a606da8d 1-81
+apps/windows/ui/src/conversations/todayStore.test.ts
+  s_6d5f75bae01ef0::t_81568a22765710 1-191
+apps/windows/ui/src/conversations/todayStore.ts
+  s_6d5f75bae01ef0::t_90e7b9c4718799 1-139
+apps/windows/ui/src/generated/schema.json
+  s_6d5f75bae01ef0::t_336c8c452c81d2 650-664,954-1040,1146-1166,1546-1562,1566-1675,1701-1772,2616-2678,2750-2927,2933-2942,5046-5068,6244-6283,6587-6684,7214-7316,8871-8874,8906-8913,8919-8922,9197-9218
+apps/windows/ui/src/generated/types.ts
+  s_6d5f75bae01ef0::t_5acaa19a19db31 99-118,154-157,295-312,483-489,1496-1503,1545-1626,1658-1666,1708-1796,1807-1814,2048-2074,2124-2165,3292-3307,3372-3395,4151-4154,4175-4182
+apps/windows/ui/src/hotkeyPanel/HotkeyPanel.tsx
+  s_6d5f75bae01ef0::t_73e355c35563d2 5-6,15,71-139
+apps/windows/ui/src/l10n.ts
+  s_6d5f75bae01ef0::t_a0d27b4327ecb7 102-106
+apps/windows/ui/src/l10n/Localizable.xcstrings
+  s_6d5f75bae01ef0::t_e6e1dcf8e6e3af 218-220,394-427,532-565,634-667,977-1010,1045-1078,1294-1327,1532-1565,1872-1905,1940-1973,2076-2078,3075-3108,3177-3210,3347-3414,3619-3652,3687-3788,3927-3960,4030-4063,4132-4165,4234-4369,4407-4440,4444-4579,4784-4817,4852-4885,4920-4953,5227-5229,5234,5240,5246,5252,5258,5261,5263,5268,5274,5280,5286,5292,5297,5302,5308,5314,5320,5326,5331,5336,5342,5348,5354,5360,5472,5501-5534,5678,5684,5690,5696,5702,5741-5808,5843-5910,6252-6319,6661-6694,6831-6898,6933-7000,7105-7138,7173-7206,7550-7583,7618-7651,8922-8955,9126-9128,9300-9333,9437-9504,10121-10188,10427-10460,10563-10596,10801-10834,11379-11412,11617-11650,11787-11966,12104-12137,12411-12444,12547-12648,12751-12784,12819-12886,13431-13464,13985-14018,14257-14290,14806,14835-14902,14908,15005-15038,15448-15481,15550-15583,15618-15685,15720-15753,16131-16198,17295-17328,17397-17430,17533-17600,17635-17668,17975-18008,18626-18693,19000-19033,19136-19441,19476-19543,19549,19583,19612-19645,20266-20299,20334-20469,20606-20608,20643-20710,20881-20914,21051-21084,21153-21254,21323-21356,21499-21566,21635-21702,21976-22009,22622-22655,22661,22695,23404-23437,23969,23974,23980,23986,23992,23998,24003,24008,24014,24020,24026,24032,24037,24042,24048,24054,24060,24066,24071,24076,24082,24088,24094,24100,24105,24110,24116,24122,24128,24134,24139,24144,24150,24156,24162,24168,24173,24178,24184,24190,24196,24202,24207,24212,24218,24224,24230,24236,24241-24242,24247,24253,24259,24265,24271,24276-24277,24281-24282,24287-24288,24293-24294,24299-24300,24305-24306,24311-24312,24317,24323,24329,24335,24341,24346-24347,24352,24358,24364,24370,24376,24381,24386,24392,24398,24404,24410,24415,24420,24426,24432,24438,24444,24449,24454,24460,24466,24472,24478,24483,24488,24494,24500,24506,24512,24517,24522,24528,24534,24540,24546,24551,24556,24562,24568,24574,24580,24585,24596-24767,24827-24860,25133-25200,25269-25302,25473-25506,25745-25778,26259-26292,26703-26736,26873-26906,27043-27076,27213-27252,27698-27731,27834-27867,28208-28319,28432-28465,28774-28807,29030-29063,29098-29131,29166-29233,29302-29335,29370-29403,29506-29744,29749,29755,29761,29767,29773,29778,29783,29789,29795,29801,29807,29812,29817,29823,29829,29835,29841-29909,29948-30015,30220-30253,30288-30321,30424-30457,31004-31037,31277-31310,31516-31549,31890-31923,31958-31991,32066,32198-32231,32266-32299,32334-32336,32541-32574,32746-32813,34012-34045,34217-34250,34321-34354,34428,34462,34525-34558,34969-35036,35072-35105,36128-36161,36366-36399,36673-36706,37490-37557,37728-37965,38214-38281,38316-38349,38622-38655,38724-38757,38928-38964,39102-39104,39572-39605,40116-40149,40354-40421,40762-40795,40830-40863,40966-40999,41544-41577,41860-41893,42710-42777,42812-42981,43085-43186,43289-43356,43425-43458,43527-43560,44003-44070,44105-44138,44173-44206,44241-44274,45063-45096,45335-45368,45651-45684,45753-45786,46118,46249-46319,46354,46359,46365,46371,46377,46383,46388,46393,46399,46405,46411,46417,46422,46427,46433,46439,46445,46451,46490-46523,46762-46795,46830-46863,47264-47297,47434-47535,47609,47845-47878,48054,48347-48349,48384-48386,49053-49086,49533-49668,49771-49804,49907-49941,49946,49952,49958,49964,49970-50004,50451-50484,50962-50995,52063-52096,52641-52674,52777-52810,53560-53593,53662-53695,53866-53934,54037-54070,54448-54481,54618-54651,54754-54787,54925-54958,55062-55095,55164-55197,55950-55983,56154-56187,56494-56561,57209-57242,57379-57446,57549-57582,57924-57957,58060-58093,58468-58501,58639-58672,58835-58868,58903-58936,59005-59038,59243-59276,59286-59319,59763-59796,60205-60238,60722-60789,61028-61061,61504-61673,61776-61809,61844-61877,61912-61945,61980-62013,62492-62526,62531,62537,62543,62549,62555-62589,62974-62976,63249-63282,63317-63350,63903-63936,64107-64140,64550-64583,64992-65025,65060-65093,65162-65195,65878-65911,66184-66217,66355-66388,66628-66661,66696-66729,66934-66967,67410-67443,67478-67545,67750-67783,68022-68055,68239-68272,68583-68616,68651-68718,68821-68888,68923-69160,69366-69433,69570-69671,69944-69977,70217-70250,70319-70352,70660-70693,70898-70931,71241-71308,71567-71569,72232-72343,73616-73709,73934-74027,74406-74439,74477-74511,74729-74762,75180-75213,75248-75281,75421-75454,75796-75829,75935-75968,76346-76379
+apps/windows/ui/src/launch/LaunchGate.tsx
+  s_6d5f75bae01ef0::t_7cb5f6d9eec63e 27,198-202,204-222
+apps/windows/ui/src/launch/RecoveryWords.tsx
+  s_6d5f75bae01ef0::t_fae8443974f49f 45-51,54,59-62,67,75,77
+apps/windows/ui/src/launch/SetupView.tsx
+  s_6d5f75bae01ef0::t_bbdbfe280b4b62 24-29,32-42,45-65,81,96,103-104,107-108,175-176,189,194-196,210,213-214,258
+apps/windows/ui/src/launch/encryptionCopy.test.tsx
+  s_6d5f75bae01ef0::t_e3d81f77c7d118 102-112,141-154
+apps/windows/ui/src/launch/redesignAfterOpen.test.tsx
+  s_6d5f75bae01ef0::t_0f13ea5761e030 1-83
+apps/windows/ui/src/launch/setupPrint.test.tsx
+  s_6d5f75bae01ef0::t_a0415c28454c44 1-49
+apps/windows/ui/src/library/Detail.tsx
+  s_6d5f75bae01ef0::t_097bcc08e9aa76 9,12,14-15,44,64,66,70-78,81,83-84
+apps/windows/ui/src/library/LibraryView.tsx
+  s_6d5f75bae01ef0::t_9c87c1091bdaec 15,63-64,252
+apps/windows/ui/src/library/redesign/AnswerCard.tsx
+  s_6d5f75bae01ef0::t_8e72f89b6a37a6 1-150
+apps/windows/ui/src/library/redesign/ConversationPanel.test.tsx
+  s_6d5f75bae01ef0::t_1872f0d4d36028 1-23
+apps/windows/ui/src/library/redesign/ConversationPanel.tsx
+  s_6d5f75bae01ef0::t_a91354734047ce 1-133
+apps/windows/ui/src/library/redesign/FindCard.tsx
+  s_6d5f75bae01ef0::t_a6012497d6270d 1-107
+apps/windows/ui/src/library/redesign/FindLibrary.tsx
+  s_6d5f75bae01ef0::t_c3bf0e1e223b47 1-83
+apps/windows/ui/src/library/redesign/FindPage.tsx
+  s_6d5f75bae01ef0::t_5b4526d92ae282 1-526
+apps/windows/ui/src/library/redesign/FindResultsView.test.tsx
+  s_6d5f75bae01ef0::t_009daf6d16faf3 1-21
+apps/windows/ui/src/library/redesign/FindResultsView.tsx
+  s_6d5f75bae01ef0::t_e6c3fa2e588da8 1-97
+apps/windows/ui/src/library/redesign/LibraryLists.tsx
+  s_6d5f75bae01ef0::t_35793f8a130be8 1-185
+apps/windows/ui/src/library/redesign/askSession.test.ts
+  s_6d5f75bae01ef0::t_4d22ef58103358 1-107
+apps/windows/ui/src/library/redesign/askSession.ts
+  s_6d5f75bae01ef0::t_eaa0cf7ed3ccaa 1-103
+apps/windows/ui/src/library/redesign/askState.test.ts
+  s_6d5f75bae01ef0::t_4392789fa0489b 1-72
+apps/windows/ui/src/library/redesign/askState.ts
+  s_6d5f75bae01ef0::t_bee8e17b610277 1-79
+apps/windows/ui/src/library/redesign/askStore.test.ts
+  s_6d5f75bae01ef0::t_c88d209da8ff74 1-474
+apps/windows/ui/src/library/redesign/askStore.ts
+  s_6d5f75bae01ef0::t_cb8086463a2207 1-288
+apps/windows/ui/src/library/redesign/find.css
+  s_6d5f75bae01ef0::t_424cb2a987bd58 1-439
+apps/windows/ui/src/library/redesign/findLayout.test.ts
+  s_6d5f75bae01ef0::t_b9667664174451 1-29
+apps/windows/ui/src/library/redesign/findModel.test.ts
+  s_6d5f75bae01ef0::t_a04158336bbf92 1-469
+apps/windows/ui/src/library/redesign/findModel.ts
+  s_6d5f75bae01ef0::t_0ded188d4bc67e 1-516
+apps/windows/ui/src/library/redesign/findStore.test.ts
+  s_6d5f75bae01ef0::t_8e820810324b9c 1-55
+apps/windows/ui/src/library/redesign/findStore.ts
+  s_6d5f75bae01ef0::t_5627de0e1798a3 1-94
+apps/windows/ui/src/library/redesign/keptFilter.test.ts
+  s_6d5f75bae01ef0::t_a10913f4265ec8 1-39
+apps/windows/ui/src/library/redesign/routePreview.test.ts
+  s_6d5f75bae01ef0::t_9854ccb3db9623 1-124
+apps/windows/ui/src/library/redesign/routePreview.ts
+  s_6d5f75bae01ef0::t_99a6cea6836b8e 1-130
+apps/windows/ui/src/library/redesign/sourceMarks.test.tsx
+  s_6d5f75bae01ef0::t_88ae1ea6e1c87f 1-109
+apps/windows/ui/src/library/redesign/sourceMarks.ts
+  s_6d5f75bae01ef0::t_b4e80eb0866320 1-56
+apps/windows/ui/src/library/redesign/useFind.test.ts
+  s_6d5f75bae01ef0::t_627784d9d0c513 1-114
+apps/windows/ui/src/library/redesign/useFind.ts
+  s_6d5f75bae01ef0::t_7683f41d0cacfc 1-146
+apps/windows/ui/src/library/rows.test.ts
+  s_6d5f75bae01ef0::t_d54c338ae0f41d 88-106
+apps/windows/ui/src/library/rows.ts
+  s_6d5f75bae01ef0::t_f257f769411334 141-142,146-149,153-154,156
+apps/windows/ui/src/main.tsx
+  s_6d5f75bae01ef0::t_ecac9c88802d8b 55-56
+apps/windows/ui/src/meetingBar/MeetingBarView.tsx
+  s_6d5f75bae01ef0::t_5bcfe3910d736b 14,22-24,70,79-82,85
+apps/windows/ui/src/meetingBar/meetingBar.css
+  s_6d5f75bae01ef0::t_2b86613f975c04 13-42
+apps/windows/ui/src/meetings/MeetingAskBar.tsx
+  s_6d5f75bae01ef0::t_aac6c99d08e147 8-10,28,37-38,100-123,139,142,188-189,195-196,235-241
+apps/windows/ui/src/meetings/MeetingsView.tsx
+  s_6d5f75bae01ef0::t_3c0d9aeb61056e 11,13-15,19,23,43-44,52-58,178-188,190,217-234,236,245,254,281-287
+apps/windows/ui/src/meetings/RecordingCard.tsx
+  s_6d5f75bae01ef0::t_ac60dd63c65407 6,15-17,55-57,59,65-67,69,71-73
+apps/windows/ui/src/meetings/Workspace.tsx
+  s_6d5f75bae01ef0::t_3ea294ba1e04cc 28-29,110-111,238,266-267,269,271-273
+apps/windows/ui/src/meetings/meetingCardModel.test.ts
+  s_6d5f75bae01ef0::t_4a720e1c05519f 15-17,147-163,180-185,274-285
+apps/windows/ui/src/meetings/meetingCardModel.ts
+  s_6d5f75bae01ef0::t_935a3a5774d417 105-108,113-125,167-173,186,228-229,245
+apps/windows/ui/src/meetings/recordingModel.test.ts
+  s_6d5f75bae01ef0::t_6966f8946b567c 3,28-84
+apps/windows/ui/src/meetings/recordingModel.ts
+  s_6d5f75bae01ef0::t_bbd86757771aa3 2,26-47
+apps/windows/ui/src/meetings/recordingNotice.test.ts
+  s_6d5f75bae01ef0::t_f578f360e32a8f 4,18-51
+apps/windows/ui/src/meetings/recordingNotice.ts
+  s_6d5f75bae01ef0::t_0e98b8c968bc88 20-36
+apps/windows/ui/src/meetings/redesign/FinishedNote.tsx
+  s_6d5f75bae01ef0::t_47d1cc71c79f0d 30,39-40,82,86,89-90,105-106,200-202,339,516
+apps/windows/ui/src/meetings/redesign/LiveGate.tsx
+  s_6d5f75bae01ef0::t_d5102bb1c9e733 49,52-53,93
+apps/windows/ui/src/meetings/redesign/LiveMeeting.tsx
+  s_6d5f75bae01ef0::t_3aa9360e0c7d92 20,23,181,188
+apps/windows/ui/src/meetings/redesign/RecordingBar.tsx
+  s_6d5f75bae01ef0::t_b41478e4624a63 35-39,67-68
+apps/windows/ui/src/meetings/redesign/finishedNote.css
+  s_6d5f75bae01ef0::t_20592a87e3eff6 49-82,444-451,453-462
+apps/windows/ui/src/meetings/redesign/finishedNoteMargin.test.ts
+  s_6d5f75bae01ef0::t_7098cdc5e034b3 1-31
+apps/windows/ui/src/meetings/redesign/liveModel.test.ts
+  s_6d5f75bae01ef0::t_8de7c0e59135b6 3,45-60,123-126,135,138-140,180-189
+apps/windows/ui/src/meetings/redesign/liveModel.ts
+  s_6d5f75bae01ef0::t_67123b53bdeca8 6,18,35-54,91-92,96-98,102,109,115-120
+apps/windows/ui/src/meetings/redesign/noteModel.test.ts
+  s_6d5f75bae01ef0::t_830334785d2ebd 3,145-187
+apps/windows/ui/src/meetings/redesign/noteModel.ts
+  s_6d5f75bae01ef0::t_586706bcb8b854 185-201
+apps/windows/ui/src/meetings/redesign/recordingBarStarting.test.tsx
+  s_6d5f75bae01ef0::t_06e3407dfd8341 1-46
+apps/windows/ui/src/meetings/usePausedMeetingId.ts
+  s_6d5f75bae01ef0::t_b55385230669a3 1-34
+apps/windows/ui/src/meetings/workspaceModel.test.ts
+  s_6d5f75bae01ef0::t_6155c23059a24e 125-129
+apps/windows/ui/src/meetings/workspaceModel.ts
+  s_6d5f75bae01ef0::t_16fcc93617eac1 76-77,82
+apps/windows/ui/src/popup/PopupView.tsx
+  s_6d5f75bae01ef0::t_d6dc671d8403c6 17,20,22,24-28,94
+apps/windows/ui/src/popup/RedesignedPopup.tsx
+  s_6d5f75bae01ef0::t_b4ffc9da0a5a05 1-273
+apps/windows/ui/src/popup/popupChoices.ts
+  s_6d5f75bae01ef0::t_29861075f5c68a 1-14
+apps/windows/ui/src/popup/popupModel.test.ts
+  s_6d5f75bae01ef0::t_a2a0764c5593b4 1-304
+apps/windows/ui/src/popup/popupModel.ts
+  s_6d5f75bae01ef0::t_7ed3ebdc4af419 1-234
+apps/windows/ui/src/redesign.test.ts
+  s_6d5f75bae01ef0::t_6afec34149ffc0 2,4-14,17-23,26,28,31
+apps/windows/ui/src/redesign.ts
+  s_6d5f75bae01ef0::t_f6add99742ac04 1-4,6-8,11-14,16-18,21-23,26,28
+apps/windows/ui/src/settings/AboutCard.tsx
+  s_6d5f75bae01ef0::t_b71d0452d8dc67 28
+apps/windows/ui/src/settings/AccountsCard.tsx
+  s_6d5f75bae01ef0::t_b900c616320a4e 51
+apps/windows/ui/src/settings/AiCard.tsx
+  s_6d5f75bae01ef0::t_2e8e058f1f16b5 134-136,188,194,263,389-393
+apps/windows/ui/src/settings/CaptureCard.tsx
+  s_6d5f75bae01ef0::t_c8521eb15616e2 2,6,13,42,46,170-186
+apps/windows/ui/src/settings/DeleteEverythingCard.tsx
+  s_6d5f75bae01ef0::t_a7542b1f25cf40 107
+apps/windows/ui/src/settings/EncryptionCard.tsx
+  s_6d5f75bae01ef0::t_3ed5073f0fa83d 27-28,39,121-134,138-149,179,196-198,224
+apps/windows/ui/src/settings/ForeignFilesCard.tsx
+  s_6d5f75bae01ef0::t_2803b52c8cf5d9 48
+apps/windows/ui/src/settings/GeneralCard.tsx
+  s_6d5f75bae01ef0::t_9c8e9dc7298a6b 153
+apps/windows/ui/src/settings/GmailCard.tsx
+  s_6d5f75bae01ef0::t_7922f6dd8d6413 68
+apps/windows/ui/src/settings/GoogleClientCard.tsx
+  s_6d5f75bae01ef0::t_98a02166229eb6 52
+apps/windows/ui/src/settings/HotkeyCard.tsx
+  s_6d5f75bae01ef0::t_8408ca0495f0f4 65
+apps/windows/ui/src/settings/McpCard.tsx
+  s_6d5f75bae01ef0::t_031a0543b76f6c 54
+apps/windows/ui/src/settings/MeetingModelsCard.tsx
+  s_6d5f75bae01ef0::t_12a6e81396977f 56
+apps/windows/ui/src/settings/MeetingsCard.tsx
+  s_6d5f75bae01ef0::t_ee8864cd1d9525 126
+apps/windows/ui/src/settings/PlanCard.tsx
+  s_6d5f75bae01ef0::t_9f03563881e1ee 1-155
+apps/windows/ui/src/settings/PlanControls.tsx
+  s_6d5f75bae01ef0::t_7cd0436882e447 1-107
+apps/windows/ui/src/settings/PlusAiPrompt.tsx
+  s_6d5f75bae01ef0::t_1eb9320869ac89 89,91
+apps/windows/ui/src/settings/ProfileCard.tsx
+  s_6d5f75bae01ef0::t_1617414a29ae09 120
+apps/windows/ui/src/settings/RetentionCard.tsx
+  s_6d5f75bae01ef0::t_051c4c886df21a 54
+apps/windows/ui/src/settings/SearchModelCard.tsx
+  s_6d5f75bae01ef0::t_8c96d470ca0def 20
+apps/windows/ui/src/settings/SettingsView.tsx
+  s_6d5f75bae01ef0::t_3f1fa616384372 13,24,36-64,74-85,97-110,130,137-161,173-174,178
+apps/windows/ui/src/settings/SkinChat.tsx
+  s_6d5f75bae01ef0::t_77c4cb810f228b 59-61,184-187,192,242-247,250-254
+apps/windows/ui/src/settings/SkinGallery.test.tsx
+  s_6d5f75bae01ef0::t_53249213ddfc8e 52-60
+apps/windows/ui/src/settings/SkinGallery.tsx
+  s_6d5f75bae01ef0::t_3944aa5a2f9f4e 167-168,188,223-241
+apps/windows/ui/src/settings/StatusPage.tsx
+  s_6d5f75bae01ef0::t_caa8615efdd34b 2-3,6,26,35,51,55
+apps/windows/ui/src/settings/StorageCard.tsx
+  s_6d5f75bae01ef0::t_6c58360bd87cd4 86
+apps/windows/ui/src/settings/SyncCard.test.tsx
+  s_6d5f75bae01ef0::t_e7d8a880634b60 4,7-12,77-109
+apps/windows/ui/src/settings/SyncCard.tsx
+  s_6d5f75bae01ef0::t_2a84b94e104a31 36-37,92-93,190-210,215,297-299
+apps/windows/ui/src/settings/TopicStepsCard.tsx
+  s_6d5f75bae01ef0::t_59cbc2f05a61da 84
+apps/windows/ui/src/settings/TopicsCard.tsx
+  s_6d5f75bae01ef0::t_b7cecff120680c 58
+apps/windows/ui/src/settings/TypeSafeCard.tsx
+  s_6d5f75bae01ef0::t_8979f71eabfd89 65
+apps/windows/ui/src/settings/VaultCard.tsx
+  s_6d5f75bae01ef0::t_70d2623f329670 42
+apps/windows/ui/src/settings/aiModel.ts
+  s_6d5f75bae01ef0::t_560dafa0e95479 264-266
+apps/windows/ui/src/settings/encryptionCardModel.ts
+  s_6d5f75bae01ef0::t_868509a3a2344c 217-225,236-239,262,297
+apps/windows/ui/src/settings/mcpModel.test.ts
+  s_6d5f75bae01ef0::t_672f03d5110977 12,89-100,114-122
+apps/windows/ui/src/settings/mcpModel.ts
+  s_6d5f75bae01ef0::t_7103a39c614afb 9,14-16,18,75-79
+apps/windows/ui/src/settings/planModel.ts
+  s_6d5f75bae01ef0::t_1b2bbeadf16fb7 1-39
+apps/windows/ui/src/settings/redesign/RedesignedSettings.tsx
+  s_6d5f75bae01ef0::t_d012f056d2a251 1-215
+apps/windows/ui/src/settings/redesign/frame.test.ts
+  s_6d5f75bae01ef0::t_1599a8eafe3e38 1-41
+apps/windows/ui/src/settings/redesign/jump.tsx
+  s_6d5f75bae01ef0::t_e443eb4169db3c 1-10
+apps/windows/ui/src/settings/redesign/names.ts
+  s_6d5f75bae01ef0::t_0de93a806ad1db 1-9
+apps/windows/ui/src/settings/redesign/noDatabaseWords.test.ts
+  s_6d5f75bae01ef0::t_b11fda4139c3de 1-44
+apps/windows/ui/src/settings/redesign/search.ts
+  s_6d5f75bae01ef0::t_e73fdd2daabffa 1-32
+apps/windows/ui/src/settings/redesign/sections.ts
+  s_6d5f75bae01ef0::t_50b1d887ae98e3 1-15
+apps/windows/ui/src/settings/redesign/sections/AiSection.tsx
+  s_6d5f75bae01ef0::t_398e0a11603c93 1-26
+apps/windows/ui/src/settings/redesign/sections/ConnectorsSection.tsx
+  s_6d5f75bae01ef0::t_775be27562e0a6 1-17
+apps/windows/ui/src/settings/redesign/sections/DevicesConnectors.test.tsx
+  s_6d5f75bae01ef0::t_158afad54b5dfb 1-578
+apps/windows/ui/src/settings/redesign/sections/DevicesSection.tsx
+  s_6d5f75bae01ef0::t_ad236077165f06 1-18
+apps/windows/ui/src/settings/redesign/sections/GeneralSection.tsx
+  s_6d5f75bae01ef0::t_e798979b8dc4bb 1-21
+apps/windows/ui/src/settings/redesign/sections/MeetingsSection.tsx
+  s_6d5f75bae01ef0::t_ad7343275588b3 1-13
+apps/windows/ui/src/settings/redesign/sections/MemorySection.tsx
+  s_6d5f75bae01ef0::t_7cf4820304133f 1-15
+apps/windows/ui/src/settings/redesign/sections/PlanSection.tsx
+  s_6d5f75bae01ef0::t_f0f89713597e73 1-10
+apps/windows/ui/src/settings/redesign/sections/ProfileSection.tsx
+  s_6d5f75bae01ef0::t_36ef251799b459 1-236
+apps/windows/ui/src/settings/redesign/sections/StatusSection.test.tsx
+  s_6d5f75bae01ef0::t_7455e8aa3e8b07 1-45
+apps/windows/ui/src/settings/redesign/sections/StatusSection.tsx
+  s_6d5f75bae01ef0::t_95d23c407288ea 1-71
+apps/windows/ui/src/settings/redesign/sections/StatusSectionModel.test.ts
+  s_6d5f75bae01ef0::t_08f65fe34f33f1 1-91
+apps/windows/ui/src/settings/redesign/sections/StatusSectionModel.ts
+  s_6d5f75bae01ef0::t_abc166aa3ab06c 1-75
+apps/windows/ui/src/settings/redesign/sections/TopicsSection.tsx
+  s_6d5f75bae01ef0::t_1f82ddb4f5b80f 1-14
+apps/windows/ui/src/settings/redesign/sections/ai/AiMain.tsx
+  s_6d5f75bae01ef0::t_3a7a6c0b20c298 1-521
+apps/windows/ui/src/settings/redesign/sections/ai/AiSearchModel.tsx
+  s_6d5f75bae01ef0::t_c87a14c7e9873d 1-48
+apps/windows/ui/src/settings/redesign/sections/ai/AiSection.test.tsx
+  s_6d5f75bae01ef0::t_cddb88f8802878 1-450
+apps/windows/ui/src/settings/redesign/sections/ai/AiTypeSafe.tsx
+  s_6d5f75bae01ef0::t_472500aac704c2 1-122
+apps/windows/ui/src/settings/redesign/sections/ai/AiUsage.tsx
+  s_6d5f75bae01ef0::t_4584550046d4b8 1-165
+apps/windows/ui/src/settings/redesign/sections/ai/ai.css
+  s_6d5f75bae01ef0::t_3b9b98d01326a4 1-27
+apps/windows/ui/src/settings/redesign/sections/ai/aiRedesignModel.test.ts
+  s_6d5f75bae01ef0::t_c14d66450a1041 1-102
+apps/windows/ui/src/settings/redesign/sections/ai/aiRedesignModel.ts
+  s_6d5f75bae01ef0::t_93d84dcd6a37c1 1-95
+apps/windows/ui/src/settings/redesign/sections/ai/useAi.ts
+  s_6d5f75bae01ef0::t_8254c4bc5352cd 1-95
+apps/windows/ui/src/settings/redesign/sections/connectors/AccountsCard.tsx
+  s_6d5f75bae01ef0::t_d0d6e9d42d9182 1-133
+apps/windows/ui/src/settings/redesign/sections/connectors/GmailAccountsCard.tsx
+  s_6d5f75bae01ef0::t_7b75408edc5169 1-125
+apps/windows/ui/src/settings/redesign/sections/connectors/GoogleRemoveDialog.tsx
+  s_6d5f75bae01ef0::t_336988c74edaeb 1-36
+apps/windows/ui/src/settings/redesign/sections/connectors/McpCards.tsx
+  s_6d5f75bae01ef0::t_e7c64b21ba5214 1-138
+apps/windows/ui/src/settings/redesign/sections/connectors/McpTokenHost.tsx
+  s_6d5f75bae01ef0::t_86504b8170bb85 1-114
+apps/windows/ui/src/settings/redesign/sections/connectors/OwnClientDisclosure.tsx
+  s_6d5f75bae01ef0::t_0d9f129e9f7bd5 1-102
+apps/windows/ui/src/settings/redesign/sections/connectors/connectors.css
+  s_6d5f75bae01ef0::t_3652f1dcf2df1f 1-26
+apps/windows/ui/src/settings/redesign/sections/connectors/connectorsModel.test.ts
+  s_6d5f75bae01ef0::t_2af7d52c78ed5a 1-40
+apps/windows/ui/src/settings/redesign/sections/connectors/connectorsModel.ts
+  s_6d5f75bae01ef0::t_5ac740077a2288 1-34
+apps/windows/ui/src/settings/redesign/sections/connectors/mcpTokenStore.ts
+  s_6d5f75bae01ef0::t_19f10617b88882 1-61
+apps/windows/ui/src/settings/redesign/sections/devices/DevicesListCard.tsx
+  s_6d5f75bae01ef0::t_049b750f7a7bc6 1-241
+apps/windows/ui/src/settings/redesign/sections/devices/PhoneCard.tsx
+  s_6d5f75bae01ef0::t_5bb0562a694687 1-41
+apps/windows/ui/src/settings/redesign/sections/devices/SyncStatusCard.tsx
+  s_6d5f75bae01ef0::t_8b7e6088021c61 1-142
+apps/windows/ui/src/settings/redesign/sections/devices/devices.css
+  s_6d5f75bae01ef0::t_443442d5b6f095 1-54
+apps/windows/ui/src/settings/redesign/sections/devices/devicesModel.test.ts
+  s_6d5f75bae01ef0::t_8358e6df7c0256 1-50
+apps/windows/ui/src/settings/redesign/sections/devices/devicesModel.ts
+  s_6d5f75bae01ef0::t_74ce0286c2c8c6 1-53
+apps/windows/ui/src/settings/redesign/sections/devices/useSyncStatus.ts
+  s_6d5f75bae01ef0::t_8ea9f787934f98 1-57
+apps/windows/ui/src/settings/redesign/sections/general/GeneralCards.tsx
+  s_6d5f75bae01ef0::t_700a8fbe0bc529 1-240
+apps/windows/ui/src/settings/redesign/sections/general/SetUp.test.tsx
+  s_6d5f75bae01ef0::t_8711d39cb189a1 1-75
+apps/windows/ui/src/settings/redesign/sections/general/SkinCards.test.tsx
+  s_6d5f75bae01ef0::t_9ef76f8f9f0b45 1-83
+apps/windows/ui/src/settings/redesign/sections/general/SkinCards.tsx
+  s_6d5f75bae01ef0::t_e7385b5ddde2dc 1-249
+apps/windows/ui/src/settings/redesign/sections/general/general.css
+  s_6d5f75bae01ef0::t_2de5a0e0b758bb 1-63
+apps/windows/ui/src/settings/redesign/sections/general/generalModel.test.ts
+  s_6d5f75bae01ef0::t_5ecd906d1a7116 1-56
+apps/windows/ui/src/settings/redesign/sections/general/generalModel.ts
+  s_6d5f75bae01ef0::t_c9514116e20316 1-42
+apps/windows/ui/src/settings/redesign/sections/meetings/MeetingModelsCardRedesign.tsx
+  s_6d5f75bae01ef0::t_83532cb4bad7fa 1-113
+apps/windows/ui/src/settings/redesign/sections/meetings/MeetingsCardRedesign.tsx
+  s_6d5f75bae01ef0::t_9d86e3cc653f53 1-241
+apps/windows/ui/src/settings/redesign/sections/meetings/meetingsRedesignModel.ts
+  s_6d5f75bae01ef0::t_814bc24276c938 1-33
+apps/windows/ui/src/settings/redesign/sections/meetings/meetops.css
+  s_6d5f75bae01ef0::t_daf725a3beea2f 1-69
+apps/windows/ui/src/settings/redesign/sections/meetingsTopics.test.tsx
+  s_6d5f75bae01ef0::t_393976d76d091a 1-237
+apps/windows/ui/src/settings/redesign/sections/memory/MemoryBottomCards.tsx
+  s_6d5f75bae01ef0::t_85151341e58fa7 1-20
+apps/windows/ui/src/settings/redesign/sections/memory/MemoryTopCards.tsx
+  s_6d5f75bae01ef0::t_b5edd8a20611e6 1-16
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/FilesKeptAsideCard.test.tsx
+  s_6d5f75bae01ef0::t_8a8b16f05c7884 1-67
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/FilesKeptAsideCard.tsx
+  s_6d5f75bae01ef0::t_910a5c631608a1 1-80
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/HotkeyPanelCard.tsx
+  s_6d5f75bae01ef0::t_ccdfefeaf9204f 1-149
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/LibraryEncryptionCard.tsx
+  s_6d5f75bae01ef0::t_51a8545703d2f9 1-197
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/RedesignedStorageCard.tsx
+  s_6d5f75bae01ef0::t_61c89e00309184 1-159
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/RetentionKeepingCard.test.tsx
+  s_6d5f75bae01ef0::t_00006e23cbe1fd 1-226
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/RetentionKeepingCard.tsx
+  s_6d5f75bae01ef0::t_4a6e59d5faa502 1-235
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/bottom.css
+  s_6d5f75bae01ef0::t_8385ec30b2050a 1-51
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/encryptionWording.ts
+  s_6d5f75bae01ef0::t_7f48cb064fd1e7 1-203
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/foreignFilesWording.ts
+  s_6d5f75bae01ef0::t_53c75ff1f4901d 1-7
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/hotkeyRecorder.test.ts
+  s_6d5f75bae01ef0::t_9e57d959b3e469 1-37
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/hotkeyRecorder.ts
+  s_6d5f75bae01ef0::t_a5e44117922d7e 1-17
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/libraryWording.ts
+  s_6d5f75bae01ef0::t_73eee1f58674d1 1-9
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/retentionDecision.test.ts
+  s_6d5f75bae01ef0::t_eccc2c48ed675b 1-49
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/retentionDecision.ts
+  s_6d5f75bae01ef0::t_c35135e062b609 1-51
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/retentionKeys.ts
+  s_6d5f75bae01ef0::t_83c679b8737eab 1-2
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/retentionWording.ts
+  s_6d5f75bae01ef0::t_11c5148b1ea3f1 1-103
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/storageWording.ts
+  s_6d5f75bae01ef0::t_aa85eb978f265b 1-30
+apps/windows/ui/src/settings/redesign/sections/memory/bottom/wording.test.ts
+  s_6d5f75bae01ef0::t_9485351b94505d 1-183
+apps/windows/ui/src/settings/redesign/sections/memory/top/DeleteEverythingRedesign.tsx
+  s_6d5f75bae01ef0::t_9b5a45121a36d9 1-83
+apps/windows/ui/src/settings/redesign/sections/memory/top/MemoryCard.tsx
+  s_6d5f75bae01ef0::t_ead05567d25776 1-126
+apps/windows/ui/src/settings/redesign/sections/memory/top/NeverCapturedCard.tsx
+  s_6d5f75bae01ef0::t_1a428a9118b3ca 1-136
+apps/windows/ui/src/settings/redesign/sections/memory/top/YourDataCard.tsx
+  s_6d5f75bae01ef0::t_7091662610409c 1-102
+apps/windows/ui/src/settings/redesign/sections/memory/top/memoryTop.test.tsx
+  s_6d5f75bae01ef0::t_0bf8b179dab992 1-338
+apps/windows/ui/src/settings/redesign/sections/memory/top/memoryTopModel.test.ts
+  s_6d5f75bae01ef0::t_578af93e983cc4 1-152
+apps/windows/ui/src/settings/redesign/sections/memory/top/memoryTopModel.ts
+  s_6d5f75bae01ef0::t_cb7fd8f880e78e 1-150
+apps/windows/ui/src/settings/redesign/sections/memory/top/memtop.css
+  s_6d5f75bae01ef0::t_3254cf07d7207f 1-17
+apps/windows/ui/src/settings/redesign/sections/plan/PlanBody.tsx
+  s_6d5f75bae01ef0::t_980cc8cc4008ff 1-93
+apps/windows/ui/src/settings/redesign/sections/plan/plan.test.tsx
+  s_6d5f75bae01ef0::t_01032c290d1ef8 1-162
+apps/windows/ui/src/settings/redesign/sections/plan/planParity.test.tsx
+  s_6d5f75bae01ef0::t_ec83397d5c381d 1-78
+apps/windows/ui/src/settings/redesign/sections/plan/usePlan.ts
+  s_6d5f75bae01ef0::t_db71a546d6c7ad 1-65
+apps/windows/ui/src/settings/redesign/sections/profile/profile.css
+  s_6d5f75bae01ef0::t_869bdc3a31d7ab 1-29
+apps/windows/ui/src/settings/redesign/sections/profile/profile.test.tsx
+  s_6d5f75bae01ef0::t_ba3d7ac3bb14c8 1-225
+apps/windows/ui/src/settings/redesign/sections/profile/profileWording.ts
+  s_6d5f75bae01ef0::t_5ccc891df7bdcf 1-10
+apps/windows/ui/src/settings/redesign/sections/topics/TopicNamesCard.tsx
+  s_6d5f75bae01ef0::t_6bf49dec5db747 1-156
+apps/windows/ui/src/settings/redesign/sections/topics/TopicsListCard.tsx
+  s_6d5f75bae01ef0::t_dde143da3f9eea 1-270
+apps/windows/ui/src/settings/redesign/sections/topics/topicsEmpty.css
+  s_6d5f75bae01ef0::t_f6701dfbbef568 1-18
+apps/windows/ui/src/settings/redesign/sections/topics/topicsList.test.tsx
+  s_6d5f75bae01ef0::t_5329912ad3267c 1-46
+apps/windows/ui/src/settings/redesign/sections/topics/topicsRedesignModel.ts
+  s_6d5f75bae01ef0::t_7717732b462ae3 1-19
+apps/windows/ui/src/settings/redesign/settings-redesign.css
+  s_6d5f75bae01ef0::t_b216d39378f119 1-38
+apps/windows/ui/src/settings/redesign/switch.test.ts
+  s_6d5f75bae01ef0::t_b9190da8d86d33 1-62
+apps/windows/ui/src/settings/redesign/types.ts
+  s_6d5f75bae01ef0::t_79121b8ed1333b 1-11
+apps/windows/ui/src/settings/settingsSearch.test.ts
+  s_6d5f75bae01ef0::t_83200a18fec4af 1-58
+apps/windows/ui/src/settings/settingsSearch.ts
+  s_6d5f75bae01ef0::t_b46ba2cf4f01c9 1-90
+apps/windows/ui/src/settings/settingsSections.test.ts
+  s_6d5f75bae01ef0::t_a78a766f0d4ae3 6
+apps/windows/ui/src/settings/settingsSections.ts
+  s_6d5f75bae01ef0::t_aae88c0928fde9 9,23-24
+apps/windows/ui/src/settings/skinGalleryModel.test.ts
+  s_6d5f75bae01ef0::t_fb3cbebdc8720d 38,40,44,52
+apps/windows/ui/src/settings/syncModel.ts
+  s_6d5f75bae01ef0::t_06a958351dcd50 88-95
+apps/windows/ui/src/shell/redesign/HeaderRow.tsx
+  s_6d5f75bae01ef0::t_a50bb92facb148 2-7,9-10,12-18,20-21,23,33,37-42,46-62,65-89,93,98-113,117-119,121,124,126-142,147,149-156,159
+apps/windows/ui/src/shell/redesign/RedesignedShell.tsx
+  s_6d5f75bae01ef0::t_9f58d6a0d7e014 6,13,18,31-32,35,47-50,55-56,61,70-71,99,123-138,141,148,156,192-197,199-201,205,207,211-212
+apps/windows/ui/src/shell/redesign/forcedColors.test.ts
+  s_6d5f75bae01ef0::t_5485a57b7fd44b 1-21
+apps/windows/ui/src/shell/redesign/headerEscape.test.tsx
+  s_6d5f75bae01ef0::t_da07649ff07f08 1-93
+apps/windows/ui/src/shell/redesign/searchCollapse.test.ts
+  s_6d5f75bae01ef0::t_b1f8b842b3379e 1-45
+apps/windows/ui/src/shell/redesign/searchCollapse.ts
+  s_6d5f75bae01ef0::t_b7f0a4f29f9895 1-22
+apps/windows/ui/src/shell/redesign/shell.css
+  s_6d5f75bae01ef0::t_10983db9408662 43-45,95-124,135-148,159-186,234-235,237-238,267-273,368-449,455-468
+apps/windows/ui/src/shell/redesign/shortViewport.test.ts
+  s_6d5f75bae01ef0::t_d6d2d730b06cbd 1-12
+apps/windows/ui/src/shell/redesign/shortViewport.ts
+  s_6d5f75bae01ef0::t_2d6004b42b0d4a 1-28
+apps/windows/ui/src/shell/redesign/shortcuts.test.ts
+  s_6d5f75bae01ef0::t_e1a0bae5e7bace 12-26,40
+apps/windows/ui/src/shell/redesign/shortcuts.ts
+  s_6d5f75bae01ef0::t_0730e3cbe35236 1-3,7-9,20,25,41-42
+apps/windows/ui/src/shell/redesign/useRecording.ts
+  s_6d5f75bae01ef0::t_405b665d88941b 7,11-12,23-24,31-44,48-54,56,68-69
+apps/windows/ui/src/skin.test.ts
+  s_6d5f75bae01ef0::t_18a895ff160abd 5-9,21,23-24,26,42,165-172,357-358,414-415,464,560,567-751
+apps/windows/ui/src/skin.ts
+  s_6d5f75bae01ef0::t_da4b2410bf5cdc 6-7,9-12,183-197,223,225-226,233-235,248-249,253,262-292,307-336,338,352-365,372,379-380,386-387,390-391,394,420-421,428-430,443,470,479,485
+apps/windows/ui/src/system/WIcon.tsx
+  s_6d5f75bae01ef0::t_b67b7687ffe3e5 123-124,132-145
+apps/windows/ui/src/system/confirm.tsx
+  s_6d5f75bae01ef0::t_a4fb110116436b 1-166
+apps/windows/ui/src/system/controlBorder.test.ts
+  s_6d5f75bae01ef0::t_d3ad661ade47e1 1-96
+apps/windows/ui/src/system/controls.tsx
+  s_6d5f75bae01ef0::t_6e7534492d1f17 87-88,91,99
+apps/windows/ui/src/system/emptyState.test.tsx
+  s_6d5f75bae01ef0::t_2b33e7a2c65106 1-48
+apps/windows/ui/src/system/flow.tsx
+  s_6d5f75bae01ef0::t_34e8704ebcc92c 7-8,326-333,336-338,341-345,351,361,407,417-420,422-427,429,477,501,511
+apps/windows/ui/src/system/gallery/Gallery.tsx
+  s_6d5f75bae01ef0::t_d05cc78932d3a4 16-18,49,66,70,146,267-340,573
+apps/windows/ui/src/system/gallery/SettingsGallery.tsx
+  s_6d5f75bae01ef0::t_67d4d91c4045f5 1-375
+apps/windows/ui/src/system/gallery/gallery.css
+  s_6d5f75bae01ef0::t_9845f76afbba9d 88-91,209-252
+apps/windows/ui/src/system/home.tsx
+  s_6d5f75bae01ef0::t_5490567d5455bf 51-54,60,76-84,90
+apps/windows/ui/src/system/index.ts
+  s_6d5f75bae01ef0::t_298bb4ff32f982 3,18,39-133
+apps/windows/ui/src/system/layout.tsx
+  s_6d5f75bae01ef0::t_a0a90d2c11be70 240-245,248-249,255,257-261
+apps/windows/ui/src/system/menuKeys.test.ts
+  s_6d5f75bae01ef0::t_511dece6a9de6f 1-24
+apps/windows/ui/src/system/menuKeys.ts
+  s_6d5f75bae01ef0::t_2de775901f649b 1-34
+apps/windows/ui/src/system/recording.tsx
+  s_6d5f75bae01ef0::t_1a51cd858c664a 72-73,80-83,88,90,105-109
+apps/windows/ui/src/system/restyle.css
+  s_6d5f75bae01ef0::t_2b78b185ca178c 1-452
+apps/windows/ui/src/system/restyle.test.ts
+  s_6d5f75bae01ef0::t_2fee18be259c6a 1-218
+apps/windows/ui/src/system/settings.behavior.test.tsx
+  s_6d5f75bae01ef0::t_eb79d83df06e62 1-467
+apps/windows/ui/src/system/settings.css
+  s_6d5f75bae01ef0::t_105c6462e9ef8c 1-1019
+apps/windows/ui/src/system/settings.markup.test.tsx
+  s_6d5f75bae01ef0::t_03a8c856471c46 1-67
+apps/windows/ui/src/system/settings.tsx
+  s_6d5f75bae01ef0::t_f50bb16f2fce17 1-1639
+apps/windows/ui/src/system/settingsLogic.test.ts
+  s_6d5f75bae01ef0::t_b4e24be53e5b34 1-176
+apps/windows/ui/src/system/settingsLogic.ts
+  s_6d5f75bae01ef0::t_e35a0f4367b55d 1-146
+apps/windows/ui/src/system/skin.tsx
+  s_6d5f75bae01ef0::t_7030df0f97e0a2 1-98
+apps/windows/ui/src/system/system.behavior.test.tsx
+  s_6d5f75bae01ef0::t_ec44afbd70e489 32-42
+apps/windows/ui/src/system/system.css
+  s_6d5f75bae01ef0::t_2864883985ce1b 22-24,537-540,746-751,1461,2035-2469
+apps/windows/ui/src/system/tokens.generated.css
+  s_6d5f75bae01ef0::t_303dfe505fe657 199,235,255,275,295,314,333,336-353
+apps/windows/ui/src/system/window.test.tsx
+  s_6d5f75bae01ef0::t_b4e5612db06235 1-307
+apps/windows/ui/src/system/window.tsx
+  s_6d5f75bae01ef0::t_2f1959ce60c088 1-479
+apps/windows/ui/src/tabs.test.ts
+  s_6d5f75bae01ef0::t_f8ad0ec0e6e60d 2,9-20
+apps/windows/ui/src/tabs.ts
+  s_6d5f75bae01ef0::t_09115cf671d1ba 6,15-18,26-28,32-37
+apps/windows/ui/src/testWindow.ts
+  s_6d5f75bae01ef0::t_43b9ab76201d51 5,23,32-33,35,54-57
+apps/windows/ui/src/today/BriefRecapBody.tsx
+  s_6d5f75bae01ef0::t_3bc900190a7cbc 3,7,11-12
+apps/windows/ui/src/today/DigestView.tsx
+  s_6d5f75bae01ef0::t_5e219e10e89401 6,10,13-14
+apps/windows/ui/src/today/TodayTimeline.tsx
+  s_6d5f75bae01ef0::t_f63c9e69ce6145 8,50-51,57
+apps/windows/ui/src/today/TodayView.tsx
+  s_6d5f75bae01ef0::t_f71527a7a50a15 29,136-138,161
+apps/windows/ui/src/today/redesign/HomeFilters.tsx
+  s_6d5f75bae01ef0::t_b2a41e44760bc5 2-4,10,39,44-80,89,93,97,101-102,104,125,127,148,150,159
+apps/windows/ui/src/today/redesign/HomeView.tsx
+  s_6d5f75bae01ef0::t_4d8f729aca4b1c 6,9,50,210-214,223,354
+apps/windows/ui/src/today/redesign/RecapMarkdown.tsx
+  s_6d5f75bae01ef0::t_636b18a43d30ad 1-62
+apps/windows/ui/src/today/redesign/home.css
+  s_6d5f75bae01ef0::t_61c29cf7dca9cd 59-63,214-254
+apps/windows/ui/src/today/redesign/homeModel.test.ts
+  s_6d5f75bae01ef0::t_c465f53f5196f9 112-114,170-220
+apps/windows/ui/src/today/redesign/homeModel.ts
+  s_6d5f75bae01ef0::t_8333c2aa531a77 7,207-211,213,220-227,305-307,344-345,373-405,414-416
+apps/windows/ui/src/today/redesign/recapMarkdown.test.tsx
+  s_6d5f75bae01ef0::t_7de3679c036603 1-124
+apps/windows/ui/src/today/redesign/useHomeData.ts
+  s_6d5f75bae01ef0::t_b88904fc687e48 5
+apps/windows/ui/src/topics/TopicsView.tsx
+  s_6d5f75bae01ef0::t_4e881a78001d98 8-10,53-54,164,166-193,199,231,273-274,311-312
+apps/windows/ui/src/topics/clientControlsModel.test.ts
+  s_6d5f75bae01ef0::t_e7dc788ed34e89 43-45,922-928
+apps/windows/ui/src/topics/clientControlsModel.ts
+  s_6d5f75bae01ef0::t_99103fd6308949 941-942,968-969
+apps/windows/ui/src/useSkin.ts
+  s_6d5f75bae01ef0::t_2a5e7d9e7a60b8 5,17
+core/Cargo.lock
+  s_6d5f75bae01ef0::t_a6f7c458712449 55,107,657,973,1084,1147,2012,2299,2309,2365,2375,2379-2380,2413,2422,2730,3363,3636,3868,3994,4007,4381
+core/Cargo.toml
+  s_6d5f75bae01ef0::t_8e4981a9ebde1c 27
+core/api/src/ask.rs
+  s_6d5f75bae01ef0::t_7b51d0e3e9debb 11-13,107-113,348-380,382-392,400-433,435-436,443,448,451,455,457,461,474,484,488,525-526,533-580,582-584,587,594,596-597,599-655,705-718,737-739,745,760,774,789-856,859-861,870,872-887,889,893,895-896,898-966,973-983,1003-1004,1008,1126,1435-1445,1475-1521,1523-1537,1540-1543,1546-1548,1550-1554,1556,1558-1560,1562,1564-1576,1579-1605,1608-1609,1611-1621,1625-1969,2166,2169,2178,2180,2189,2192,2229-2232,2238-2248,2254,2257,2319,2323,2387,2391,2943-4097
+core/api/src/citations.rs
+  s_6d5f75bae01ef0::t_f9c9d02fe06c3f 39,82-85
+core/api/src/client_delete.rs
+  s_6d5f75bae01ef0::t_ae805c4779d989 172,212,1192-1229
+core/api/src/client_export.rs
+  s_6d5f75bae01ef0::t_63e0f6d8c48303 225,293-294,303-307,318,350,352,791-813,864-897
+core/api/src/client_inventory.rs
+  s_6d5f75bae01ef0::t_12a42e42e547e5 38-40,43-57,151,183,359,374-381,500-533
+core/api/src/client_retention.rs
+  s_6d5f75bae01ef0::t_88053186bd2e99 486-488,850-863
+core/api/src/conversations.rs
+  s_6d5f75bae01ef0::t_7ba350783f5539 1-744
+core/api/src/envelope.rs
+  s_6d5f75bae01ef0::t_57b8c159d560ad 27-33,50-55,143-145,155-157
+core/api/src/exclusion_sweep.rs
+  s_6d5f75bae01ef0::t_83032338e6a6fb 409,417-424,523,528-535,592-744,787-898,3000,3010-3014,3036-3040,3080,3082-3095,3128-3129,3179,3192,3197,3218,3321-3323,3347-3352
+core/api/src/lib.rs
+  s_6d5f75bae01ef0::t_9fe220c4566abd 27,48-49
+core/api/src/mcp.rs
+  s_6d5f75bae01ef0::t_c50af69168d83c 19-82,87-93,133-165,174,195-336,338
+core/api/src/mcp_item_coverage.rs
+  s_6d5f75bae01ef0::t_34376b96e831ea 1-837
+core/api/src/test_store.rs
+  s_6d5f75bae01ef0::t_3fd65ac1880f51 51-77
+core/api/src/window_ask.rs
+  s_6d5f75bae01ef0::t_f9523a3ee74565 7,199,301,311,458-459,479-480
+core/api/src/your_data.rs
+  s_6d5f75bae01ef0::t_0ee15c0483da08 43-45,48-61,335-362,420-434,440-441,475-476,571-652,691-726
+core/cloud-runner/src/backfill.rs
+  s_6d5f75bae01ef0::t_c2890c69163d2b 1-354
+core/cloud-runner/src/main.rs
+  s_6d5f75bae01ef0::t_812d2617c89d31 6-11,28-31,37-85,143,151-192
+core/cloud-runner/src/run.rs
+  s_6d5f75bae01ef0::t_0e5dc8905c6261 21-23,168-169,200,349-350,367-406,902,906,911,929-997,1015-1016
+core/ffi/include/whimbrel_core.h
+  s_6d5f75bae01ef0::t_4a0ff9a7b61103 597-814,905-912,1575-1657,2174-2178,2187-2213
+core/ffi/src/ask_sourced_ffi.rs
+  s_6d5f75bae01ef0::t_d42e41cd7d3e88 1-553
+core/ffi/src/lib.rs
+  s_6d5f75bae01ef0::t_3b4d603c2a0273 20,1168-1202,3695-3720,3873-4160,5213-5217,5223,5238,5276-5350,6398-6756,9311,9379-9466,9474-9475
+core/llm/Cargo.toml
+  s_6d5f75bae01ef0::t_b742087b072146 14-15
+core/llm/src/exclusion.rs
+  s_6d5f75bae01ef0::t_514bac3045c86e 173-177,293
+core/llm/src/lib.rs
+  s_6d5f75bae01ef0::t_27f291f7ad2f45 25-90,113-114,126-136,148,169-170,190,1101-1102,1217,1227-1260,1262-1263,1274,1276-1278,1280-1281,1302-1335,1338,1347,1353,1363,1372-1375,1378,1387,1392,1397,1412-1413,1433,1444-1497,1535,1544,1554,1560,1568-1594,1612-1613,1688-1702,1774,1796-1809,1811-1885,1887-1889,1892-1920,1922,1924-1940,1943,2753,2836,3212-3231,3631-3656
+core/llm/src/limited_use.rs
+  s_6d5f75bae01ef0::t_2307162be841de 104-105
+core/llm/src/request_log.rs
+  s_6d5f75bae01ef0::t_60ccf97c2be777 12-16,18-19,21-25,102,104-107
+core/llm/src/scoped.rs
+  s_6d5f75bae01ef0::t_0bcc46678bd8c8 1-144
+core/llm/tests/added_items.rs
+  s_6d5f75bae01ef0::t_8cd220231ac713 1-267
+core/llm/tests/ask_prompt_golden.rs
+  s_6d5f75bae01ef0::t_037ee406272487 1-159
+core/llm/tests/fixtures/ask_prompts/added_item.txt
+  s_6d5f75bae01ef0::t_42993b7052935d 1-17
+core/llm/tests/fixtures/ask_prompts/all_kinds.txt
+  s_6d5f75bae01ef0::t_26552852461ac6 1-11
+core/llm/tests/fixtures/ask_prompts/empty_context.txt
+  s_6d5f75bae01ef0::t_ccffb377f1d08d 1-5
+core/llm/tests/fixtures/ask_prompts/history_instructions_date.txt
+  s_6d5f75bae01ef0::t_b2c602f88b82cb 1-19
+core/llm/tests/scoped_retrieval.rs
+  s_6d5f75bae01ef0::t_04535315d701b1 1-103
+core/mcp-server/Cargo.toml
+  s_6d5f75bae01ef0::t_2eaa0188dcad5f 24-26,47-48
+core/mcp-server/src/auth.rs
+  s_6d5f75bae01ef0::t_9f41439d43c9ae 72-73,240,372,382
+core/mcp-server/src/checked.rs
+  s_6d5f75bae01ef0::t_63d95f43055da8 1-53
+core/mcp-server/src/lib.rs
+  s_6d5f75bae01ef0::t_66dcd4f9abf70e 1,5-9,82-85,116-119,135-136,138-140,150-151,163-164,168-174,236,240-243,247-252,463,468,471,493,508,528,543,548-570,596,599,626,629,653,656,697,700,722,725,783,786,823-824,905,984,1016,1075,1111-1180,1240-1258,1269,1272,1276,1281,1286,1288,1290,1293,1299,1304,1309,1317,1324-1502,1509,1522,1536,1553,1602,1635,1643-1752,1777,1822,1838,1857,1889,1937,1953,2022,2090,2096,2101,2109,2117,2124,2126,2129,2142,2172,2195
+core/mcp-server/src/limits.rs
+  s_6d5f75bae01ef0::t_4f48a9a655c758 1-203
+core/mcp-server/src/origin.rs
+  s_6d5f75bae01ef0::t_5cbbf23f78d2f7 1-217
+core/mcp-server/src/write_tools.rs
+  s_6d5f75bae01ef0::t_d047dcf9e7ebae 1-741
+core/mcp-server/tests/real_client_integration.rs
+  s_6d5f75bae01ef0::t_a781b98fbda205 50-65,153-163,187-190,192-195,463-465,516-670
+core/memory/Cargo.toml
+  s_6d5f75bae01ef0::t_89b064ff92993a 34-35
+core/memory/src/capture_search.rs
+  s_6d5f75bae01ef0::t_b5ced5206d4ef8 64
+core/memory/src/cards.rs
+  s_6d5f75bae01ef0::t_0de06991cb1650 1-872
+core/memory/src/client_delete.rs
+  s_6d5f75bae01ef0::t_378e713bf14d23 577,586-588
+core/memory/src/client_forget.rs
+  s_6d5f75bae01ef0::t_98cb2f935f1bc3 83-85,99,113,332-340,609-610,1086-1097,1742-1754
+core/memory/src/embedding.rs
+  s_6d5f75bae01ef0::t_e16b0d896f426f 21-59,106,110-111,113-117,159,163-167,239,241-250,261-266,314-319,329-442,603-730
+core/memory/src/find.rs
+  s_6d5f75bae01ef0::t_7d20cced75439c 1-3111
+core/memory/src/find_eval.rs
+  s_6d5f75bae01ef0::t_35980c270a4bfc 1-494
+core/memory/src/find_eval_models.rs
+  s_6d5f75bae01ef0::t_e56100984d7f48 1-326
+core/memory/src/keyed.rs
+  s_6d5f75bae01ef0::t_5a751737912970 489,509,533,973-978,995-999,1001
+core/memory/src/lib.rs
+  s_6d5f75bae01ef0::t_de225c33318a2e 20-21,28-29,54,61-63,201-204,481-616,1507-1509,1595-1596,1707,1728,1891,1963-1973,2072-2076,2373-2374,2399,2798-2817,3347,3503,3592-3596,3657,3985,4062,4143,4253,4927,4939,5019,5031,5095,5108,5122-5135,5156,5167,5201,5335,5392,7609,7710-7731,7761-7936,7954-8003,8094-8097,8123-8129,8497,10061-10062,13555-13723,13796-13886,15919,16134
+core/memory/src/mcp_items.rs
+  s_6d5f75bae01ef0::t_aa88529ee59432 1-2944
+core/memory/src/redact.rs
+  s_6d5f75bae01ef0::t_2ca7179327107f 11-21,64,111-195,347-412,414
+core/memory/src/topics/edit.rs
+  s_6d5f75bae01ef0::t_3897b258ca77d9 121-124,227,394-467
+core/memory/src/topics/exclusion.rs
+  s_6d5f75bae01ef0::t_84f2f0496a1bbb 435-436,438,440,444,461-474,510-511,669,779,992,1004-1006,1020-1044,1066,1240,1256,1271-1274,2701-2750,3105-3182
+core/memory/src/topics/index.rs
+  s_6d5f75bae01ef0::t_a6af1cd5920088 475,890
+core/memory/src/topics/inventory.rs
+  s_6d5f75bae01ef0::t_ba534a5ad8f6b9 177-184,228,541-563
+core/memory/src/topics/page.rs
+  s_6d5f75bae01ef0::t_415d205c42c8df 184,467-472,492-604,1299-1330
+core/memory/src/topics/seeds.rs
+  s_6d5f75bae01ef0::t_8aeee19437ec71 769-770
+core/memory/tests/schema_second_open.rs
+  s_6d5f75bae01ef0::t_d121b7e038f6e6 1-29
+core/memory/tests/two_connections.rs
+  s_6d5f75bae01ef0::t_b6516066b34372 246-248,250-271,344,361
+core/skins/src/format.rs
+  s_6d5f75bae01ef0::t_9c1f1d8c7734dc 579
+core/skins/src/redesign.rs
+  s_6d5f75bae01ef0::t_6465d1eb217a1a 1-3,8,10,13,18-20,23-25
+core/skins/tests/corpus.rs
+  s_6d5f75bae01ef0::t_d8773474fca554 142-143
+core/skins/tests/thread.rs
+  s_6d5f75bae01ef0::t_9d31e66f8d7d7b 3,68,70-77,82,85-89
+core/sync-engine/src/content.rs
+  s_6d5f75bae01ef0::t_2255e4c534caa3 77-79,155,169-171,208,224-229,276-280,287,425-462,919-920,924-925,927-928,936,938,941,958-960,969-971,980-981,990,993,1004-1008,1135,1160-1161,1166-1177,1187-1189,1383-1394,1549-1558,1596-1599,1611-1613,1621-1622,1624,1637,1657-1658,1688-1689,1700-1702,1710-1711,1713,1725,1744-1747,1753,1764-1766,1769,1778-1902,1904-1905,1909-2002,2201-2205,3154-3156,3163-3164,3186-3192,3204-3208,3216-3250,3254-3262,3314,3318-3320,3325-3356,3367-3390,3466,3472-3522,3643-3651,3660-3677,3693-3699,3712-3724,3916-3917,3925,3927-3940,3942-3943,3947,3970,3979-3982,4077,4158-4168,4170,4174-4193,4195,4198,4210-4211,4374-4380,4382-4383,4387-4391,4396,4415,4423,4472,4474-4476,4578-4583,4590-4596,4660-4662,4666-4703,4706,4724-4741,4776,4794,6597-6607,6610-6611,6614-6625,6629,6634,6636-6644,6646-6820,8400-8496,10497,10530-10531,11233-11418,11521-11525,11532-11533,11638-11743,11885-11887,11999-12257,12262,12267,12272,12280-12996,13036-13303
+core/sync-engine/src/kind_backfill.rs
+  s_6d5f75bae01ef0::t_57d9446a27ef0f 25-26,39-57,60-102,262-274,277,279,284,293-294,297,301,314,328,331,334,341,345,350-542,544,546,575,578,590,593,598,600,610,622,639,650,653,657,1484-1696
+core/sync-engine/src/lib.rs
+  s_6d5f75bae01ef0::t_9f4b22c56632ba 32-36,498-577,664-668,670-688,716-717,723-827
+core/sync-engine/src/outbox.rs
+  s_6d5f75bae01ef0::t_eaf64b9215ea40 18-19,140,251-253,258-261,387-388,395,397,406,408-418,424,1948-2009,3371
+core/sync-engine/src/slice_backfill.rs
+  s_6d5f75bae01ef0::t_edfba3e923ad01 1-716
+core/sync/src/lib.rs
+  s_6d5f75bae01ef0::t_eef4efe8be421d 242-320,427-496
+design/tokens/build.mjs
+  s_6d5f75bae01ef0::t_b82fc05e89f517 8,41,43,48-49,67-73,194-201,274-278
+design/tokens/tokens.json
+  s_6d5f75bae01ef0::t_6e4645e3577d6d 34-41
+docs/16-open-core-commercial-model.md
+  s_6d5f75bae01ef0::t_239df26b8697e0 4,222-254
+docs/RELEASING.md
+  s_6d5f75bae01ef0::t_3d3bad8408fd30 15
+docs/self-hosting-runner.md
+  s_6d5f75bae01ef0::t_c5e1efff5395da 221-321
+scripts/check-paywalls.py
+  s_6d5f75bae01ef0::t_3b143c9ddd2916 1-171
+scripts/l10n/apply-reviewed.sh
+  s_6d5f75bae01ef0::t_f571aa81627322 1-41
+scripts/paywall-allow.txt
+  s_6d5f75bae01ef0::t_f52cd4efcd7648 1-42
+scripts/public-review-allow.txt
+  s_6d5f75bae01ef0::t_ec027b76196a4a 1-11
+scripts/public-review.py
+  s_6d5f75bae01ef0::t_fd3bf82e764a9e 1-144
+scripts/publish-public.sh
+  s_6d5f75bae01ef0::t_78a576a9070499 6-9,11-21,31-32,34-48,71-91,95,98-116,126-127,129-130,136-187
+scripts/rename-whimbrel.py
+  s_6d5f75bae01ef0::t_7ed52c57d217fe 133
+scripts/test_check_paywalls.py
+  s_6d5f75bae01ef0::t_b9f9d7272c8ee2 1-112
+scripts/test_public_review.py
+  s_6d5f75bae01ef0::t_04ccb27d8f5f49 1-90
+skins/whimbrel.json
+  s_6d5f75bae01ef0::t_fcfa3e304b122c 22
+website/site/pages/cloud/cancelled.html
+  s_6d5f75bae01ef0::t_8949b78ba3c92e 4
+website/site/pages/cloud/thanks.html
+  s_6d5f75bae01ef0::t_4dc3724dbac778 3-4,11
+website/site/pages/compare/index.html
+  s_6d5f75bae01ef0::t_f390b260cd42ee 44,50
+website/site/pages/compare/littlebird-alternative.html
+  s_6d5f75bae01ef0::t_be11582913a56f 57,61
+website/site/pages/es/index.html
+  s_6d5f75bae01ef0::t_4d5efc11fe12a4 35,50
+website/site/pages/es/open-source.html
+  s_6d5f75bae01ef0::t_94788f387f011b 27,34,61,65
+website/site/pages/es/pricing.html
+  s_6d5f75bae01ef0::t_5fd1bc72511faa 4,22,26,29-30,34-38,45,53,60,86-88,93,96-100,105,108-110,118,125,127,131
+website/site/pages/fr/index.html
+  s_6d5f75bae01ef0::t_a7026f1d4c526d 35,50
+website/site/pages/fr/open-source.html
+  s_6d5f75bae01ef0::t_d41166c12e87e6 27,34,61,65
+website/site/pages/fr/pricing.html
+  s_6d5f75bae01ef0::t_f369df50fcfaa8 4,22,26,29-30,34-38,42,45,53,60,86-88,90,92-93,96-100,105,108-110,118,125,127,131
+website/site/pages/index.html
+  s_6d5f75bae01ef0::t_84b85aa6592d14 13
+website/site/pages/open-source.html
+  s_6d5f75bae01ef0::t_e6ef59f67064db 11,40,44
+website/site/pages/pricing.html
+  s_6d5f75bae01ef0::t_577e773b35d0e6 4,10-14,24,31,57-59,64,67-71,76,79-81,89,96,98,102
+website/site/pages/privacy.html
+  s_6d5f75bae01ef0::t_ed3133090be323 13,32,106
+website/site/pages/tos.html
+  s_6d5f75bae01ef0::t_8ddf2e1a8ba680 13,42-43
+website/test/index.test.ts
+  s_6d5f75bae01ef0::t_8f472b6ef543ed 427,429-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c37ef20b6e6c496776fa4583e27abe89fbc8fa2f",
+  "prompts": {},
+  "sessions": {
+    "s_6d5f75bae01ef0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cd687b5-f590-441a-bff0-e1a1dc6593c5",
+        "model": "unknown"
+      },
+      "human_author": "Mike Pointer <mpointer@gmail.com>"
+    }
+  }
+}
