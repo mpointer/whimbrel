@@ -345,3 +345,10 @@ code, kbd { font-family: var(--mono); font-size: .9em; background: var(--bg-alt)
 .plan-features li::before { content: "✓"; position: absolute; left: 0; color: var(--success); font-weight: 700; }
 .plan-features li:has(strong)::before { content: ""; }
 .plan-features li:has(strong) { padding-left: 0; }
+
+/* share block */
+.share-block { padding: 0 0 clamp(48px, 7vw, 80px); text-align: center; }
+.share-block h2 { margin-bottom: .3em; }
+.share-message { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; text-align: left; overflow-wrap: anywhere; }
+.share-status { margin: 12px 0 0; min-height: 1.4em; font-weight: 600; color: var(--success); }
+.share-status.is-error { color: var(--error); }

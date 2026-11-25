@@ -233,7 +233,7 @@
   align-items: center;
   gap: var(--w-space-sm);
   font-size: var(--w-text-body-strong-size);
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .th-marks-count {
   color: var(--color-text-secondary);
@@ -263,7 +263,7 @@
   color: var(--color-accent-primary);
   font-family: var(--sx-font-numerals);
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: var(--weight-numerals, 600);
 }
 .th-marks-label {
   flex: 1 1 auto;

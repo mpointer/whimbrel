@@ -22,7 +22,8 @@
   font-family: var(--sx-font-title);
   font-size: var(--w-text-page-title-size);
   line-height: var(--w-text-page-title-line);
-  font-weight: var(--w-text-page-title-weight);
+  font-weight: var(--weight-display, var(--w-text-page-title-weight));
+  font-style: var(--style-display, normal);
 }
 .th-ask {
   display: flex;
@@ -66,7 +67,7 @@
   font-weight: 400;
 }
 .th-menu .w-menu-item[aria-checked="true"] {
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
   background: var(--color-selection);
 }
 .th-range {
@@ -147,7 +148,7 @@
   border-top: var(--sx-line);
 }
 .th-list-title {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .th-list-meta {
   color: var(--color-text-secondary);
@@ -225,7 +226,7 @@
   white-space: pre-wrap;
 }
 .th-md strong {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .th-md ul,
 .th-md ol {

@@ -92,7 +92,6 @@ fn base_catalogue() -> Value {
             "keys": voice_keys,
             "name": format!("greetings may use the literal {{name}}; the limit counts it as {MEASURED_NAME_LENGTH} characters"),
         },
-        "archetypes": names(&Archetype::ALL),
         "motion": names(&Motion::ALL),
         "palette": {
             "shape": r##"{"id","name","light":{token:"#rrggbb"},"dark":{token:"#rrggbb"}}; light, dark or both"##,

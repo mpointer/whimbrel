@@ -60,11 +60,11 @@ final class RecordingCheckInTests: XCTestCase {
         return d
     }
 
-    func testSettingDefaultsToTwoHoursAndZeroIsOff() {
+    func testSettingDefaultsToOneHourAndZeroIsOff() {
         let d = defaults()
         let s = RecordingCheckInSettings(defaults: d)
-        XCTAssertEqual(s.hours, 2)
-        XCTAssertEqual(s.firstPromptAfter, 2 * 3600)
+        XCTAssertEqual(s.hours, 1)
+        XCTAssertEqual(s.firstPromptAfter, 3600)
         s.hours = 0
         XCTAssertNil(RecordingCheckInSettings(defaults: d).firstPromptAfter)
         XCTAssertEqual(RecordingCheckInSettings(defaults: d).hours, 0)
@@ -93,17 +93,37 @@ final class RecordingCheckInTests: XCTestCase {
             d.set(value, forKey: "com.mpointer.kestrel.debugCheckInSeconds")
             d.set(value, forKey: "com.mpointer.kestrel.debugCheckInCountdownSeconds")
             let c = RecordingCheckInSettings(defaults: d).makeCheckIn(startedAt: t0)
-            XCTAssertEqual(c.firstPromptAfter, 2 * h, "\(value)")
+            XCTAssertEqual(c.firstPromptAfter, h, "\(value)")
             XCTAssertEqual(c.countdown, 5 * m)
             XCTAssertEqual(c.reaskAfter, h)
         }
     }
     #endif
 
-    func testOutOfRangePersistedValueFallsBackToTwo() {
+    func testOutOfRangePersistedValueFallsBackToOne() {
         let d = defaults()
         d.set(9, forKey: "com.mpointer.kestrel.recordingCheckInHours")
-        XCTAssertEqual(RecordingCheckInSettings(defaults: d).hours, 2)
+        XCTAssertEqual(RecordingCheckInSettings(defaults: d).hours, 1)
+    }
+
+    func testStoredChoiceIsKeptWhenTheDefaultChanged() {
+        for stored in [0, 1, 2, 3, 4] {
+            let d = defaults()
+            d.set(stored, forKey: "com.mpointer.kestrel.recordingCheckInHours")
+            XCTAssertEqual(RecordingCheckInSettings(defaults: d).hours, stored)
+        }
+        let d = defaults()
+        d.set(2, forKey: "com.mpointer.kestrel.recordingCheckInHours")
+        XCTAssertEqual(RecordingCheckInSettings(defaults: d).firstPromptAfter, 2 * 3600)
+    }
+
+    func testHourlyTimeoutEndsWithTheAutoTrim() {
+        // The same trim the 15-minute check uses: both end with .checkInTimeout.
+        XCTAssertTrue(MeetingEndDetector.EndReason.checkInTimeout.endsWithAutoTrim)
+        // The person's own answer and every other end are untouched.
+        let others: [MeetingEndDetector.EndReason] = [.checkInStop, .appQuit, .captureReleased, .browserTabGone,
+                                                      .scheduledEndHardCeiling, .maxDuration, .silence, .durationCap, .lowDisk, .split]
+        for reason in others { XCTAssertFalse(reason.endsWithAutoTrim, reason.rawValue) }
     }
 
     func testMaxDurationSuppressedWhilePromptShowingUntilStop() {

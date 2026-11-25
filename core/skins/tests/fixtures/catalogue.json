@@ -1,12 +1,4 @@
 {
-  "archetypes": [
-    "standard",
-    "terminal",
-    "glass",
-    "field",
-    "almanac",
-    "reference"
-  ],
   "decoration": {
     "dividers": [
       "none",

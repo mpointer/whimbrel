@@ -1,5 +1,5 @@
 // The tray popup with the redesign switch on (docs/ui-redesign/screens/menu-bar.md). Order: Recording, Memory, Needs
-// attention, Next meeting, then Open Whimbrel and Quit. Every control calls what the old popup's controls call. What each
+// attention, Next meeting, Tell a friend (a quiet row that copies a message with a link), then Open Whimbrel and Quit. Every control calls what the old popup's controls call. What each
 // row shows in each state is `popupRows` (popupModel.ts). Return opens Whimbrel, Escape closes, arrow keys move between controls.
 //
 // Layout: the header, the recording row with Stop, the memory state line and the footer are pinned, at any text size; the rest
@@ -10,7 +10,7 @@
 // screen-text reading is failing), the launch stage and the next meeting. Nothing here blocks the main thread: the Google
 // sign-in and the sync status were read with sync commands on every open and are not read here.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { emit } from "@tauri-apps/api/event";
 import {
   capturePauseUntil,
@@ -32,6 +32,7 @@ import { timeLabel } from "../library/rows";
 import { recordedSeconds } from "../meetings/redesign/liveModel";
 import type { CaptureStatus, NextMeetingView, TrayStatus } from "../generated/types";
 import { useL10n } from "../l10n";
+import { useTellAFriend } from "../share/tellAFriend";
 import { useRecording } from "../shell/redesign/useRecording";
 import { PAUSE_CHOICES, pauseDeadline, type PauseChoice } from "../shell/redesign/captureModel";
 import { WAppMark, WButton, WMemoryControl, WMenuSection, WNotice, WRecordingRow, WRoot, WScrollArea, mainActionOnReturn, useArrowKeys, useCompactWindow, useWindowKeys, WINDOW_DESIGN } from "../system";
@@ -44,6 +45,8 @@ const openSettings = (section: string) => void popupOpenMain().then(() => emit("
 export function RedesignedPopup() {
   const { t, locale } = useL10n();
   const rec = useRecording(true);
+  const share = useTellAFriend(t);
+  const shareNote = useId();
   // When the popup has less CSS space than its design size (the shell capped it to a small screen at a large text size) the
   // explanation of a recording problem moves into the scrolling part, so the pinned part keeps Stop and Memory in view.
   const large = useCompactWindow(WINDOW_DESIGN.popup);
@@ -260,6 +263,21 @@ export function RedesignedPopup() {
               ) : null}
             </WMenuSection>
           ) : null}
+          {/* Quiet, above Open Whimbrel and Quit: copies a short message with a link. It opens nothing and sends nothing. */}
+          <WMenuSection label={t("Tell a friend")} labelHidden>
+            <div>
+              <WButton variant="quiet" link icon={share.copied ? "check" : undefined} onClick={share.copy} aria-describedby={shareNote}>
+                {share.copied ? t("Copied") : t("Tell a friend")}
+              </WButton>
+              <span id={shareNote} className="w-visually-hidden">
+                {t("Copies a short message and a link to Whimbrel. Nothing is sent.")}
+              </span>
+              <span className="w-visually-hidden" role="status">
+                {share.copied ? t("Copied") : ""}
+              </span>
+              {share.failed ? <WNotice tone="warning">{t("Could not copy. Try again.")}</WNotice> : null}
+            </div>
+          </WMenuSection>
         </WScrollArea>
         <div className="w-win-actions w-pop-foot">
           <WButton variant="primary" onClick={() => void popupOpenMain()}>

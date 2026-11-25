@@ -25,6 +25,6 @@ pub use loader::{load_bundled, parse_skin};
 pub use palette::{default_palette, load_palettes, parse_palette, Palette, Token, Variant};
 pub use redesign::{is_redesign_skin, visible_palettes, visible_skins, REDESIGN_PALETTE_IDS, REDESIGN_SKIN_IDS};
 pub use elements::ElementChoices;
-pub use repair::{all_pairs, archetype_pairs, element_pairs, redesign_pairs, repair, repair_for, Pair};
+pub use repair::{all_pairs, all_redesign_pairs, archetype_pairs, element_pairs, redesign_pairs, repair, repair_for, Pair};
 pub use scrim::{blend, extremes, scrim_opacity, Glow};
 pub use store::{save_gate_repair, skin_name, UserSkinStore};

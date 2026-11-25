@@ -257,6 +257,39 @@ export function WScrollArea({ className, children }: { className?: string; child
   );
 }
 
+/** The page's name for a small window: its title, then the product name. A screen reader says the page's name when the window
+ *  is opened, and "Whimbrel" alone says nothing about what is being asked. */
+export function windowDocumentTitle(title: string): string {
+  const name = title.trim();
+  return name ? `${name} - Whimbrel` : "Whimbrel";
+}
+
+/** The accessible name and description of a small window. The name is its title; the description is its pinned sentence and
+ *  lines, each ended as a sentence so they are not run together. Empty parts are left out. The countdown is not part of it, so
+ *  the seconds are not read. When the shell opens the window active (a screen reader is running) focus is put on the frame, and
+ *  the reader says this name and description once, as the focus change. */
+export function windowDescription(parts: ReactNode[] | undefined | null): string {
+  return (parts ?? [])
+    .filter((part): part is string | number => typeof part === "string" || typeof part === "number")
+    .map((part) => String(part).replace(/\s+/g, " ").trim())
+    .filter((part) => part.length > 0)
+    .map((part) => (/[.!?]$/.test(part) ? part : `${part}.`))
+    .join(" ");
+}
+
+/** Names the page after the window, and puts focus on the frame itself when the window is drawn. Focus is on the frame, not on
+ *  a button: nothing is pressed by a stray key, and the reader says the title and text, then the person Tabs to the buttons.
+ *  With no screen reader the shell does not activate the window, so this only sets which element has focus once the person
+ *  clicks or switches to it; nothing is shown or moved. Runs once per window drawn (the countdown does not move focus). */
+function useWindowFocus(frame: RefObject<HTMLElement | null>, title: string) {
+  useEffect(() => {
+    document.title = windowDocumentTitle(title);
+  }, [title]);
+  useEffect(() => {
+    frame.current?.focus({ preventScroll: true });
+  }, [frame]);
+}
+
 /** One compact frame for every small window. The title is a heading that names the window; the lines are a polite status
  *  so a change is read once. Return and Escape follow `WINDOW_KEYS`. The header, the countdown and the action row are
  *  pinned: they never scroll away, at any text size, because the actions must always be in view (a recording can
@@ -266,6 +299,9 @@ export function WWindowFrame({ title, lines, pinned, countdown, actions, design,
   const main = useRef<HTMLElement>(null);
   useWindowKeys(onPrimary, onDismiss);
   useArrowKeys(main);
+  useWindowFocus(main, title);
+  const descriptionId = `${id}-text`;
+  const description = windowDescription([pinned, ...(lines ?? [])]);
   // The product name is drawn at every text size: these windows have no title bar, and one that asks to record must say whose it
   // is. In the compact layout (the window has less CSS space than its design size) the mark and name shrink to a compact inline
   // mark beside the title (same row, capped in px), so the name costs no extra row; with its full space it is the small row above the title.
@@ -273,7 +309,14 @@ export function WWindowFrame({ title, lines, pinned, countdown, actions, design,
   const hasBody = (lines && lines.length > 0) || children;
   return (
     <div className="w-sys w-win-root">
-      <main className={large ? "w-win w-win-frame w-win-frame--compact" : "w-win w-win-frame"} aria-labelledby={id} ref={main}>
+      <main
+        className={large ? "w-win w-win-frame w-win-frame--compact" : "w-win w-win-frame"}
+        role="alertdialog"
+        aria-labelledby={id}
+        aria-describedby={description ? descriptionId : undefined}
+        tabIndex={-1}
+        ref={main}
+      >
         <div className={large ? "w-win-top w-win-top--inline" : "w-win-top"}>
           <header className="w-win-head">
             <WAppMark />
@@ -306,6 +349,12 @@ export function WWindowFrame({ title, lines, pinned, countdown, actions, design,
         ) : null}
         {countdown ? <div className="w-win-countdown">{countdown}</div> : null}
         <div className="w-win-actions">{actions}</div>
+        {/* The text a screen reader says with the title when focus arrives (the same words as on screen, without the countdown). Hidden, so it is only ever the description and is not met a second time when moving through the page. */}
+        {description ? (
+          <span id={descriptionId} hidden>
+            {description}
+          </span>
+        ) : null}
       </main>
     </div>
   );

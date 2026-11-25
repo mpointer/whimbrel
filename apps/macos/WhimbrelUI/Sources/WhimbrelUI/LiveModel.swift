@@ -96,11 +96,14 @@ public struct WLiveMeetingModel: Sendable {
     public var transcript: [WTranscriptEntry]
     /// "Auto-scroll on" or similar, on the right of the transcript card's title.
     public var transcriptAccessory: String?
+    /// The id of a transcript entry to show as cited and scroll to: a live-alert jump or a line the ask bar cited.
+    public var highlightedEntryId: String?
 
     public init(
         title: String, detail: String = "", state: WLiveState = .recording, recordedSeconds: Int = 0, level: Float = 0,
         showsNotice: Bool = false, noticeCopied: Bool = false, marks: [WLiveMark] = [], stops: [WLiveStop] = [],
-        showsTranscript: Bool = false, transcript: [WTranscriptEntry] = [], transcriptAccessory: String? = nil
+        showsTranscript: Bool = false, transcript: [WTranscriptEntry] = [], transcriptAccessory: String? = nil,
+        highlightedEntryId: String? = nil
     ) {
         self.title = title
         self.detail = detail
@@ -114,6 +117,7 @@ public struct WLiveMeetingModel: Sendable {
         self.showsTranscript = showsTranscript
         self.transcript = transcript
         self.transcriptAccessory = transcriptAccessory
+        self.highlightedEntryId = highlightedEntryId
     }
 
     /// Whether the notice is drawn: never on another device's meeting, and not once processing starts.

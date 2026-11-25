@@ -83,4 +83,71 @@ final class LiveMeetingRedesignTests: XCTestCase {
         XCTAssertEqual(marks.first?.label, "Priya: check churn")
         XCTAssertFalse(marks.first?.timeOfDay.isEmpty ?? true)
     }
+
+    /// Mike, 2026-11-25: on 0.9.82 every line one speaker said within a minute showed the text of that minute's first line,
+    /// because rows were identified by the minute and the speaker. Each row is now identified by its stored line.
+    func testLinesInTheSameMinuteKeepTheirOwnIdAndText() {
+        func seg(_ id: Int64, _ startCs: Int64, _ label: String, _ text: String) -> CoreLiveSegment {
+            CoreLiveSegment(id: id, meetingId: 1, channel: label == "me" ? "mic" : "system", chunkIndex: 0, startCs: startCs, endCs: startCs + 300, speakerLabel: label, text: text)
+        }
+        let segments = [
+            seg(1, 0, "Others", "That's just kind of the, the,"),
+            seg(2, 400, TranscriptionService.Speaker.me.rawValue, "The naming convention that some in the industry are using."),
+            seg(3, 800, "Others", "I'm actually taking some PTO next week."),
+            seg(4, 1200, TranscriptionService.Speaker.me.rawValue, "As soon as I get back I'll try it."),
+        ]
+        let entries = LiveMeetingAdapter.entries(segments: segments, spans: [], recordingStartedAt: start, lastLine: .live, you: "You", locale: Locale(identifier: "en_US_POSIX"))
+        XCTAssertEqual(Set(entries.map(\.time)).count, 1, "the four lines fall in one minute")
+        XCTAssertEqual(Set(entries.map(\.id)).count, 4)
+        XCTAssertEqual(entries.map(\.text), segments.map(\.text))
+    }
+
+    // MARK: Jump and citation targets
+
+    private func segs(_ n: Int) -> [CoreLiveSegment] {
+        (1...n).map { i in
+            CoreLiveSegment(id: Int64(i), meetingId: 1, channel: "system", chunkIndex: 0, startCs: Int64(i * 100), endCs: Int64(i * 100 + 90), speakerLabel: "Others", text: "line \(i)")
+        }
+    }
+
+    private func ids(_ highlighted: String?, count: Int = 60) -> [String] {
+        LiveMeetingAdapter.entries(
+            segments: segs(count), spans: [], recordingStartedAt: start, lastLine: .normal, you: "You", highlightedId: highlighted,
+            locale: Locale(identifier: "en_US_POSIX")
+        ).map(\.id)
+    }
+
+    func testEntryIdsAreLiveAndTheSegmentId() {
+        XCTAssertEqual(LiveMeetingAdapter.entryId(segmentId: 42), "live-42")
+        XCTAssertEqual(ids(nil).first, "live-41")
+        XCTAssertEqual(ids(nil).last, "live-60")
+    }
+
+    func testWithNoHighlightOnlyTheNewestTwentyShow() {
+        XCTAssertEqual(ids(nil).count, 20)
+    }
+
+    func testAHighlightInsideTheWindowChangesNothing() {
+        XCTAssertEqual(ids("live-55"), ids(nil))
+    }
+
+    func testAHighlightOlderThanTheWindowWidensItToIncludeThatLine() {
+        let shown = ids("live-10")
+        XCTAssertTrue(shown.contains("live-10"))
+        XCTAssertEqual(shown.first, "live-8", "two lines of context above the target")
+        XCTAssertEqual(shown.last, "live-60", "the newest line stays")
+        XCTAssertEqual(shown.count, 53)
+    }
+
+    func testAHighlightNearTheStartDoesNotGoBelowTheFirstLine() {
+        XCTAssertEqual(ids("live-1").first, "live-1")
+    }
+
+    func testAHighlightThatNamesNoLineLeavesTheWindowAlone() {
+        XCTAssertEqual(ids("live-999"), ids(nil))
+    }
+
+    func testTheHighlightLastsAFewSeconds() {
+        XCTAssertEqual(LiveMeetingAdapter.highlightDuration, .seconds(8))
+    }
 }

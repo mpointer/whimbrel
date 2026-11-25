@@ -895,6 +895,9 @@ export async function handleBillingCheckout(
     };
     // The tier rides on the subscription, so a renewal on a retired Plus price stays Plus.
     if (plan === "plus") params["subscription_data[metadata][tier]"] = "plus";
+    // Plus only: Checkout shows an "Add promotion code" box. Nothing changes
+    // until a promotion code exists in Stripe. Cloud is retired for new buyers.
+    if (plan === "plus") params.allow_promotion_codes = "true";
     if (account.stripeCustomerId) {
       params.customer = account.stripeCustomerId;
       params["customer_update[address]"] = "auto";
@@ -1225,7 +1228,10 @@ async function refundAiCharge(db: SqlExecutor, key: string, charge: any, now: nu
 
 /** Grants the Plus allowance for a paid `invoice.paid` payload of the kept
  * Plus subscription. Only `subscription_create` and `subscription_cycle`
- * with an amount paid grant (`subscription_update` grants nothing in v1).
+ * grant (`subscription_update` grants nothing in v1), and only with a whole
+ * amount paid of 0 or more: a $0 invoice (a promotion code, or a renewal
+ * paid from the customer's credit balance) grants when the invoice subtotal
+ * and its Plus line are positive; a free trial's $0 line grants nothing.
  * The invoice id is the grant key, so a redelivered event grants once; the
  * expiry is the Plus line's period end; the row records `subId`. A paid
  * grant that does not refill the allowance (the expiry guard refused it, or
@@ -1251,8 +1257,18 @@ async function grantForInvoice(
 ): Promise<Response | null> {
   const reason = invoice?.billing_reason;
   if (reason !== "subscription_create" && reason !== "subscription_cycle") return null;
-  if (!Number.isSafeInteger(invoice?.amount_paid) || invoice.amount_paid <= 0) {
-    // Say, a renewal paid from the customer's credit balance: no grant, by ruling.
+  // Only a whole, non-negative amount paid can grant. A $0 paid invoice (a
+  // promotion code or the customer's credit balance covered it) grants only
+  // when its Plus line is positive before the discount (checked below).
+  const amountPaid = invoice?.amount_paid;
+  if (!Number.isSafeInteger(amountPaid) || amountPaid < 0) {
+    console.log("billing: plus invoice paid with no usable amount, no grant", invoice?.id);
+    return null;
+  }
+  const zeroPaid = amountPaid === 0;
+  // A $0 invoice with nothing priced on it (a free trial, an invoice of other
+  // lines) is not a month of Plus.
+  if (zeroPaid && !(Number.isSafeInteger(invoice?.subtotal) && invoice.subtotal > 0)) {
     console.log("billing: plus invoice paid with no amount, no grant", invoice?.id);
     return null;
   }
@@ -1267,6 +1283,11 @@ async function grantForInvoice(
     // The Plus line's period is not a range. The paid invoice's lines never
     // change, so a retry would fail the same way for 3 days: log, no grant.
     console.error("billing: paid plus invoice line period is not a range, no grant", invoice.id);
+    return null;
+  }
+  if (zeroPaid && period !== null && !(period.amountCents !== null && period.amountCents > 0)) {
+    // The $0 invoice's Plus line is itself $0 (a trial): the subtotal was something else.
+    console.log("billing: plus invoice paid with no amount, no grant", invoice.id);
     return null;
   }
   if (period === null) {

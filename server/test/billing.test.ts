@@ -211,6 +211,16 @@ it("checkout_bad_interval_is_400", async () => {
   expect(calls).toHaveLength(0);
 });
 
+it("only_plus_checkout_allows_promotion_codes_cloud_and_ai_credit_do_not", async () => {
+  const { db } = await seeded();
+  const cloud = fakeFetch();
+  await checkout(db, cloud.fetcher, { interval: "month" });
+  expect(cloud.calls[0].form.has("allow_promotion_codes")).toBe(false);
+  const plus = fakeFetch();
+  await checkout(db, plus.fetcher, { plan: "plus", interval: "month" });
+  expect(plus.calls[0].form.get("allow_promotion_codes")).toBe("true");
+});
+
 it("plus_checkout_uses_the_plus_price_and_marks_tier_metadata", async () => {
   const { db, account } = await seeded();
   for (const [interval, price] of [["month", "price_plus_monthly"], ["year", "price_plus_yearly"]]) {
@@ -223,6 +233,10 @@ it("plus_checkout_uses_the_plus_price_and_marks_tier_metadata", async () => {
     expect(f.get("mode")).toBe("subscription");
     expect(f.get("line_items[0][price]")).toBe(price);
     expect(f.get("subscription_data[metadata][tier]")).toBe("plus");
+    // Checkout shows the "Add promotion code" box for Plus.
+    expect(f.get("allow_promotion_codes")).toBe("true");
+    expect(f.has("discounts[0][coupon]")).toBe(false);
+    expect(f.has("discounts[0][promotion_code]")).toBe(false);
     expect(f.get("subscription_data[metadata][account_id]")).toBe(account.id);
     expect(f.get("client_reference_id")).toBe(account.id);
     expect(f.get("automatic_tax[enabled]")).toBe("true");
@@ -1148,6 +1162,8 @@ it("ai_checkout_sends_payment_mode_with_metadata_on_both", async () => {
   expect(f.get("payment_intent_data[metadata][account_id]")).toBe(account.id);
   expect(f.get("automatic_tax[enabled]")).toBe("true");
   expect(f.get("adaptive_pricing[enabled]")).toBe("false");
+  // The prepaid AI credit session never gets a promotion code box (codes are for Plus).
+  expect(f.has("allow_promotion_codes")).toBe(false);
   expect(f.get("billing_address_collection")).toBe("required");
   expect(f.get("success_url")).toBe("https://whimbrelapp.com/ai/thanks/");
   expect(f.get("cancel_url")).toBe("https://whimbrelapp.com/ai/cancelled/");

@@ -12,6 +12,7 @@
   font-family: var(--sx-font-ui);
   font-size: var(--w-text-body-size);
   line-height: var(--w-text-body-line);
+  font-weight: var(--weight-body, 400);
   color: var(--color-text-primary);
 }
 
@@ -21,19 +22,20 @@
   font-family: var(--sx-font-title);
   font-size: var(--w-text-title-size);
   line-height: var(--w-text-title-line);
-  font-weight: var(--w-text-title-weight);
-  font-style: normal;
+  font-weight: var(--weight-display, var(--w-text-title-weight));
+  font-style: var(--style-display, normal);
 }
 .w-shell .rt .section-label {
   margin: 0 0 var(--w-space-sm);
   font-family: var(--sx-font-label);
   font-size: var(--w-text-secondary-size);
   line-height: var(--w-text-secondary-line);
-  font-weight: 600;
+  font-weight: var(--weight-section-label, var(--weight-label, 600));
   letter-spacing: normal;
-  text-transform: none;
-  font-variant-caps: normal;
+  text-transform: var(--caps, none);
+  font-variant-caps: var(--caps-variant, normal);
   color: var(--color-text-secondary);
+  font-style: var(--style-label, normal);
 }
 .w-shell .rt .muted {
   color: var(--color-text-secondary);
@@ -41,23 +43,27 @@
 .w-shell .rt .small {
   font-size: var(--w-text-secondary-size);
   line-height: var(--w-text-secondary-line);
+  font-family: var(--sx-font-label);
+  font-style: var(--style-label, normal);
 }
 .w-shell .rt .mono {
   font-family: var(--w-font-mono);
   font-size: var(--w-text-secondary-size);
 }
 .w-shell .rt .row-title {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-shell .rt .day {
   margin: var(--w-space-lg) 0 var(--w-space-xs);
   font-size: var(--w-text-secondary-size);
   line-height: var(--w-text-secondary-line);
-  font-weight: 600;
+  font-weight: var(--weight-section-label, var(--weight-label, 600));
   letter-spacing: normal;
-  text-transform: none;
-  font-variant-caps: normal;
+  text-transform: var(--caps, none);
+  font-variant-caps: var(--caps-variant, normal);
   color: var(--color-text-secondary);
+  font-family: var(--sx-font-label);
+  font-style: var(--style-label, normal);
 }
 
 /* ---- Surfaces ---- */
@@ -194,7 +200,7 @@
   color: var(--color-text-primary);
   font-size: var(--w-text-caption-size);
   line-height: var(--w-text-caption-line);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-shell .rt button.chip {
   border: var(--rt-control-line);
@@ -236,7 +242,7 @@
   border-inline-start-color: var(--color-accent-primary);
 }
 .w-shell .rt .topic-row.topic-row--active .row-title {
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .w-shell .rt .topic-row .row-title {
   max-width: 100%;
@@ -262,7 +268,7 @@
 }
 .w-shell .rt .topic-overdue {
   color: var(--color-error);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-shell .rt .topic-chip {
   font-size: var(--w-text-caption-size);
@@ -326,7 +332,7 @@
   min-height: var(--w-target);
   align-items: center;
   color: var(--color-text-primary);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-shell .rt .run-head:hover {
   color: var(--color-accent-primary);
@@ -348,7 +354,7 @@
 .w-shell .rt .meeting-row__start {
   font-size: var(--w-text-secondary-size);
   line-height: var(--w-text-secondary-line);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-shell .rt .meeting-item__sub {
   font-size: var(--w-text-secondary-size);
@@ -356,7 +362,7 @@
   color: var(--color-text-secondary);
 }
 .w-shell .rt .meeting-row__title {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-shell .rt .meeting-item--clickable:hover .meeting-item__hit::before {
   background: var(--color-selection);
@@ -372,7 +378,7 @@
   border-inline-start-color: var(--color-accent-primary);
 }
 .w-shell .rt .meeting-row.meeting-item--active .meeting-row__title {
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .w-shell .rt.meeting-list details {
   margin: var(--w-space-sm) 0;

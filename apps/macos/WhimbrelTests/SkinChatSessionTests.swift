@@ -681,7 +681,7 @@ final class SkinChatSessionTests: XCTestCase {
         let palette = try XCTUnwrap(catalogue["palette"] as? [String: Any])
         XCTAssertEqual(palette["tokens"] as? [String], ThemeToken.allCases.map(\.rawValue))
         XCTAssertEqual((catalogue["fonts"] as? [String: Any])?["families"] as? [String], SkinFamily.allCases.map(\.rawValue))
-        XCTAssertEqual(catalogue["archetypes"] as? [String], SkinArchetype.allCases.map(\.rawValue))
+        XCTAssertNil(catalogue["archetypes"], "the maker is not offered whole-page layouts")
         let voice = try XCTUnwrap((catalogue["voice"] as? [String: Any])?["keys"] as? [String: [String: Int]])
         XCTAssertEqual(voice["tagline"]?["limit"], SkinVoiceKey.tagline.limit)
         XCTAssertEqual(voice.count, SkinVoiceKey.allCases.count)

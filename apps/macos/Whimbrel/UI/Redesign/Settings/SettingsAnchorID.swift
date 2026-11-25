@@ -61,6 +61,7 @@ enum SettingsAnchorID: String, CaseIterable {
     case devicesName = "devices.name"
     case devicesPhone = "devices.phone"
     case devicesDeleteAccount = "devices.deleteAccount"
+    case devicesTellAFriend = "devices.tellAFriend"
     case connectorsCalendar = "connectors.calendar"
     case connectorsGmail = "connectors.gmail"
     case connectorsOutlook = "connectors.outlook"
@@ -111,7 +112,7 @@ enum SettingsAnchorID: String, CaseIterable {
     static var sync: WSyncAnchors {
         WSyncAnchors(
             overview: devicesOverview.rawValue, syncNow: devicesSyncNow.rawValue, name: devicesName.rawValue, phone: devicesPhone.rawValue,
-            deleteAccount: devicesDeleteAccount.rawValue)
+            deleteAccount: devicesDeleteAccount.rawValue, tellAFriend: devicesTellAFriend.rawValue)
     }
 
     static var connectors: WConnectorsAnchors {

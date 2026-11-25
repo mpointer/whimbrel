@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { WINDOW_KEYS, WMemoryControl, WMenuSection, WRecordingRow, WWindowFrame, arrowFocusIndex, arrowKeyAction, WINDOW_DESIGN, isCompactSpace, mainActionOnReturn, memoryControls, windowKeyAction, type SmallWindowKind } from ".";
+import { WINDOW_KEYS, WMemoryControl, WMenuSection, WRecordingRow, WWindowFrame, arrowFocusIndex, arrowKeyAction, WINDOW_DESIGN, isCompactSpace, mainActionOnReturn, memoryControls, windowKeyAction, windowDescription, windowDocumentTitle, type SmallWindowKind } from ".";
 
 const choices = [
   { id: "15m", label: "15 minutes" },
@@ -161,6 +161,21 @@ describe("the window frame", () => {
     />,
   );
 
+  it("is the focus target: a named dialog that can take focus from code but is not in the Tab order", () => {
+    expect(html).toMatch(/<main[^>]*role="alertdialog"/);
+    expect(html).toMatch(/<main[^>]*tabindex="-1"/);
+    const labelled = /aria-labelledby="([^"]+)"/.exec(html)?.[1];
+    const described = /aria-describedby="([^"]+)"/.exec(html)?.[1];
+    expect(labelled).toBeTruthy();
+    expect(described).toBeTruthy();
+    expect(html).toContain(`<h1 class="w-win-title" id="${labelled}"`);
+    // The description is hidden (never read a second time in the page) and holds the lines, not the countdown.
+    expect(html).toContain(`<span id="${described}" hidden="">Northwind security review. Audio stays on this PC.</span>`);
+    const description = /<span id="[^"]+" hidden="">([^<]*)<\/span>/.exec(html)?.[1] ?? "";
+    expect(description).not.toContain("Recording starts");
+    expect(description).not.toContain("8 s");
+  });
+
   it("names the window by its title, with the app mark and name above it", () => {
     expect(html).toContain("<h1");
     expect(html).toContain("Meeting detected");
@@ -303,5 +318,29 @@ describe("a menu section", () => {
   it("is named by its heading, which can be hidden from the eye but not from a screen reader", () => {
     expect(renderToStaticMarkup(<WMenuSection label="Memory">x</WMenuSection>)).toContain('class="w-menu-label"');
     expect(renderToStaticMarkup(<WMenuSection label="Recording" labelHidden>x</WMenuSection>)).toContain('class="w-visually-hidden"');
+  });
+});
+
+describe("what a small window is called and described", () => {
+  it("names the page by the window's title, then the product, never the product name alone", () => {
+    expect(windowDocumentTitle("Still in a meeting?")).toBe("Still in a meeting? - Whimbrel");
+    expect(windowDocumentTitle("  Raise budget ")).toBe("Raise budget - Whimbrel");
+    expect(windowDocumentTitle("")).toBe("Whimbrel");
+  });
+
+  it("describes with the pinned sentence and the lines in order, each as its own sentence", () => {
+    expect(windowDescription(["No one has spoken for 15 minutes."])).toBe("No one has spoken for 15 minutes.");
+    expect(windowDescription(["Record it? Audio stays on this PC.", "Northwind security review", "Zoom"])).toBe("Record it? Audio stays on this PC. Northwind security review. Zoom.");
+  });
+
+  it("leaves out empty and non-text parts and tidies spacing", () => {
+    expect(windowDescription([null, undefined, "  ", "Free  space\n to keep recording"])).toBe("Free space to keep recording.");
+    expect(windowDescription([])).toBe("");
+    expect(windowDescription(undefined)).toBe("");
+  });
+
+  it("has no description element when there is nothing to describe", () => {
+    const bare = renderToStaticMarkup(<WWindowFrame title="Meeting detected" actions={<button>Ok</button>} />);
+    expect(bare).not.toContain("aria-describedby");
   });
 });

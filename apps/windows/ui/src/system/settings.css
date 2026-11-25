@@ -39,7 +39,7 @@
   color: var(--color-text-primary);
   font-size: var(--w-text-caption-size);
   line-height: var(--w-text-caption-line);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   overflow-wrap: anywhere;
 }
 .w-status .w-icon {
@@ -85,7 +85,7 @@
   gap: var(--w-space-sm);
 }
 .w-nbox-title {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-nbox-text {
   overflow-wrap: anywhere;
@@ -265,6 +265,7 @@
   font-size: var(--w-text-subtitle-size);
   line-height: var(--w-text-subtitle-line);
   font-weight: var(--weight-display, var(--w-text-subtitle-weight));
+  font-style: var(--style-display, normal);
 }
 .w-scard-actions {
   display: flex;
@@ -691,7 +692,7 @@
   transform: rotate(90deg);
 }
 .w-disc-title {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -741,7 +742,7 @@
 .w-iconfirm-q {
   flex: 1 1 12rem;
   min-width: 0;
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   overflow-wrap: anywhere;
 }
 .w-iconfirm-actions {
@@ -804,7 +805,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--w-space-xs) var(--w-space-sm);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   overflow-wrap: anywhere;
 }
 .w-skin-yours {
@@ -813,7 +814,7 @@
   border-radius: var(--w-radius-pill);
   font-size: var(--w-text-caption-size);
   line-height: var(--w-text-caption-line);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-skin-caption {
   color: var(--color-text-secondary);

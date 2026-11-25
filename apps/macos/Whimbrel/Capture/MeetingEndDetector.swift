@@ -169,6 +169,12 @@ final class MeetingEndDetector {
         /// The next calendar meeting started (`MeetingSplit`).
         case split = "split"
 
+        /// A check that ran out with no answer ends untrimmed and marks the meeting for the
+        /// auto-trim: once the full transcript is stored, the queue trims it back to the last
+        /// stored speech plus the keep margin. Both the 15-minute "Still in a meeting?" and the
+        /// hourly "Still recording?" end with `.checkInTimeout`.
+        var endsWithAutoTrim: Bool { self == .checkInTimeout }
+
         /// The call itself went away (left, closed or quit), as opposed to the user being done
         /// (silence, the caps). Only these re-arm a calendar event for a rejoin.
         var callWentAway: Bool {

@@ -12,8 +12,10 @@ public struct WSyncAnchors: Equatable, Sendable {
     public var name: String
     public var phone: String
     public var deleteAccount: String
+    public var tellAFriend: String
 
-    public init(overview: String, syncNow: String, name: String, phone: String, deleteAccount: String) {
+    public init(overview: String, syncNow: String, name: String, phone: String, deleteAccount: String, tellAFriend: String) {
+        self.tellAFriend = tellAFriend
         self.overview = overview
         self.syncNow = syncNow
         self.name = name
@@ -21,7 +23,7 @@ public struct WSyncAnchors: Equatable, Sendable {
         self.deleteAccount = deleteAccount
     }
 
-    public var all: [String] { [overview, syncNow, name, phone, deleteAccount] }
+    public var all: [String] { [overview, syncNow, name, phone, deleteAccount, tellAFriend] }
 }
 
 public struct WConnectorsAnchors: Equatable, Sendable {
@@ -282,12 +284,14 @@ public struct WSyncModel {
     public var notes: [WSyncNote]
     public var pending: WPendingClientsModel?
     public var anchors: WSyncAnchors
+    /// The words of the Tell a friend card, or nil for no card.
+    public var tellAFriend: WTellAFriendLabels?
 
     public init(
         labels: WSyncLabels = WSyncLabels(), planLabels: WPlanLabels = WPlanLabels(), phase: WSyncPhase, phone: WPhoneCardModel,
         deviceName: String = "", actionError: String? = nil, devices: [WDeviceRow] = [], showsAddRunner: Bool = false, limit: WLimitModel? = nil,
         deleteMessage: String = "", staleLine: String? = nil, syncNow: WSyncNowModel, notes: [WSyncNote] = [],
-        pending: WPendingClientsModel? = nil, anchors: WSyncAnchors
+        pending: WPendingClientsModel? = nil, anchors: WSyncAnchors, tellAFriend: WTellAFriendLabels? = nil
     ) {
         self.labels = labels
         self.planLabels = planLabels
@@ -304,6 +308,7 @@ public struct WSyncModel {
         self.notes = notes
         self.pending = pending
         self.anchors = anchors
+        self.tellAFriend = tellAFriend
     }
 }
 
@@ -333,6 +338,8 @@ public struct WSyncActions {
     public var registerRunner: (String) async -> WRunnerRegistration
     /// Writes to the pasteboard; true when it worked.
     public var copy: (String) -> Bool
+    /// Copies the Tell a friend message to the pasteboard; true when it worked.
+    public var tellAFriend: () -> Bool
 
     public init(
         enableSync: @escaping () -> Void = {}, setDeviceName: @escaping (String) -> Void = { _ in }, saveDeviceName: @escaping () -> Void = {},
@@ -341,8 +348,9 @@ public struct WSyncActions {
         joinWaitlist: @escaping (Set<String>) -> Void = { _ in }, buy: @escaping (String) -> Void = { _ in }, syncNow: @escaping () -> Void = {},
         openURL: @escaping (String) -> Void = { _ in }, pendingAsk: @escaping (String) -> Void = { _ in }, pendingCancel: @escaping () -> Void = {},
         pendingConfirm: @escaping () -> Void = {}, registerRunner: @escaping (String) async -> WRunnerRegistration = { _ in .failure("") },
-        copy: @escaping (String) -> Bool = { _ in true }
+        copy: @escaping (String) -> Bool = { _ in true }, tellAFriend: @escaping () -> Bool = { true }
     ) {
+        self.tellAFriend = tellAFriend
         self.enableSync = enableSync
         self.setDeviceName = setDeviceName
         self.saveDeviceName = saveDeviceName

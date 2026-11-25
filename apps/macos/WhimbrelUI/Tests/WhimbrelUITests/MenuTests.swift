@@ -141,7 +141,7 @@ import Testing
             needs: [WMenuNeed(id: "sync", kind: .sync, title: "Sync", actions: []), WMenuNeed(id: "lib", kind: .library, title: "Library", actions: [WMenuAction(title: "Dismiss") {}])],
             next: WMenuNext(title: "Design sync", time: "1:30 PM", topic: "Pricing", hasBrief: true))
         #expect(model.focusOrder == [
-            "pause", "stop", "meetingWindow", "memory", "need.sync.0", "need.lib.0", "topic", "brief", "ask", "open", "settings", "quit",
+            "pause", "stop", "meetingWindow", "memory", "need.sync.0", "need.lib.0", "topic", "brief", "ask", "tellAFriend", "open", "settings", "quit",
         ])
     }
 
@@ -149,9 +149,9 @@ import Testing
         let model = WMenuModel(
             recording: WMenuRecording(state: .paused, canTogglePause: false),
             needs: [WMenuNeed(id: "sync", kind: .sync, title: "Sync")], disabled: [WMenuFocusID.memory, "need.sync.0"])
-        #expect(model.focusOrder == ["stop", "meetingWindow", "ask", "open", "settings", "quit"])
+        #expect(model.focusOrder == ["stop", "meetingWindow", "ask", "tellAFriend", "open", "settings", "quit"])
         let idle = WMenuModel(disabled: [WMenuFocusID.memory, WMenuFocusID.start])
-        #expect(idle.focusOrder == ["ask", "open", "settings", "quit"])
+        #expect(idle.focusOrder == ["ask", "tellAFriend", "open", "settings", "quit"])
     }
 
     @Test func theMenuOpensWithFocusOnTheFirstControlThatIsOn() {
@@ -172,7 +172,7 @@ import Testing
             recording: WMenuRecording(state: .recording),
             needs: [WMenuNeed(id: "lib", kind: .library, title: "L", actions: [WMenuAction(title: "Help") {}, WMenuAction(title: "Dismiss") {}])],
             next: WMenuNext(title: "x", time: "1:30 PM", topic: "t", hasBrief: true))
-        for id in ["pause", "stop", "meetingWindow", "memory", "need.lib.0", "need.lib.1", "topic", "brief", "ask", "open", "settings", "quit"] {
+        for id in ["pause", "stop", "meetingWindow", "memory", "need.lib.0", "need.lib.1", "topic", "brief", "ask", "tellAFriend", "open", "settings", "quit"] {
             #expect(model.focusOrder.contains(id), "\(id)")
         }
     }
@@ -191,7 +191,7 @@ import Testing
 
     @Test func withoutARecordingStartComesBeforeAsk() {
         let order = WMenuModel().focusOrder
-        #expect(order == ["memory", "start", "ask", "open", "settings", "quit"])
+        #expect(order == ["memory", "start", "ask", "tellAFriend", "open", "settings", "quit"])
     }
 
     @Test func aSyncNeedHasASlotAfterItsOwnActions() {
@@ -378,7 +378,7 @@ import Testing
                    s.streamsBoth, s.streamsMicrophone, s.streamsSystemAudio, s.streamsNone, WStrings.english.memoryNotCapturing,
                    WStrings.english.pausedUntil("3:10 PM"), s.memoryPausedUntil("3:10 PM"), s.turnOnMemory, s.turnOffMemory, s.startMeeting,
                    s.openBrief, s.openBriefFor("x"), s.openTopic("x"), s.askAboutWindow, s.openWhimbrel, s.settings, s.quit, s.cancel,
-                   s.alertWindowName, s.hotkeyWindowName, s.close, s.copy, s.answering]
+                   s.tellAFriend, s.tellAFriendCopied, s.tellAFriendHint, s.alertWindowName, s.hotkeyWindowName, s.close, s.copy, s.answering]
         for text in all {
             #expect(!text.contains("\u{2014}") && !text.contains("\u{2013}"), "dash in \(text)")
             #expect(!text.lowercased().contains("activity capture"), "old name in \(text)")

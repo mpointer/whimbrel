@@ -1,8 +1,10 @@
 import Foundation
 
-/// "Ask if I'm still recording after N hours". 0 = Off. Local to this Mac.
+/// "Ask if I'm still recording after N hours". 0 = Off; 1 until someone chooses. Local to this Mac.
 final class RecordingCheckInSettings: ObservableObject {
     static let allowedHours = [0, 1, 2, 3, 4]
+    /// For someone who never chose; a stored choice is kept as it is.
+    static let defaultHours = 1
     private static let hoursKey = "com.mpointer.kestrel.recordingCheckInHours"
     private let defaults: UserDefaults
 
@@ -37,6 +39,6 @@ final class RecordingCheckInSettings: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let stored = defaults.object(forKey: Self.hoursKey) as? Int
-        hours = stored.flatMap { Self.allowedHours.contains($0) ? $0 : nil } ?? 2
+        hours = stored.flatMap { Self.allowedHours.contains($0) ? $0 : nil } ?? Self.defaultHours
     }
 }

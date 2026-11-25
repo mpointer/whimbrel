@@ -134,8 +134,8 @@ import Testing
     // MARK: Anchors
 
     @Test func theAnchorListsAreTheirSections() {
-        let sync = WSyncAnchors(overview: "a", syncNow: "b", name: "c", phone: "d", deleteAccount: "e")
-        #expect(sync.all == ["a", "b", "c", "d", "e"])
+        let sync = WSyncAnchors(overview: "a", syncNow: "b", name: "c", phone: "d", deleteAccount: "e", tellAFriend: "f")
+        #expect(sync.all == ["a", "b", "c", "d", "e", "f"])
         let c = WConnectorsAnchors(calendar: "a", gmail: "b", outlook: "c", ownClient: "d", mcp: "e")
         #expect(c.all == ["a", "b", "c", "d", "e"])
     }

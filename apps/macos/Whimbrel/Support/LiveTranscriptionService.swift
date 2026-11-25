@@ -14,6 +14,16 @@ final class LiveTranscriptionService: ObservableObject {
         case listening
         case paused
         case unavailable(String)
+
+        /// For the check-in log: the case only, never the unavailable message.
+        var logName: String {
+            switch self {
+            case .idle: return "idle"
+            case .listening: return "listening"
+            case .paused: return "paused"
+            case .unavailable: return "unavailable"
+            }
+        }
     }
 
     @Published private(set) var segments: [CoreLiveSegment] = []
@@ -21,6 +31,8 @@ final class LiveTranscriptionService: ObservableObject {
     /// When a live line with new text last arrived (wall clock): late, backlogged speech
     /// still counts as someone speaking now.
     private(set) var lastSpeechArrivedAt: Date?
+    /// The live engine's type name, for the check-in log.
+    private(set) var engineName = "none"
     /// The live meeting's Ask. Here, not in the bar, so a window rebuild (a skin switch) keeps an
     /// answer streaming; torn down with the rest of the live state in `stop()`.
     let askSession = MeetingAskSession()
@@ -63,6 +75,7 @@ final class LiveTranscriptionService: ObservableObject {
         generation += 1
         segments = []
         lastSpeechArrivedAt = nil
+        engineName = String(describing: type(of: engine))
         status = .listening
         runner = Runner(meetingId: meetingId, engine: engine, detectLanguage: detectLanguage(), store: store())
         interval = Self.baseInterval
@@ -120,7 +133,15 @@ final class LiveTranscriptionService: ObservableObject {
         case .listening(let rows, let slowest):
             status = .listening
             if let rows {
-                if StillInMeeting.hasNewSpeech(old: segments, new: rows) { lastSpeechArrivedAt = Date() }
+                let arrival = CheckInLog.arrival(old: segments, new: rows)
+                if StillInMeeting.hasNewSpeech(old: segments, new: rows) {
+                    lastSpeechArrivedAt = Date()
+                    CheckInLog.record(event: "speech-arrived", reason: "live-line", lastSpeechAt: lastSpeechArrivedAt, quietSince: nil,
+                                      liveStatus: status.logName, engine: engineName, extra: arrival.extra)
+                } else if arrival.fillerLines > 0 {
+                    CheckInLog.record(event: "filler-ignored", reason: "live-line", lastSpeechAt: lastSpeechArrivedAt, quietSince: nil,
+                                      liveStatus: status.logName, engine: engineName, extra: arrival.extra)
+                }
                 segments = rows
             }
             if let slowest {

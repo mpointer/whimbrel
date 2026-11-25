@@ -40,18 +40,38 @@ enum LiveMeetingAdapter {
     }
 
     /// The live lines without any that fall in a paused stretch, as transcript entries timed by the clock.
+    /// How many of the newest lines the card shows.
+    static let transcriptWindow = 20
+    /// Lines kept above a jump target that is older than the window, so it is not alone.
+    static let jumpContext = 2
+    /// How long a jumped-to line stays marked as cited.
+    static let highlightDuration: Duration = .seconds(8)
+
+    /// The id of the entry for a live row.
+    static func entryId(segmentId: Int64) -> String { "live-\(segmentId)" }
+
+    /// The newest `transcriptWindow` lines. When `highlightedId` names an older line, the window starts a little above that line
+    /// instead, so a jump from an alert or an ask citation has a line to land on. It goes back to 20 once the highlight clears.
+    static func windowed<T>(_ rows: [T], highlightedId: String?, id: (T) -> String) -> [T] {
+        let newest = rows.count - transcriptWindow
+        guard newest > 0, let highlightedId, let at = rows.firstIndex(where: { id($0) == highlightedId }), at < newest else {
+            return Array(rows.suffix(transcriptWindow))
+        }
+        return Array(rows[max(0, at - jumpContext)...])
+    }
+
     static func entries(
         segments: [CoreLiveSegment], spans: [RecordingPausedSpan], recordingStartedAt: Date?, lastLine: WTranscriptLineState, you: String,
-        locale: Locale = .current
+        highlightedId: String? = nil, locale: Locale = .current
     ) -> [WTranscriptEntry] {
-        let kept = RecordingPausedSpans.dropping(segments, spans: spans).suffix(20)
+        let kept = windowed(RecordingPausedSpans.dropping(segments, spans: spans), highlightedId: highlightedId) { entryId(segmentId: $0.id) }
         let start = recordingStartedAt ?? Date()
         let rows = Array(kept)
         return rows.enumerated().map { index, row in
             let at = start.addingTimeInterval(Double(row.startCs) / 100)
             let name = row.speakerLabel == TranscriptionService.Speaker.me.rawValue ? you : row.speakerLabel
             return WTranscriptEntry(
-                time: timeOfDay(at, locale: locale), speaker: WPerson(name: name), text: row.text,
+                id: entryId(segmentId: row.id), time: timeOfDay(at, locale: locale), speaker: WPerson(name: name), text: row.text,
                 state: index == rows.count - 1 ? lastLine : .normal)
         }
     }
@@ -102,6 +122,8 @@ struct LiveMeetingRedesignScreen: View {
     let nextMeeting: (time: Date, title: String)?
     @StateObject private var autosave: ActiveNoteAutosaveController
     @State private var noticeCopied = false
+    /// The transcript line a live-alert jump or an ask citation points at. Clears itself after a few seconds.
+    @State private var highlightedEntryId: String?
 
     init(
         appState: AppState, model: ActiveMeetingModel, meeting: CoreMeeting, initialNotes: String,
@@ -124,13 +146,22 @@ struct LiveMeetingRedesignScreen: View {
                 model: liveModel, actions: actions,
                 warnings: { warnings },
                 editor: { editor },
+                extras: { LiveMeetingSnapshots(meetingId: meeting.id, store: appState.coreStore) },
                 alerts: {
                     // The existing alerts and ask, without a second transcript.
-                    if appState.liveTranscriptSettings.enabled { LiveMeetingSection(live: live, meeting: meeting, showsTranscript: false) }
+                    if appState.liveTranscriptSettings.enabled { LiveMeetingSection(
+                            live: live, meeting: meeting, showsTranscript: false, padsHorizontally: false,
+                            onHighlight: { highlight(segmentId: $0) })
+                    }
                 },
                 ask: { EmptyView() }
             )
             .redesignThemed()
+        }
+        .task(id: highlightedEntryId) {
+            guard highlightedEntryId != nil else { return }
+            try? await Task.sleep(for: LiveMeetingAdapter.highlightDuration)
+            if !Task.isCancelled { highlightedEntryId = nil }
         }
         .onAppear {
             autosave.seed(initialNotes)
@@ -168,8 +199,17 @@ struct LiveMeetingRedesignScreen: View {
             showsTranscript: transcriptOn,
             transcript: LiveMeetingAdapter.entries(
                 segments: live.segments, spans: pause?.spans(closingAt: now) ?? [], recordingStartedAt: audio.recordingStartedAt,
-                lastLine: LiveMeetingAdapter.lastLineState(state, listening: live.status == .listening), you: String(localized: "You", comment: "Speaker name for the person using this Mac in the live transcript.")),
-            transcriptAccessory: state == .paused ? strings.paused : (state == .resuming ? strings.resuming : (live.status == .listening ? strings.listening : nil)))
+                lastLine: LiveMeetingAdapter.lastLineState(state, listening: live.status == .listening), you: String(localized: "You", comment: "Speaker name for the person using this Mac in the live transcript."),
+                highlightedId: highlightedEntryId),
+            transcriptAccessory: state == .paused ? strings.paused : (state == .resuming ? strings.resuming : (live.status == .listening ? strings.listening : nil)),
+            highlightedEntryId: highlightedEntryId)
+    }
+
+    /// Shows a line as cited and scrolls to it. Reset first so citing the same line twice scrolls again.
+    private func highlight(segmentId: Int64) {
+        let id = LiveMeetingAdapter.entryId(segmentId: segmentId)
+        highlightedEntryId = nil
+        DispatchQueue.main.async { highlightedEntryId = id }
     }
 
     private var actions: WLiveActions {

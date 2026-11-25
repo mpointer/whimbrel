@@ -16,7 +16,7 @@ final class SettingsRedesignSyncConnectorsTests: XCTestCase {
             XCTAssertEqual(declared.count, Set(declared).count, "\(section)")
             XCTAssertEqual(SettingsRedesign.declaredAnchorIDs(for: section), declared)
         }
-        XCTAssertEqual(SettingsAnchorID.sync.all.count, 5)
+        XCTAssertEqual(SettingsAnchorID.sync.all.count, 6)
         XCTAssertEqual(SettingsAnchorID.connectors.all.count, 5)
         // Routines have no search entries.
         XCTAssertTrue(SettingsSearch.entries.filter { $0.section == .automations }.isEmpty)

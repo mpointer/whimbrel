@@ -296,7 +296,7 @@ public struct WMenuModel {
             if next.hasBrief { ids.append(WMenuFocusID.brief) }
         }
         if offersStart { ids.append(WMenuFocusID.start) }
-        ids.append(contentsOf: [WMenuFocusID.ask, WMenuFocusID.open, WMenuFocusID.settings, WMenuFocusID.quit])
+        ids.append(contentsOf: [WMenuFocusID.ask, WMenuFocusID.tellAFriend, WMenuFocusID.open, WMenuFocusID.settings, WMenuFocusID.quit])
         return ids.filter { !disabled.contains($0) }
     }
 
@@ -307,6 +307,7 @@ public struct WMenuModel {
 public enum WMenuFocusID {
     public static let pause = "pause", stop = "stop", meetingWindow = "meetingWindow", memory = "memory"
     public static let topic = "topic", brief = "brief", start = "start", ask = "ask"
+    public static let tellAFriend = "tellAFriend"
     public static let open = "open", settings = "settings", quit = "quit"
     public static func need(_ id: String, _ index: Int) -> String { ["need", id, String(index)].joined(separator: ".") }
 }
@@ -327,6 +328,8 @@ public struct WMenuActions {
     public var openWhimbrel: () -> Void
     public var openSettings: () -> Void
     public var quit: () -> Void
+    /// Copies the Tell a friend message; true when the copy worked, so the row says "Copied" only then.
+    public var tellAFriend: () -> Bool
 
     public init(
         pauseRecording: @escaping () -> Void = {}, resumeRecording: @escaping () -> Void = {}, stopRecording: @escaping () -> Void = {},
@@ -334,8 +337,9 @@ public struct WMenuActions {
         resumeMemory: @escaping () -> Void = {}, toggleMemory: @escaping () -> Void = {}, whatIsCaptured: @escaping () -> Void = {},
         openBrief: @escaping () -> Void = {}, openTopic: @escaping () -> Void = {}, startMeeting: @escaping () -> Void = {},
         askAboutWindow: @escaping () -> Void = {}, openWhimbrel: @escaping () -> Void = {}, openSettings: @escaping () -> Void = {},
-        quit: @escaping () -> Void = {}
+        quit: @escaping () -> Void = {}, tellAFriend: @escaping () -> Bool = { true }
     ) {
+        self.tellAFriend = tellAFriend
         self.pauseRecording = pauseRecording
         self.resumeRecording = resumeRecording
         self.stopRecording = stopRecording

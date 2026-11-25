@@ -12032,6 +12032,40 @@
         }
       }
     },
+    "Copies a short message and a link to Whimbrel. Nothing is sent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopiert eine kurze Nachricht und einen Link zu Whimbrel. Es wird nichts gesendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copia un mensaje corto y un enlace a Whimbrel. No se envía nada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie un court message et un lien vers Whimbrel. Rien n'est envoyé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie un court message et un lien vers Whimbrel. Rien n'est envoyé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copia uma mensagem curta e um link para o Whimbrel. Nada é enviado."
+          }
+        }
+      }
+    },
     "Copies your devices sent to the sync relay before this version stay there, encrypted. Current devices ignore them." : {
       "comment" : "Client controls (X6, Task 11; the Mac's Task 10 wording, with this PC's facts).",
       "localizations" : {
@@ -12097,6 +12131,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Copiar"
+          }
+        }
+      }
+    },
+    "Copy a short message with a link to Whimbrel, then paste it wherever you like. Nothing is sent from here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopieren Sie eine kurze Nachricht mit einem Link zu Whimbrel und fügen Sie sie ein, wo Sie möchten. Von hier wird nichts gesendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copia un mensaje corto con un enlace a Whimbrel y pégalo donde quieras. Desde aquí no se envía nada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiez un court message avec un lien vers Whimbrel, puis collez-le où vous voulez. Rien n'est envoyé d'ici."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiez un court message avec un lien vers Whimbrel, puis collez-le où vous voulez. Rien n'est envoyé d'ici."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie uma mensagem curta com um link para o Whimbrel e cole onde quiser. Nada é enviado a partir daqui."
           }
         }
       }
@@ -12233,6 +12301,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Copiar imagem"
+          }
+        }
+      }
+    },
+    "Copy message" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nachricht kopieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiar mensaje"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copier le message"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copier le message"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiar mensagem"
           }
         }
       }
@@ -12642,6 +12744,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Não foi possível copiar. Selecione o token e copie-o você mesmo."
+          }
+        }
+      }
+    },
+    "Could not copy. Try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopieren nicht möglich. Versuchen Sie es erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo copiar. Inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie impossible. Réessayez."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie impossible. Réessayez."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível copiar. Tente novamente."
           }
         }
       }
@@ -22789,6 +22925,40 @@
         }
       }
     },
+    "I adjusted {colours} in “{name}” so text stays readable." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ich habe {colours} in „{name}“ angepasst, damit der Text lesbar bleibt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "He ajustado {colours} en «{name}» para que el texto siga siendo legible."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "J’ai ajusté {colours} dans « {name} » pour que le texte reste lisible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "J’ai ajusté {colours} dans « {name} » pour que le texte reste lisible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustei {colours} em “{name}” para que o texto continue legível."
+          }
+        }
+      }
+    },
     "I couldn't make a usable palette, so this skin uses Whimbrel's colours for now." : {
       "localizations" : {
         "de" : {
@@ -22921,6 +23091,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Tenho reuniões em outros idiomas"
+          }
+        }
+      }
+    },
+    "I use Whimbrel for my meeting notes. It records without a bot, and my recordings stay on my computer. Free for Mac and Windows: {link}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ich nutze Whimbrel für meine Meeting-Notizen. Es nimmt ohne Bot auf, und meine Aufnahmen bleiben auf meinem Computer. Kostenlos für Mac und Windows: {link}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso Whimbrel para mis notas de reuniones. Graba sin bot y mis grabaciones se quedan en mi computadora. Gratis para Mac y Windows: {link}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "J'utilise Whimbrel pour mes notes de réunion. Il enregistre sans robot, et mes enregistrements restent sur mon ordinateur. Gratuit pour Mac et Windows : {link}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "J'utilise Whimbrel pour mes notes de réunion. Il enregistre sans robot, et mes enregistrements restent sur mon ordinateur. Gratuit pour Mac et Windows : {link}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eu uso o Whimbrel para minhas anotações de reuniões. Ele grava sem bot, e minhas gravações ficam no meu computador. Grátis para Mac e Windows: {link}"
           }
         }
       }
@@ -30145,6 +30349,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Mesclar {name} com"
+          }
+        }
+      }
+    },
+    "Message copied. Paste it wherever you like." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nachricht kopiert. Fügen Sie sie ein, wo Sie möchten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mensaje copiado. Pégalo donde quieras."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Message copié. Collez-le où vous voulez."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Message copié. Collez-le où vous voulez."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mensagem copiada. Cole onde quiser."
           }
         }
       }
@@ -52668,6 +52906,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Retirar"
+          }
+        }
+      }
+    },
+    "Tell a friend" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einem Freund empfehlen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recomendar a un amigo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recommander à un ami"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recommander à un ami"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recomendar a um amigo"
           }
         }
       }

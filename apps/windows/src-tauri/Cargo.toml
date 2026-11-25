@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.82"
+version = "0.9.83"
 edition = "2021"
 publish = false
 # One binary, the app; the Tauri CLI builds and bundles it. Tauri puts every [[bin]] in the
@@ -154,6 +154,9 @@ features = [
     "Media_Ocr",
     "Security_Authorization_AppCapabilityAccess",
     "System_UserProfile",
+    # The "Message copied" toast from the tray's Tell a friend item (tell_friend.rs); no new crate.
+    "Data_Xml_Dom",
+    "UI_Notifications",
 ]
 
 [dependencies.windows-core]

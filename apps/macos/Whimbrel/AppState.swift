@@ -682,6 +682,8 @@ final class AppState: ObservableObject {
     /// "Still in a meeting?" (`StillInMeeting`) for a recording started by hand, fed by the
     /// same 5 s poll and on wake; nil for any other recording.
     private var stillInMeeting: (promptShownAt: Date?, keptAt: Date?, polledAt: Date?)?
+    /// The quiet clock's start as last logged, so a reset is logged once (`CheckInLog`).
+    private var loggedQuietSince: Date?
     private var wakeObserver: NSObjectProtocol?
     /// "Whimbrel isn't hearing anything": silence on every track while recording, fed by the
     /// same 5 s poll. `silenceWarning` is the inline banner's text; nil while sound is arriving.
@@ -1771,7 +1773,7 @@ final class AppState: ObservableObject {
 
     private func carryOutStop(_ action: StartStopRules.StopAction, reason: MeetingEndDetector.EndReason?) {
         switch action {
-        case .endMeeting: endMeeting(reason: reason)
+        case .endMeeting: endMeeting(reason: reason, autoTrim: reason?.endsWithAutoTrim ?? false)
         case .stopAudioAndEndWhenRowLands: requestStopDuringStart(reason: reason)
         case .stopRowlessRecording: stopRowlessRecording()
         case .nothing: break
@@ -2015,6 +2017,7 @@ final class AppState: ObservableObject {
         recordingCheckInPanel.hide()
         if stillInMeeting != nil { removeStillInMeetingNotice() }
         stillInMeeting = nil
+        loggedQuietSince = nil
     }
 
     private func pollSilence() {
@@ -2187,14 +2190,23 @@ final class AppState: ObservableObject {
         case .none:
             break
         case .showPrompt:
+            logCheckIn("prompt-shown", reason: "hourly-paused")
             recordingCheckInPanel.showPaused(
                 onResume: { [weak self] in self?.resumeRecording() },
-                onStop: { [weak self] in self?.endActiveMeetingIfNeeded(reason: .checkInStop) })
+                onStop: { [weak self] in
+                    self?.logCheckIn("stop", reason: "hourly-paused-answer")
+                    self?.endActiveMeetingIfNeeded(reason: .checkInStop)
+                })
             postRecordingNotice(String(localized: "This recording is still paused."))
         case .stop:
             // The countdown ran out. A pause is never ended by the app: the panel stays, and it asks again in an hour.
-            if RecordingPauseRules.checkInMayEnd(paused: true) { endActiveMeetingIfNeeded(reason: .checkInTimeout) }
-            else { activeCheckIn?.keepRecording(now: Date()) }
+            if RecordingPauseRules.checkInMayEnd(paused: true) {
+                logCheckIn("stop", reason: "hourly-timeout")
+                endActiveMeetingIfNeeded(reason: .checkInTimeout)
+            } else {
+                logCheckIn("keep", reason: "hourly-paused-no-answer")
+                activeCheckIn?.keepRecording(now: Date())
+            }
         }
     }
 
@@ -2211,13 +2223,22 @@ final class AppState: ObservableObject {
         case .none:
             break
         case .showPrompt(let deadline):
+            logCheckIn("prompt-shown", reason: "hourly")
             recordingCheckInPanel.show(
                 deadline: deadline,
-                onKeep: { [weak self] in self?.activeCheckIn?.keepRecording(now: Date()) },
-                onStop: { [weak self] in self?.endActiveMeetingIfNeeded(reason: .checkInStop) }
+                onKeep: { [weak self] in
+                    self?.logCheckIn("keep", reason: "hourly-answer")
+                    self?.activeCheckIn?.keepRecording(now: Date())
+                },
+                onStop: { [weak self] in
+                    self?.logCheckIn("stop", reason: "hourly-answer")
+                    self?.endActiveMeetingIfNeeded(reason: .checkInStop)
+                }
             )
             postRecordingNotice(StatusMenuCopy.checkInWarning)
         case .stop:
+            // No answer. `.checkInTimeout` ends with the auto-trim (`EndReason.endsWithAutoTrim`).
+            logCheckIn("stop", reason: "hourly-timeout")
             recordingCheckInPanel.hide()
             endActiveMeetingIfNeeded(reason: .checkInTimeout)
         }
@@ -2232,15 +2253,24 @@ final class AppState: ObservableObject {
         stillInMeeting?.polledAt = now
         if let shown, shown != watch.promptShownAt {
             stillInMeeting?.promptShownAt = shown
+            logCheckIn("prompt-shown", reason: "quiet-after-sleep")
             showStillInMeetingPrompt(now: now)
         }
         // Late (backlogged) live lines count as speech when they arrive; off live, nothing does.
         let arrived = liveTranscript.status == .listening ? liveTranscript.lastSpeechArrivedAt : nil
         let action = StillInMeeting.state(now: now, recordingStartedAt: startedAt, lastSpeechAt: lastSpeechAt(startedAt: startedAt),
                                           speechArrivedAt: arrived, promptShownAt: shown, keptAt: watch.keptAt)
+        let quiet = StillInMeeting.quietSince(recordingStartedAt: startedAt, lastSpeechAt: lastSpeechAt(startedAt: startedAt),
+                                              speechArrivedAt: arrived, keptAt: watch.keptAt)
+        if quiet != loggedQuietSince {
+            let reason = loggedQuietSince == nil ? "recording-start" : "speech-or-keep"
+            loggedQuietSince = quiet
+            logCheckIn("quiet-clock-reset", reason: reason, quietSince: quiet)
+        }
         switch action {
         case .none:
             if shown != nil {   // someone spoke while it asked
+                logCheckIn("cancel", reason: "speech-while-asked", quietSince: quiet)
                 stillInMeeting?.promptShownAt = nil
                 recordingCheckInPanel.hide()
                 removeStillInMeetingNotice()
@@ -2249,9 +2279,11 @@ final class AppState: ObservableObject {
         case .prompt:
             guard shown == nil else { return true }
             stillInMeeting?.promptShownAt = now
+            logCheckIn("prompt-shown", reason: "quiet", quietSince: quiet)
             showStillInMeetingPrompt(now: now)
             return true
         case .stop:
+            logCheckIn("stop", reason: "quiet-timeout", quietSince: quiet)
             stopQuietRecording(reason: .checkInTimeout)
             return true
         }
@@ -2280,13 +2312,30 @@ final class AppState: ObservableObject {
     private func answerStillInMeeting(keep: Bool) {
         guard stillInMeeting?.promptShownAt != nil else { return }
         if keep {
+            logCheckIn("keep", reason: "quiet-answer")
             stillInMeeting?.promptShownAt = nil
             stillInMeeting?.keptAt = Date()   // re-arms only this timer
             recordingCheckInPanel.hide()
             removeStillInMeetingNotice()
         } else {
+            logCheckIn("stop", reason: "quiet-answer")
             stopQuietRecording(reason: .checkInStop)
         }
+    }
+
+    /// One `check-in` log line with the state a "why did it run so long?" report needs.
+    /// Counts and times only, never transcript text (`CheckInLog`).
+    private func logCheckIn(_ event: String, reason: String, quietSince: Date? = nil) {
+        let started = activeMeetingStartedAt
+        let speech = started.flatMap { lastSpeechAt(startedAt: $0) }
+        var quiet = quietSince
+        if quiet == nil, let started {
+            quiet = StillInMeeting.quietSince(recordingStartedAt: started, lastSpeechAt: speech,
+                                              speechArrivedAt: liveTranscript.status == .listening ? liveTranscript.lastSpeechArrivedAt : nil,
+                                              keptAt: stillInMeeting?.keptAt)
+        }
+        CheckInLog.record(event: event, reason: reason, lastSpeechAt: speech, quietSince: quiet,
+                          liveStatus: liveTranscript.status.logName, engine: liveTranscript.engineName)
     }
 
     /// Stops untrimmed; the transcription queue trims it once the full transcript is stored.

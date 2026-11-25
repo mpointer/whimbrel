@@ -17,6 +17,7 @@ pub mod quality;
 pub mod recorder;
 pub mod service;
 pub mod snapshots;
+pub mod speech_rule;
 pub mod spoken;
 pub mod still_here;
 pub mod trim;

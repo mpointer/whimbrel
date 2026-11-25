@@ -179,6 +179,13 @@ fn prompt_contains_catalogue_history_and_no_name_slot_fill() {
 }
 
 #[test]
+fn the_prompt_does_not_offer_whole_page_layouts() {
+    let prompt = build_skin_prompt(&input(0));
+    assert!(!prompt.contains("layout archetype"));
+    assert!(!prompt.contains("archetypes"));
+}
+
+#[test]
 fn skin_maker_es_us_adds_language_line_first() {
     let mut i = input(0);
     i.output_language = "es-US".into();

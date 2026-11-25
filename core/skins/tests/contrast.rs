@@ -626,6 +626,8 @@ fn pairs_named(name: &str) -> Vec<Pair> {
         "glass" => archetype_pairs(Archetype::Glass),
         "field" => archetype_pairs(Archetype::Field),
         "standard" => archetype_pairs(Archetype::Standard),
+        // Every layout's pairs and every Home element's: what Windows repairs a palette against.
+        "elements" => skins::all_redesign_pairs(),
         other => panic!("unknown pair set {other}"),
     }
 }
@@ -651,6 +653,23 @@ fn golden_inputs() -> Vec<(String, &'static str, Variant)> {
     gold.set(Token::BackgroundCard, 0xFFFFFF);
     gold.set(Token::AccentPrimary, 0xFFB612);
     cases.push(("steelers-gold-on-white".into(), "all", gold));
+    // The Home element pairs (redesign): random palettes, then the three elements that add a pair.
+    for k in 0..6 {
+        cases.push((
+            format!("random-elements-{k}"),
+            "elements",
+            random_variant(&mut Seeded(900 + k)),
+        ));
+    }
+    let mut scoreboard = default_palette().light;
+    scoreboard.set(Token::AccentPrimary, 0x1F3A5F);
+    scoreboard.set(Token::TextOnAccent, 0x244468);
+    cases.push(("elements-scoreboard-digits-too-faint".into(), "elements", scoreboard));
+    let mut links = default_palette().dark;
+    links.set(Token::Link, links.get(Token::BackgroundPage).unwrap());
+    cases.push(("elements-link-too-faint-on-page".into(), "elements", links));
+    cases.push(("elements-default-light-passes".into(), "elements", default_palette().light));
+    cases.push(("elements-default-dark-passes".into(), "elements", default_palette().dark));
     cases.push((
         "default-light-on-glass".into(),
         "glass",
@@ -775,4 +794,93 @@ fn every_bundled_skin_passes_its_own_element_pairs_after_repair() {
             }
         }
     }
+}
+
+// --- Windows palette repair: the gate every save, import, sync-in and maker palette goes through
+
+use skins::elements::{Actions, NextMeeting};
+use skins::store::{archetype_repair, archetype_repair_with};
+
+fn elements(f: impl Fn(ElementChoices) -> ElementChoices) -> [ElementChoices; 1] {
+    [f(ElementChoices::default())]
+}
+
+/// Default with its scoreboard digits (`textOnAccent` on `accentPrimary`) made unreadable in light.
+fn faint_scoreboard() -> Palette {
+    let mut p = default_palette();
+    p.id = "faint".into();
+    // A dark accent reads on the page and cards; digits only a shade lighter do not read on it.
+    p.light.set(Token::AccentPrimary, 0x1F3A5F);
+    p.light.set(Token::TextOnAccent, 0x244468);
+    p
+}
+
+#[test]
+fn a_failing_palette_is_repaired_and_reports_what_moved() {
+    let mut p = default_palette();
+    p.id = "pale".into();
+    let page = p.light.get(Token::BackgroundPage).unwrap();
+    p.light.set(Token::TextPrimary, page);
+    let (fixed, changed) = archetype_repair_with(&p, "pale", Archetype::Standard, &[]).expect("repaired");
+    assert!(changed.contains(&Token::TextPrimary));
+    assert!(pairs_pass(&fixed.light, &all_pairs()) && pairs_pass(&fixed.dark, &all_pairs()));
+    assert_ne!(fixed.light.get(Token::TextPrimary), Some(page));
+}
+
+#[test]
+fn a_passing_palette_is_left_unchanged() {
+    // Default passes the Standard layout and every element it can choose: nothing is repaired or reported.
+    let d = default_palette();
+    assert!(archetype_repair(&d, "default", Archetype::Standard).is_none());
+    assert!(archetype_repair_with(&d, "default", Archetype::Standard, &ElementChoices::every_variant()).is_none());
+}
+
+#[test]
+fn the_scoreboard_pair_is_checked_and_repaired() {
+    // The scoreboard's digits are `textOnAccent` on `accentPrimary`, a pair every layout already requires,
+    // so it is repaired for a skin that chooses the scoreboard and for one that does not.
+    let p = faint_scoreboard();
+    let scoreboard = elements(|c| ElementChoices { next_meeting: NextMeeting::Scoreboard, ..c });
+    for choices in [&[][..], &scoreboard[..]] {
+        let (fixed, changed) = archetype_repair_with(&p, "faint", Archetype::Standard, choices).expect("repaired");
+        assert!(changed.contains(&Token::TextOnAccent) || changed.contains(&Token::AccentPrimary), "{changed:?}");
+        assert!(pair_failures(&fixed.light, &element_pairs(&scoreboard[0])).is_empty());
+    }
+}
+
+#[test]
+fn the_links_pair_is_checked_for_a_skin_that_chooses_text_links() {
+    let mut p = default_palette();
+    p.id = "faint-links".into();
+    p.dark.set(Token::Link, p.dark.get(Token::BackgroundPage).unwrap());
+    let links = elements(|c| ElementChoices { actions: Actions::Links, ..c });
+    // Standard does not draw links itself, so only the element's pair can ask for the repair.
+    assert!(archetype_repair_with(&p, "faint-links", Archetype::Standard, &[]).is_none());
+    let (fixed, changed) = archetype_repair_with(&p, "faint-links", Archetype::Standard, &links).expect("repaired");
+    assert!(!changed.is_empty());
+    assert!(pair_failures(&fixed.dark, &element_pairs(&links[0])).is_empty());
+}
+
+#[test]
+fn the_repair_covers_every_element_so_a_later_choice_cannot_bring_a_pair_back() {
+    let scoreboard = elements(|c| ElementChoices { next_meeting: NextMeeting::Scoreboard, ..c });
+    let mut p = faint_scoreboard();
+    p.dark.set(Token::Link, p.dark.get(Token::BackgroundPage).unwrap());
+    let (fixed, _) = archetype_repair_with(&p, "faint", Archetype::Standard, &scoreboard).unwrap();
+    for c in ElementChoices::every_variant() {
+        for v in [&fixed.light, &fixed.dark] {
+            assert!(pair_failures(v, &element_pairs(&c)).is_empty(), "{c:?}");
+        }
+    }
+}
+
+#[test]
+fn all_redesign_pairs_is_all_pairs_plus_each_element_pair_once() {
+    let combined = skins::all_redesign_pairs();
+    let names: Vec<String> = combined.iter().map(|p| format!("{} on {}", p.text.name(), p.name)).collect();
+    let unique: std::collections::BTreeSet<&String> = names.iter().collect();
+    assert_eq!(unique.len(), names.len(), "no pair twice");
+    assert!(combined.len() >= all_pairs().len());
+    assert!(names.iter().any(|n| n == "textOnAccent on accentPrimary"));
+    assert!(names.iter().any(|n| n == "link on backgroundPage"));
 }

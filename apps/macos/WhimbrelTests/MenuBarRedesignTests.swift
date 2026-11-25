@@ -308,6 +308,42 @@ final class MenuBarRedesignTests: XCTestCase {
         XCTAssertEqual(starting.quitTitle, EncryptionCopy.quitAction)
     }
 
+    // MARK: Tell a friend
+
+    func testTheTellAFriendRowIsInTheMenuBetweenAskAndOpenAndWorksWithoutAnAccount() {
+        let strings = WhimbrelUIStrings.menuStrings()
+        XCTAssertEqual(strings.tellAFriend, "Tell a friend")
+        XCTAssertEqual(strings.tellAFriendCopied, "Copied")
+        XCTAssertFalse(strings.tellAFriendHint.isEmpty)
+        // The row has a place in the arrow-key order, and no state of the app (no store, no account, memory off) takes it away.
+        let order = WMenuModel(disabled: [WMenuFocusID.memory, WMenuFocusID.start]).focusOrder
+        let ask = order.firstIndex(of: WMenuFocusID.ask)
+        XCTAssertNotNil(ask)
+        XCTAssertEqual(order[(ask ?? 0) + 1], WMenuFocusID.tellAFriend)
+        XCTAssertEqual(order[(ask ?? 0) + 2], WMenuFocusID.open)
+    }
+
+    func testTellAFriendCopiesOnePlainMessageWithThePlainLinkAndNoCode() throws {
+        let message = TellAFriend.message()
+        XCTAssertTrue(message.hasSuffix(WTellAFriend.link))
+        XCTAssertEqual(message.components(separatedBy: WTellAFriend.link).count, 2)
+        XCTAssertFalse(message.contains("%@"))
+        XCTAssertFalse(message.lowercased().contains("code"))
+        let board = NSPasteboard(name: NSPasteboard.Name("whimbrel.test.tell-a-friend.\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        XCTAssertTrue(TellAFriend.copy(to: board))
+        XCTAssertEqual(board.string(forType: .string), message)
+        // Not concealed: it is meant to be pasted anywhere (unlike a token).
+        XCTAssertNil(board.string(forType: SettingsPasteboard.concealedType))
+    }
+
+    func testTheTellAFriendCardWordsAreTheCatalogsAndSayNothingIsSent() {
+        let labels = TellAFriend.labels()
+        XCTAssertEqual(labels.heading, "Tell a friend")
+        XCTAssertEqual(labels.copyButton, "Copy message")
+        XCTAssertTrue(labels.blurb.contains("Nothing is sent"))
+    }
+
     // MARK: The old status line is gone from the new menu
 
     func testTheNewMenuDoesNotUseTheDeveloperStatusLine() throws {

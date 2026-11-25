@@ -31,7 +31,7 @@
 }
 .th-cv-question {
   margin: 0;
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   overflow-wrap: anywhere;
   user-select: text;
 }
@@ -127,7 +127,7 @@
   min-width: 0;
   margin: 0;
   font-size: var(--w-text-title-size, 1.25rem);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   overflow-wrap: anywhere;
 }
 .th-cv-title:focus-visible {
@@ -304,7 +304,7 @@
   align-items: center;
   gap: var(--w-space-xs);
   max-width: 100%;
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .th-cv-row-title > span {
   overflow: hidden;
@@ -352,7 +352,7 @@
   height: 1rem;
 }
 .th-cv-radio[aria-checked="true"] {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .th-cv-row .th-conv-edit {
   flex: 1 1 auto;

@@ -255,3 +255,35 @@
       });
   });
 })();
+
+// Share block: copy the message. Without script the button stays hidden and the
+// message is plain text to select.
+(function () {
+  "use strict";
+  var block = document.querySelector("[data-share]");
+  if (!block) return;
+  var button = block.querySelector("[data-share-button]");
+  var message = block.querySelector("[data-share-message]");
+  var status = block.querySelector("[data-share-status]");
+  if (!button || !message || !status) return;
+  button.hidden = false;
+  button.addEventListener("click", function () {
+    var done = function (ok) {
+      status.textContent = block.getAttribute(ok ? "data-copied" : "data-failed") || "";
+      status.classList.toggle("is-error", !ok);
+    };
+    var fallback = function () {
+      try {
+        var range = document.createRange();
+        range.selectNodeContents(message);
+        var sel = getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        done(document.execCommand("copy"));
+      } catch (e) { done(false); }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(message.textContent.trim()).then(function () { done(true); }, fallback);
+    } else fallback();
+  });
+})();

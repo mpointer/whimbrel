@@ -17,7 +17,7 @@ use serde::Serialize;
 use serde_json::Value;
 use skins::format::{Archetype, Placement};
 use skins::palette::Palette;
-use skins::store::archetype_repair;
+use skins::store::{archetype_repair, archetype_repair_with, skin_choices};
 use skins::{default_palette, load_bundled, load_palettes, Glow, Skin, Token, UserSkinStore, Variant};
 use tauri::{ipc::Response, AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -61,7 +61,8 @@ impl BundledDirs {
 /// `palette` as it is drawn under `skin`'s layout: repaired when it fails that layout's pairs, with
 /// the id, name, author and shipped variants it had.
 fn gated(palette: &Palette, skin: &Skin) -> Palette {
-    match archetype_repair(palette, &palette.id, skin.today.archetype) {
+    // The skin's own Home element pairs count too (scoreboard digits, text links, labels, infobox).
+    match archetype_repair_with(palette, &palette.id, skin.today.archetype, &[skin_choices(skin)]) {
         Some((fixed, _)) => Palette {
             id: palette.id.clone(),
             name: palette.name.clone(),
@@ -752,6 +753,23 @@ mod tests {
         let fixed = skins::parse_palette(&serde_json::to_vec(&out[0]).unwrap(), &default_palette()).unwrap();
         assert!(archetype_repair(&fixed, "pale", skin.today.archetype).is_none());
         assert_ne!(fixed.light.get(skins::Token::TextPrimary), Some(page));
+    }
+
+    #[test]
+    fn a_palette_failing_only_the_skins_links_pair_is_repaired_for_that_skin() {
+        let mut faint = default_palette();
+        faint.id = "faint".into();
+        // Links drawn in the page colour: the layout's own pairs pass, the links pair does not.
+        let page = faint.light.get(skins::Token::BackgroundPage).unwrap();
+        faint.light.set(skins::Token::Link, page);
+        // A skin that draws text links needs them readable on the page.
+        let mut links = skins::whimbrel_default();
+        links.today.options.insert("actions".into(), "links".into());
+        let fixed = gated(&faint, &links);
+        assert_eq!(fixed.id, "faint");
+        assert_ne!(fixed.light, faint.light);
+        // One that does not is drawn as the palette is.
+        assert_eq!(gated(&faint, &skins::whimbrel_default()).light, faint.light);
     }
 
     #[test]

@@ -16,6 +16,7 @@ import {
   applySkin,
   chooseSkin,
   controlRadius,
+  emphasisWeight,
   currentSelection,
   installedSkins,
   isCreamDefault,
@@ -212,6 +213,32 @@ describe("applying a skin", () => {
     expect(vars["--font-label"]).toBe(FONT_MAP["Georgia"]);
     expect(vars["--weight-label"]).toBe("900");
     expect(vars["--style-label"]).toBe("italic");
+  });
+
+  it("sets body emphasis two steps over the body weight, never past 800 and never under the body", () => {
+    const emphasis = (body: string) => skinVariables(variant({ typography: { body } }).skin)["--weight-emphasis"];
+    expect(emphasis("SF Pro/regular")).toBe("600");
+    expect(emphasis("SF Pro/ultraLight")).toBe("300");
+    expect(emphasis("SF Pro/medium")).toBe("700");
+    expect(emphasis("SF Pro/semibold")).toBe("800");
+    expect(emphasis("SF Pro/heavy")).toBe("800");
+    expect(emphasis("SF Pro/black")).toBe("900");
+    expect(emphasisWeight(400)).toBe(600);
+  });
+
+  it("sets Thread's type variables to what Thread has always drawn", () => {
+    const vars = skinVariables(THREAD.skin);
+    expect(["display", "body", "numerals", "label"].map((r) => vars[`--weight-${r}`])).toEqual(["600", "400", "600", "400"]);
+    expect(["display", "body", "numerals", "label"].map((r) => vars[`--style-${r}`])).toEqual(["normal", "normal", "normal", "normal"]);
+    expect(vars["--weight-emphasis"]).toBe("600");
+    expect(vars["--caps"]).toBe("none");
+    expect(vars["--caps-variant"]).toBe("normal");
+  });
+
+  it("maps caps upper and small to their own properties", () => {
+    const caps = (c: string) => skinVariables(variant({ typography: { caps: c as never } }).skin);
+    expect([caps("upper")["--caps"], caps("upper")["--caps-variant"]]).toEqual(["uppercase", "normal"]);
+    expect([caps("small")["--caps"], caps("small")["--caps-variant"]]).toEqual(["none", "small-caps"]);
   });
 
   it("names the skin's layout, band, dividers and texture", () => {

@@ -7,7 +7,8 @@ use crate::format::{is_valid_id, whimbrel_default, Archetype, Skin};
 use crate::history::{self, Version, VersionPalette};
 use crate::loader::parse_skin;
 use crate::palette::{default_palette, parse_palette, Palette, Token, Variants};
-use crate::repair::{all_pairs, archetype_pairs, pairs_pass, repair};
+use crate::elements::ElementChoices;
+use crate::repair::{all_pairs, archetype_pairs, element_pairs, pairs_pass, repair_for};
 use serde_json::Value;
 use std::fmt;
 use std::io;
@@ -508,6 +509,9 @@ pub struct Gated {
     pub palettes: Vec<Palette>,
     /// One sentence per palette adjusted, for the chat to show.
     pub notes: Vec<String>,
+    /// The same, as data: each adjusted palette's name and the colours that moved, in order, so a
+    /// shell can say it in its own language.
+    pub adjusted: Vec<(String, Vec<Token>)>,
 }
 
 /// `textSecondary` as "text secondary".
@@ -531,7 +535,21 @@ pub fn archetype_repair(
     id: &str,
     archetype: Archetype,
 ) -> Option<(Palette, Vec<Token>)> {
-    let pairs = archetype_pairs(archetype);
+    archetype_repair_with(palette, id, archetype, &[])
+}
+
+/// `archetype_repair`, where a palette that fails the Home element pairs of `choices` (the skin's own
+/// scoreboard digits, text links, labels and infobox) also needs repair. The repair itself always
+/// covers every element variant, as the Mac's does (`PaletteRepair.repair(_, redesign:)` with
+/// `WHomeElements.everyVariant`), so a later change of element cannot bring back a failing pair.
+pub fn archetype_repair_with(
+    palette: &Palette,
+    id: &str,
+    archetype: Archetype,
+    choices: &[ElementChoices],
+) -> Option<(Palette, Vec<Token>)> {
+    let mut pairs = archetype_pairs(archetype);
+    pairs.extend(choices.iter().flat_map(element_pairs));
     if pairs_pass(&palette.light, &pairs) && pairs_pass(&palette.dark, &pairs) {
         return None;
     }
@@ -543,11 +561,16 @@ pub fn archetype_repair(
     candidate.author = String::new();
     candidate.variants = Variants::Both;
     let all = all_pairs();
-    let (fixed, changed) = repair(&candidate, &all);
-    if !(pairs_pass(&fixed.light, &all) && pairs_pass(&fixed.dark, &all)) {
+    let (fixed, changed) = repair_for(&candidate, &all, Some(&ElementChoices::every_variant()));
+    if !(pairs_pass(&fixed.light, &all) && pairs_pass(&fixed.dark, &all)) || changed.is_empty() {
         return None;
     }
     Some((fixed, changed))
+}
+
+/// The Home element choices `skin` makes, resolved as the page resolves them.
+pub fn skin_choices(skin: &Skin) -> ElementChoices {
+    ElementChoices::from_options(&skin.today.options, skin.today.archetype)
 }
 
 /// The contrast gate every save and import goes through: each palette the skin names must pass its
@@ -561,7 +584,9 @@ pub fn save_gate_repair(
     let mut skin = skin.clone();
     let mut palettes = palettes.to_vec();
     let mut notes = Vec::new();
+    let mut adjusted_palettes = Vec::new();
     let archetype = skin.today.archetype;
+    let choices = [skin_choices(&skin)];
     let mut next = 1;
     for index in 0..skin.palettes.len() {
         let reference = skin.palettes[index].clone();
@@ -583,7 +608,7 @@ pub fn save_gate_repair(
             }
             format!("{}-p{next}", skin.id)
         };
-        let Some((fixed, changed)) = archetype_repair(&palette, &id, archetype) else {
+        let Some((fixed, changed)) = archetype_repair_with(&palette, &id, archetype, &choices) else {
             continue;
         };
         let name = fixed.name.clone();
@@ -592,6 +617,7 @@ pub fn save_gate_repair(
             None => palettes.push(fixed),
         }
         skin.palettes[index] = id;
+        adjusted_palettes.push((name.clone(), changed.clone()));
         let adjusted: Vec<String> = changed.into_iter().map(words).collect();
         notes.push(format!(
             "I adjusted {} in \u{201C}{name}\u{201D} so text stays readable.",
@@ -602,5 +628,6 @@ pub fn save_gate_repair(
         skin,
         palettes,
         notes,
+        adjusted: adjusted_palettes,
     }
 }

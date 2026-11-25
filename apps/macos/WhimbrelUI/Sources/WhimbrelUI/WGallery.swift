@@ -1138,6 +1138,7 @@ public enum WLiveGallery {
                         model: model, actions: WLiveActions(),
                         warnings: { if warning { SampleWarning() } },
                         editor: { SampleEditor(cursor: model.state == .recording || model.state == .paused) },
+                        extras: { EmptyView() },
                         alerts: { EmptyView() }, ask: { SampleAsk() }
                     )
                     .environment(\.wScrollsContent, false)

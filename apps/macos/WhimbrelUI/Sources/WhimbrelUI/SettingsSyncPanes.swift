@@ -55,6 +55,11 @@ public struct WSyncDevicesSettingsView: View {
             phoneCard
             devicesCard
             syncCard
+            if let labels = model.tellAFriend {
+                WTellAFriendCard(labels: labels, copy: actions.tellAFriend)
+                    .wSettingsAnchored(model.anchors.tellAFriend, highlighted: highlighted)
+                    .id(model.anchors.tellAFriend)
+            }
         }
         .onChange(of: model.phase) { _, phase in
             AccessibilityNotification.Announcement(WSyncStatusRule.announcement(phase, labels: model.labels)).post()

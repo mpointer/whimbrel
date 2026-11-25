@@ -352,6 +352,20 @@ pub fn memory_menu_ids(memory: MemoryState, recording: RecordingMenu) -> Vec<&'s
     ids
 }
 
+/// The tray menu item that copies a short message with a link, so a person can tell a friend (rollout row 1 of
+/// docs/superpowers/plans/2026-11-24-referral-and-share.md). It needs no account and sends nothing.
+pub const TELL_FRIEND_ID: &str = "tell-friend";
+
+/// The item's words, in the shell's language.
+pub fn tell_friend_text() -> String {
+    tr("Tell a friend", &[])
+}
+
+/// The fixed items at the end of the redesign menu, top to bottom: Tell a friend sits after the Discord invite and above Quit.
+pub fn menu_tail_ids() -> [&'static str; 7] {
+    ["open", "ask-window", "meeting-bar", "feedback", "discord", TELL_FRIEND_ID, "quit"]
+}
+
 /// When a timed pause chosen at `now` ends, in unix ms: 15 minutes or an hour from now, or 4:00 AM local time on the next
 /// calendar day for "until tomorrow" (4:00 AM the same day between midnight and 4:00 AM). The popup's `pauseDeadline`
 /// follows the same rule, case for case.
@@ -708,7 +722,17 @@ fn menu_for(app: &AppHandle, redesign: bool, memory: MemoryState, recording: Rec
                 _ => menu.append(&PredefinedMenuItem::separator(app)?)?,
             }
         }
-        for item in [&open, &ask_window, &bar, &feedback, &discord, &quit] {
+        let tell_friend = MenuItem::with_id(app, TELL_FRIEND_ID, tell_friend_text(), true, None::<&str>)?;
+        for id in menu_tail_ids() {
+            let item = match id {
+                "open" => &open,
+                "ask-window" => &ask_window,
+                "meeting-bar" => &bar,
+                "feedback" => &feedback,
+                "discord" => &discord,
+                TELL_FRIEND_ID => &tell_friend,
+                _ => &quit,
+            };
             menu.append(item)?;
         }
         return Ok(menu);
@@ -777,6 +801,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 if let Err(e) = crate::syncing::controller::open_in_browser(crate::commands::ai::DISCORD_URL) {
                     tracing::warn!(error = %e, "open the Discord invite from the tray");
                 }
+            }
+            // Copies a short message with a plain link, then says in a toast whether it worked. Off the event loop: a busy
+            // clipboard is retried with short sleeps.
+            TELL_FRIEND_ID => {
+                let aumid = app.config().identifier.clone();
+                std::thread::spawn(move || crate::tell_friend::copy_and_notify(&aumid));
             }
             "quit" => app.exit(0),
             _ => {}
@@ -1282,6 +1312,22 @@ mod tests {
     fn the_classic_tooltip_is_what_it_always_was() {
         assert_eq!(tooltip_classic(None, "Capturing · Sync on"), "Whimbrel · Capturing · Sync on");
         assert_eq!(tooltip_classic(Some("Recording paused"), "Capturing · Sync on"), "Whimbrel · Recording paused · Capturing · Sync on");
+    }
+
+    #[test]
+    fn tell_a_friend_has_its_own_id_and_words_and_sits_after_discord_above_quit() {
+        assert_eq!(TELL_FRIEND_ID, "tell-friend");
+        assert_eq!(tell_friend_text(), "Tell a friend");
+        assert_eq!(menu_tail_ids(), ["open", "ask-window", "meeting-bar", "feedback", "discord", "tell-friend", "quit"]);
+        // The id is unique among the menu's own ids, so the click handler cannot mistake it.
+        let mut ids = menu_tail_ids().to_vec();
+        ids.extend(memory_menu_ids(MemoryState::On, RecordingMenu::Recording));
+        ids.extend(["pause-15m", "pause-1h", "pause-tomorrow"]);
+        ids.retain(|id| *id != "-");
+        let before = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), before);
     }
 
     #[test]

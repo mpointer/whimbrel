@@ -47,60 +47,90 @@ struct WLiveTimeline: View {
 
 // MARK: The screen
 
-public struct WLiveMeetingView<Warnings: View, Editor: View, Alerts: View, Ask: View>: View {
+/// The live screen's column sizes, as plain numbers so tests can pin them.
+enum WLiveLayout {
+    static let mainMin: CGFloat = 440
+    static let sideMin: CGFloat = 320
+    static let sideMax: CGFloat = 560
+    static let sideShare: CGFloat = 0.38
+
+    enum Arrangement: Equatable { case three, stacked, stackedWithoutTimeline }
+
+    /// The three columns fit when the time line, the main column at its minimum and the transcript at its minimum all fit.
+    static func arrangement(width: CGFloat, hasStops: Bool, showsTranscript: Bool, gap: CGFloat, k: CGFloat) -> Arrangement {
+        let timeline = timelineWidth(hasStops: hasStops, spine: WTokens.Size.spine, gap: gap, k: k)
+        let mainMin = Self.mainMin * k
+        let side = showsTranscript ? sideMin * k + gap : 0
+        if width >= timeline + mainMin + side { return .three }
+        if width >= timeline + mainMin { return .stacked }
+        return .stackedWithoutTimeline
+    }
+
+    static func timelineWidth(hasStops: Bool, spine: CGFloat, gap: CGFloat, k: CGFloat) -> CGFloat { hasStops ? spine * k + gap : 0 }
+
+    /// The transcript column: about 38 percent of the width, never under 320 or over 560 (times text scale), and never so wide
+    /// that the main column drops under its minimum. Callers only use it for `.three`, where the minimum always fits.
+    static func sideWidth(available: CGFloat, timeline: CGFloat, gap: CGFloat, k: CGFloat) -> CGFloat {
+        let wanted = min(max(available * sideShare, sideMin * k), sideMax * k)
+        let room = available - timeline - mainMin * k - gap
+        return max(sideMin * k, min(wanted, room))
+    }
+}
+
+public struct WLiveMeetingView<Warnings: View, Editor: View, Extras: View, Alerts: View, Ask: View>: View {
     @Environment(\.wTheme) private var theme
     @Environment(\.wTextScale) private var k
     @Environment(\.wStrings) private var strings
     @Environment(\.wScrollsContent) private var scrolls
+    @State private var transcriptViewport: CGFloat = 0
     let model: WLiveMeetingModel
     let actions: WLiveActions
     let warnings: Warnings
     let editor: Editor
+    let extras: Extras
     let alerts: Alerts
     let ask: Ask
 
     public init(
         model: WLiveMeetingModel, actions: WLiveActions,
         @ViewBuilder warnings: () -> Warnings, @ViewBuilder editor: () -> Editor,
-        @ViewBuilder alerts: () -> Alerts, @ViewBuilder ask: () -> Ask
+        @ViewBuilder extras: () -> Extras, @ViewBuilder alerts: () -> Alerts, @ViewBuilder ask: () -> Ask
     ) {
         self.model = model
         self.actions = actions
         self.warnings = warnings()
         self.editor = editor()
+        self.extras = extras()
         self.alerts = alerts()
         self.ask = ask()
     }
 
     /// The three columns need room: the time line, a main column that holds the bar and the note card, and the
     /// transcript. With less room the transcript goes under the main column, and with less still the time line goes.
-    enum Arrangement: Equatable { case three, stacked, stackedWithoutTimeline }
-
-    func arrangement(width: CGFloat) -> Arrangement {
-        let gap = theme.space(16)
-        let timeline = model.stops.isEmpty ? 0 : WTokens.Size.spine * k + gap
-        let mainMin = 440 * k
-        let side = model.showsTranscript ? 320 * k + gap : 0
-        if width >= timeline + mainMin + side { return .three }
-        if width >= timeline + mainMin { return .stacked }
-        return .stackedWithoutTimeline
+    func arrangement(width: CGFloat) -> WLiveLayout.Arrangement {
+        WLiveLayout.arrangement(width: width, hasStops: !model.stops.isEmpty, showsTranscript: model.showsTranscript, gap: theme.space(16), k: k)
     }
 
     public var body: some View {
         GeometryReader { geo in
-            let layout = arrangement(width: geo.size.width - theme.space(40))
+            let available = geo.size.width - theme.space(40)
+            let layout = arrangement(width: available)
+            let sideWidth = WLiveLayout.sideWidth(
+                available: available,
+                timeline: WLiveLayout.timelineWidth(hasStops: !model.stops.isEmpty, spine: WTokens.Size.spine, gap: theme.space(16), k: k),
+                gap: theme.space(16), k: k)
             HStack(alignment: .top, spacing: theme.space(16)) {
                 if !model.stops.isEmpty, layout != .stackedWithoutTimeline {
                     WLiveTimeline(stops: model.stops, paused: model.state == .paused || model.state == .resuming).frame(width: WTokens.Size.spine * k)
                 }
                 if layout == .three {
                     column(main)
-                    if model.showsTranscript { column(side).frame(width: 320 * k) }
+                    if model.showsTranscript { column(side, reportsViewport: true).frame(width: sideWidth) }
                 } else {
                     column(VStack(alignment: .leading, spacing: theme.space(12)) {
                         main
                         if model.showsTranscript { side }
-                    })
+                    }, reportsViewport: true)
                 }
             }
             .padding(.horizontal, theme.space(20))
@@ -111,9 +141,15 @@ public struct WLiveMeetingView<Warnings: View, Editor: View, Alerts: View, Ask: 
     }
 
     @ViewBuilder
-    private func column<C: View>(_ content: C) -> some View {
+    private func column<C: View>(_ content: C, reportsViewport: Bool = false) -> some View {
         if scrolls {
-            ScrollView { content.frame(maxWidth: .infinity, alignment: .topLeading) }.scrollIndicators(.automatic)
+            // The transcript inside this scroll view measures its own bottom in this view's coordinate space against the
+            // scroll view's height, which is passed down here, to tell whether it is at the bottom (see `WTranscriptFollow`).
+            ScrollView { content.frame(maxWidth: .infinity, alignment: .topLeading).environment(\.wTranscriptViewport, reportsViewport ? transcriptViewport : 0) }
+                .scrollIndicators(.automatic)
+                .coordinateSpace(name: WTranscriptScrollSpace.name)
+                .background(GeometryReader { geo in Color.clear.preference(key: WViewportHeightKey.self, value: reportsViewport ? geo.size.height : 0) })
+                .onPreferenceChange(WViewportHeightKey.self) { if reportsViewport { transcriptViewport = $0 } }
         } else {
             content.frame(maxWidth: .infinity, alignment: .topLeading)
         }
@@ -138,6 +174,7 @@ public struct WLiveMeetingView<Warnings: View, Editor: View, Alerts: View, Ask: 
             }
             warnings
             noteCard
+            extras
         }
         .padding(.top, theme.space(4))
     }
@@ -223,7 +260,7 @@ public struct WLiveMeetingView<Warnings: View, Editor: View, Alerts: View, Ask: 
 
     private var side: some View {
         VStack(alignment: .leading, spacing: theme.space(12)) {
-            WTranscriptView(accessory: model.transcriptAccessory, entries: model.transcript)
+            WTranscriptView(accessory: model.transcriptAccessory, entries: model.transcript, highlightedId: model.highlightedEntryId)
             alerts
             ask
         }

@@ -122,7 +122,7 @@
 }
 .th-find-question {
   margin: 0;
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .th-find-text-answer {
   font-family: var(--w-font-reading);
@@ -303,7 +303,7 @@
   -webkit-line-clamp: unset;
 }
 .th-find-speaker {
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .th-find-more {
   align-self: flex-start;
@@ -368,7 +368,7 @@
 }
 .th-conv-active .th-conv-title {
   background: var(--color-selection);
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .th-conv-title {
   flex: 1 1 auto;

@@ -4,16 +4,19 @@
 //! minutes with no answer, stops it, and once transcribed it is trimmed to 30 s after the last line
 //! with words (`pipeline`, `trim::auto_keep_ms`). Speech while the popup is up closes it.
 //!
-//! "Words" are a new live-transcript segment with text. With no live transcription (no model), the
+//! "Words" are a new live-transcript line of speech: 2 or more words with letters and at least 1 s
+//! of audio (`speech_rule`, the Mac's rule), so filler like "Thank you." from near-silent audio
+//! neither resets the clock nor closes an open prompt. With no live transcription (no model), the
 //! recorder's audio level stands in. The clock is wall time, compared on every poll, so a PC that
 //! slept through the quiet asks as soon as it wakes.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 
 use super::live::{Accumulated, Listener};
+use super::speech_rule::{self, Tally};
 use crate::l10n::tr;
 
 /// No words this long → ask.
@@ -82,34 +85,89 @@ impl Timer {
     }
 }
 
-/// When the live transcript last gained a line with words, and whether a recording's live
+/// When the live transcript last gained a line of speech, and whether a recording's live
 /// transcription is feeding it (one recording at a time).
 static LAST_SPEECH_MS: AtomicI64 = AtomicI64::new(0);
 static LIVE_TRACKING: AtomicBool = AtomicBool::new(false);
-static TEXT_SEGMENTS: AtomicUsize = AtomicUsize::new(0);
+/// What the live transcript held at the last look, as counts (`speech_rule::Tally`).
+static SEEN: Mutex<Tally> = Mutex::new(Tally::ZERO);
 
-fn text_segments(state: &Accumulated) -> usize {
-    state.system.iter().chain(state.mic.iter()).filter(|s| !s.text.trim().is_empty()).count()
+/// The counts of every line in `state` (never its text).
+fn tally_of(state: &Accumulated) -> Tally {
+    let mut tally = Tally::ZERO;
+    for s in state.system.iter().chain(state.mic.iter()) {
+        tally.add(s.start_cs, s.end_cs, &s.text);
+    }
+    tally
 }
 
-/// Whether `state` holds more lines with words than `seen` (and how many it holds).
+/// How many lines of speech `state` holds. A line counts only with 2 or more words with letters
+/// and at least 1 s of audio (`speech_rule`), so filler like "Thank you." does not.
+fn text_segments(state: &Accumulated) -> usize {
+    tally_of(state).speech_lines
+}
+
+/// Whether `state` holds more lines of speech than `seen` (and how many it holds).
 pub fn more_words(state: &Accumulated, seen: usize) -> (bool, usize) {
     let now = text_segments(state);
     (now > seen, now)
 }
 
-/// The live listener for a new recording: notes each new line with words, then hands the state to
+/// The check-in log (`target: "check-in"`): one line per event, counts and times only, never
+/// transcript text. Same fields as the Mac's `CheckInLog`.
+fn log_check_in(event: &str, reason: &str, last_speech_ms: i64, quiet_since_ms: Option<i64>, extra: &str) {
+    let live = if !LIVE_TRACKING.load(Ordering::Relaxed) {
+        "off"
+    } else if crate::meeting_load::live_paused() {
+        "paused"
+    } else {
+        "listening"
+    };
+    let line = speech_rule::check_in_line(
+        event,
+        reason,
+        Some(last_speech_ms).filter(|ms| *ms > 0).map(clock).as_deref(),
+        quiet_since_ms.map(clock).as_deref(),
+        live,
+        extra,
+    );
+    tracing::info!(target: "check-in", "{line}");
+}
+
+/// A local `HH:mm:ss` for the log.
+fn clock(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+/// A look at the live transcript at `now_ms`: a new line of speech moves the quiet clock's input
+/// (`LAST_SPEECH_MS`), which `poll` reads (and which closes an open prompt). A line that is only
+/// filler changes nothing and is logged as ignored. Returns whether speech arrived.
+fn note_live_lines(state: &Accumulated, now_ms: i64) -> bool {
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let (more, _) = more_words(state, seen.speech_lines);
+    let now = tally_of(state);
+    let arrival = now.since(&seen);
+    *seen = now;
+    drop(seen);
+    if more {
+        LAST_SPEECH_MS.store(now_ms, Ordering::Relaxed);
+        log_check_in("speech-arrived", "live-line", now_ms, None, &arrival.fields());
+    } else if arrival.filler_lines > 0 {
+        log_check_in("filler-ignored", "live-line", LAST_SPEECH_MS.load(Ordering::Relaxed), None, &arrival.fields());
+    }
+    more
+}
+
+/// The live listener for a new recording: notes each new line of speech, then hands the state to
 /// `inner` (the question watcher, when armed). `tracking` is whether live transcription will run.
 pub fn speech_listener(inner: Option<Listener>, tracking: bool) -> Listener {
     LAST_SPEECH_MS.store(0, Ordering::Relaxed);
-    TEXT_SEGMENTS.store(0, Ordering::Relaxed);
+    *SEEN.lock().unwrap_or_else(|e| e.into_inner()) = Tally::ZERO;
     LIVE_TRACKING.store(tracking, Ordering::Relaxed);
     Listener(Arc::new(move |state: &Accumulated| {
-        let (more, count) = more_words(state, TEXT_SEGMENTS.load(Ordering::Relaxed));
-        if more {
-            TEXT_SEGMENTS.store(count, Ordering::Relaxed);
-            LAST_SPEECH_MS.store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
-        }
+        note_live_lines(state, chrono::Utc::now().timestamp_millis());
         if let Some(inner) = &inner {
             (inner.0)(state);
         }
@@ -158,10 +216,17 @@ pub fn poll(meeting_id: i64, started_ms: i64, now_ms: i64, audio_active: bool, p
     };
     if let Some(at) = spoke {
         if at > t.last_speech_ms && t.heard(at) == Action::Close {
+            log_check_in("cancel", "speech-while-asked", t.last_speech_ms, Some(t.last_speech_ms), "");
             return Action::Close;
         }
     }
-    t.tick(now_ms)
+    let action = t.tick(now_ms);
+    match action {
+        Action::Ask => log_check_in("prompt-shown", "quiet", t.last_speech_ms, Some(t.last_speech_ms), ""),
+        Action::Stop => log_check_in("stop", "quiet-timeout", t.last_speech_ms, Some(t.last_speech_ms), ""),
+        Action::Nothing | Action::Close => {}
+    }
+    action
 }
 
 /// The recording ended: forget its timer.
@@ -173,6 +238,7 @@ pub fn reset() {
 pub fn keep(now_ms: i64) {
     if let Some(t) = timer().lock().unwrap().as_mut() {
         t.keep(now_ms);
+        log_check_in("keep", "quiet-answer", t.last_speech_ms, Some(t.last_speech_ms), "");
     }
 }
 
@@ -306,19 +372,89 @@ mod tests {
         PAUSED_ASKED_MS.store(0, Ordering::Relaxed);
     }
 
+    fn seg(start_cs: i64, end_cs: i64, text: &str) -> transcribe::TranscriptSegment {
+        transcribe::TranscriptSegment { start_cs, end_cs, text: text.into() }
+    }
+
+    /// The statics are process-wide, so the tests that use them take turns.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
-    fn a_new_line_with_words_counts_and_blank_ones_do_not() {
-        let seg = |text: &str| transcribe::TranscriptSegment { start_cs: 0, end_cs: 100, text: text.into() };
+    fn a_new_line_of_speech_counts_and_blank_or_filler_ones_do_not() {
         let mut state = Accumulated::default();
-        state.system.push(seg("  "));
-        assert_eq!(more_words(&state, 0), (false, 0));
-        state.mic.push(seg("hello"));
+        state.system.push(seg(0, 300, "  "));
+        assert_eq!(more_words(&state, 0), (false, 0), "blank");
+        state.mic.push(seg(0, 300, "hello"));
+        assert_eq!(more_words(&state, 0), (false, 0), "one word is not speech");
+        state.mic.push(seg(300, 340, "Thank you."));
+        assert_eq!(more_words(&state, 0), (false, 0), "under a second is filler");
+        state.mic.push(seg(400, 600, "let's begin the review"));
         assert_eq!(more_words(&state, 0), (true, 1));
         assert_eq!(more_words(&state, 1), (false, 1));
     }
 
     #[test]
+    fn japanese_without_spaces_is_a_line_of_speech() {
+        let mut state = Accumulated::default();
+        state.system.push(seg(0, 300, "\u{4F1A}\u{8B70}\u{3092}\u{59CB}\u{3081}\u{307E}\u{3059}"));
+        assert_eq!(more_words(&state, 0), (true, 1));
+    }
+
+    #[test]
+    fn filler_does_not_reset_the_clock_or_close_a_prompt_but_speech_does() {
+        let _turn = serial();
+        LIVE_TRACKING.store(true, Ordering::Relaxed);
+        LAST_SPEECH_MS.store(0, Ordering::Relaxed);
+        *SEEN.lock().unwrap() = Tally::ZERO;
+        reset();
+
+        let mut state = Accumulated::default();
+        assert_eq!(poll(9, 0, 5 * MIN, false, false), Action::Nothing);
+        // "Thank you." at 14 minutes from near-silent audio: not speech, the clock keeps running.
+        state.mic.push(seg(0, 40, "Thank you."));
+        assert!(!note_live_lines(&state, 14 * MIN));
+        assert_eq!(poll(9, 0, 15 * MIN, false, false), Action::Ask, "filler did not delay the prompt");
+        // More filler while the prompt is open does not cancel it.
+        state.mic.push(seg(50, 90, "Thanks."));
+        assert!(!note_live_lines(&state, 16 * MIN));
+        assert_eq!(poll(9, 0, 16 * MIN, false, false), Action::Nothing);
+        assert_eq!(poll(9, 0, 17 * MIN, false, false), Action::Stop, "still asking, so the two minutes run out");
+
+        // A real two-word line of 1 s or more resets the clock, and closes an open prompt.
+        reset();
+        LAST_SPEECH_MS.store(0, Ordering::Relaxed);
+        *SEEN.lock().unwrap() = Tally::ZERO;
+        let mut state = Accumulated::default();
+        assert_eq!(poll(10, 0, 15 * MIN, false, false), Action::Ask);
+        state.mic.push(seg(100, 250, "let's begin"));
+        assert!(note_live_lines(&state, 16 * MIN));
+        assert_eq!(poll(10, 0, 16 * MIN + 1, false, false), Action::Close);
+        assert_eq!(poll(10, 0, 30 * MIN, false, false), Action::Nothing, "15 minutes from the speech");
+        assert_eq!(poll(10, 0, 31 * MIN + 1, false, false), Action::Ask);
+        reset();
+        LIVE_TRACKING.store(false, Ordering::Relaxed);
+        LAST_SPEECH_MS.store(0, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn a_listener_started_for_a_new_recording_forgets_the_last_ones_lines() {
+        let _turn = serial();
+        let mut state = Accumulated::default();
+        state.mic.push(seg(0, 300, "let's begin"));
+        let _ = speech_listener(None, true);
+        assert!(note_live_lines(&state, 1_000));
+        let _ = speech_listener(None, true);
+        assert!(note_live_lines(&state, 2_000), "counted again for the new recording");
+        LIVE_TRACKING.store(false, Ordering::Relaxed);
+        LAST_SPEECH_MS.store(0, Ordering::Relaxed);
+    }
+
+    #[test]
     fn without_live_transcription_audible_audio_stands_in() {
+        let _turn = serial();
         LIVE_TRACKING.store(false, Ordering::Relaxed);
         reset();
         assert_eq!(poll(7, 0, 14 * MIN, true, false), Action::Nothing);

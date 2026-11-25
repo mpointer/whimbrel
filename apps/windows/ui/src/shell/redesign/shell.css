@@ -83,7 +83,8 @@
   font-family: var(--sx-font-title);
   font-size: var(--w-text-subtitle-size);
   line-height: var(--w-text-subtitle-line);
-  font-weight: var(--w-text-subtitle-weight);
+  font-weight: var(--weight-display, var(--w-text-subtitle-weight));
+  font-style: var(--style-display, normal);
 }
 .w-shell-title p {
   margin: 0;

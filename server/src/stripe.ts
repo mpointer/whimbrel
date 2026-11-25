@@ -104,8 +104,9 @@ export function isPlusSubscription(sub: any, plusPriceIds: string[]): boolean {
  * previous period on a renewal and zero-length on the first invoice. null
  * when no such line has a whole period start and end; "invalid" when the
  * only such lines have whole bounds that are not a range (start at or after
- * end), which no retry of the same paid invoice can change. */
-export function plusLinePeriod(invoice: any, sub: any, plusPriceIds: string[]): { startMs: number; endMs: number } | "invalid" | null {
+ * end), which no retry of the same paid invoice can change. The result
+ * also carries the line's pre-discount `amountCents`. */
+export function plusLinePeriod(invoice: any, sub: any, plusPriceIds: string[]): { startMs: number; endMs: number; amountCents: number | null } | "invalid" | null {
   const lines: any[] = Array.isArray(invoice?.lines?.data) ? invoice.lines.data : [];
   const items = new Set<string>(
     (Array.isArray(sub?.items?.data) ? sub.items.data : []).map((i: any) => i?.id).filter((id: unknown): id is string => typeof id === "string"),
@@ -130,7 +131,9 @@ export function plusLinePeriod(invoice: any, sub: any, plusPriceIds: string[]): 
     const start = line?.period?.start;
     const end = line?.period?.end;
     if (ours && Number.isSafeInteger(start) && Number.isSafeInteger(end) && end > 0) {
-      if (start < end) return { startMs: start * 1000, endMs: end * 1000 };
+      // `amountCents` is the line's amount before any discount or credit
+      // (null when Stripe sent none): a $0 paid invoice grants only when it is positive.
+      if (start < end) return { startMs: start * 1000, endMs: end * 1000, amountCents: Number.isSafeInteger(line?.amount) ? line.amount : null };
       invalid = true;
     }
   }

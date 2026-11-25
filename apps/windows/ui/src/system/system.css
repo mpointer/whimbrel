@@ -16,6 +16,19 @@
   --sx-border-style: var(--border-style, solid);
   --sx-density: var(--density, 1);
 }
+/* Thread's section labels. Its label face is regular (skins/thread.json), but Thread has always drawn a section label
+   semibold, so a section label reads this one variable and Thread sets it, so Thread draws as it did. Every other skin
+   leaves it unset and a section label takes the skin's own label weight. Captions and small meta read the label weight
+   itself (regular in Thread). The skin file is shared with the Mac, so the pin lives here (Mike's decision, 2026-11-25;
+   the Mac does the same).
+   Strong text (card headings, counts, badges, the primary link) follows body emphasis, two steps over the body weight
+   (--weight-emphasis, skin.ts). Thread has always drawn it at 700, one step over its emphasis (600), so Thread pins
+   --weight-strong to 700 and every other skin takes its own emphasis. */
+:root[data-skin="thread"],
+.w-thread {
+  --weight-section-label: 600;
+  --weight-strong: 700;
+}
 .w-sys {
   /* Here, not on :root: it names --color-border, which a palette class below :root changes. */
   --sx-line: var(--sx-border-width) var(--sx-border-style) var(--color-border);
@@ -34,6 +47,7 @@
   font-family: var(--sx-font-ui);
   font-size: var(--w-text-body-size);
   line-height: var(--w-text-body-line);
+  font-weight: var(--weight-body, 400);
   color: var(--color-text-primary);
 }
 .w-sys :where(button, input) {
@@ -82,7 +96,7 @@
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
   color: var(--color-text-primary);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   cursor: pointer;
   transition: background-color var(--w-duration-fast) var(--w-ease-standard);
 }
@@ -140,7 +154,7 @@
   padding: 0 var(--w-space-md) 0 var(--w-space-xs);
   border-radius: var(--w-radius-pill);
   background: var(--color-selection);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   max-width: 100%;
 }
 .w-speaker-avatar {
@@ -490,7 +504,7 @@
   background: var(--color-accent-primary);
   color: var(--color-text-on-accent);
   font-size: var(--w-text-caption-size);
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
   text-align: center;
 }
 
@@ -608,15 +622,17 @@
   padding-top: var(--w-space-xs);
   text-align: right;
   font-family: var(--sx-font-numerals);
-  font-weight: 600;
+  font-weight: var(--weight-numerals, 600);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 .w-spine-sub {
   display: block;
-  font-weight: 400;
+  font-weight: var(--weight-label, 400);
   font-size: var(--w-text-caption-size);
   color: var(--color-text-secondary);
+  font-family: var(--sx-font-label);
+  font-style: var(--style-label, normal);
 }
 .w-spine-rail {
   position: relative;
@@ -682,10 +698,10 @@
   border-radius: var(--sx-radius-control);
   background: var(--color-accent-primary);
   color: var(--color-text-on-accent);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-now-label b {
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .w-now-rule {
   flex: 1;
@@ -705,7 +721,7 @@
   background: var(--color-background-card);
 }
 .w-meeting-title {
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
   font-size: var(--w-text-body-strong-size);
 }
 .w-meeting-with {
@@ -741,7 +757,7 @@
   background: var(--color-selection);
   color: var(--color-accent-primary);
   font-size: var(--w-text-secondary-size);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 /* A skin's accent on its selection color is not always readable (3.6 to 4.4 to 1 in Classic, Game Day and Hypermodern
    palettes), so outside Thread the tag is written in the skin's text color and keeps the selection fill and the weight.
@@ -770,7 +786,7 @@
   align-items: baseline;
 }
 .w-memory-range {
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .w-memory-kind {
   color: var(--color-text-secondary);
@@ -928,7 +944,7 @@
   color: var(--w-color-ai-ink);
   font-family: var(--sx-font-ui);
   font-size: var(--w-text-caption-size);
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
   line-height: 1;
   cursor: pointer;
   vertical-align: 0.12em;
@@ -980,7 +996,7 @@
   border-radius: 50%;
   color: var(--w-color-ai-ink);
   font-size: var(--w-text-caption-size);
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
   flex: none;
 }
 .w-source-selected .w-source-num {
@@ -988,7 +1004,7 @@
   color: var(--color-background-card);
 }
 .w-source-name {
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .w-source-time,
 .w-source-kind {
@@ -996,7 +1012,7 @@
   font-size: var(--w-text-secondary-size);
 }
 .w-source-title {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-source-quote {
   margin: 0;
@@ -1072,7 +1088,7 @@
   background: transparent;
   color: var(--color-accent-primary);
   font-size: var(--w-text-caption-size);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   position: relative;
@@ -1202,7 +1218,7 @@
   color: var(--color-text-primary);
   font-size: var(--w-text-subtitle-size);
   line-height: var(--w-text-subtitle-line);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-state-help {
   max-width: 32rem;
@@ -1379,7 +1395,7 @@
 .w-flow-step {
   margin-bottom: calc(var(--w-space-sm) * -1);
   color: var(--color-text-secondary);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-flow-title {
   font-family: var(--sx-font-title);
@@ -1449,7 +1465,7 @@
   max-width: 26.25rem;
 }
 .w-field-label {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-field-help {
   color: var(--color-text-secondary);
@@ -1557,7 +1573,7 @@
   color: var(--color-error);
 }
 .w-notice-strong {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 
 /* Progress */
@@ -1570,7 +1586,7 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--w-space-md);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-progress-value {
   font-family: var(--sx-font-numerals);
@@ -1627,7 +1643,7 @@
   border: 0;
   border-radius: var(--sx-radius-control);
   background: transparent;
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   cursor: pointer;
 }
 .w-segment:hover {
@@ -1672,6 +1688,7 @@
   font-size: var(--w-text-title-size);
   line-height: var(--w-text-title-line);
   font-weight: var(--weight-display, var(--w-text-title-weight));
+  font-style: var(--style-display, normal);
 }
 .w-dialog-body {
   color: var(--color-text-secondary);
@@ -1742,7 +1759,7 @@
 .w-banner-title {
   font-size: var(--w-text-subtitle-size);
   line-height: var(--w-text-subtitle-line);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-banner-body {
   display: flex;
@@ -1808,16 +1825,22 @@
   font-family: var(--sx-font-label);
   font-size: var(--w-text-secondary-size);
   line-height: var(--w-text-secondary-line);
-  font-weight: 600;
+  font-weight: var(--weight-section-label, var(--weight-label, 600));
   color: var(--color-text-secondary);
+  font-style: var(--style-label, normal);
+  text-transform: var(--caps, none);
+  font-variant-caps: var(--caps-variant, normal);
 }
 .w-label-bracketed {
   font-family: var(--w-font-mono);
   letter-spacing: 0.04em;
+  text-transform: none;
+  font-variant-caps: normal;
 }
 .w-label-smallCaps {
   font-variant-caps: all-small-caps;
   letter-spacing: 0.08em;
+  text-transform: none;
 }
 
 .w-ask {
@@ -1869,7 +1892,7 @@
 }
 .w-ask-mark {
   color: var(--color-accent-primary);
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .w-ask-below {
   display: flex;
@@ -1885,7 +1908,7 @@
 .w-next-title {
   font-size: var(--w-text-title-size);
   line-height: var(--w-text-title-line);
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
   margin: var(--w-space-xs) 0;
 }
 .w-next-scoreboard {
@@ -1906,12 +1929,12 @@
   font-family: var(--sx-font-numerals);
   font-size: var(--w-text-page-title-size);
   line-height: var(--w-text-page-title-line);
-  font-weight: 700;
+  font-weight: var(--weight-numerals, 700);
   font-variant-numeric: tabular-nums;
 }
 .w-next-soon {
   font-size: var(--w-text-secondary-size);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-next-main {
   min-width: 0;
@@ -1929,7 +1952,7 @@
   padding: var(--w-space-xs) var(--w-space-lg);
   background: var(--color-selection);
   border-bottom: var(--sx-line);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   color: var(--color-accent-primary);
 }
 .w-next-infobox > .w-next-title,
@@ -1952,7 +1975,7 @@
 }
 .w-next-facts dt {
   color: var(--color-text-secondary);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-next-facts dd {
   margin: 0;
@@ -2003,7 +2026,7 @@
   filter: none;
 }
 .w-button-link.w-button-primary {
-  font-weight: 700;
+  font-weight: var(--weight-strong, var(--weight-emphasis, 700));
 }
 .w-button-link.w-button-destructive {
   color: var(--color-error);
@@ -2068,8 +2091,9 @@
   font-family: var(--sx-font-title);
   font-size: var(--w-text-subtitle-size);
   line-height: var(--w-text-subtitle-line);
-  font-weight: 600;
+  font-weight: var(--weight-display, 600);
   overflow-wrap: anywhere;
+  font-style: var(--style-display, normal);
 }
 .w-win-lines {
   display: flex;
@@ -2265,7 +2289,7 @@
   color: var(--color-text-secondary);
   font-size: var(--w-text-secondary-size);
   line-height: var(--w-text-secondary-line);
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
 }
 .w-menu-notice {
   display: flex;
@@ -2286,7 +2310,7 @@
   gap: var(--w-space-xs) var(--w-space-sm);
 }
 .w-menu-next-title {
-  font-weight: 600;
+  font-weight: var(--weight-emphasis, 600);
   overflow-wrap: anywhere;
 }
 .w-menu-next-time {
@@ -2466,4 +2490,9 @@
 .w-hk .w-win-actions {
   margin-top: 0;
   padding-top: 0;
+}
+
+/* The frame takes focus (programmatically) so a screen reader says the alert; it is not a control, so it draws no ring. */
+.w-win-frame:focus {
+  outline: none;
 }

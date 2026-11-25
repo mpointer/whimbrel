@@ -15,8 +15,8 @@ use skins::palette::Variants;
 use skins::repair::{pairs_pass, repair_variant};
 use skins::store::is_user_id;
 use skins::{
-    all_pairs, default_palette, is_valid_id, parse_palette, parse_skin, save_gate_repair, skin_name, whimbrel_default, Palette, Token,
-    UserSkinStore, Variant,
+    all_pairs, all_redesign_pairs, default_palette, is_valid_id, parse_palette, parse_skin, save_gate_repair, skin_name, whimbrel_default,
+    Palette, Token, UserSkinStore, Variant,
 };
 
 use crate::error::CommandError;
@@ -453,7 +453,7 @@ fn save_reply(user: &UserSkinStore, pool: &[Palette], origin: &Origin, reply: &S
     // Palettes not repaired above (a fork's built-ins, Whimbrel's own, your earlier ones) must still suit
     // this skin's layout: one that doesn't is replaced by a repaired copy of its own.
     let gated = save_gate_repair(&skin, &palettes, &|id| pool.iter().find(|p| p.id == id).cloned());
-    lines.extend(gated.notes);
+    lines.extend(gated.adjusted.iter().map(|(name, changed)| adjusted(changed, name)));
     let files: Vec<(String, Vec<u8>)> = gated.palettes.iter().map(|p| (p.id.clone(), pretty(&p.to_json()))).collect();
     if let Err(e) = user.save_raw(&target, &pretty(&serde_json::to_value(&gated.skin).ok()?), &files) {
         tracing::error!(error = %e, "skin save failed");
@@ -472,7 +472,8 @@ fn taken(existing: &[Palette], palettes: &[Palette], id: &str) -> bool {
 fn repaired_palette(raw: &Value, id: &str) -> Option<(Palette, Vec<Token>)> {
     let object = raw.as_object()?;
     let base = default_palette();
-    let pairs = all_pairs();
+    // Every layout's pairs, and every Home element's (the Mac's `repairPalette` with the redesign on).
+    let pairs = all_redesign_pairs();
     let mut changed: Vec<Token> = Vec::new();
     let mut variant = |key: &str, base: &Variant| -> Option<Option<Variant>> {
         let Some(tokens) = object.get(key).and_then(Value::as_object) else { return Some(None) };
@@ -483,7 +484,8 @@ fn repaired_palette(raw: &Value, id: &str) -> Option<(Palette, Vec<Token>)> {
             }
         }
         let (fixed, moved) = repair_variant(&filled, &pairs);
-        if !pairs_pass(&fixed, &pairs) {
+        // As the Mac: the layouts' pairs must hold, or the visible fallback runs.
+        if !pairs_pass(&fixed, &all_pairs()) {
             return None;
         }
         for token in moved {
@@ -520,10 +522,11 @@ fn hex(s: &str) -> Option<u32> {
     (digits.len() == 6).then(|| u32::from_str_radix(digits, 16).ok()).flatten()
 }
 
-/// The chat line for a palette whose `changed` tokens were moved for contrast.
+/// The chat line for a palette whose `changed` tokens were moved for contrast: the note the Mac's skin
+/// chat shows ("I adjusted text secondary in “Name” so text stays readable."), in the shell's language.
 fn adjusted(changed: &[Token], name: &str) -> String {
     let words: Vec<String> = changed.iter().map(|t| words(*t)).collect();
-    format!("I adjusted {} in \u{201C}{name}\u{201D} so text stays readable.", words.join(", "))
+    tr("I adjusted {colours} in “{name}” so text stays readable.", &[("colours", &words.join(", ")), ("name", name)])
 }
 
 /// `textSecondary` as "text secondary".

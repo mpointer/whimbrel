@@ -100,7 +100,7 @@ fn everything_the_catalogue_offers_is_accepted_by_the_loader() {
             "headerBand": last(&c["decoration"]["headerBand"]), "dividers": last(&c["decoration"]["dividers"]),
             "texture": last(&c["decoration"]["texture"]), "imagery": [],
         },
-        "today": { "archetype": last(&c["archetypes"]), "options": {} },
+        "today": { "archetype": "reference", "options": {} },
         "motion": last(&c["motion"]),
     });
     let skin = loads_clean(&manifest);
@@ -129,15 +129,8 @@ fn everything_the_catalogue_offers_is_accepted_by_the_loader() {
             );
         }
     }
-    for key in ["archetypes", "motion"] {
-        for v in c[key].as_array().unwrap() {
-            let m = if key == "motion" {
-                serde_json::json!({"id": "e", "name": "E", "palettes": ["default"], "motion": v})
-            } else {
-                serde_json::json!({"id": "e", "name": "E", "palettes": ["default"], "today": {"archetype": v}})
-            };
-            loads_clean(&m);
-        }
+    for v in c["motion"].as_array().unwrap() {
+        loads_clean(&serde_json::json!({"id": "e", "name": "E", "palettes": ["default"], "motion": v}));
     }
 }
 
@@ -161,6 +154,27 @@ fn the_voice_limits_offered_are_the_ones_enforced() {
                 parse_skin(&serde_json::to_vec(&m).unwrap(), &whimbrel_default()).unwrap();
             assert_eq!(repairs.is_empty(), ok, "{key}");
         }
+    }
+}
+
+#[test]
+fn the_catalogue_offers_no_whole_page_layouts_but_still_has_the_five_element_keys() {
+    use skins::catalogue_for;
+    for c in [catalogue(), catalogue_for(false), catalogue_for(true)] {
+        assert!(c.get("archetypes").is_none(), "the maker is not offered layouts");
+    }
+    let options = catalogue_for(true)["today"]["options"].clone();
+    let mut keys: Vec<&str> = options.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(keys, ["actions", "ask", "labels", "nextMeeting", "timeline"]);
+}
+
+#[test]
+fn an_old_skin_file_with_an_archetype_still_loads() {
+    for name in ["standard", "terminal", "glass", "field", "almanac", "reference"] {
+        let m = serde_json::json!({"id": "old", "name": "Old", "palettes": ["default"], "today": {"archetype": name, "options": {}}});
+        let skin = loads_clean(&m);
+        assert_eq!(format!("{:?}", skin.today.archetype).to_lowercase(), name);
     }
 }
 

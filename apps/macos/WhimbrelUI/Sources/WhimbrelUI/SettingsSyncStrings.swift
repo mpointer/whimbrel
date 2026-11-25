@@ -144,3 +144,24 @@ public struct WAutomationsLabels: Sendable {
     public var readyBy = "Ready by"
     public init() {}
 }
+
+// MARK: Tell a friend
+
+extension WTellAFriend {
+    /// The plain link: the home page with the one campaign tag the site already keeps in the visitor's own browser.
+    public static let link = "https://whimbrelapp.com/?utm_source=share"
+}
+
+/// The words of the Tell a friend card in Settings. The app fills every field from its string catalog.
+public struct WTellAFriendLabels: Equatable, Sendable {
+    public var heading = "Tell a friend"
+    public var blurb = "Copy a short message with a link to Whimbrel, then paste it wherever you like. Nothing is sent from here."
+    public var copyButton = "Copy message"
+    public var copied = "Copied"
+    /// The line under the button when the pasteboard refused the write.
+    public var failed = "Could not copy. Try again."
+
+    public init() {}
+
+    public var all: [String] { [heading, blurb, copyButton, copied, failed] }
+}

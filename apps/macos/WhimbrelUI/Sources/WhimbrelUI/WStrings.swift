@@ -682,6 +682,12 @@ public struct WMenuStrings: Sendable {
     /// The word on the disabled button that stands where Stop was once a Stop has been asked for and the meeting is still being
     /// saved. The old menu says the same.
     public var saving: String
+    /// The quiet row above Open Whimbrel: it copies a short message with a link, so a person can tell a friend. No account needed.
+    public var tellAFriend: String
+    /// What the row says for a few seconds after the copy worked.
+    public var tellAFriendCopied: String
+    /// Spoken after the name of the row: what it does. It opens nothing and sends nothing.
+    public var tellAFriendHint: String
 
     public init(
         appName: String, menuName: String, needsAttention: String, nextMeeting: String, workingOn: String,
@@ -695,9 +701,14 @@ public struct WMenuStrings: Sendable {
         openTopic: @escaping @Sendable (String) -> String,
         askAboutWindow: String, openWhimbrel: String, settings: String, quit: String,
         cancel: String, alertWindowName: String, hotkeyWindowName: String, close: String, copy: String, answering: String,
-        saving: String = "Saving\u{2026}"
+        saving: String = "Saving\u{2026}",
+        tellAFriend: String = "Tell a friend", tellAFriendCopied: String = "Copied",
+        tellAFriendHint: String = "Copies a short message and a link to Whimbrel. Nothing is sent."
     ) {
         self.saving = saving
+        self.tellAFriend = tellAFriend
+        self.tellAFriendCopied = tellAFriendCopied
+        self.tellAFriendHint = tellAFriendHint
         self.appName = appName
         self.menuName = menuName
         self.needsAttention = needsAttention

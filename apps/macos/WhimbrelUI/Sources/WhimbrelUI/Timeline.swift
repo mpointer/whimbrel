@@ -257,8 +257,10 @@ public struct WTranscriptEntry: Identifiable, Sendable {
     public let speaker: WPerson
     public let text: String
     public let state: WTranscriptLineState
-    public init(time: String, speaker: WPerson, text: String, state: WTranscriptLineState = .normal) {
-        self.id = "\(time)-\(speaker.name)"
+    /// `id` must be unique in a list. Pass the stored line's id: the shown time is only to the minute, so time and speaker
+    /// alone repeat for every line one person says within a minute, and SwiftUI then draws the first such line in each row.
+    public init(id: String? = nil, time: String, speaker: WPerson, text: String, state: WTranscriptLineState = .normal) {
+        self.id = id ?? "\(time)-\(speaker.name)-\(text)"
         self.time = time
         self.speaker = speaker
         self.text = text
@@ -270,19 +272,58 @@ public struct WTranscriptEntry: Identifiable, Sendable {
 public struct WTranscriptView: View {
     @Environment(\.wTheme) private var theme
     @Environment(\.wStrings) private var strings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.wTranscriptViewport) private var viewport
+    @State private var follow = WTranscriptFollow()
+    private static let bottomId = "wTranscriptBottom"
     let customTitle: String?
     let accessory: String?
     let entries: [WTranscriptEntry]
+    /// An entry to show as cited and scroll to (a live-alert jump, or a line the ask bar cited). Nil shows none.
+    let highlightedId: String?
 
     private var title: String { customTitle ?? strings.liveTranscript }
 
-    public init(title: String? = nil, accessory: String? = nil, entries: [WTranscriptEntry]) {
+    public init(title: String? = nil, accessory: String? = nil, entries: [WTranscriptEntry], highlightedId: String? = nil) {
         self.customTitle = title
         self.accessory = accessory
         self.entries = entries
+        self.highlightedId = highlightedId
+    }
+
+    /// An entry shown as cited when it is the highlighted one, whatever it said before.
+    static func shownState(_ entry: WTranscriptEntry, highlightedId: String?) -> WTranscriptLineState {
+        entry.id == highlightedId ? .cited : entry.state
     }
 
     public var body: some View {
+        ScrollViewReader { proxy in
+            card
+                .onChange(of: highlightedId) { _, id in
+                    follow.highlight(active: id != nil)
+                    scroll(to: id, proxy)
+                }
+                .onAppear {
+                    follow.highlight(active: highlightedId != nil)
+                    scroll(to: highlightedId, proxy)
+                }
+                .onChange(of: entries.last?.id) { _, _ in
+                    // Only inside a scroll view. Only the scroll position changes; accessibility focus is not moved.
+                    guard viewport > 0, follow.newLine() else { return }
+                    if reduceMotion { proxy.scrollTo(Self.bottomId, anchor: .bottom) } else { withAnimation { proxy.scrollTo(Self.bottomId, anchor: .bottom) } }
+                }
+                .onPreferenceChange(WTranscriptBottomKey.self) { top in
+                    if let top, viewport > 0 { follow.position(distanceBelow: top - viewport) }
+                }
+        }
+    }
+
+    private func scroll(to id: String?, _ proxy: ScrollViewProxy) {
+        guard let id, entries.contains(where: { $0.id == id }) else { return }
+        if reduceMotion { proxy.scrollTo(id, anchor: .center) } else { withAnimation { proxy.scrollTo(id, anchor: .center) } }
+    }
+
+    private var card: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: theme.space(6)) {
                 WGlyph(name: "waveform", size: 13, weight: .semibold).foregroundStyle(theme.textSecondary)
@@ -294,9 +335,15 @@ public struct WTranscriptView: View {
             .padding(.vertical, theme.space(10))
             ForEach(entries) { entry in
                 Divider().overlay(theme.border.opacity(0.6))
-                WTranscriptLine(time: entry.time, speaker: entry.speaker, text: entry.text, state: entry.state)
+                WTranscriptLine(time: entry.time, speaker: entry.speaker, text: entry.text, state: Self.shownState(entry, highlightedId: highlightedId))
                     .padding(.horizontal, theme.space(4))
+                    .id(entry.id)
             }
+            // The end of the transcript: where "at the bottom" is measured, and what a new line scrolls to.
+            Color.clear.frame(height: 1).id(Self.bottomId).accessibilityHidden(true)
+                .background(GeometryReader { geo in
+                    Color.clear.preference(key: WTranscriptBottomKey.self, value: geo.frame(in: .named(WTranscriptScrollSpace.name)).minY)
+                })
         }
         .padding(.bottom, theme.space(6))
         .frame(maxWidth: .infinity, alignment: .leading)

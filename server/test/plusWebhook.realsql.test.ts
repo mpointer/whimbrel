@@ -54,7 +54,7 @@ function plusSub(accountId: string, over: Record<string, unknown> = {}, price = 
   };
 }
 
-function invoice(over: Record<string, unknown> = {}, line: { start?: number; end?: number; price?: string; item?: string; sub?: string } = {}) {
+function invoice(over: Record<string, unknown> = {}, line: { start?: number; end?: number; price?: string; item?: string; sub?: string; amount?: number } = {}) {
   const sub = line.sub ?? "sub_1";
   return {
     id: "in_1",
@@ -69,6 +69,7 @@ function invoice(over: Record<string, unknown> = {}, line: { start?: number; end
       data: [
         {
           id: "il_1",
+          ...(line.amount === undefined ? {} : { amount: line.amount }),
           period: { start: line.start ?? START, end: line.end ?? LINE_END },
           pricing: { price_details: { price: line.price ?? "price_plus_monthly" } },
           parent: { type: "subscription_item_details", subscription_item_details: { subscription_item: line.item ?? "si_1", proration: false } },
@@ -177,14 +178,149 @@ it("subscription_update_invoices_grant_nothing", async () => {
   expect(await allowance(db, id)).toEqual({ micros: 0, expires: null, plan: "cloud", tier: "plus" });
 });
 
-it("a_zero_amount_invoice_grants_nothing", async () => {
+// CHANGED ON PURPOSE (referral plan PR 3): this used to be "a_zero_amount_invoice_grants_nothing"
+// and pinned that EVERY amount_paid of 0 gets no grant. A $0 invoice now grants when it has a positive
+// Plus line (see the $0 tests below). What still grants nothing: a bad amount, and a $0 invoice with
+// nothing priced on it.
+it("an_unusable_amount_or_a_zero_invoice_with_nothing_priced_grants_nothing", async () => {
   const { db, id } = await account();
   const { fetcher } = stripe({ sub_1: plusSub(id) });
-  for (const [n, amount_paid] of [[0, 0], [1, -5], [2, undefined], [3, "1500"]] as const) {
-    expect((await deliver(db, fetcher, paid(invoice({ id: `in_z${n}`, amount_paid })))).status).toBe(200);
+  const cases: [Record<string, unknown>, number | undefined][] = [
+    [{ amount_paid: -5, subtotal: 1500 }, 1500], // negative
+    [{ amount_paid: undefined, subtotal: 1500 }, 1500], // missing
+    [{ amount_paid: "0", subtotal: 1500 }, 1500], // a string
+    [{ amount_paid: 0.5, subtotal: 1500 }, 1500], // fractional
+    [{ amount_paid: 0 }, 1500], // $0, no subtotal sent
+    [{ amount_paid: 0, subtotal: 0 }, 0], // $0, free trial
+    [{ amount_paid: 0, subtotal: 500 }, 0], // $0, subtotal from other lines, Plus line $0
+    [{ amount_paid: 0, subtotal: 1500 }, undefined], // $0, Plus line amount missing
+    [{ amount_paid: 0, subtotal: 1500 }, -1500], // $0, Plus line negative
+  ];
+  for (const [n, [over, amount]] of cases.entries()) {
+    expect((await deliver(db, fetcher, paid(invoice({ id: `in_z${n}`, ...over }, { amount })))).status).toBe(200);
   }
   expect(await grants(db)).toBe(0);
   expect((await allowance(db, id)).micros).toBe(0);
+});
+
+/** A paid $0 invoice: a promotion code or the customer's credit balance covered the $15 Plus line. */
+const zeroInvoice = (over: Record<string, unknown> = {}, line: Parameters<typeof invoice>[1] = {}) =>
+  invoice({ amount_paid: 0, subtotal: 1500, total: 0, ...over }, { amount: 1500, ...line });
+
+it("a_zero_dollar_paid_invoice_with_a_positive_plus_line_grants_once", async () => {
+  const { db, id } = await account();
+  const { fetcher } = stripe({ sub_1: plusSub(id) });
+  expect((await deliver(db, fetcher, paid(zeroInvoice()))).status).toBe(200);
+  expect(await allowance(db, id)).toEqual({ micros: SETTING, expires: LINE_END * 1000, plan: "cloud", tier: "plus" });
+  expect(await grants(db)).toBe(1);
+  expect(await rowOf(db, "in_1")).toMatchObject({ micros: SETTING, period_end_unix_ms: LINE_END * 1000, subscription_id: "sub_1" });
+  // Redelivered (the same event, then a new event for the same invoice): still one grant, no refill.
+  await db.execute("UPDATE account SET ai_allowance_micros = 1000000 WHERE id = ?", [id]);
+  const evt = paid(zeroInvoice());
+  expect((await deliver(db, fetcher, evt)).status).toBe(200);
+  expect((await deliver(db, fetcher, evt)).status).toBe(200);
+  expect((await deliver(db, fetcher, paid(zeroInvoice()))).status).toBe(200);
+  expect(await grants(db)).toBe(1);
+  expect((await allowance(db, id)).micros).toBe(1_000_000);
+});
+
+it("a_yearly_zero_dollar_invoice_grants_its_first_month", async () => {
+  const { db, id } = await account();
+  const yearEnd = START + 365 * DAY;
+  const sub = plusSub(id, {}, "price_plus_yearly", yearEnd);
+  sub.items.data[0].price.recurring.interval = "year";
+  const inv = zeroInvoice({ subtotal: 14400 }, { price: "price_plus_yearly", end: yearEnd, amount: 14400 });
+  expect((await deliver(db, stripe({ sub_1: sub }).fetcher, paid(inv))).status).toBe(200);
+  expect(await grants(db)).toBe(1);
+  expect((await allowance(db, id)).micros).toBe(SETTING);
+  expect((await allowance(db, id)).expires).toBeLessThan(yearEnd * 1000);
+});
+
+it("a_renewal_paid_from_the_credit_balance_grants_and_replaces_the_allowance", async () => {
+  const { db, id } = await account();
+  expect((await deliver(db, stripe({ sub_1: plusSub(id) }).fetcher, paid(invoice()))).status).toBe(200);
+  await db.execute("UPDATE account SET ai_allowance_micros = 1000000 WHERE id = ?", [id]);
+  const next = LINE_END + 30 * DAY;
+  const inv = zeroInvoice({ id: "in_2", billing_reason: "subscription_cycle", period_start: START, period_end: LINE_END, starting_balance: -1500, ending_balance: 0 }, { start: LINE_END, end: next });
+  expect((await deliver(db, stripe({ sub_1: plusSub(id, {}, "price_plus_monthly", next) }).fetcher, paid(inv), (LINE_END + 60) * 1000)).status).toBe(200);
+  // Replaced, not added: no rollover.
+  expect(await allowance(db, id)).toEqual({ micros: SETTING, expires: next * 1000, plan: "cloud", tier: "plus" });
+  expect(await grants(db)).toBe(2);
+});
+
+it("a_zero_dollar_invoice_only_grants_for_the_reasons_that_grant_when_paid", async () => {
+  const { db, id } = await account();
+  const { fetcher } = stripe({ sub_1: plusSub(id) });
+  for (const billing_reason of ["subscription_update", "manual", "subscription_threshold", undefined]) {
+    expect((await deliver(db, fetcher, paid(zeroInvoice({ id: `in_${billing_reason}`, billing_reason })))).status).toBe(200);
+  }
+  expect(await grants(db)).toBe(0);
+});
+
+it("a_zero_dollar_invoice_of_a_cloud_or_another_products_subscription_grants_nothing", async () => {
+  // Cloud on a retired price: not Plus.
+  const { db, id } = await account();
+  const cloud = plusSub(id, { metadata: { account_id: id } }, "price_monthly");
+  expect((await deliver(db, stripe({ sub_1: cloud }).fetcher, paid(zeroInvoice({}, { price: "price_monthly" })))).status).toBe(200);
+  expect(await grants(db)).toBe(0);
+  expect(await allowance(db, id)).toEqual({ micros: 0, expires: null, plan: "cloud", tier: "cloud" });
+  // Another product on the shared Stripe account: a subscription with no Whimbrel price or metadata.
+  const { db: db2, id: id2 } = await account();
+  const other = { id: "sub_fma", object: "subscription", status: "active", customer: "cus_x", metadata: { product: "fma" }, items: { data: [{ id: "si_x", current_period_end: LINE_END, price: { id: "price_fma", recurring: { interval: "month" } } }] } };
+  const inv = zeroInvoice({ id: "in_fma", parent: { subscription_details: { subscription: "sub_fma" } } }, { price: "price_fma", item: "si_x" });
+  expect((await deliver(db2, stripe({ sub_fma: other }).fetcher, paid(inv))).status).toBe(200);
+  expect(await grants(db2)).toBe(0);
+  expect((await allowance(db2, id2)).micros).toBe(0);
+});
+
+it("a_zero_dollar_invoice_without_a_readable_plus_line_is_retried_not_granted", async () => {
+  const { db, id } = await account();
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const inv = zeroInvoice({ lines: { data: [] } });
+  expect((await deliver(db, stripe({ sub_1: plusSub(id) }).fetcher, paid(inv))).status).toBeGreaterThanOrEqual(500);
+  expect(await grants(db)).toBe(0);
+});
+
+it("a_full_refund_of_last_months_paid_invoice_keeps_this_months_zero_dollar_grant", async () => {
+  const { db, id } = await account();
+  const next = LINE_END + 30 * DAY;
+  const in2 = zeroInvoice({ id: "in_2", billing_reason: "subscription_cycle", period_start: START, period_end: LINE_END }, { start: LINE_END, end: next });
+  const { fetcher } = stripe({ sub_1: plusSub(id, {}, "price_plus_monthly", next), in_1: invoice(), in_2: in2 }, { pi_1: "in_1" });
+  expect((await deliver(db, fetcher, paid(invoice()))).status).toBe(200);
+  expect((await deliver(db, fetcher, paid(in2), LINE_END * 1000 + 60_000)).status).toBe(200);
+  vi.spyOn(console, "log").mockImplementation(() => {});
+  expect((await deliver(db, fetcher, refundOf("pi_1"), LINE_END * 1000 + 2 * HOUR)).status).toBe(200);
+  expect(await allowance(db, id)).toEqual({ micros: SETTING, expires: next * 1000, plan: "cloud", tier: "plus" });
+  expect(await markers(db)).toEqual([]);
+});
+
+it("a_full_refund_of_the_charge_behind_a_zero_dollar_grant_zeroes_it_and_a_partial_one_does_not", async () => {
+  // A $0-paid invoice is normally charge-less; this pins that if Stripe ever reports a charge for it
+  // (say, tax collected on a credit-paid invoice), the existing refund rule applies to its grant row.
+  const { db, id } = await account();
+  const in1 = zeroInvoice();
+  const { fetcher } = stripe({ sub_1: plusSub(id), in_1: in1 }, { pi_inv: "in_1" });
+  expect((await deliver(db, fetcher, paid(in1))).status).toBe(200);
+  expect((await deliver(db, fetcher, event("charge.refunded", { id: "ch_inv", object: "charge", amount: 1500, amount_refunded: 500, payment_intent: "pi_inv" }), NOW + 60_000)).status).toBe(200);
+  expect((await allowance(db, id)).micros).toBe(SETTING);
+  expect((await deliver(db, fetcher, fullRefund(), NOW + 120_000)).status).toBe(200);
+  expect((await allowance(db, id)).micros).toBe(0);
+  expect(await grants(db)).toBe(1);
+});
+
+it("a_refund_that_lands_before_a_zero_dollar_invoice_is_paid_leaves_it_with_no_grant", async () => {
+  const { db, id } = await account();
+  const in1 = zeroInvoice();
+  const { fetcher } = stripe({ sub_1: plusSub(id), in_1: in1 }, { pi_inv: "in_1" });
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  // The subscription is already attached to the account (checkout completed); only the invoice is unpaid.
+  const completed = event("checkout.session.completed", { id: "cs_1", object: "checkout.session", mode: "subscription", subscription: "sub_1", client_reference_id: id });
+  expect((await deliver(db, fetcher, completed)).status).toBe(200);
+  expect((await deliver(db, fetcher, fullRefund())).status).toBe(200);
+  expect(await rowOf(db, "in_1")).toMatchObject({ micros: 0 }); // the tombstone
+  expect((await deliver(db, fetcher, paid(in1), NOW + 60_000)).status).toBe(200);
+  expect((await allowance(db, id)).micros).toBe(0);
+  expect(await rowOf(db, "in_1")).toMatchObject({ micros: 0 }); // still only the tombstone
 });
 
 it("a_cloud_invoice_grants_nothing", async () => {
@@ -626,7 +762,7 @@ it("a_paid_grant_for_an_ended_period_is_logged_not_retried", async () => {
 
 it("silent_no_grant_cases_are_logged", async () => {
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
-  // Paid from the credit balance.
+  // Paid from the credit balance, with no priced subtotal on the payload (a priced one now grants).
   const { db, id } = await account();
   expect((await deliver(db, stripe({ sub_1: plusSub(id) }).fetcher, paid(invoice({ amount_paid: 0 })))).status).toBe(200);
   expect(log).toHaveBeenCalledWith("billing: plus invoice paid with no amount, no grant", "in_1");

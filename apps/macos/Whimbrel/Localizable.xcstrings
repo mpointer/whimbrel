@@ -14480,6 +14480,41 @@
         }
       }
     },
+    "Copies a short message and a link to Whimbrel. Nothing is sent." : {
+      "comment" : "Spoken by a screen reader after the Tell a friend row in the menu bar menu.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopiert eine kurze Nachricht und einen Link zu Whimbrel. Es wird nichts gesendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copia un mensaje corto y un enlace a Whimbrel. No se envía nada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie un court message et un lien vers Whimbrel. Rien n'est envoyé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie un court message et un lien vers Whimbrel. Rien n'est envoyé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copia uma mensagem curta e um link para o Whimbrel. Nada é enviado."
+          }
+        }
+      }
+    },
     "Copies your devices sent to the sync relay before this version stay there, encrypted. Current devices ignore them." : {
       "comment" : "Client controls (X6, Task 10).",
       "localizations" : {
@@ -14579,6 +14614,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Copiar imagem"
+          }
+        }
+      }
+    },
+    "Copy a short message with a link to Whimbrel, then paste it wherever you like. Nothing is sent from here." : {
+      "comment" : "Settings: under the Tell a friend heading.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopieren Sie eine kurze Nachricht mit einem Link zu Whimbrel und fügen Sie sie ein, wo Sie möchten. Von hier wird nichts gesendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copia un mensaje corto con un enlace a Whimbrel y pégalo donde quieras. Desde aquí no se envía nada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiez un court message avec un lien vers Whimbrel, puis collez-le où vous voulez. Rien n'est envoyé d'ici."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiez un court message avec un lien vers Whimbrel, puis collez-le où vous voulez. Rien n'est envoyé d'ici."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie uma mensagem curta com um link para o Whimbrel e cole onde quiser. Nada é enviado a partir daqui."
           }
         }
       }
@@ -14716,6 +14786,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Copiar como texto simples"
+          }
+        }
+      }
+    },
+    "Copy message" : {
+      "comment" : "Settings: button on the Tell a friend card.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nachricht kopieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiar mensaje"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copier le message"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copier le message"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copiar mensagem"
           }
         }
       }
@@ -14957,6 +15062,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Não foi possível adicionar o tópico."
+          }
+        }
+      }
+    },
+    "Could not copy. Try again." : {
+      "comment" : "Settings: shown when the clipboard refused the Tell a friend message.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopieren nicht möglich. Versuchen Sie es erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo copiar. Inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie impossible. Réessayez."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copie impossible. Réessayez."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível copiar. Tente novamente."
           }
         }
       }
@@ -26900,6 +27040,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tenho reuniões em outros idiomas"
+          }
+        }
+      }
+    },
+    "I use Whimbrel for my meeting notes. It records without a bot, and my recordings stay on my computer. Free for Mac and Windows: %@" : {
+      "comment" : "The message copied by Tell a friend, to paste into a chat or an email. The placeholder is the link to the Whimbrel website and must stay at the end of the message.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ich nutze Whimbrel für meine Meeting-Notizen. Es nimmt ohne Bot auf, und meine Aufnahmen bleiben auf meinem Computer. Kostenlos für Mac und Windows: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso Whimbrel para mis notas de reuniones. Graba sin bot y mis grabaciones se quedan en mi computadora. Gratis para Mac y Windows: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "J'utilise Whimbrel pour mes notes de réunion. Il enregistre sans robot, et mes enregistrements restent sur mon ordinateur. Gratuit pour Mac et Windows : %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "J'utilise Whimbrel pour mes notes de réunion. Il enregistre sans robot, et mes enregistrements restent sur mon ordinateur. Gratuit pour Mac et Windows : %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eu uso o Whimbrel para minhas anotações de reuniões. Ele grava sem bot, e minhas gravações ficam no meu computador. Grátis para Mac e Windows: %@"
           }
         }
       }
@@ -58434,6 +58609,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "O áudio do sistema parou de chegar. A gravação mantém o áudio capturado até esse momento; o restante é somente do microfone."
+          }
+        }
+      }
+    },
+    "Tell a friend" : {
+      "comment" : "Settings: heading of the card that copies a message about Whimbrel. Also the name of the row in the menu bar menu.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einem Freund empfehlen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recomendar a un amigo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recommander à un ami"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recommander à un ami"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recomendar a um amigo"
           }
         }
       }

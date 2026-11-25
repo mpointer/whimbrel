@@ -4,6 +4,28 @@ Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
 ## [Unreleased]
 
+## [0.9.83] - 2026-11-25
+
+### Mac and Windows
+- Tell a friend: the menu bar or tray, the popup and Settings → Sync & Devices can copy a short message with a link to Whimbrel to paste wherever you like. Nothing is sent from Whimbrel, and no code or reward is involved yet.
+- The skin maker no longer offers whole-page layouts. It offers the five Home element choices. Skins you already have load as before.
+
+### Mac
+- The live transcript no longer repeats one line's text in every row said by the same person within a minute.
+- On the live meeting screen the transcript column grows with the window, slides appear under the notes as they are captured, and an alert's jump or a cited line in Ask highlights and scrolls to that line again.
+- The live transcript follows the newest line, and stops following while you scroll up.
+- "Still recording?" now asks after 1 hour instead of 2, for anyone who never changed it (a choice you made stays). If it gets no answer, the recording stops and is trimmed to the last words plus 30 seconds, the same trim "Still in a meeting?" uses. A short filler line like "Thank you." from near-silent audio no longer delays "Still in a meeting?" or cancels its prompt.
+
+### Windows
+- Narrator now reads a corner alert (for example "Meeting detected" or "Question for you") when it appears, and Tab reaches its buttons. With no screen reader running, alerts still open without taking focus. This was a known issue in 0.9.82.
+- Skins can now set font weights, italic, and separate fonts for numbers and labels. Thread looks the same as before.
+- When a skin's colors are hard to read against Home's parts, Windows adjusts them, as the Mac does, and says which colors it changed.
+- Short filler lines such as "Thank you." no longer delay "Still in a meeting?"
+
+### Website
+- The home and download pages have a Tell a friend block that copies the same message as the apps, in English, Spanish and French.
+- The privacy policy and terms describe referral codes, which are not offered yet.
+
 ## [0.9.82] - 2026-11-25
 
 ### Mac and Windows

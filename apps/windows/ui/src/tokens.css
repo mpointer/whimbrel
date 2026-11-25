@@ -45,6 +45,8 @@
   --font-display: Cambria, Georgia, serif;
   --weight-display: 600;
   --weight-body: 400;
+  /* Body emphasis: two steps (200) above --weight-body, never past 800 (skin.ts `emphasisWeight`). */
+  --weight-emphasis: 600;
   --weight-numerals: 400;
   --weight-label: 400;
   --style-display: normal;

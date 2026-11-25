@@ -10,7 +10,7 @@
 <section class="page-hero">
   <div class="narrow prose">
     <h1>Privacy policy</h1>
-    <p class="muted">Last updated November 19, 2026</p>
+    <p class="muted">Last updated November 25, 2026</p>
 
     <div class="callout"><p><strong>The short version:</strong> the Whimbrel app keeps your meetings and work history on your own computer. This website only collects what you type into its forms and basic download records, uses them to give you the download or the phone beta and (if you ask) product updates, and never sells them.</p></div>
 
@@ -98,12 +98,22 @@
     </ul>
 
     <h2>Cookies and local storage</h2>
-    <p>We set one cookie, <code>whimbrel_lead</code>, after you register. It holds a random identifier so the download links work without asking you again, and expires after a year. The site also keeps a note of your first visit's campaign tags in your browser's local storage. We use no advertising or cross-site tracking cookies.</p>
+    <p>We set one cookie, <code>whimbrel_lead</code>, after you register. It holds a random identifier so the download links work without asking you again, and expires after a year. The site also keeps a note of your first visit's campaign tags in your browser's local storage. If you open a friend's referral link, the site also keeps the code in the link in your browser's local storage, so it can show the code back to you. It stays in your browser. The site does not send it to a server, and it is not a cookie. We use no advertising or cross-site tracking cookies.</p>
 
     <h2>Who processes it</h2>
     <p>The website and its database run on Cloudflare. Spam protection may use Cloudflare Turnstile. Emails, including the download-links email and an internal notice to us about each registration, are sent through Resend. We may copy registrations into our customer-relationship tools to follow up with you. We do not sell or rent your information.</p>
 
     <p>Payments for Whimbrel Plus, Whimbrel Cloud and Whimbrel AI credit are processed by Stripe. We receive your plan, billing period and Stripe customer id, and never your card number.</p>
+
+    <h2 id="referrals">Referral codes</h2>
+    <p>If you are signed in to sync, you can ask for a personal referral code to share with a friend. A friend types the code into the promotion code box on Stripe's checkout page. The code is created in Stripe. Stripe also holds the discount, the credit and the invoices, under its own policy.</p>
+    <p>When you ask for a code, we store these things:</p>
+    <ul>
+      <li>The code, the Stripe id of the code, which of our accounts it belongs to, and when it was made.</li>
+      <li>When a friend's payment is checked for a reward, one record per Stripe invoice. It holds the account that got the code, the friend's account and Stripe customer id, the invoice id, the amount, when it happened, and the result: rewarded, not rewarded, or reversed. If a reward is not given, for example because the sender was not on Plus or the yearly limit was reached, we still keep a record with that result.</li>
+    </ul>
+    <p>We do not see who installs the app. We do not record which friend a link was sent to. A friend's name and email are not shown to the person who shared the code.</p>
+    <p>We keep reward records until the account they belong to is deleted. If you delete your sync account, we delete your referral code and turn the code off in Stripe. We also delete every reward record where you are the person who shared the code. Where you are the friend in a record, we remove your account id and Stripe customer id and keep the rest of the record. Stripe keeps its own payment and credit records under its own retention rules.</p>
 
     <h2>How long we keep it</h2>
     <p>We keep registration records while early access is running and for up to two years after your last interaction, then delete them. You can ask us to delete them sooner at any time.</p>

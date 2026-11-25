@@ -57,6 +57,8 @@ export {
   arrowFocusIndex,
   arrowKeyAction,
   useArrowKeys,
+  windowDocumentTitle,
+  windowDescription,
   type WWindowFrameProps,
   type WRecordingRowProps,
   type WMemoryControlProps,

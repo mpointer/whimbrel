@@ -37,7 +37,6 @@ enum SkinCatalogue {
                 "keys": Dictionary(uniqueKeysWithValues: SkinVoiceKey.allCases.map { ($0.rawValue, ["limit": $0.limit]) }),
                 "name": "greetings may use the literal {name}; the limit counts it as \(SkinVoiceKey.measuredNameLength) characters",
             ],
-            "archetypes": raw(SkinArchetype.self),
             "motion": raw(SkinMotion.self),
             "palette": [
                 "shape": ##"{"id","name","light":{token:"#rrggbb"},"dark":{token:"#rrggbb"}}; light, dark or both"##,

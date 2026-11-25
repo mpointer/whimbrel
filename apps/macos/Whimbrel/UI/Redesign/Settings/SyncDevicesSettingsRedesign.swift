@@ -28,6 +28,35 @@ enum SettingsPasteboard {
     }
 }
 
+// MARK: Tell a friend
+
+/// The message the menu bar row and the Settings card copy: a short line about Whimbrel and a plain link, no code and no reward.
+/// It is plain text, not concealed: unlike a token, it is meant to be pasted anywhere and may sit in a clipboard history.
+enum TellAFriend {
+    /// The localized message. The template's one `%@` is where the link goes (`WTellAFriend.message`).
+    static func message() -> String {
+        WTellAFriend.message(template: String(
+            localized: "I use Whimbrel for my meeting notes. It records without a bot, and my recordings stay on my computer. Free for Mac and Windows: %@",
+            comment: "The message copied by Tell a friend, to paste into a chat or an email. The placeholder is the link to the Whimbrel website and must stay at the end of the message."))
+    }
+
+    /// Puts the message on the pasteboard (the general one unless a test passes its own). True only when the write succeeded.
+    static func copy(to board: NSPasteboard = .general) -> Bool {
+        board.clearContents()
+        return board.setString(message(), forType: .string)
+    }
+
+    static func labels() -> WTellAFriendLabels {
+        var l = WTellAFriendLabels()
+        l.heading = String(localized: "Tell a friend", comment: "Settings: heading of the card that copies a message about Whimbrel. Also the name of the row in the menu bar menu.")
+        l.blurb = String(localized: "Copy a short message with a link to Whimbrel, then paste it wherever you like. Nothing is sent from here.", comment: "Settings: under the Tell a friend heading.")
+        l.copyButton = String(localized: "Copy message", comment: "Settings: button on the Tell a friend card.")
+        l.copied = String(localized: "Copied")
+        l.failed = String(localized: "Could not copy. Try again.", comment: "Settings: shown when the clipboard refused the Tell a friend message.")
+        return l
+    }
+}
+
 // MARK: Adapter (pure, tested)
 
 enum SyncDevicesAdapter {
@@ -94,7 +123,7 @@ enum SyncDevicesAdapter {
             l.intro, l.phoneBlurb, l.collisionTitle, l.collisionText, l.revokeTitle, l.revokeMessage, l.removeRunnerMessage, l.deleteAccountTitle,
             l.runnerNotShownAgain, l.runnerCloseQuestion, l.provisionInstructions, l.runnerPublicKeyHelp, l.removeDeviceMessage, l.waitlistPrompt,
             l.waitlistJoined, l.upgradePlus, l.upgradeCloud, l.planReadFailed,
-        ]
+        ] + TellAFriend.labels().all
     }
 
     static func labels() -> WSyncLabels {
@@ -294,7 +323,7 @@ private struct SyncDevicesSettingsRedesignBody: View {
             staleLine: staleLine(now: now),
             syncNow: WSyncNowModel(
                 isEnabled: state == .enabled, isSyncing: state == .syncing, message: syncNow.message, messageIsError: syncNow.phase != .synced),
-            notes: isReady ? notes() : [], pending: pendingModel, anchors: SettingsAnchorID.sync)
+            notes: isReady ? notes() : [], pending: pendingModel, anchors: SettingsAnchorID.sync, tellAFriend: TellAFriend.labels())
     }
 
     private func staleLine(now: Date) -> String? {
@@ -376,6 +405,7 @@ private struct SyncDevicesSettingsRedesignBody: View {
                 case .failure(let error): return .failure(error.text)
                 }
             },
-            copy: { SettingsPasteboard.copy($0) })
+            copy: { SettingsPasteboard.copy($0) },
+            tellAFriend: { TellAFriend.copy() })
     }
 }

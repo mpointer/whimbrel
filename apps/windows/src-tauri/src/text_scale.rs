@@ -142,14 +142,42 @@ pub fn place_corner_alert(app: &AppHandle, window: &WebviewWindow, logical: (f64
     Ok(())
 }
 
-/// Shows a redesigned corner alert without making it the active window, so it does not close an open tray menu or take the
-/// keyboard from the app in use. `WebviewWindow::show` activates the window even when it was built unfocused. A click or
-/// Alt+Tab still gives it the keyboard.
+/// Whether a corner alert opens active and focused: only when a screen reader is running. Narrator speaks a focus change and
+/// stays silent for a window that appears without one (measured on a real PC, 2026-11-25), so for that person the alert takes
+/// the keyboard, which also lets them reach its buttons. Everyone else keeps the no-activate show. Pure.
+pub fn corner_alert_activates(screen_reader_running: bool) -> bool {
+    screen_reader_running
+}
+
+/// Whether Windows says a screen reader is running (`SPI_GETSCREENREADER`, which Narrator and the other readers set). Read each
+/// time an alert opens, so turning Narrator on or off takes effect on the next alert. Any error counts as not running.
+pub fn screen_reader_running() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETSCREENREADER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
+    // A Win32 BOOL is a 32-bit integer.
+    let mut on: i32 = 0;
+    let read = unsafe { SystemParametersInfoW(SPI_GETSCREENREADER, 0, Some(&mut on as *mut i32 as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) };
+    read.is_ok() && on != 0
+}
+
+/// Shows a redesigned corner alert. Without a screen reader it does not become the active window, so it does not close an open
+/// tray menu or take the keyboard from the app in use (`WebviewWindow::show` activates the window even when it was built
+/// unfocused); a click or Alt+Tab still gives it the keyboard. With a screen reader running (`corner_alert_activates`) it is shown
+/// active and brought to the front, and the page puts focus on the alert's own content, so the reader says it as a focus change.
 pub fn show_corner_alert(window: &WebviewWindow) -> tauri::Result<()> {
-    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+    use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_SHOW, SW_SHOWNOACTIVATE};
     let hwnd = windows::Win32::Foundation::HWND(window.hwnd()?.0);
-    unsafe {
-        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    if corner_alert_activates(screen_reader_running()) {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            // Windows may refuse to move the foreground to a background process; the window is then still shown, and
+            // `set_focus` asks the shell's own way as well. Neither failure is an error to the caller.
+            let _ = SetForegroundWindow(hwnd);
+        }
+        let _ = window.set_focus();
+    } else {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
     }
     Ok(())
 }
@@ -159,6 +187,12 @@ mod tests {
     use super::*;
 
     const WORK: (i32, i32, u32, u32) = (0, 0, 1920, 1032);
+
+    #[test]
+    fn a_screen_reader_makes_the_alert_take_focus_and_no_screen_reader_does_not() {
+        assert!(corner_alert_activates(true));
+        assert!(!corner_alert_activates(false));
+    }
 
     #[test]
     fn no_value_means_100_percent() {

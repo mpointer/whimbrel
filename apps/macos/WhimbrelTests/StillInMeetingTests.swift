@@ -75,10 +75,89 @@ final class StillInMeetingTests: XCTestCase {
         XCTAssertEqual(StillInMeeting.state(now: at(1850), recordingStartedAt: start, lastSpeechAt: at(600),
                                             speechArrivedAt: at(950), promptShownAt: nil, keptAt: nil), .prompt)
         // Arrival is a new line with text, not a refresh of the same rows or a blank one.
-        let old = [segment(endCs: 30_000, text: "hi")]
+        let old = [segment(endCs: 30_000, text: "hi there")]
         XCTAssertFalse(StillInMeeting.hasNewSpeech(old: old, new: old))
         XCTAssertFalse(StillInMeeting.hasNewSpeech(old: old, new: old + [segment(endCs: 40_000, text: " ")]))
-        XCTAssertTrue(StillInMeeting.hasNewSpeech(old: old, new: old + [segment(endCs: 20_000, text: "late")]))
+        XCTAssertTrue(StillInMeeting.hasNewSpeech(old: old, new: old + [segment(endCs: 20_000, text: "late again")]))
+    }
+
+    // MARK: Filler is not speech
+
+    private func line(endCs: Int64, lengthCs: Int64, text: String) -> CoreLiveSegment {
+        CoreLiveSegment(id: endCs, meetingId: 1, channel: "system", chunkIndex: 0, startCs: endCs - lengthCs,
+                        endCs: endCs, speakerLabel: "Them", text: text)
+    }
+
+    func testShortFillerLineIsNotSpeech() {
+        // "Thank you." from near-silent audio is two words but under a second.
+        let filler = line(endCs: 60_000, lengthCs: 60, text: "Thank you.")
+        XCTAssertFalse(StillInMeeting.countsAsSpeech(filler))
+        XCTAssertFalse(StillInMeeting.hasNewSpeech(old: [], new: [filler]))
+        XCTAssertNil(StillInMeeting.lastSpeechAt(recordingStartedAt: start, liveListening: true, liveSegments: [filler],
+                                                 lastNonSilentAt: at(0)))
+        // One word is not speech however long it runs.
+        XCTAssertFalse(StillInMeeting.countsAsSpeech(line(endCs: 60_000, lengthCs: 400, text: "Thanks.")))
+        XCTAssertFalse(StillInMeeting.countsAsSpeech(line(endCs: 60_000, lengthCs: 400, text: "... - 12")))
+    }
+
+    func testRealTwoWordLineOfASecondResetsTheClock() {
+        let real = line(endCs: 60_000, lengthCs: 100, text: "Let's begin")
+        XCTAssertTrue(StillInMeeting.countsAsSpeech(real))
+        XCTAssertTrue(StillInMeeting.hasNewSpeech(old: [], new: [real]))
+        XCTAssertEqual(StillInMeeting.lastSpeechAt(recordingStartedAt: start, liveListening: true, liveSegments: [real],
+                                                   lastNonSilentAt: at(0)), at(600))
+        XCTAssertFalse(StillInMeeting.countsAsSpeech(line(endCs: 60_000, lengthCs: 99, text: "Let's begin")))
+    }
+
+    func testFillerAmongRealLinesDoesNotMoveLastSpeech() {
+        let segments = [line(endCs: 30_000, lengthCs: 300, text: "We shipped it"), line(endCs: 90_000, lengthCs: 50, text: "Thank you.")]
+        XCTAssertEqual(StillInMeeting.lastSpeechAt(recordingStartedAt: start, liveListening: true, liveSegments: segments,
+                                                   lastNonSilentAt: at(0)), at(300))
+    }
+
+    func testPromptIsNotCancelledByOneFillerLine() {
+        // A prompt shows at 900 s. A filler line arrives: it must not count as arrival, so
+        // the prompt runs to its stop.
+        let filler = line(endCs: 95_000, lengthCs: 60, text: "Thank you.")
+        let arrived: Date? = StillInMeeting.hasNewSpeech(old: [], new: [filler]) ? at(950) : nil
+        let lastSpeech = StillInMeeting.lastSpeechAt(recordingStartedAt: start, liveListening: true, liveSegments: [filler],
+                                                     lastNonSilentAt: at(0))
+        XCTAssertEqual(StillInMeeting.state(now: at(960), recordingStartedAt: start, lastSpeechAt: lastSpeech,
+                                            speechArrivedAt: arrived, promptShownAt: at(900), keptAt: nil), .prompt)
+        XCTAssertEqual(StillInMeeting.state(now: at(1020), recordingStartedAt: start, lastSpeechAt: lastSpeech,
+                                            speechArrivedAt: arrived, promptShownAt: at(900), keptAt: nil), .stop)
+    }
+
+    func testWordsWithLettersAreUnicodeAware() {
+        XCTAssertEqual(StillInMeeting.speechWordCount("Thank you."), 2)
+        XCTAssertEqual(StillInMeeting.speechWordCount("Gracias, amigo m\u{ED}o"), 3)
+        XCTAssertEqual(StillInMeeting.speechWordCount("12 - ... 3.5"), 0)
+        // A no-space script: a run of 2 or more letters is enough on its own.
+        XCTAssertGreaterThanOrEqual(StillInMeeting.speechWordCount("\u{4F1A}\u{8B70}\u{3092}\u{59CB}\u{3081}\u{307E}\u{3059}"), 2)
+        XCTAssertGreaterThanOrEqual(StillInMeeting.speechWordCount("\u{5927}\u{5BB6}\u{597D}"), 2)
+        XCTAssertLessThan(StillInMeeting.speechWordCount("\u{306F}"), 2)
+        XCTAssertTrue(StillInMeeting.countsAsSpeech(line(endCs: 60_000, lengthCs: 300, text: "\u{4F1A}\u{8B70}\u{3092}\u{59CB}\u{3081}\u{307E}\u{3059}")))
+        XCTAssertFalse(StillInMeeting.countsAsSpeech(line(endCs: 60_000, lengthCs: 50, text: "\u{4F1A}\u{8B70}\u{3092}\u{59CB}\u{3081}\u{307E}\u{3059}")))
+    }
+
+    func testCheckInLogLineHasFieldsAndNoTranscriptText() {
+        let rows = [line(endCs: 60_000, lengthCs: 300, text: "Secret budget plan"), line(endCs: 61_000, lengthCs: 40, text: "Thank you.")]
+        let arrival = CheckInLog.arrival(old: [], new: rows)
+        XCTAssertEqual(arrival, CheckInLog.Arrival(speechLines: 1, fillerLines: 1, words: 3, characters: 18))
+        let text = CheckInLog.line(event: "speech-arrived", reason: "live-line", lastSpeechAt: at(600), quietSince: nil,
+                                   liveStatus: "listening", engine: "WhisperEngine", extra: arrival.extra)
+        XCTAssertTrue(text.contains("event=speech-arrived reason=live-line"))
+        XCTAssertTrue(text.contains("quietSince=none live=listening engine=WhisperEngine"))
+        XCTAssertTrue(text.contains("speechLines=1 fillerLines=1 words=3 characters=18"))
+        XCTAssertFalse(text.contains("Secret"))
+        XCTAssertFalse(text.contains("Thank"))
+        // Rows already seen add nothing.
+        XCTAssertEqual(CheckInLog.arrival(old: rows, new: rows), CheckInLog.Arrival())
+    }
+
+    func testQuietSinceNamesTheLatestResetter() {
+        XCTAssertEqual(StillInMeeting.quietSince(recordingStartedAt: start, lastSpeechAt: at(600), speechArrivedAt: at(700), keptAt: at(650)), at(700))
+        XCTAssertEqual(StillInMeeting.quietSince(recordingStartedAt: start, lastSpeechAt: nil, speechArrivedAt: nil, keptAt: nil), start)
     }
 
     func testPromptOnlyForManual() {

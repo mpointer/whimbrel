@@ -112,6 +112,10 @@ export function parseFace(name: FaceName): Face {
 
 const DENSITY: Record<string, number> = { compact: 0.75, regular: 1, airy: 1.25 };
 
+/** Body emphasis: two steps (200) above the body weight, up to 800. A body already heavier than 800 keeps its own weight,
+ *  so emphasis is never lighter than the text it sits in (docs/superpowers/plans/2026-11-25-richer-skins.md, decision 6). */
+export const emphasisWeight = (body: number): number => Math.max(body, Math.min(body + 200, 800));
+
 /** The control radius is two thirds of the radius, rounded (core/skins `Shape::control_radius`). */
 export const controlRadius = (radius: number): number => Math.round((radius * 2) / 3);
 
@@ -124,6 +128,7 @@ export function skinVariables(skin: SkinManifest): Record<string, string> {
     vars[`--weight-${role}`] = String(face.weight);
     vars[`--style-${role}`] = face.italic ? "italic" : "normal";
   }
+  vars["--weight-emphasis"] = String(emphasisWeight(parseFace(skin.typography.body).weight));
   // Upper case is `text-transform`; small caps is `font-variant-caps`. Each is its own property.
   vars["--caps"] = skin.typography.caps === "upper" ? "uppercase" : "none";
   vars["--caps-variant"] = skin.typography.caps === "small" ? "small-caps" : "normal";

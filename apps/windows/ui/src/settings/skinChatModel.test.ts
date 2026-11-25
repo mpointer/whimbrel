@@ -110,6 +110,25 @@ describe("a turn", () => {
     expect(api.chat).not.toHaveBeenCalled();
   });
 
+  it("the note about a repaired palette shows in the chat, after the reply, as the Mac shows it", async () => {
+    // The shell repaired a palette and wrote the Mac's sentence into the skin's chat lines (skin_maker.rs).
+    const note = "I adjusted text secondary, link in “Stadium night” so text stays readable.";
+    const stored = [said("user", "a stadium skin"), said("whimbrel", "Here is a stadium skin."), said("whimbrel", note)];
+    const h = harness();
+    const api = fakeApi({
+      turn: vi.fn(async () => result({ lines: ["Here is a stadium skin.", note] })),
+      chat: vi.fn(async () => stored),
+    });
+    await runTurn(api, h.send("a stadium skin"), h.dispatch, () => true);
+    expect(texts(h.get())).toEqual(["a stadium skin", "Here is a stadium skin.", note]);
+    expect(h.get().turns.at(-1)?.role).toBe("whimbrel");
+    // A built-in's reply is only shown, not stored: the note still shows, in the same place.
+    const h2 = harness();
+    const api2 = fakeApi({ turn: vi.fn(async () => result({ lines: ["Here is a stadium skin.", note], stored: false, chatSkinId: "whimbrel" })) });
+    await runTurn(api2, h2.send("a stadium skin"), h2.dispatch, () => true);
+    expect(texts(h2.get())).toEqual(["a stadium skin", "Here is a stadium skin.", note]);
+  });
+
   it("a failed turn says nothing changed and stops", async () => {
     const h = harness();
     const turn = h.send("a skin");

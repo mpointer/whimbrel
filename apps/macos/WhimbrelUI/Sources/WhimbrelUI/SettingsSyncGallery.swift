@@ -7,7 +7,8 @@ import SwiftUI
 @MainActor
 extension WSettingsWindowGallery {
     static let anchorsSync = WSyncAnchors(
-        overview: "devices.overview", syncNow: "devices.syncNow", name: "devices.name", phone: "devices.phone", deleteAccount: "devices.deleteAccount")
+        overview: "devices.overview", syncNow: "devices.syncNow", name: "devices.name", phone: "devices.phone", deleteAccount: "devices.deleteAccount",
+        tellAFriend: "devices.tellAFriend")
     static let anchorsConnectors = WConnectorsAnchors(
         calendar: "connectors.calendar", gmail: "connectors.gmail", outlook: "connectors.outlook", ownClient: "connectors.ownClient", mcp: "connectors.mcp")
 

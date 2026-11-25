@@ -353,7 +353,8 @@ struct MenuBarRedesignView: View {
             askAboutWindow: { appState.openHotkeyPanelFromMenu(menuOpenedAt: openedAt) },
             openWhimbrel: { openWindow(id: "timeline") },
             openSettings: { openSettings() },
-            quit: { NSApplication.shared.terminate(nil) })
+            quit: { NSApplication.shared.terminate(nil) },
+            tellAFriend: { TellAFriend.copy() })
     }
 }
 

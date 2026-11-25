@@ -57,6 +57,7 @@ pub mod skin_sync;
 pub mod state;
 pub mod store_actor;
 pub mod syncing;
+pub mod tell_friend;
 pub mod topic_vault;
 pub mod text_scale;
 pub mod topics;

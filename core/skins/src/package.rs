@@ -7,7 +7,7 @@
 use crate::format::whimbrel_default;
 use crate::loader::parse_skin;
 use crate::palette::{default_palette, parse_palette};
-use crate::store::{archetype_repair, skin_name, StoreError, UserSkinStore};
+use crate::store::{archetype_repair_with, skin_choices, skin_name, StoreError, UserSkinStore};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -308,6 +308,7 @@ pub fn import(
     let (parsed, _) =
         parse_skin(&package.manifest, &whimbrel_default()).ok_or_else(|| invalid("skin.json"))?;
     let archetype = parsed.today.archetype;
+    let choices = [skin_choices(&parsed)];
     let Ok(Value::Object(mut manifest)) = serde_json::from_slice::<Value>(&package.manifest) else {
         return Err(invalid("skin.json"));
     };
@@ -399,7 +400,7 @@ pub fn import(
         let mut rewritten = pretty(&Value::Object(palette));
         // A palette that does not suit the skin's archetype is repaired, as one the chat made would be.
         if let Some((fixed, _)) =
-            parse_palette(&rewritten, &fallback).and_then(|p| archetype_repair(&p, &id, archetype))
+            parse_palette(&rewritten, &fallback).and_then(|p| archetype_repair_with(&p, &id, archetype, &choices))
         {
             rewritten = pretty(&fixed.to_json());
         }

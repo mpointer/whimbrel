@@ -225,6 +225,19 @@ pub fn redesign_pairs(choices: &[ElementChoices]) -> Vec<Pair> {
         .collect()
 }
 
+/// What a palette that any skin may take is repaired against with the redesign on: `all_pairs()` plus
+/// `redesign_pairs` for every element variant, each pair once. The same set `repair_for` builds from
+/// `all_pairs()` and `ElementChoices::every_variant()`; the Mac's `PaletteRepair.repair(_, redesign:)` with
+/// `WHomeElements.everyVariant`.
+pub fn all_redesign_pairs() -> Vec<Pair> {
+    let mut seen = std::collections::BTreeSet::new();
+    all_pairs()
+        .into_iter()
+        .chain(redesign_pairs(&ElementChoices::every_variant()))
+        .filter(|p| seen.insert(format!("{} on {}", p.text.name(), p.name)))
+        .collect()
+}
+
 /// `repair`, with the redesign's element pairs added when `redesign` is `Some(choices)`. With `None`
 /// this is `repair(palette, pairs)` exactly.
 pub fn repair_for(

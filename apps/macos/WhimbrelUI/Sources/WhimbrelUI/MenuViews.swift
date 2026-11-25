@@ -2,7 +2,8 @@ import SwiftUI
 
 // The menu bar menu (docs/ui-redesign/screens/menu-bar.md). One surface with sections and dividers, in this order:
 // Recording (only while a meeting records), Memory, Needs attention (only when there is something), Next meeting,
-// Start Meeting and Ask about this window, Working on, then Open Whimbrel, Settings and Quit.
+// Start Meeting and Ask about this window, Working on, Tell a friend (a quiet row that copies a message with a link), then Open
+// Whimbrel, Settings and Quit.
 // Recording and Memory are never hidden, shrunk or shown by color alone. The Recording and Memory rows stay at the top and
 // Open, Settings and Quit at the bottom; when the menu is taller than the screen the part between them scrolls.
 
@@ -84,6 +85,8 @@ struct WMenuRow: View {
     let title: String
     var spokenName: String?
     var hint: String?
+    /// Said after the name by a screen reader: what the row does, when the title alone does not say.
+    var spokenHint: String?
     let action: () -> Void
 
     var body: some View {
@@ -97,6 +100,7 @@ struct WMenuRow: View {
         }
         .buttonStyle(WMenuRowStyle())
         .accessibilityLabel(spokenName ?? title)
+        .accessibilityHint(spokenHint ?? "")
     }
 }
 
@@ -202,6 +206,8 @@ public struct WMenuView<Accessory: View, Extras: View>: View {
     @FocusState private var focus: String?
     @State private var content = WMenuContentMetrics(height: 0, offset: 0)
     @State private var viewport: CGFloat = 0
+    /// "Copied" shows in the Tell a friend row for a few seconds after a copy that worked.
+    @State private var copiedFlash = WCopyFlash()
     let model: WMenuModel
     let actions: WMenuActions
     let memoryGate: (AnyView) -> AnyView
@@ -355,6 +361,28 @@ public struct WMenuView<Accessory: View, Extras: View>: View {
                 .frame(minHeight: WTokens.Size.target * k)
                 .accessibilityElement(children: .combine)
             }
+        }
+        divider
+        WMenuSection { tellAFriendRow }
+    }
+
+    /// A quiet row above Open Whimbrel. It copies a short message with a link and says "Copied" in the row for a few seconds. It
+    /// opens no window and sends nothing.
+    private var tellAFriendRow: some View {
+        WMenuRow(
+            glyph: copiedFlash.copied ? "checkmark" : "person.2",
+            title: copiedFlash.copied ? strings.menu.tellAFriendCopied : strings.menu.tellAFriend,
+            spokenHint: copiedFlash.copied ? nil : strings.menu.tellAFriendHint
+        ) {
+            let ok = actions.tellAFriend()
+            copiedFlash.finish(succeeded: ok)
+            if ok { AccessibilityNotification.Announcement(strings.menu.tellAFriendCopied).post() }
+        }
+        .menuControl(WMenuFocusID.tellAFriend, $focus)
+        .task(id: copiedFlash.generation) {
+            guard copiedFlash.copied else { return }
+            try? await Task.sleep(nanoseconds: UInt64(WTellAFriend.copiedSeconds * 1_000_000_000))
+            if !Task.isCancelled { copiedFlash.reset() }
         }
     }
 

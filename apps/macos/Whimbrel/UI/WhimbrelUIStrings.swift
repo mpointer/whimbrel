@@ -246,7 +246,10 @@ enum WhimbrelUIStrings {
             copy: String(localized: "Copy"),
             answering: String(localized: "Answering", comment: "Spoken name of the progress indicator in the Ask about this window panel while the answer is being written."),
             // The old menu's disabled button after a Stop during a start; the key is the one it already uses.
-            saving: String(localized: "Saving…")
+            saving: String(localized: "Saving…"),
+            tellAFriend: String(localized: "Tell a friend", comment: "Settings: heading of the card that copies a message about Whimbrel. Also the name of the row in the menu bar menu."),
+            tellAFriendCopied: String(localized: "Copied"),
+            tellAFriendHint: String(localized: "Copies a short message and a link to Whimbrel. Nothing is sent.", comment: "Spoken by a screen reader after the Tell a friend row in the menu bar menu.")
         )
     }
 

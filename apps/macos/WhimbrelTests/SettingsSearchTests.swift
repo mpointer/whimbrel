@@ -51,6 +51,13 @@ final class SettingsSearchTests: XCTestCase {
         XCTAssertEqual(SettingsSearch.results(for: "zzzzqxj"), [])
     }
 
+    func testTellAFriendIsFoundInSyncAndDevicesByItsTitleAndByShare() {
+        for query in ["tell a friend", "share", "friend"] {
+            let hit = SettingsSearch.results(for: query).first { $0.id == "devices.tellAFriend" }
+            XCTAssertEqual(hit?.section, .devices, query)
+        }
+    }
+
     func testEntryIdsAreUnique() {
         let ids = SettingsSearch.entries.map(\.id)
         XCTAssertEqual(ids.count, Set(ids).count)
@@ -73,7 +80,10 @@ final class SettingsSearchTests: XCTestCase {
         for entry in SettingsSearch.entries {
             let needle = ".settingsAnchor(\"\(entry.id)\")"
             let count = source.components(separatedBy: needle).count - 1
-            XCTAssertEqual(count, 1, "anchor \(entry.id) appears \(count) times in the UI source, expected 1")
+            // A classic entry has its call once. A card the classic panes do not have (`inClassicPane` false) has none: the redrawn
+            // section anchors it through `SettingsAnchorID`, which the redesign tests check against the registry.
+            let expected = entry.inClassicPane ? 1 : 0
+            XCTAssertEqual(count, expected, "anchor \(entry.id) appears \(count) times in the UI source, expected \(expected)")
         }
 
         // Orphans: a call site whose id is not in the registry.

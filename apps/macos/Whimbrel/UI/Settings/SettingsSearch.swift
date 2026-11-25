@@ -8,6 +8,9 @@ struct SettingsSearchEntry: Equatable {
     let title: String
     let section: SettingsSection
     let keywords: [String]
+    /// False for a card the classic panes do not have (Tell a friend): it has no `.settingsAnchor` call there. The redrawn
+    /// section carries its id through `SettingsAnchorID`, as for every redrawn row.
+    var inClassicPane = true
 }
 
 enum SettingsSearch {
@@ -79,6 +82,7 @@ enum SettingsSearch {
         e("devices.name", "This device's name", .devices, ["rename", "device name"]),
         e("devices.phone", "Whimbrel on your phone", .devices, ["iphone", "android", "mobile", "phone", "beta", "qr"]),
         e("devices.deleteAccount", "Delete my sync account", .devices, ["remove account", "erase"]),
+        SettingsSearchEntry(id: "devices.tellAFriend", title: "Tell a friend", section: .devices, keywords: ["share", "recommend", "invite", "link", "copy message", "friend"], inClassicPane: false),
         // Connectors
         e("connectors.calendar", "Google Calendar", .connectors, ["calendar", "accounts", "connect", "add account"]),
         e("connectors.gmail", "Gmail", .connectors, ["email", "mail", "google", "accounts"]),

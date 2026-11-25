@@ -94,6 +94,10 @@ struct LiveMeetingSection: View {
     let meeting: CoreMeeting
     /// False on the redesign live screen, which draws the transcript itself.
     var showsTranscript = true
+    /// The old screen sets the section in from the window's edge. The Thread screen draws it inside a column that is already set in.
+    var padsHorizontally = true
+    /// Called with the live row's own id (the positive one) whenever a line is cited or an alert is jumped to, for a screen that draws the transcript itself.
+    var onHighlight: ((Int64) -> Void)?
     @State private var highlightedId: Int64?
     @State private var alerts: [LiveAlertsSection.Row] = []
     /// Live rows count from this part's start; alerts and links from the meeting's. Nil until loaded.
@@ -113,7 +117,7 @@ struct LiveMeetingSection: View {
                 highlight(id)
             }
         }
-        .padding(.horizontal, Spacing.xl)
+        .padding(.horizontal, padsHorizontally ? Spacing.xl : 0)
         .padding(.top, Spacing.sm)
         .onAppear {
             loadAlerts()
@@ -150,6 +154,7 @@ struct LiveMeetingSection: View {
         // Reset first so citing the same line twice re-scrolls.
         highlightedId = nil
         DispatchQueue.main.async { highlightedId = id }
+        if id < 0 { onHighlight?(-id) }
     }
 
     /// `atCs` is meeting-absolute; the live rows are part-relative.

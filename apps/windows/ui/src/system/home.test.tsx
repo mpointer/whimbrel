@@ -12,6 +12,16 @@ describe("Home parts", () => {
     expect(out).toContain("w-label-bracketed");
     expect(html(<WSectionLabel variant="smallCaps">x</WSectionLabel>)).toContain("w-label-smallCaps");
   });
+  it("leaves the words as written when a skin sets caps upper or small: the case is drawn by CSS, so the text a reader gets is the same", () => {
+    // Upper case and small caps are `text-transform` and `font-variant-caps` on `.w-label` (type.test.ts resolves them);
+    // nothing in the markup changes with the skin's caps, so the heading's text and name are the same under every skin.
+    for (const variant of ["plain", "bracketed", "smallCaps"] as const) {
+      const out = html(<WSectionLabel variant={variant}>Open threads</WSectionLabel>);
+      expect(out, variant).toContain("Open threads");
+      expect(out, variant).not.toContain("OPEN THREADS");
+      expect(out, variant).toContain(`class="w-label w-label-${variant}"`);
+    }
+  });
   it("draws the next meeting three ways with the same words", () => {
     for (const variant of ["card", "scoreboard", "infobox"] as const) {
       const out = html(<WNextMeeting variant={variant} {...next} when="Today, 10:31 AM" />);

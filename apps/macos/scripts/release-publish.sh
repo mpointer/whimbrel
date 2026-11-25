@@ -216,4 +216,15 @@ echo "not bundled -- see core/transcribe/README.md and core/diarize/README.md, o
 echo "use the in-app first-run model downloader once it's built. The embedding model"
 echo "(core/memory/README.md) IS bundled -- this script just downloaded/verified it above."
 
+# Keep this build's debug symbols so a crash report from users of this version can be
+# symbolized (the scratch folder, archive included, is deleted next). The dSYM UUIDs match
+# the published binary because the export above comes from this same archive.
+DSYM_DIR="$HOME/Library/Developer/Whimbrel/dSYMs/$VERSION"
+mkdir -p "$DSYM_DIR"
+if [ -d "$ARCHIVE_PATH/dSYMs" ] && cp -R "$ARCHIVE_PATH/dSYMs/." "$DSYM_DIR/"; then
+  echo "==> Kept debug symbols in $DSYM_DIR"
+else
+  echo "warning: no dSYMs found in the archive; crash reports for $VERSION will not symbolize" >&2
+fi
+
 rm -rf "$SCRATCH"

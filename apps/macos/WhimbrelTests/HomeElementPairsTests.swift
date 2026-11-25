@@ -69,6 +69,10 @@ final class HomeElementPairsTests: XCTestCase {
     func testCatalogueGainsTheTodayKeyOnlyWithTheRedesignOn() throws {
         let off = SkinCatalogue.object()
         XCTAssertNil(off["today"])
+        XCTAssertNil(off["archetypes"])
+        XCTAssertNil(SkinCatalogue.object(redesign: true)["archetypes"])
+        let keys = try XCTUnwrap(((SkinCatalogue.object(redesign: true)["today"] as? [String: Any])?["options"]) as? [String: [String]]).keys
+        XCTAssertEqual(Set(keys), ["nextMeeting", "timeline", "labels", "ask", "actions"])
         XCTAssertEqual(NSDictionary(dictionary: off), NSDictionary(dictionary: SkinCatalogue.object(redesign: false)))
         let on = SkinCatalogue.object(redesign: true)
         let today = try XCTUnwrap(on["today"] as? [String: Any])

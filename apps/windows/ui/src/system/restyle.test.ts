@@ -78,9 +78,9 @@ describe("the restyle stylesheet applies only with the redesign switch on", () =
 
   it("shows a chosen row by more than color: a border bar and heavier words, and forced colors keep the bar and add an outline", () => {
     expect(css).toMatch(/\.topic-row\.topic-row--active \{[^}]*border-inline-start-color/);
-    expect(css).toMatch(/\.topic-row\.topic-row--active \.row-title \{[^}]*font-weight: 700/);
+    expect(css).toMatch(/\.topic-row\.topic-row--active \.row-title \{[^}]*font-weight: var\(--weight-strong, var\(--weight-emphasis, 700\)\)/);
     expect(css).toMatch(/\.meeting-row\.meeting-item--active \{[^}]*border-inline-start-color/);
-    expect(css).toMatch(/\.meeting-row\.meeting-item--active \.meeting-row__title \{[^}]*font-weight: 700/);
+    expect(css).toMatch(/\.meeting-row\.meeting-item--active \.meeting-row__title \{[^}]*font-weight: var\(--weight-strong, var\(--weight-emphasis, 700\)\)/);
     expect(css).toMatch(/\.meeting-row--active,\s*\.w-shell \.rt \.meeting-item--active \{\s*box-shadow: none/);
     expect(css).toMatch(/forced-colors: active\) \{[\s\S]*meeting-item--active \{[^}]*outline: 1px solid Highlight/);
   });
