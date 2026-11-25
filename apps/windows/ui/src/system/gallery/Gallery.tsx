@@ -13,6 +13,9 @@ import {
   W_ICON_NAMES,
   WLoadingState,
   WMeetingCard,
+  WMemoryControl,
+  WRecordingRow,
+  WWindowFrame,
   WNextMeeting,
   WSectionLabel,
   WAskBar,
@@ -43,6 +46,7 @@ import {
   WTranscriptView,
 } from "..";
 import "./gallery.css";
+import { SettingsGallery } from "./SettingsGallery";
 import { MEMORY_ITEMS, NOTE, PAUSE_CHOICES, PEOPLE, SOURCES, TRANSCRIPT } from "./sample";
 
 // Debug screen: every component in every state, on the Thread palette. The mode and the text size are set from the
@@ -59,11 +63,11 @@ const MODES = [
 const SIZES = [100, 150, 200] as const;
 type Mode = (typeof MODES)[number][0];
 
-function fromAddress(): { mode: Mode; size: number } {
+function fromAddress(): { mode: Mode; size: number; only: string | null } {
   const q = new URLSearchParams(window.location.search);
   const mode = MODES.find(([id]) => id === q.get("mode"))?.[0] ?? "system";
   const size = SIZES.find((s) => String(s) === q.get("size")) ?? 100;
-  return { mode, size };
+  return { mode, size, only: q.get("only") };
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -139,7 +143,7 @@ export function Gallery() {
           </div>
         </header>
 
-        <main className="g-main">
+        <main className="g-main" hidden={init.only === "settings"}>
           <Section title="Finished note, with sources in the margin">
             <div className="g-note">
               <div className="g-note-page">
@@ -257,6 +261,80 @@ export function Gallery() {
             </Case>
             <Case label="Consent banner, after Copy notice" wide>
               <WConsentBanner onCopy={noop} onDone={noop} copied />
+            </Case>
+          </Section>
+
+          <Section title="Small windows: frame, recording row, memory control">
+            <Case label="Meeting detected, with the countdown">
+              <div className="g-window">
+                <WWindowFrame
+                  title="Meeting detected"
+                  lines={[<span className="w-win-strong">{"Northwind security review"}</span>, "Record it? Audio stays on this PC."]}
+                  countdown={<span>{"Recording starts in 8 s"}</span>}
+                  actions={
+                    <>
+                      <WButton variant="primary">{"Record"}</WButton>
+                      <WButton>{"Record & open"}</WButton>
+                      <WButton title="Stops the countdown. Whimbrel will not ask about this meeting again.">{"Don\u2019t record"}</WButton>
+                    </>
+                  }
+                />
+              </div>
+            </Case>
+            <Case label="Still recording?">
+              <div className="g-window">
+                <WWindowFrame
+                  title="Still in a meeting?"
+                  lines={["No one has spoken for 15 minutes."]}
+                  actions={
+                    <>
+                      <WButton variant="primary">{"Keep recording"}</WButton>
+                      <WButton>{"Stop"}</WButton>
+                    </>
+                  }
+                />
+              </div>
+            </Case>
+            <Case label="Frame with a long body: the lines scroll under a cue, the actions stay">
+              <div className="g-window g-window-short">
+                <WWindowFrame
+                  title="Your disk is almost full"
+                  lines={["Only 4.5 GB left on C:. Whimbrel may stop recording.", "Only 8.1 GB left on D:, where the recordings are kept.", "Free up space in Settings, under Storage, or move the recordings to another drive."]}
+                  actions={
+                    <>
+                      <WButton variant="primary">{"Free up space…"}</WButton>
+                      <WButton>{"Dismiss"}</WButton>
+                    </>
+                  }
+                />
+              </div>
+            </Case>
+            <Case label="Recording row: recording, paused, problem, and a problem while paused">
+              <div className="g-window g-stack">
+                <WRecordingRow state="recording" elapsedSeconds={848} actions={<><WButton icon="pause">{"Pause"}</WButton><WButton icon="stop" variant="primary">{"Stop"}</WButton></>} />
+                <WRecordingRow state="paused" elapsedSeconds={848} actions={<><WButton icon="play">{"Resume"}</WButton><WButton icon="stop" variant="primary">{"Stop"}</WButton></>} />
+                <WRecordingRow state="problem" elapsedSeconds={848} reason="The microphone isn't delivering audio, so this meeting records system audio only." actions={<WButton icon="stop" variant="primary">{"Stop"}</WButton>} />
+                <WRecordingRow state="paused" word="Recording paused" problem elapsedSeconds={728} reason="Your headset switched to call quality, so the meeting's audio may sound muffled." actions={<><WButton icon="play">{"Resume"}</WButton><WButton icon="stop" variant="primary">{"Stop"}</WButton></>} />
+              </div>
+            </Case>
+            <Case label="Memory control: on, paused, paused by the app, off, stopped">
+              <div className="g-window g-stack">
+                {(["on", "paused", "pausedByApp", "off", "stopped"] as const).map((state) => (
+                  <WMemoryControl
+                    key={state}
+                    state={state}
+                    pausedUntil="3:10 PM"
+                    notes={state === "stopped" ? ["Whimbrel could not start memory."] : state === "on" ? ["Synced 10:20 AM"] : undefined}
+                    onOpenSettings={noop}
+                    choices={[{ id: "15m", label: "15 minutes" }, { id: "1h", label: "1 hour" }, { id: "tomorrow", label: "Until tomorrow" }]}
+                    onPause={noop}
+                    onResumeNow={noop}
+                    onTurnOff={noop}
+                    onTurnOn={noop}
+                    onWhatIsCaptured={noop}
+                  />
+                ))}
+              </div>
             </Case>
           </Section>
 
@@ -492,6 +570,7 @@ export function Gallery() {
             </div>
           </Section>
         </main>
+        <SettingsGallery />
       </WRoot>
     </div>
   );

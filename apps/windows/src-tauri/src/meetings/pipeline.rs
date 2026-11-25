@@ -219,12 +219,19 @@ fn paused_spans(audio_path: &Path) -> super::pause_clock::PausedSpans {
         .unwrap_or_default()
 }
 
-/// A transcript without what the model heard in the silence written for a pause.
+/// A transcript without what the model heard in the silence written for a pause. A line whisper timed from inside a pause
+/// (the first one after Resume) is kept and moved to where the pause ended (`PausedSpans::outside`).
 fn without_paused(segments: Vec<transcribe::TranscriptSegment>, spans: &super::pause_clock::PausedSpans) -> Vec<transcribe::TranscriptSegment> {
     if spans.is_empty() {
         return segments;
     }
-    segments.into_iter().filter(|s| !spans.covers(s.start_cs, s.end_cs)).collect()
+    segments
+        .into_iter()
+        .filter_map(|s| {
+            let (start_cs, end_cs) = spans.outside(s.start_cs, s.end_cs)?;
+            Some(transcribe::TranscriptSegment { start_cs, end_cs, text: s.text })
+        })
+        .collect()
 }
 
 /// The marker the pipeline leaves next to a recording whose transcription failed, holding
@@ -1558,6 +1565,20 @@ mod paused_tests {
         spans.close(12_000);
         let kept = without_paused(vec![seg(100, 400, "hello"), seg(7_000, 7_200, "Thanks for watching."), seg(12_500, 12_800, "back")], &spans);
         assert_eq!(kept.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["hello", "back"]);
+    }
+
+    #[test]
+    fn the_first_sentence_after_resume_survives_when_whisper_times_it_from_inside_the_pause() {
+        // The real-PC run: paused 0:36 to 1:09, and whisper started the sentence spoken right after Resume at 0:42.
+        let mut spans = super::super::pause_clock::PausedSpans::default();
+        spans.open(3_600);
+        spans.close(6_900);
+        let kept = without_paused(
+            vec![seg(3_000, 3_550, "We will buy the shingles."), seg(4_200, 7_400, "Banana. The first word after resuming was banana."), seg(5_000, 5_300, "Thank you.")],
+            &spans,
+        );
+        let shape: Vec<(i64, i64, &str)> = kept.iter().map(|s| (s.start_cs, s.end_cs, s.text.as_str())).collect();
+        assert_eq!(shape, [(3_000, 3_550, "We will buy the shingles."), (6_900, 7_400, "Banana. The first word after resuming was banana.")]);
     }
 
     #[test]

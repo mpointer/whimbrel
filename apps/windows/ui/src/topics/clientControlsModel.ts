@@ -938,6 +938,8 @@ export function kindName(k: ClientItemKind): string {
       return t("Vault notes");
     case "export_folder":
       return t("Export folders");
+    case "mcp_item":
+      return t("Added items");
   }
 }
 
@@ -963,6 +965,8 @@ export function kindSingular(k: ClientItemKind): string {
       return t("Vault note");
     case "export_folder":
       return t("Export folder");
+    case "mcp_item":
+      return t("Added item");
   }
 }
 

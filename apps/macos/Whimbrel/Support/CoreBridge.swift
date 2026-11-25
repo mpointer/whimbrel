@@ -184,6 +184,8 @@ struct CoreContextItemRef: Codable, Equatable {
         case capture, transcript
         case routineRun = "routine_run"
         case episode, thread, snapshot
+        /// An item a local MCP client (such as Claude) added. Opens nothing yet.
+        case mcpItem = "mcp_item"
     }
     let kind: Kind
     let id: Int64
@@ -249,17 +251,92 @@ enum CoreExclusionOutcome: Decodable, Equatable {
     }
 }
 
-/// #74: `whimbrel_llm_prepare_ask`'s success payload.
+/// #74: `whimbrel_llm_prepare_ask`'s success payload (and `whimbrel_llm_prepare_ask_in_topic`'s).
 struct CorePrepareAskData: Decodable {
     let prepareId: String
     let prompt: String
     /// Nil from a core that does not say (the answer then shows no left-out note).
     let exclusion: CoreExclusionOutcome?
+    /// A topic-scoped prepare found nothing in the topic: nothing was stashed or sent, and
+    /// `prepareId` and `prompt` are empty. False when absent.
+    let scopeEmpty: Bool
 
     enum CodingKeys: String, CodingKey {
         case prepareId = "prepare_id"
         case prompt, exclusion
+        case scopeEmpty = "scope_empty"
     }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        prepareId = try c.decode(String.self, forKey: .prepareId)
+        prompt = try c.decode(String.self, forKey: .prompt)
+        exclusion = try c.decodeIfPresent(CoreExclusionOutcome.self, forKey: .exclusion)
+        scopeEmpty = try c.decodeIfPresent(Bool.self, forKey: .scopeEmpty) ?? false
+    }
+}
+
+/// What a conversation's Ask answers from (core's conversation scope JSON:
+/// `{"kind":"everything"}`, `{"kind":"topic","id":N}` or `{"kind":"meeting","id":N}`).
+enum CoreConversationScope: Equatable, Codable {
+    case everything
+    case topic(Int64)
+    case meeting(Int64)
+
+    private enum CodingKeys: String, CodingKey { case kind, id }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .kind) {
+        case "topic": self = .topic(try c.decode(Int64.self, forKey: .id))
+        case "meeting": self = .meeting(try c.decode(Int64.self, forKey: .id))
+        // "everything", and any kind a newer core added, asks of everything.
+        default: self = .everything
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .everything:
+            try c.encode("everything", forKey: .kind)
+        case .topic(let id):
+            try c.encode("topic", forKey: .kind)
+            try c.encode(id, forKey: .id)
+        case .meeting(let id):
+            try c.encode("meeting", forKey: .kind)
+            try c.encode(id, forKey: .id)
+        }
+    }
+}
+
+/// One row of the Conversations list (`whimbrel_conversation_rows`): the summary fields, the live topic (nil:
+/// none, or gone) and the first line of the latest answer (nil before any answer).
+struct CoreConversationRow: Decodable, Identifiable, Equatable {
+    let id: Int64
+    let title: String
+    let starred: Bool
+    let updatedAtUnixMs: Int64
+    let topic: TopicRef?
+    let latestAnswerLine: String?
+
+    var summary: CoreMemoryStore.ConversationSummary {
+        CoreMemoryStore.ConversationSummary(id: id, title: title, starred: starred, updatedAtUnixMs: updatedAtUnixMs)
+    }
+
+    /// The rows from core's JSON array (snake_case keys).
+    static func decodeList(_ data: Data) throws -> [CoreConversationRow] {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode([CoreConversationRow].self, from: data)
+    }
+}
+
+/// A conversation's topic link (`whimbrel_conversation_topic`, decoded with `.convertFromSnakeCase`):
+/// the topic, or nil when it has none, and whether the user chose it.
+struct CoreConversationTopic: Decodable, Equatable {
+    let topic: TopicRef?
+    let setByUser: Bool
 }
 
 /// `whimbrel_llm_prepare_meeting_ask`'s success payload.
@@ -945,6 +1022,24 @@ struct CoreRoutingConfig: Encodable {
         )
     }
 
+    /// A copy for a call that must stay on this computer: core's `sensitive` (local-only) routing, which keeps every hosted link out of the chain.
+    func localOnly() -> CoreRoutingConfig {
+        CoreRoutingConfig(
+            anthropicKey: anthropicKey, openaiKey: openaiKey, googleKey: googleKey, typesafeKey: typesafeKey,
+            userDailyCapCents: userDailyCapCents, globalDailyCapCents: globalDailyCapCents,
+            sensitive: true, preferredProvider: "ollama", preferredModel: preferredModel,
+            customInstructions: customInstructions, dailyDigestInstructions: dailyDigestInstructions,
+            weeklyDigestInstructions: weeklyDigestInstructions, profile: profile,
+            cheapFirst: cheapFirst, useLocalModel: useLocalModel,
+            openrouterKey: openrouterKey, openrouterModel: openrouterModel, openrouterPrices: openrouterPrices,
+            outputLanguage: outputLanguage,
+            whimbrelIdToken: whimbrelIdToken, whimbrelDeviceKey: whimbrelDeviceKey,
+            ollamaModel: ollamaModel,
+            googleAiBillingConfirmed: googleAiBillingConfirmed, remoteOllamaGoogleData: remoteOllamaGoogleData,
+            streamedOllamaModel: streamedOllamaModel, streamedOllamaBaseUrl: streamedOllamaBaseUrl
+        )
+    }
+
     enum CodingKeys: String, CodingKey {
         case anthropicKey = "anthropic_key"
         case openaiKey = "openai_key"
@@ -1215,6 +1310,10 @@ enum CoreLLMError: Error, Equatable, Decodable {
     case localModelMissing
     /// Every provider left is over its monthly budget (`provider` is a core id such as "openai").
     case budgetSpent(provider: String, spentCents: Int64, budgetCents: Int64)
+    /// The sourced Ask calls refused the request for a reason of their own that is not a provider problem (a filter that does not
+    /// validate, `invalid_filter`, or a kind a later core adds). Only `CoreLLMEnvelope.sourcedResult` produces it; every other call
+    /// decodes such a kind as `.providerFailure`, as before.
+    case searchNotRun
 
     enum Scope: String, Decodable {
         case user
@@ -1336,6 +1435,8 @@ enum CoreLLMError: Error, Equatable, Decodable {
             return String(localized: "There is no text in this window to ask about.")
         case .localModelMissing:
             return String(localized: "Local-only mode is on, but no local model is installed. Install one in Settings → AI Providers.")
+        case .searchNotRun:
+            return String(localized: "That search could not be run.", comment: "Shown when Library's Ask was refused for a reason that is not a problem with the AI provider, for example a filter that could not be applied.")
         case let .budgetSpent(provider, spentCents, budgetCents):
             let name = Self.providerNames[provider] ?? provider
             return String(localized: "Your \(name) budget for this month is spent (\(AIProvidersSettingsPane.dollars(spentCents)) of \(AIProvidersSettingsPane.dollars(budgetCents))). Raise it in Settings → AI Providers.")
@@ -1411,7 +1512,27 @@ struct CoreLLMEnvelope<T: Decodable>: Decodable {
 
     /// The envelope at `json` as a `Result`; an undecodable one is `.providerFailure`.
     static func result(_ json: UnsafeMutablePointer<CChar>) -> Result<T, CoreLLMError> {
-        let data = Data(String(cString: json).utf8)
+        result(data: Data(String(cString: json).utf8))
+    }
+
+    /// The error kinds `CoreLLMError` has a meaning for. Any other kind is, for every call but the sourced Ask ones, a provider failure.
+    static var recognizedErrorKinds: Set<String> { ["spend_cap", "no_transcript", "no_text", "local_model_missing", "budget_spent", "provider_failure"] }
+
+    /// The same, for the sourced Ask calls only: an error envelope whose kind is not one `CoreLLMError` knows (`invalid_filter`, or a kind a
+    /// later core adds) is `.searchNotRun`, not "Couldn't reach the AI provider". Everything else decodes exactly as `result` does.
+    static func sourcedResult(_ json: UnsafeMutablePointer<CChar>) -> Result<T, CoreLLMError> {
+        sourcedResult(data: Data(String(cString: json).utf8))
+    }
+
+    static func sourcedResult(data: Data) -> Result<T, CoreLLMError> {
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], object["ok"] as? Bool == false,
+           let error = object["error"] as? [String: Any], let kind = error["kind"] as? String, !recognizedErrorKinds.contains(kind) {
+            return .failure(.searchNotRun)
+        }
+        return result(data: data)
+    }
+
+    static func result(data: Data) -> Result<T, CoreLLMError> {
         guard let envelope = try? JSONDecoder().decode(CoreLLMEnvelope<T>.self, from: data) else {
             log.error("decodeLLMResult: failed to decode envelope JSON")
             return .failure(.providerFailure)
@@ -2777,6 +2898,27 @@ final class CoreMemoryStore {
             historyString.withCString { h in
                 routingString.withCString { r in
                     whimbrel_llm_prepare_ask(handle, q, contextLimit, h, r)
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decodeLLMResult(json)
+    }
+
+    /// The topic-scoped counterpart of `prepareAsk`: retrieval keeps only items in topic
+    /// `topicId`. When nothing in the topic matched, the data's `scopeEmpty` is true and
+    /// nothing was stashed (no `finalizeAsk` / `discardAsk`). Otherwise finish as for `prepareAsk`.
+    func prepareAskInTopic(
+        topicId: Int64, query: String, contextLimit: Int = 5, history: [CoreChatTurn] = [], routing: CoreRoutingConfig
+    ) -> Result<CorePrepareAskData, CoreLLMError>? {
+        guard let historyJSON = try? JSONEncoder().encode(history),
+              let historyString = String(data: historyJSON, encoding: .utf8) else { return nil }
+        guard let routingJSON = try? JSONEncoder().encode(routing),
+              let routingString = String(data: routingJSON, encoding: .utf8) else { return nil }
+        guard let json = query.withCString({ q in
+            historyString.withCString { h in
+                routingString.withCString { r in
+                    whimbrel_llm_prepare_ask_in_topic(handle, topicId, q, contextLimit, h, r)
                 }
             }
         }) else { return nil }
@@ -4432,8 +4574,17 @@ final class CoreMemoryStore {
     /// FR-CHAT-6: creates a new conversation, returning its id, or nil on a null
     /// handle/DB error. `{"id": ...}` is decoded via a private helper struct rather than
     /// a full model type, since this is the only place that specific shape is needed.
-    func createConversation(firstQuery: String) -> Int64? {
-        guard let json = firstQuery.withCString({ whimbrel_conversations_create(handle, $0) }) else { return nil }
+    /// A Find conversation is made with its kept filters (`findFilter`) in the same write.
+    func createConversation(firstQuery: String, findFilter: CoreSavedFindFilter? = nil) -> Int64? {
+        let made: UnsafeMutablePointer<CChar>?
+        if let findFilter, let data = try? JSONEncoder().encode(findFilter) {
+            made = firstQuery.withCString { q in
+                String(decoding: data, as: UTF8.self).withCString { f in whimbrel_conversations_create_with_find_filter(handle, q, f) }
+            }
+        } else {
+            made = firstQuery.withCString { whimbrel_conversations_create(handle, $0) }
+        }
+        guard let json = made else { return nil }
         defer { whimbrel_core_free_string(json) }
         struct IdResponse: Decodable { let id: Int64 }
         let response: IdResponse? = decode(json)
@@ -4477,6 +4628,102 @@ final class CoreMemoryStore {
 
     func deleteConversation(id: Int64) -> Bool {
         whimbrel_conversations_delete(handle, id)
+    }
+
+    /// The Find filters an everything conversation was asked under; nil when it has none, is scoped to a topic or meeting, or on failure.
+    func conversationFindFilter(_ conversationId: Int64) -> CoreSavedFindFilter? {
+        guard let json = whimbrel_conversation_find_filter(handle, conversationId) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    /// Sets what a conversation's Ask answers from. False on a DB error.
+    func setConversationScope(_ conversationId: Int64, scope: CoreConversationScope) -> Bool {
+        guard let data = try? JSONEncoder().encode(scope) else { return false }
+        return String(decoding: data, as: UTF8.self).withCString { whimbrel_conversation_set_scope(handle, conversationId, $0) }
+    }
+
+    /// A conversation's scope; `.everything` for an unknown conversation, an older row, or on failure.
+    func conversationScope(_ conversationId: Int64) -> CoreConversationScope {
+        guard let json = whimbrel_conversation_scope(handle, conversationId) else { return .everything }
+        defer { whimbrel_core_free_string(json) }
+        let scope: CoreConversationScope? = decode(json)
+        return scope ?? .everything
+    }
+
+    /// The scope a conversation's next question is asked with: a merged topic followed to the topic it became, and
+    /// a topic or meeting that no longer exists read as `.everything`. Nil on failure (callers keep the stored
+    /// scope: a failed read never widens it).
+    func conversationResolvedScope(_ conversationId: Int64) -> CoreConversationScope? {
+        guard let json = whimbrel_conversation_resolved_scope(handle, conversationId) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    /// Links a conversation to a topic, or clears the link when `topicId` is nil. `byUser` records
+    /// that the user chose it, so the automatic link never changes it again.
+    func setConversationTopic(_ conversationId: Int64, topicId: Int64?, byUser: Bool) -> Bool {
+        whimbrel_conversation_set_topic(handle, conversationId, topicId ?? -1, byUser)
+    }
+
+    /// A conversation's topic link; no topic, not set by the user, on failure.
+    func conversationTopic(_ conversationId: Int64) -> CoreConversationTopic {
+        topicJSON(whimbrel_conversation_topic(handle, conversationId)) ?? CoreConversationTopic(topic: nil, setByUser: false)
+    }
+
+    /// Attaches a conversation to the topic most of its cited items belong to, unless the user already
+    /// chose one. The linked topic, or nil when there is none (or on failure).
+    func autoTopic(conversationId: Int64) -> TopicRef? {
+        let linked: TopicRef?? = topicJSON(whimbrel_conversation_auto_topic(handle, conversationId))
+        return linked ?? nil
+    }
+
+    /// Whether a saved exchange touches an excluded client's material (its question, answer, scope or a cited row), so
+    /// its generated title must stay on this Mac. Core's rule (`exchange_touches_excluded_client`), which fails closed:
+    /// true when anything cannot be read or encoded. Call on `CoreMemoryStore.accessQueue`.
+    func exchangeTouchesExcludedClient(
+        scope: CoreConversationScope, query: String, answer: String, citedSources: [CoreCitedSource]
+    ) -> Bool {
+        guard let scopeData = try? JSONEncoder().encode(scope), let citedData = try? JSONEncoder().encode(citedSources) else { return true }
+        return String(decoding: scopeData, as: UTF8.self).withCString { scopeJson in
+            query.withCString { q in
+                answer.withCString { a in
+                    String(decoding: citedData, as: UTF8.self).withCString { cited in
+                        whimbrel_conversation_exchange_touches_excluded_client(handle, scopeJson, q, a, cited)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The ids of a conversation's exchanges answered on this Mac from an excluded client's material (stored
+    /// `local_only`); empty on failure.
+    func localOnlyExchangeIds(conversationId: Int64) -> Set<Int64> {
+        guard let json = whimbrel_conversation_local_only_exchanges(handle, conversationId) else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        let ids: [Int64]? = decode(json)
+        return Set(ids ?? [])
+    }
+
+    /// The live topics a conversation's stored citations belong to, each once in first-cited order; empty on
+    /// failure.
+    func conversationCitedTopics(_ conversationId: Int64) -> [TopicRef] {
+        topicJSON(whimbrel_conversation_cited_topics(handle, conversationId)) ?? []
+    }
+
+    /// Every conversation as a Conversations list row, starred first then most recently updated, with its topic
+    /// and the first line of its latest answer, in one call. Nil on failure.
+    func conversationRows() -> [CoreConversationRow]? {
+        guard let json = whimbrel_conversation_rows(handle) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return try? CoreConversationRow.decodeList(Data(String(cString: json).utf8))
+    }
+
+    /// The conversations linked to a topic; empty on failure.
+    func topicConversations(topicId: Int64) -> [ConversationSummary] {
+        guard let json = whimbrel_topic_conversations(handle, topicId) else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json) ?? []
     }
 
     /// Returns the generated title on success, or nil on any failure (provider
@@ -5339,6 +5586,12 @@ final class CoreMemoryStore {
         return CoreLLMEnvelope<T>.result(json)
     }
 
+    /// `decodeLLMResult` for the sourced Ask calls: a refusal of a kind of its own is `.searchNotRun`.
+    fileprivate func decodeSourcedLLMResult<T: Decodable>(_ json: UnsafeMutablePointer<CChar>) -> Result<T, CoreLLMError> {
+        Self.afterGovernedCall?()
+        return CoreLLMEnvelope<T>.sourcedResult(json)
+    }
+
     private func decode<T: Decodable>(_ json: UnsafeMutablePointer<CChar>) -> T? {
         let data = Data(String(cString: json).utf8)
         return try? JSONDecoder().decode(T.self, from: data)
@@ -5350,12 +5603,14 @@ final class CoreMemoryStore {
 extension CoreMemoryStore {
     /// Returns the one-time plaintext token string ("kmcp_<id>.<secret>") to show
     /// the user — never retrievable again after this call returns.
-    func generateMcpClientToken(name: String, scopes: [String]) -> (id: Int64, token: String)? {
+    /// `writeConfirmed` must be true when `scopes` holds "write" (the user confirmed the
+    /// Write dialog); core refuses a write token without it.
+    func generateMcpClientToken(name: String, scopes: [String], writeConfirmed: Bool = false) -> (id: Int64, token: String)? {
         guard let scopesJson = try? JSONEncoder().encode(scopes),
               let scopesJsonString = String(data: scopesJson, encoding: .utf8) else { return nil }
         guard let json = name.withCString({ namePtr in
             scopesJsonString.withCString { scopesPtr in
-                whimbrel_mcp_generate_client_token(handle, namePtr, scopesPtr)
+                whimbrel_mcp_generate_client_token(handle, namePtr, scopesPtr, writeConfirmed)
             }
         }) else { return nil }
         defer { whimbrel_core_free_string(json) }
@@ -5370,9 +5625,11 @@ extension CoreMemoryStore {
         return decode(json)
     }
 
+    /// Revokes a client and, with `deleteItems`, deletes everything it added, in one
+    /// transaction (all or nothing). Phase 3's revoke dialog passes the user's choice.
     @discardableResult
-    func revokeMcpClientToken(id: Int64) -> Bool {
-        whimbrel_mcp_revoke_client_token(handle, id)
+    func revokeMcpClientToken(id: Int64, deleteItems: Bool = false) -> Bool {
+        whimbrel_mcp_revoke_client_token_with_items(handle, id, deleteItems) >= 0
     }
 }
 
@@ -6231,6 +6488,8 @@ enum ClientItemKind: String, Codable, Equatable, Hashable {
     case calendarEvent = "calendar_event"
     case vaultNote = "vault_note"
     case exportFolder = "export_folder"
+    /// An item a local MCP client (such as Claude) added.
+    case mcpItem = "mcp_item"
 }
 
 /// An item as the review screen sends it back: kind and id only (core matches it against a fresh inventory).
@@ -6881,6 +7140,126 @@ extension CoreMemoryStore {
     /// Call on `CoreMemoryStore.accessQueue`. Nil on an error or a missing meeting.
     func meetingNoteSources(meetingId: Int64) -> CoreNoteSources? {
         guard let json = whimbrel_meeting_note_sources(handle, meetingId) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+}
+
+// MARK: Screen 5: memory search and Ask (redesign flag only)
+
+extension CoreMemoryStore {
+    private static func jsonString<T: Encodable>(_ value: T) -> String? {
+        (try? JSONEncoder().encode(value)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    /// One page of memory search (`whimbrel_memory_find`): keyword and meaning results merged, per-kind counts, mentions of a person
+    /// apart. An empty query with a filter lists by time (Home's memory block Open). Reads the store: `accessQueue`. Nil on a bad call.
+    func memoryFind(query: String, filter: CoreFindFilter?, order: String, offset: Int, limit: Int) -> CoreFindPage? {
+        guard let json = query.withCString({ q in
+            Self.withOptionalCString(filter?.json) { f in
+                order.withCString { o in whimbrel_memory_find(handle, q, f, o, offset, limit) }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    /// Where an Ask would be answered, without sending anything (`whimbrel_ask_route_preview`). `mode` is "stream" or "blocking".
+    /// Reads the store, so it runs on `accessQueue`. Nil on a bad call.
+    func askRoutePreview(
+        _ query: String, model: String?, history: [CoreChatTurn], routing: CoreRoutingConfig, filter: CoreFindFilter?, requireLocal: Bool, mode: String
+    ) -> CoreRoutePreview? {
+        guard let historyString = Self.jsonString(history), let routingString = Self.jsonString(routing) else { return nil }
+        guard let json = query.withCString({ q in
+            Self.withOptionalCString(model) { m in
+                historyString.withCString { h in
+                    routingString.withCString { r in
+                        Self.withOptionalCString(filter?.json) { f in
+                            mode.withCString { md in whimbrel_ask_route_preview(handle, q, m, h, r, f, requireLocal, md) }
+                        }
+                    }
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        if case .success(let preview) = CoreLLMEnvelope<CoreRoutePreview>.result(json) { return preview }
+        return nil
+    }
+
+    /// `askQuestionDetailed`, bounded by the filter and the numbered sources it saw (`whimbrel_llm_answer_sourced`). Holds a store across a
+    /// model call: the slow lane. `requireLocal` answers on this computer or fails.
+    func askQuestionSourced(
+        _ query: String, model: String, contextLimit: Int = 5, history: [CoreChatTurn] = [], routing: CoreRoutingConfig,
+        filter: CoreFindFilter?, requireLocal: Bool
+    ) -> Result<CoreSourcedAnswer, CoreLLMError>? {
+        guard let historyString = Self.jsonString(history), let routingString = Self.jsonString(routing) else { return nil }
+        guard let json = query.withCString({ q in
+            model.withCString { m in
+                historyString.withCString { h in
+                    routingString.withCString { r in
+                        Self.withOptionalCString(filter?.json) { f in
+                            whimbrel_llm_answer_sourced(handle, q, m, contextLimit, h, r, f, requireLocal)
+                        }
+                    }
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decodeSourcedLLMResult(json)
+    }
+
+    /// `prepareAsk`, bounded and numbered (`whimbrel_llm_prepare_ask_sourced`). Finish with `finalizeAskSourced` or `discardAsk`.
+    func prepareAskSourced(
+        _ query: String, contextLimit: Int = 5, history: [CoreChatTurn] = [], routing: CoreRoutingConfig, filter: CoreFindFilter?, requireLocal: Bool
+    ) -> Result<CorePrepareSourcedData, CoreLLMError>? {
+        guard let historyString = Self.jsonString(history), let routingString = Self.jsonString(routing) else { return nil }
+        guard let json = query.withCString({ q in
+            historyString.withCString { h in
+                routingString.withCString { r in
+                    Self.withOptionalCString(filter?.json) { f in
+                        whimbrel_llm_prepare_ask_sourced(handle, q, contextLimit, h, r, f, requireLocal)
+                    }
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decodeSourcedLLMResult(json)
+    }
+
+    /// `finalizeAsk` with the cited numbers (`whimbrel_llm_finalize_ask_sourced`). Plain JSON, not an envelope.
+    func finalizeAskSourced(prepareId: String, finalText: String, model: String, inputTokens: Int64, outputTokens: Int64) -> CoreFinalizeSourced? {
+        guard let json = prepareId.withCString({ p in
+            finalText.withCString { t in
+                model.withCString { m in whimbrel_llm_finalize_ask_sourced(handle, p, t, m, inputTokens, outputTokens) }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        Self.afterGovernedCall?()
+        return decode(json)
+    }
+
+    /// Saves an answered exchange with only the ids of the sources it cited (`whimbrel_conversations_append_exchange_sourced`).
+    func appendConversationExchangeSourced(
+        conversationId: Int64, query: String, answer: String, citedSources: [CoreCitedSource], model: String?, provider: String?,
+        answeredLocally: Bool, leftOut: Int
+    ) -> Bool {
+        guard let sources = Self.jsonString(citedSources) else { return false }
+        return query.withCString { q in
+            answer.withCString { a in
+                sources.withCString { s in
+                    Self.withOptionalCString(model) { m in
+                        Self.withOptionalCString(provider) { p in
+                            whimbrel_conversations_append_exchange_sourced(handle, conversationId, q, a, s, m, p, answeredLocally, Int64(leftOut))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A conversation with its cited sources' cards re-read from the live rows (`whimbrel_conversations_get_sourced`).
+    func getConversationSourced(id: Int64) -> CoreSourcedConversation? {
+        guard let json = whimbrel_conversations_get_sourced(handle, id) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return decode(json)
     }

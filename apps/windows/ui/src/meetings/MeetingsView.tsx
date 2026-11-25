@@ -8,29 +8,22 @@ import { PrepBriefPanel } from "../today/PrepBrief";
 import { openTopic } from "../topics/TopicChip";
 import { importSummary } from "./importSummary";
 import { MeetingListRow } from "./MeetingCard";
-import { forRecorded, groupByDay, type MeetingCardTarget } from "./meetingCardModel";
+import { forRecorded, groupByDay, triggerLabel, type MeetingCardTarget } from "./meetingCardModel";
 import { RecordingCard } from "./RecordingCard";
+import { dismissNotice, meetingsNoticeFor, noticeText, useRecordingNotice } from "./recordingNotice";
+import { liveScreenActive } from "./redesign/liveModel";
+import { useRecordingContext } from "./redesign/recordingContext";
 import { footer as pagingFooter, hasMore as pagingHasMore, nextLimit, PAGE_SIZE } from "./meetingsPaging";
 import { meetingTitleLabel } from "./sentinels";
 import { useMeetingChips } from "./useMeetingChips";
+import { usePausedMeetingId } from "./usePausedMeetingId";
 import { Workspace } from "./Workspace";
 import { MeetingPane } from "./redesign/LiveGate";
 import { useRedesign } from "../redesign";
+import { WConsentBanner, WEmptyState, WNoticeBox } from "../system";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
-}
-
-/** How the meeting started, for its row; anything else (Away Mode's "away") reads as recorded. */
-function triggerLabel(trigger: string | null | undefined): string {
-  switch (trigger) {
-    case "calendar":
-      return t("Calendar");
-    case "detected":
-      return t("Detected");
-    default:
-      return t("Recorded");
-  }
 }
 
 /** The Meetings tab: record, the meeting list, and the selected meeting's workspace. */
@@ -47,6 +40,8 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
   const { locale } = useL10n();
   // Rows show at once; their Prep and Topic chips arrive from one lookup that reruns only when the meetings change.
   const chips = useMeetingChips(rows);
+  // A paused meeting is still stored as recording: its row says Paused (with the redesign on or off).
+  const pausedId = usePausedMeetingId(rows.some((r) => r.status === "recording"));
   // The hidden redesign switch: with it off nothing below differs from before.
   const redesign = useRedesign();
   // Redesign: a finished note wants the whole width, so the list and the record card give way to it until Back is pressed.
@@ -54,6 +49,13 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
   const [listOpen, setListOpen] = useState(false);
   const solo = redesign && noteFull && !listOpen;
   const meetingsRef = useRef<HTMLDivElement>(null);
+  // The recording notice stays on this screen whichever meeting is selected: the live screen draws it for the meeting being
+  // recorded, and this screen draws it when another meeting, or none, is selected (redesigned shell only: it shares the state).
+  const rec = useRecordingContext();
+  const noticeState = useRecordingNotice();
+  const recordingId = rec && liveScreenActive(rec.state) ? (rec.view?.meetingId ?? null) : null;
+  const noticeMeeting = redesign ? meetingsNoticeFor(recordingId, selected, noticeState.settings, noticeState.dismissed) : null;
+  const [noticeCopied, setNoticeCopied] = useState<number | null>(null);
   const focusRow = useRef(false);
   // Back from a full-width note shows the list again and puts focus on the selected meeting's row, so the keyboard is not left on a button that went.
   const showList = useCallback(() => {
@@ -173,10 +175,19 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
 
   return (
     <div className="stack">
-      {!solo && <RecordingCard onChanged={() => load(filter)} hideNotice={redesign} />}
-      {error && <p role="alert">{error}</p>}
+      {!solo && <RecordingCard onChanged={() => load(filter)} hideNotice={redesign} redesign={redesign} />}
+      {noticeMeeting != null ? (
+        <WConsentBanner
+          copied={noticeCopied === noticeMeeting}
+          onCopy={() => {
+            void navigator.clipboard?.writeText(noticeText(noticeState.settings?.text ?? "")).then(() => setNoticeCopied(noticeMeeting), () => {});
+          }}
+          onDone={() => dismissNotice(noticeMeeting)}
+        />
+      ) : null}
+      {error && (redesign ? <WNoticeBox tone="error">{error}</WNoticeBox> : <p role="alert">{error}</p>)}
       <div ref={meetingsRef} className={solo ? "meetings th-fin-solo" : "meetings"}>
-        <section className="card meeting-list" aria-label={t("Meetings")}>
+        <section className={redesign ? "card meeting-list rt" : "card meeting-list"} aria-label={t("Meetings")}>
           <input
             className="input"
             type="search"
@@ -203,15 +214,26 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
           {rows.length === 0 && filter !== "" ? (
             <p className="muted">{t("No meetings yet. Record one, and it appears here.")}</p>
           ) : rows.length === 0 ? (
-            <div className="stack">
-              <p className="row-title">{t("No meetings yet")}</p>
-              <p className="muted">{t("Recorded meetings appear here. You can also bring in transcripts from Granola, Otter or files.")}</p>
-              <div className="toolbar">
-                <button className="mode" disabled={importing} onClick={() => runImport(importTranscripts)}>
-                  {t("Import Transcripts…")}
-                </button>
+            redesign ? (
+              <WEmptyState
+                icon="meetings"
+                title={t("No meetings yet")}
+                help={t("Recorded meetings appear here. You can also bring in transcripts from Granola, Otter or files.")}
+                actionLabel={t("Import Transcripts…")}
+                actionDisabled={importing}
+                onAction={() => runImport(importTranscripts)}
+              />
+            ) : (
+              <div className="stack">
+                <p className="row-title">{t("No meetings yet")}</p>
+                <p className="muted">{t("Recorded meetings appear here. You can also bring in transcripts from Granola, Otter or files.")}</p>
+                <div className="toolbar">
+                  <button className="mode" disabled={importing} onClick={() => runImport(importTranscripts)}>
+                    {t("Import Transcripts…")}
+                  </button>
+                </div>
               </div>
-            </div>
+            )
           ) : (
             <div className="meeting-days">
               {groupByDay(rows, Date.now(), locale).map((day) => (
@@ -220,7 +242,7 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
                   <ul className="meeting-rows">
                     {day.rows.map((row) => {
                       const extra = chips.get(row.id);
-                      const model = { ...forRecorded(row, extra?.prepKey, extra?.topic, locale), title: meetingTitleLabel(row.title) };
+                      const model = { ...forRecorded(row, extra?.prepKey, extra?.topic, locale, pausedId), title: meetingTitleLabel(row.title) };
                       return (
                         <li key={row.id}>
                           <MeetingListRow
@@ -229,7 +251,7 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
                             onOpen={openTarget}
                             meta={
                               <>
-                                <span>{triggerLabel(row.trigger)}</span>
+                                {triggerLabel(row) && <span>{triggerLabel(row)}</span>}
                                 <DeviceChip device={row.device} />
                               </>
                             }
@@ -256,7 +278,13 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
         <div className="meeting-workspace stack">
           {prepKey && <PrepBriefPanel prepKey={prepKey} onClose={() => setPrepKey(null)} onOpenMeeting={setSelected} />}
           {selected == null ? (
-            <section className="card empty-state">{t("Select a meeting to see its notes, summary and transcript.")}</section>
+            redesign ? (
+              <section className="empty-state rt">
+                <WEmptyState icon="meetings" title={t("Select a meeting to see its notes, summary and transcript.")} />
+              </section>
+            ) : (
+              <section className="card empty-state">{t("Select a meeting to see its notes, summary and transcript.")}</section>
+            )
           ) : (
             (() => {
               const workspace = <Workspace meetingId={selected} onChanged={() => load(filter)} onOpenSettings={onOpenSettings} />;

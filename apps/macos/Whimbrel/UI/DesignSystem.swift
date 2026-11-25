@@ -1,4 +1,5 @@
 import SwiftUI
+import WhimbrelUI
 
 /// FR-UI-5: shared design tokens (palette, type scale, spacing, component styles) so
 /// Settings and the debug window stop relying on default SwiftUI styling. Extends the
@@ -280,13 +281,23 @@ struct WhimbrelSectionLabel: View {
 struct WhimbrelMetadataChip: View {
     let systemImage: String?
     let text: String
+    @Environment(\.threadLook) private var look
 
     init(systemImage: String? = nil, text: String) {
         self.systemImage = systemImage
         self.text = text
     }
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if look == .thread {
+            // A restyled screen (redesign switch on): the Thread chip.
+            WStatusChip(text, tone: .neutral, glyph: systemImage)
+        } else {
+            classicBody
+        }
+    }
+
+    private var classicBody: some View {
         HStack(spacing: Spacing.xs) {
             if let systemImage {
                 Image(systemName: systemImage)
@@ -314,8 +325,18 @@ struct WhimbrelEmptyState: View {
     let message: String
     var actionTitle: String?
     var action: (() -> Void)?
+    @Environment(\.threadLook) private var look
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if look == .thread {
+            // A restyled screen (redesign switch on): the Thread empty state, same glyph, title, line and action.
+            WEmptyState(glyph: systemImage, title: title, help: message, actionTitle: actionTitle, action: action)
+        } else {
+            classicBody
+        }
+    }
+
+    private var classicBody: some View {
         VStack(spacing: Spacing.md) {
             Image(systemName: systemImage)
                 .font(.system(size: 28))
@@ -363,7 +384,7 @@ struct WhimbrelSourceChip: View {
                     .font(.system(size: 11))
             }
             Text(text)
-                .font(.whimbrelBody(.caption))
+                .restyledFont(.caption)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }

@@ -74,6 +74,9 @@ pub(crate) const ROW_TYPE_DEVICE_RETIRED: &str = "device_retired";
 /// device's own id, its `created_at_unix_ms` refreshed every step. Like every marker it is never pulled (pulls
 /// read `local_seq > cursor`, cursor from 0) and no query reads it by `row_type` alone.
 pub(crate) const ROW_TYPE_KIND_BACKFILL_CLAIM: &str = "kind_backfill_claim";
+/// The `slice_tag` backfill's advisory claim (`slice_backfill`, the cloud runner only): the same kind of row as
+/// [`ROW_TYPE_KIND_BACKFILL_CLAIM`], of its own type so the two passes never hold each other.
+pub(crate) const ROW_TYPE_SLICE_BACKFILL_CLAIM: &str = "slice_backfill_claim";
 
 /// The relay bytes of image chunks one pass moves from (or to) one peer, so a skin with large images
 /// spreads over several rounds instead of holding the store or overrunning `SYNC_TIMEOUT`. Counted on
@@ -149,6 +152,7 @@ pub async fn ensure_content_schema(conn: &Connection) -> Result<(), SyncEngineEr
             created_at_unix_ms INTEGER NOT NULL,
             entity_tag TEXT,
             kind_tag TEXT,
+            slice_tag TEXT,
             PRIMARY KEY (device_id, local_seq, row_type)
         );
         CREATE INDEX IF NOT EXISTS idx_sync_row_created ON sync_row(created_at_unix_ms);",
@@ -161,6 +165,9 @@ pub async fn ensure_content_schema(conn: &Connection) -> Result<(), SyncEngineEr
     }
     if !KIND_TAG_COLUMN_SEEN.get() && ensure_kind_tag_column(conn).await {
         KIND_TAG_COLUMN_SEEN.set();
+    }
+    if !SLICE_TAG_COLUMN_SEEN.get() && ensure_slice_tag_column(conn).await {
+        SLICE_TAG_COLUMN_SEEN.set();
     }
     Ok(())
 }
@@ -198,6 +205,7 @@ thread_local! {
     static COLUMN_SEEN_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static INDEX_SEEN_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static KIND_COLUMN_SEEN_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SLICE_COLUMN_SEEN_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Set once this process has confirmed `sync_row.entity_tag`. `push_content` runs after
@@ -212,6 +220,12 @@ pub(crate) static ENTITY_TAG_COLUMN_SEEN: Latch = Latch(&COLUMN_SEEN_CELL);
 pub(crate) static KIND_TAG_COLUMN_SEEN: Latch = Latch(AtomicBool::new(false));
 #[cfg(test)]
 pub(crate) static KIND_TAG_COLUMN_SEEN: Latch = Latch(&KIND_COLUMN_SEEN_CELL);
+
+/// Set once this process has confirmed `sync_row.slice_tag`; independent of the other two tag columns.
+#[cfg(not(test))]
+pub(crate) static SLICE_TAG_COLUMN_SEEN: Latch = Latch(AtomicBool::new(false));
+#[cfg(test)]
+pub(crate) static SLICE_TAG_COLUMN_SEEN: Latch = Latch(&SLICE_COLUMN_SEEN_CELL);
 
 /// Set once this process has seen the ops index on the relay.
 #[cfg(not(test))]
@@ -259,13 +273,18 @@ pub(crate) async fn ensure_kind_tag_column(conn: &Connection) -> bool {
     ensure_sync_row_column(conn, "kind_tag").await
 }
 
+/// The `slice_tag` twin of `ensure_kind_tag_column`: same race rules, same best effort.
+pub(crate) async fn ensure_slice_tag_column(conn: &Connection) -> bool {
+    ensure_sync_row_column(conn, "slice_tag").await
+}
+
 #[cfg(test)]
 async fn add_entity_tag_column(conn: &Connection) -> bool {
     add_sync_row_column(conn, "entity_tag").await
 }
 
 /// `column` is one of our own constant names, never user input.
-async fn ensure_sync_row_column(conn: &Connection, column: &str) -> bool {
+pub(crate) async fn ensure_sync_row_column(conn: &Connection, column: &str) -> bool {
     if let Ok(mut rows) = conn.query("PRAGMA table_info(sync_row)", ()).await {
         while let Ok(Some(row)) = rows.next().await {
             if row.get::<String>(1).is_ok_and(|name| name == column) {
@@ -401,6 +420,44 @@ pub(crate) fn kind_tag_for(group_key: &GroupKey, row: &SyncableRow) -> Option<St
 pub(crate) fn item_payload_kind_tag(group_key: &GroupKey, plaintext: &[u8]) -> Option<String> {
     let payload = serde_json::from_slice::<ItemPayload>(plaintext).ok()?;
     Some(sync::kind_tag(group_key, &payload.item.kind))
+}
+
+/// The `slice_tag` of one item: its kind, source class and calendar month (`sync::slice_tag`).
+fn item_slice_tag(group_key: &GroupKey, kind: &str, source: Option<&str>, ts_unix_ms: i64) -> String {
+    sync::slice_tag(group_key, kind, sync::source_class(kind, source), sync::month_bucket(ts_unix_ms))
+}
+
+/// The `slice_tag` for a pushed row: only `items` rows have one.
+pub(crate) fn slice_tag_for(group_key: &GroupKey, row: &SyncableRow) -> Option<String> {
+    match row {
+        SyncableRow::Item { item, .. } => {
+            Some(item_slice_tag(group_key, &item.kind, item.source.as_deref(), item.ts_unix_ms))
+        }
+        _ => None,
+    }
+}
+
+/// The backfill twin of `slice_tag_for`: an `items` row's decrypted payload, decoded exactly as the pull decodes it.
+/// `None` when the payload does not decode.
+pub(crate) fn item_payload_slice_tag(group_key: &GroupKey, plaintext: &[u8]) -> Option<String> {
+    let payload = serde_json::from_slice::<ItemPayload>(plaintext).ok()?;
+    let item = &payload.item;
+    Some(item_slice_tag(group_key, &item.kind, item.source.as_deref(), item.ts_unix_ms))
+}
+
+/// The outbox twin of `slice_tag_for`: an `items` op's payload is the item. An op without `ts_unix_ms` is left
+/// untagged rather than guessed.
+pub(crate) fn outbox_slice_tag(group_key: &GroupKey, op: &memory::ClaimedOutboxOperation) -> Option<String> {
+    if op.row_type != ROW_TYPE_ITEMS {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(&op.payload_json).ok()?;
+    Some(item_slice_tag(
+        group_key,
+        value.get("kind")?.as_str()?,
+        value.get("source").and_then(|v| v.as_str()),
+        value.get("ts_unix_ms")?.as_i64()?,
+    ))
 }
 
 /// The outbox twin of `kind_tag_for`: an `items` op's payload is the item, so it names its kind.
@@ -859,17 +916,16 @@ const PEER_MARKER_SQL: &str =
 /// Bounded passes plus per-chunk cursor saves drain any backlog across the 60 s cycle.
 const MAX_ROWS_PER_PUSH_PASS: usize = 500;
 
-/// Rows per multi-row INSERT: one network round trip each, not one per row. Six
-/// parameters per row keeps a chunk (300) under SQLite's 999-variable floor. It also
+/// Rows per multi-row INSERT: one network round trip each, not one per row. Up to
+/// eight parameters per row keeps a chunk (400) under SQLite's 999-variable floor. It also
 /// caps a chunk's distinct tags at 50, the most `compact_entity_tags` takes.
 const PUSH_CHUNK_ROWS: usize = 50;
 
-/// One encoded row to insert: `(local_seq, row_type, ciphertext, entity_tag, kind_tag)`.
-pub(crate) type PushRow<'a> = (i64, &'a str, String, Option<String>, Option<String>);
+/// One encoded row to insert: `(local_seq, row_type, ciphertext, entity_tag, kind_tag, slice_tag)`.
+pub(crate) type PushRow<'a> = (i64, &'a str, String, Option<String>, Option<String>, Option<String>);
 
-/// One multi-row INSERT of a chunk of encoded rows. `with_entity` / `with_kind` add those
-/// columns (NULL for untagged rows); each is independent, as a relay may have either, both
-/// or neither.
+/// One multi-row INSERT of a chunk of encoded rows. `with_entity` / `with_kind` / `with_slice` add those
+/// columns (NULL for untagged rows); each is independent, as a relay may have any, all or none.
 async fn insert_push_chunk(
     conn: &Connection,
     device_id: &str,
@@ -877,11 +933,12 @@ async fn insert_push_chunk(
     rows: &[PushRow<'_>],
     with_entity: bool,
     with_kind: bool,
+    with_slice: bool,
 ) -> Result<u64, libsql::Error> {
-    let width = 5 + usize::from(with_entity) + usize::from(with_kind);
+    let width = 5 + usize::from(with_entity) + usize::from(with_kind) + usize::from(with_slice);
     let mut placeholders = Vec::with_capacity(rows.len());
     let mut values: Vec<Value> = Vec::with_capacity(rows.len() * width);
-    for (i, (local_seq, row_type, ciphertext, entity, kind)) in rows.iter().enumerate() {
+    for (i, (local_seq, row_type, ciphertext, entity, kind, slice)) in rows.iter().enumerate() {
         let p = i * width;
         let slots: Vec<String> = (p + 1..=p + width).map(|n| format!("?{n}")).collect();
         placeholders.push(format!("({})", slots.join(", ")));
@@ -898,6 +955,9 @@ async fn insert_push_chunk(
         if with_kind {
             values.push(kind.clone().map_or(Value::Null, Value::Text));
         }
+        if with_slice {
+            values.push(slice.clone().map_or(Value::Null, Value::Text));
+        }
     }
     let mut columns = String::from("device_id, local_seq, row_type, ciphertext, created_at_unix_ms");
     if with_entity {
@@ -905,6 +965,9 @@ async fn insert_push_chunk(
     }
     if with_kind {
         columns.push_str(", kind_tag");
+    }
+    if with_slice {
+        columns.push_str(", slice_tag");
     }
     let sql = format!(
         "INSERT INTO sync_row ({columns}) VALUES {} \
@@ -914,8 +977,8 @@ async fn insert_push_chunk(
     conn.execute(&sql, Params::Positional(values)).await
 }
 
-/// `insert_push_chunk` that survives a relay missing either tag column: each missing column
-/// is dropped from `with_entity` / `with_kind` (so the caller stops asking for it) and the
+/// `insert_push_chunk` that survives a relay missing any tag column: each missing column
+/// is dropped from `with_entity` / `with_kind` / `with_slice` (so the caller stops asking for it) and the
 /// INSERT retried, ending untagged at worst. Any other error is returned.
 pub(crate) async fn insert_with_tag_fallback(
     conn: &Connection,
@@ -924,9 +987,10 @@ pub(crate) async fn insert_with_tag_fallback(
     rows: &[PushRow<'_>],
     with_entity: &mut bool,
     with_kind: &mut bool,
+    with_slice: &mut bool,
 ) -> Result<u64, libsql::Error> {
     loop {
-        match insert_push_chunk(conn, device_id, now, rows, *with_entity, *with_kind).await {
+        match insert_push_chunk(conn, device_id, now, rows, *with_entity, *with_kind, *with_slice).await {
             Err(e) if *with_entity && is_missing_entity_tag_column(&e.to_string()) => {
                 #[cfg(test)]
                 FAILED_TAGGED_INSERTS.with(|c| c.set(c.get() + 1));
@@ -936,6 +1000,11 @@ pub(crate) async fn insert_with_tag_fallback(
                 #[cfg(test)]
                 FAILED_TAGGED_INSERTS.with(|c| c.set(c.get() + 1));
                 *with_kind = false;
+            }
+            Err(e) if *with_slice && is_missing_slice_tag_column(&e.to_string()) => {
+                #[cfg(test)]
+                FAILED_TAGGED_INSERTS.with(|c| c.set(c.get() + 1));
+                *with_slice = false;
             }
             other => return other,
         }
@@ -1063,6 +1132,7 @@ pub async fn push_content(
     };
     // Same for `kind_tag`, which is independent of `entity_tag`: it needs no epoch.
     let mut kind_on = KIND_TAG_COLUMN_SEEN.get();
+    let mut slice_on = SLICE_TAG_COLUMN_SEEN.get();
     let mut compaction = CompactionBudget::default();
     for chunk in rows.chunks(PUSH_CHUNK_ROWS) {
         let now = now_unix_ms();
@@ -1087,14 +1157,24 @@ pub async fn push_content(
                 }
             }
             let kind = kind_on.then(|| kind_tag_for(group_key, row)).flatten();
-            encoded.push((local_seq, row_type, STANDARD.encode(&ciphertext), tag, kind));
+            let slice = slice_on.then(|| slice_tag_for(group_key, row)).flatten();
+            encoded.push((local_seq, row_type, STANDARD.encode(&ciphertext), tag, kind, slice));
             chunk_highest = chunk_highest.max(local_seq);
         }
         let mut with_entity = !tags.is_empty();
         let mut with_kind = kind_on && encoded.iter().any(|r| r.4.is_some());
-        let (asked_entity, asked_kind) = (with_entity, with_kind);
-        let inserted =
-            insert_with_tag_fallback(conn, device_id, now, &encoded, &mut with_entity, &mut with_kind).await;
+        let mut with_slice = slice_on && encoded.iter().any(|r| r.5.is_some());
+        let (asked_entity, asked_kind, asked_slice) = (with_entity, with_kind, with_slice);
+        let inserted = insert_with_tag_fallback(
+            conn,
+            device_id,
+            now,
+            &encoded,
+            &mut with_entity,
+            &mut with_kind,
+            &mut with_slice,
+        )
+        .await;
         if asked_entity && !with_entity {
             // A relay that predates `entity_tag`: compact nothing, and stop tagging for the
             // rest of this call (as the outbox does).
@@ -1103,6 +1183,9 @@ pub async fn push_content(
         }
         if asked_kind && !with_kind {
             kind_on = false;
+        }
+        if asked_slice && !with_slice {
+            slice_on = false;
         }
         inserted.map_err(|e| SyncEngineError::Query(e.to_string()))?;
         // So forgetting the meeting can delete these rows (deletion sync).
@@ -1297,6 +1380,18 @@ fn count_row_query() {
     ROW_QUERIES.with(|c| c.set(c.get() + 1));
 }
 
+// The SQL of every tag-filtered pull query ([`query_envelopes`]), so tests can assert which shape ran.
+#[cfg(test)]
+thread_local! {
+    static PULL_SQL: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The pull SQL captured on this thread since the last call.
+#[cfg(test)]
+fn take_pull_sql() -> Vec<String> {
+    PULL_SQL.with(|c| std::mem::take(&mut *c.borrow_mut()))
+}
+
 // Counts compaction DELETEs, so tests can assert a push issued none.
 #[cfg(test)]
 thread_local! {
@@ -1451,6 +1546,16 @@ pub(crate) fn is_missing_kind_tag_column(error: &str) -> bool {
     error.contains("no column named kind_tag")
 }
 
+/// The `slice_tag` twin of `is_missing_kind_tag_column`.
+pub(crate) fn is_missing_slice_tag_column(error: &str) -> bool {
+    error.contains("no column named slice_tag")
+}
+
+/// The `slice_tag` twin of `is_no_such_kind_tag_column` ("no such column: slice_tag").
+pub(crate) fn is_no_such_slice_tag_column(error: &str) -> bool {
+    error.contains("no such column: slice_tag")
+}
+
 /// True when a SELECT failed because the relay's `sync_row` predates `kind_tag`
 /// ("no such column: kind_tag").
 pub(crate) fn is_no_such_kind_tag_column(error: &str) -> bool {
@@ -1488,8 +1593,10 @@ fn gap_page_rows(pace: Pace, budget: std::time::Duration) -> i64 {
 
 /// Up to `limit` of the peer's rows with `gap_lo < local_seq < gap_hi`, highest first. With the runner's
 /// kind tags ([`RowFilter::query_kind_tags`]) the range is `window_lo < local_seq < gap_hi` and other kinds'
-/// tagged `items` rows are left out; on a relay without `kind_tag` it falls back to the plain allowlist
-/// over the whole gap. Returns the rows and whether the kind filter (and its window) applied.
+/// tagged `items` rows are left out, and with its slice tags ([`RowFilter::query_slice_tags`]) also sliced rows
+/// of a calendar source or month it does not ask for; on a relay without `slice_tag` it falls back to the kind
+/// filter, and without `kind_tag` to the plain allowlist over the whole gap. Returns the rows and whether the
+/// kind filter (and its window) applied.
 #[allow(clippy::too_many_arguments)]
 async fn fetch_gap_rows(
     conn: &Connection,
@@ -1501,7 +1608,9 @@ async fn fetch_gap_rows(
     skip_skins: bool,
     filter: &RowFilter,
 ) -> Result<(Vec<RowEnvelope>, bool), SyncEngineError> {
-    if let (Some(types), Some(tags)) = (filter.row_types.as_deref(), filter.query_kind_tags()) {
+    // At most three tries: with slice and kind tags, with kind tags, then (below) the plain allowlist.
+    while let (Some(types), Some(tags)) = (filter.row_types.as_deref(), filter.query_kind_tags()) {
+        let slices = filter.query_slice_tags().unwrap_or_default();
         let mut values = vec![
             Value::Text(peer_device_id.to_string()),
             Value::Integer(gap_hi),
@@ -1509,10 +1618,10 @@ async fn fetch_gap_rows(
             Value::Integer(limit),
         ];
         values.extend(types.iter().map(|t| Value::Text(t.clone())));
-        values.extend(tags.iter().map(|t| Value::Text(t.clone())));
-        match query_envelopes(conn, &fetch_allowed_gap_rows_sql(types.len(), tags.len()), values).await {
+        values.extend(tags.iter().chain(slices).map(|t| Value::Text(t.clone())));
+        match query_envelopes(conn, &fetch_allowed_gap_rows_sql(types.len(), tags.len(), slices.len()), values).await {
             Ok(envelopes) => return Ok((envelopes, true)),
-            Err(e) if filter.kind_tag_column_missing(&e) => {}
+            Err(e) if filter.tag_column_missing(&e) => {}
             Err(e) => return Err(e),
         }
     }
@@ -1525,7 +1634,7 @@ async fn fetch_gap_rows(
                 Value::Integer(limit),
             ];
             values.extend(types.iter().map(|t| Value::Text(t.clone())));
-            conn.query(&fetch_allowed_gap_rows_sql(types.len(), 0), Params::Positional(values))
+            conn.query(&fetch_allowed_gap_rows_sql(types.len(), 0, 0), Params::Positional(values))
                 .await
         }
         None => {
@@ -1545,6 +1654,8 @@ async fn fetch_gap_rows(
 /// One kind-filtered page: the query and its rows, so a missing `kind_tag` column is caught wherever
 /// the relay reports it.
 async fn query_envelopes(conn: &Connection, sql: &str, values: Vec<Value>) -> Result<Vec<RowEnvelope>, SyncEngineError> {
+    #[cfg(test)]
+    PULL_SQL.with(|c| c.borrow_mut().push(sql.to_string()));
     let rows = conn.query(sql, Params::Positional(values)).await.map_err(query_err)?;
     read_envelopes(rows).await
 }
@@ -1574,7 +1685,8 @@ async fn peer_top_seq(
 /// `skip_skins` leaves out skin rows at the query, so a puller that never applies them (the phone)
 /// never downloads their images. An allowlist (`filter.row_types`) takes only those types instead. With
 /// the runner's kind tags the range is `since < local_seq <= window_hi` and other kinds' tagged `items`
-/// rows are left out; on a relay without `kind_tag` it falls back to the plain allowlist, unbounded.
+/// rows are left out, as are sliced rows of a slice it does not ask for; on a relay without `slice_tag` it
+/// falls back to the kind filter, and without `kind_tag` to the plain allowlist, unbounded.
 /// Returns the rows and whether the kind filter (and its window) applied.
 async fn fetch_rows_since(
     conn: &Connection,
@@ -1585,7 +1697,9 @@ async fn fetch_rows_since(
     skip_skins: bool,
     filter: &RowFilter,
 ) -> Result<(Vec<RowEnvelope>, bool), SyncEngineError> {
-    if let (Some(types), Some(tags)) = (filter.row_types.as_deref(), filter.query_kind_tags()) {
+    // At most three tries: with slice and kind tags, with kind tags, then (below) the plain allowlist.
+    while let (Some(types), Some(tags)) = (filter.row_types.as_deref(), filter.query_kind_tags()) {
+        let slices = filter.query_slice_tags().unwrap_or_default();
         let mut values = vec![
             Value::Text(peer_device_id.to_string()),
             Value::Integer(since_local_seq),
@@ -1593,10 +1707,10 @@ async fn fetch_rows_since(
         ];
         values.extend(types.iter().map(|t| Value::Text(t.clone())));
         values.push(Value::Integer(window_hi));
-        values.extend(tags.iter().map(|t| Value::Text(t.clone())));
-        match query_envelopes(conn, &fetch_allowed_rows_sql(types.len(), tags.len()), values).await {
+        values.extend(tags.iter().chain(slices).map(|t| Value::Text(t.clone())));
+        match query_envelopes(conn, &fetch_allowed_rows_sql(types.len(), tags.len(), slices.len()), values).await {
             Ok(envelopes) => return Ok((envelopes, true)),
-            Err(e) if filter.kind_tag_column_missing(&e) => {}
+            Err(e) if filter.tag_column_missing(&e) => {}
             Err(e) => return Err(e),
         }
     }
@@ -1608,7 +1722,7 @@ async fn fetch_rows_since(
                 Value::Integer(limit),
             ];
             values.extend(types.iter().map(|t| Value::Text(t.clone())));
-            conn.query(&fetch_allowed_rows_sql(types.len(), 0), Params::Positional(values))
+            conn.query(&fetch_allowed_rows_sql(types.len(), 0, 0), Params::Positional(values))
                 .await
         }
         None => {
@@ -1627,14 +1741,16 @@ async fn fetch_rows_since(
 
 /// `FETCH_ROWS_SQL` for an allowlist of `type_count` row types, `?4..`. With `tag_count` kind tags
 /// (the runner), also `local_seq <= ?(4 + type_count)` and only `items` rows that are untagged or carry
-/// one of the tags, `?(5 + type_count)..`. Without tags the SQL is exactly the plain allowlist's.
-fn fetch_allowed_rows_sql(type_count: usize, tag_count: usize) -> String {
+/// one of the tags, `?(5 + type_count)..`, and with `slice_count` slice tags after them, `?(5 + type_count +
+/// tag_count)..`, a sliced row only when its slice is one of them (see [`kind_tag_condition`]). Without kind
+/// tags the SQL is exactly the plain allowlist's (slice tags are only ever asked for beside kind tags).
+fn fetch_allowed_rows_sql(type_count: usize, tag_count: usize, slice_count: usize) -> String {
     let kind_filter = match tag_count {
         0 => String::new(),
         n => format!(
             " AND local_seq <= ?{} {}",
             4 + type_count,
-            kind_tag_condition(5 + type_count, n)
+            kind_tag_condition(5 + type_count, n, slice_count)
         ),
     };
     format!(
@@ -1645,11 +1761,12 @@ fn fetch_allowed_rows_sql(type_count: usize, tag_count: usize) -> String {
 }
 
 /// `FETCH_GAP_ROWS_SQL` for an allowlist of `type_count` row types, `?5..`. With `tag_count` kind tags,
-/// also the kind condition of [`fetch_allowed_rows_sql`], `?(5 + type_count)..` (the window is `?3`).
-fn fetch_allowed_gap_rows_sql(type_count: usize, tag_count: usize) -> String {
+/// also the kind condition of [`fetch_allowed_rows_sql`], `?(5 + type_count)..`, and its `slice_count` slice
+/// tags after them (the window is `?3`).
+fn fetch_allowed_gap_rows_sql(type_count: usize, tag_count: usize, slice_count: usize) -> String {
     let kind_filter = match tag_count {
         0 => String::new(),
-        n => format!(" {}", kind_tag_condition(5 + type_count, n)),
+        n => format!(" {}", kind_tag_condition(5 + type_count, n, slice_count)),
     };
     format!(
         "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq < ?2 \
@@ -1658,13 +1775,229 @@ fn fetch_allowed_gap_rows_sql(type_count: usize, tag_count: usize) -> String {
     )
 }
 
-/// Every row but an `items` row tagged with a kind not asked for. An untagged row (old client, old row,
-/// failed ALTER) is always taken and filtered after decrypting, as before tags.
-fn kind_tag_condition(first: usize, count: usize) -> String {
+// Makes every indexed pull sub-query fail, so tests can check that any such error falls back to the scan.
+#[cfg(test)]
+thread_local! {
+    static INDEXED_QUERY_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// One indexed pull sub-query ([`fetch_rows_indexed`], [`fetch_gap_rows_indexed`]).
+async fn query_indexed(conn: &Connection, sql: &str, values: Vec<Value>) -> Result<Vec<RowEnvelope>, SyncEngineError> {
+    #[cfg(test)]
+    if INDEXED_QUERY_FAILS.with(|c| c.get()) {
+        return Err(SyncEngineError::Query("injected indexed query failure".to_string()));
+    }
+    query_envelopes(conn, sql, values).await
+}
+
+/// An indexed sub-query failed for a reason other than a missing tag column (a missing or wrongly shaped index,
+/// a timeout, a dropped connection): the rest of this round scans. Said once a round.
+fn give_up_pull_indexes(filter: &RowFilter, error: &SyncEngineError) {
+    if !filter.no_pull_indexes.swap(true, Ordering::Relaxed) {
+        eprintln!("[sync] an indexed pull query failed ({error}): this round scans");
+    }
+}
+
+/// One indexed sub-query of [`fetch_rows_indexed`]: `?1` device, `?2` since, `?3` window top, `?4` limit, and
+/// `condition`'s own list from `?5`.
+fn indexed_pull_sql(index: &str, condition: &str) -> String {
     format!(
-        "AND (row_type != '{ROW_TYPE_ITEMS}' OR kind_tag IS NULL OR kind_tag IN ({}))",
-        numbered_placeholders(first, count)
+        "SELECT local_seq, row_type, ciphertext FROM sync_row INDEXED BY {index} WHERE device_id = ?1 AND {condition} \
+         AND local_seq > ?2 AND local_seq <= ?3 ORDER BY local_seq ASC LIMIT ?4"
     )
+}
+
+/// The runner's live page when the relay has both pull indexes ([`RowFilter::use_pull_indexes`]): the rows
+/// [`fetch_rows_since`]'s slice-filtered query takes in `since < local_seq <= window_hi`, read by three queries
+/// that each seek an index instead of scanning the primary key: allowed non-`items` types (`idx_sync_row_type`),
+/// `items` of an asked slice, and `items` without a slice whose kind tag is NULL or asked (`idx_sync_row_slice`).
+/// Each takes at most `limit` rows in `local_seq` order. A sub-query that came back full may have more above its
+/// last row, so the merged page stops there (rows of the others above it are dropped, read again next page);
+/// sorted and cut to `limit`. So a page shorter than `limit` holds every row of the window, as the scan's does,
+/// and a full one ends where every sub-query has been read. `None` when the relay turns out to lack a tag column,
+/// or when an indexed sub-query fails for any other reason (a missing or wrongly shaped index, a timeout, a dropped
+/// connection): the caller falls back to the scan, and the rest of this round scans too. A genuine connection
+/// error then surfaces from the scan.
+///
+/// Cost: Q1 and Q2 read several index ranges (one per type or slice) and sort them, so each page reads every
+/// match left in the window: about `matches^2 / limit` over a whole window. Q3 reads one range in order but
+/// filters `kind_tag` per row (it is not in the index), so it tracks the peer's unsliced `items` rows. The span
+/// scan reads every position once, so the indexed window wins while matches stay under about
+/// `sqrt(positions * limit)`: ~220k matches for a 98M-position range at `limit` 500.
+async fn fetch_rows_indexed(
+    conn: &Connection,
+    peer_device_id: &str,
+    since_local_seq: i64,
+    window_hi: i64,
+    limit: i64,
+    filter: &RowFilter,
+) -> Result<Option<Vec<RowEnvelope>>, SyncEngineError> {
+    let (Some(types), Some(kinds), Some(slices)) =
+        (filter.row_types.as_deref(), filter.query_kind_tags(), filter.query_slice_tags())
+    else {
+        return Ok(None);
+    };
+    // Q1. `slices` is never empty (`month_bucket` clamps the cutoff's month to `MAX_MONTH_BUCKET`, so each kind has
+    // at least one month), which the Q2/Q3 split relies on: a sliced row is read by Q2 alone.
+    let others: Vec<&String> = types.iter().filter(|t| *t != ROW_TYPE_ITEMS).collect();
+    let mut queries: Vec<(String, Vec<&String>)> = Vec::new();
+    if !others.is_empty() {
+        let condition = format!(
+            "row_type != '{ROW_TYPE_ITEMS}' AND row_type IN ({})",
+            numbered_placeholders(5, others.len())
+        );
+        queries.push((indexed_pull_sql("idx_sync_row_type", &condition), others));
+    }
+    if types.iter().any(|t| t == ROW_TYPE_ITEMS) {
+        if !slices.is_empty() {
+            let condition = format!(
+                "row_type = '{ROW_TYPE_ITEMS}' AND slice_tag IN ({})",
+                numbered_placeholders(5, slices.len())
+            );
+            queries.push((indexed_pull_sql("idx_sync_row_slice", &condition), slices.iter().collect()));
+        }
+        // `kinds` is never empty (kind tags exist only for a kind restriction); if it were, `IN ()` matches nothing
+        // and Q3 takes only NULL-kind rows, as the scan's `kind_tag_condition` would.
+        let condition = format!(
+            "row_type = '{ROW_TYPE_ITEMS}' AND slice_tag IS NULL AND (kind_tag IS NULL OR kind_tag IN ({}))",
+            numbered_placeholders(5, kinds.len())
+        );
+        queries.push((indexed_pull_sql("idx_sync_row_slice", &condition), kinds.iter().collect()));
+    }
+    let mut merged = Vec::new();
+    // The lowest last row of a sub-query that came back full: nothing above it is known to be complete.
+    let mut cap = i64::MAX;
+    for (sql, list) in queries {
+        let mut values = vec![
+            Value::Text(peer_device_id.to_string()),
+            Value::Integer(since_local_seq),
+            Value::Integer(window_hi),
+            Value::Integer(limit),
+        ];
+        values.extend(list.into_iter().map(|t| Value::Text(t.clone())));
+        match query_indexed(conn, &sql, values).await {
+            Ok(rows) => {
+                if rows.len() as i64 >= limit {
+                    if let Some(last) = rows.last() {
+                        cap = cap.min(last.local_seq);
+                    }
+                }
+                merged.extend(rows);
+            }
+            Err(e) if filter.tag_column_missing(&e) => return Ok(None),
+            Err(e) => {
+                give_up_pull_indexes(filter, &e);
+                return Ok(None);
+            }
+        }
+    }
+    merged.retain(|e| e.local_seq <= cap);
+    merged.sort_by(|a, b| (a.local_seq, &a.row_type).cmp(&(b.local_seq, &b.row_type)));
+    merged.truncate(limit.max(0) as usize);
+    Ok(Some(merged))
+}
+
+/// One indexed gap sub-query of [`fetch_gap_rows_indexed`]: `?1` device, `?2` the gap's top (exclusive), `?3` its
+/// floor (exclusive), `?4` limit, and `condition`'s own list from `?5`.
+fn indexed_gap_sql(index: &str, condition: &str) -> String {
+    format!(
+        "SELECT local_seq, row_type, ciphertext FROM sync_row INDEXED BY {index} WHERE device_id = ?1 AND {condition} \
+         AND local_seq < ?2 AND local_seq > ?3 ORDER BY local_seq DESC LIMIT ?4"
+    )
+}
+
+/// [`fetch_rows_indexed`] for a gap page, newest first: the rows [`fetch_gap_rows`]'s slice-filtered query takes in
+/// `gap_lo < local_seq < gap_hi`, by the same three index-seeking queries, each `ORDER BY local_seq DESC LIMIT
+/// limit`. A sub-query that came back full may have more below its last row, so the merged page stops there (rows
+/// of the others below it are dropped, read by the next page); sorted descending and cut to `limit`. So a page
+/// shorter than `limit` holds every row of the gap, and a full one ends where every sub-query has been read. `None`
+/// as for [`fetch_rows_indexed`]: the caller scans, and the rest of this round does too.
+async fn fetch_gap_rows_indexed(
+    conn: &Connection,
+    peer_device_id: &str,
+    gap_lo: i64,
+    gap_hi: i64,
+    limit: i64,
+    filter: &RowFilter,
+) -> Result<Option<Vec<RowEnvelope>>, SyncEngineError> {
+    let (Some(types), Some(kinds), Some(slices)) =
+        (filter.row_types.as_deref(), filter.query_kind_tags(), filter.query_slice_tags())
+    else {
+        return Ok(None);
+    };
+    // Q1. `slices` is never empty (`month_bucket` clamps the cutoff's month to `MAX_MONTH_BUCKET`, so each kind has
+    // at least one month), which the Q2/Q3 split relies on: a sliced row is read by Q2 alone.
+    let others: Vec<&String> = types.iter().filter(|t| *t != ROW_TYPE_ITEMS).collect();
+    let mut queries: Vec<(String, Vec<&String>)> = Vec::new();
+    if !others.is_empty() {
+        let condition = format!(
+            "row_type != '{ROW_TYPE_ITEMS}' AND row_type IN ({})",
+            numbered_placeholders(5, others.len())
+        );
+        queries.push((indexed_gap_sql("idx_sync_row_type", &condition), others));
+    }
+    if types.iter().any(|t| t == ROW_TYPE_ITEMS) {
+        if !slices.is_empty() {
+            let condition = format!(
+                "row_type = '{ROW_TYPE_ITEMS}' AND slice_tag IN ({})",
+                numbered_placeholders(5, slices.len())
+            );
+            queries.push((indexed_gap_sql("idx_sync_row_slice", &condition), slices.iter().collect()));
+        }
+        // `kinds` is never empty, as in [`fetch_rows_indexed`].
+        let condition = format!(
+            "row_type = '{ROW_TYPE_ITEMS}' AND slice_tag IS NULL AND (kind_tag IS NULL OR kind_tag IN ({}))",
+            numbered_placeholders(5, kinds.len())
+        );
+        queries.push((indexed_gap_sql("idx_sync_row_slice", &condition), kinds.iter().collect()));
+    }
+    let mut merged = Vec::new();
+    // The highest last (lowest) row of a sub-query that came back full: nothing below it is known to be complete.
+    let mut cap = i64::MIN;
+    for (sql, list) in queries {
+        let mut values = vec![
+            Value::Text(peer_device_id.to_string()),
+            Value::Integer(gap_hi),
+            Value::Integer(gap_lo),
+            Value::Integer(limit),
+        ];
+        values.extend(list.into_iter().map(|t| Value::Text(t.clone())));
+        match query_indexed(conn, &sql, values).await {
+            Ok(rows) => {
+                if rows.len() as i64 >= limit {
+                    if let Some(last) = rows.last() {
+                        cap = cap.max(last.local_seq);
+                    }
+                }
+                merged.extend(rows);
+            }
+            Err(e) if filter.tag_column_missing(&e) => return Ok(None),
+            Err(e) => {
+                give_up_pull_indexes(filter, &e);
+                return Ok(None);
+            }
+        }
+    }
+    merged.retain(|e| e.local_seq >= cap);
+    merged.sort_by(|a, b| (b.local_seq, &b.row_type).cmp(&(a.local_seq, &a.row_type)));
+    merged.truncate(limit.max(0) as usize);
+    Ok(Some(merged))
+}
+
+/// Every row but an `items` row tagged with a kind not asked for. An untagged row (old client, old row,
+/// failed ALTER) is always taken and filtered after decrypting, as before tags. With `slice_count` slice tags
+/// (`?(first + count)..`), an `items` row with a `slice_tag` is judged by it alone (taken only when it is one
+/// of them), and one without by its `kind_tag` as before.
+fn kind_tag_condition(first: usize, count: usize, slice_count: usize) -> String {
+    let kinds = numbered_placeholders(first, count);
+    match slice_count {
+        0 => format!("AND (row_type != '{ROW_TYPE_ITEMS}' OR kind_tag IS NULL OR kind_tag IN ({kinds}))"),
+        m => format!(
+            "AND (row_type != '{ROW_TYPE_ITEMS}' OR (slice_tag IS NULL AND (kind_tag IS NULL OR kind_tag IN ({kinds}))) \
+             OR slice_tag IN ({}))",
+            numbered_placeholders(first + count, m)
+        ),
+    }
 }
 
 /// `?first, ?first+1, ...`, `count` of them.
@@ -1863,6 +2196,11 @@ fn apply_parent_row(
                 // that may not be ready yet) -- reaching this arm for a transcript-kind
                 // items row means pull_content's classification routed it incorrectly.
                 // Applying it here with thread_id = None would orphan it permanently.
+                return Ok(());
+            }
+            // Added items stay on the computer that received them (bridge spec 8.2): a peer's
+            // row of the kind (a bug, or a newer build) is never applied here.
+            if payload.item.kind == memory::MCP_ITEM_KIND {
                 return Ok(());
             }
             if forgotten_item(store, peer_device_id, local_seq, &payload.item)? {
@@ -2813,14 +3151,17 @@ pub struct PullOptions {
     /// (a line names its meeting only inside the ciphertext), but only their key is kept. Tombstones
     /// (`meeting_forgotten`, `client_item_forgotten`, `topic_seed_purged`) and marker rows are always
     /// pulled. The row type is filtered at the query, and so is the item kind of a row tagged with one
-    /// (`kind_tag`); an untagged row's kind is checked after decrypting, as is every row's; a row left out
+    /// (`kind_tag`), and the calendar source class and month of a row with a `slice_tag` (against
+    /// `non_google_calendar_only` and `item_window_ms`); an untagged row's kind is checked after decrypting, as
+    /// is every row's; a row left out
     /// still moves the cursor past it, so this is for a store that is never pulled without it (the
     /// runner's per-run store).
     pub row_type_allowlist: Option<Vec<String>>,
     /// Skip `items` rows of every kind, and legacy `capture_item` rows, whose own `ts_unix_ms` is older
     /// than now minus this many ms (dated by the item, so a future calendar event is always kept).
     /// A meeting is dated by its start: one started before the window is applied only as the parent of an
-    /// applied transcript line. Tombstones are never windowed. `None` applies everything.
+    /// applied transcript line. A legacy `transcript_segment` line has no date of its own: it is dated by its
+    /// meeting's start plus its offset into the meeting. Tombstones are never windowed. `None` applies everything.
     pub item_window_ms: Option<i64>,
     /// Apply a `calendar_event` item only when its stored source is known and is not Google Calendar (the
     /// cloud runner: Google Calendar text stays off it until Google verification). An event with no
@@ -2842,6 +3183,13 @@ const ALWAYS_PULLED_ROW_TYPES: [&str; 9] = [
     ROW_TYPE_CLIENT_CONTROLS_CAPABILITY,
 ];
 
+/// The most row types, kind tags and slice tags one pull query carries, well under SQLite's 999 variables
+/// (the query adds five of its own).
+const MAX_TAG_QUERY_VARIABLES: usize = 900;
+
+/// Set once this process has said a pull's slice tags were too many, so it says it once, not every round.
+static SLICE_TAGS_TOO_MANY_LOGGED: AtomicBool = AtomicBool::new(false);
+
 /// What one pull round takes, from [`PullOptions`]: the row types asked for at the query (`None`: all),
 /// the `items` kinds applied (`None`: all), and the two time cutoffs.
 #[derive(Debug, Default)]
@@ -2853,6 +3201,11 @@ struct RowFilter {
     kind_tags: Option<Vec<String>>,
     /// This round found the relay's `sync_row` has no `kind_tag`: the rest of it queries without tags.
     no_kind_tag_column: AtomicBool,
+    /// The `slice_tag`s this pull asks for beside `kind_tags` (see [`RowFilter::slices`]); `None` without kind
+    /// tags, or when they would make the query too long.
+    slice_tags: Option<Vec<String>>,
+    /// This round found the relay's `sync_row` has no `slice_tag`: the rest of it queries with kind tags only.
+    no_slice_tag_column: AtomicBool,
     capture_cutoff: Option<i64>,
     item_cutoff: Option<i64>,
     /// `meeting` is pulled only as the parent of a granted transcript (it was not granted itself): a meeting
@@ -2860,9 +3213,53 @@ struct RowFilter {
     /// when an applied transcript line needs it.
     meetings_as_parents_only: bool,
     non_google_calendar_only: bool,
+    /// Whether the relay has the runner's pull indexes, read once per round (a filter lives for one round;
+    /// [`RowFilter::use_pull_indexes`]).
+    pull_indexes: tokio::sync::OnceCell<bool>,
+    /// An indexed sub-query failed this round ([`give_up_pull_indexes`]): the rest of the round scans.
+    no_pull_indexes: AtomicBool,
+}
+
+/// Whether `sql` (a query of index names) finds both `idx_sync_row_slice` and `idx_sync_row_type`; any error is false.
+async fn pull_indexes_exist(conn: &Connection, sql: &str) -> bool {
+    let Ok(mut rows) = conn.query(sql, ()).await else {
+        return false;
+    };
+    let (mut slice, mut kind) = (false, false);
+    loop {
+        match rows.next().await {
+            Ok(Some(row)) => match row.get::<String>(0).as_deref() {
+                Ok("idx_sync_row_slice") => slice = true,
+                Ok("idx_sync_row_type") => kind = true,
+                _ => {}
+            },
+            Ok(None) => break,
+            Err(_) => return false,
+        }
+    }
+    slice && kind
+}
+
+/// True only when the relay has both pull indexes, `idx_sync_row_slice` and `idx_sync_row_type`. The name is
+/// the contract (the partial predicate is set where the index is created); any error means false.
+async fn relay_has_pull_indexes(conn: &Connection) -> bool {
+    pull_indexes_exist(
+        conn,
+        "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_sync_row_slice','idx_sync_row_type')",
+    )
+    .await
 }
 
 impl RowFilter {
+    /// Whether this round may use the indexed queries: only with slice tags in the query, and the relay has both
+    /// pull indexes. Checked once per round; false for the rest of the round once an indexed sub-query failed.
+    async fn use_pull_indexes(&self, conn: &Connection) -> bool {
+        if self.query_slice_tags().is_none() || self.no_pull_indexes.load(Ordering::Relaxed) {
+            return false;
+        }
+        *self.pull_indexes.get_or_init(|| relay_has_pull_indexes(conn)).await
+    }
+
     fn new(options: &PullOptions, skip_skins: bool, now_unix_ms: i64, group_key: &GroupKey) -> Self {
         let mut filter = RowFilter {
             capture_cutoff: options.capture_window_ms.map(|w| now_unix_ms - w),
@@ -2914,11 +3311,47 @@ impl RowFilter {
             types.retain(|t| t != ROW_TYPE_SKIN && t != ROW_TYPE_SKIN_IMAGE_CHUNK);
         }
         filter.meetings_as_parents_only = !explicit_meeting && types.iter().any(|t| t == ROW_TYPE_MEETING);
+        let type_count = types.len();
         filter.row_types = Some(types);
         filter.kind_tags = (!every_kind && !kinds.is_empty())
             .then(|| kinds.iter().map(|kind| sync::kind_tag(group_key, kind)).collect());
+        if filter.kind_tags.is_some() {
+            filter.slice_tags = filter.slices(&kinds, type_count, group_key);
+        }
         filter.item_kinds = (!every_kind).then_some(kinds);
         filter
+    }
+
+    /// The slice tags for `kinds`: each kind, each source class it may carry in this pull (a calendar event only
+    /// `Other` when Google Calendar is left out, else `Google` and `Other`; any other kind `None`), each month from
+    /// the item cutoff's through [`sync::MAX_MONTH_BUCKET`] (every month without a window, so Google events are
+    /// still left out). A sliced row of the cutoff's month is fetched and checked after decrypting, like any
+    /// other. `None` when the query would carry more than [`MAX_TAG_QUERY_VARIABLES`]; the kind tags alone then.
+    fn slices(&self, kinds: &[String], type_count: usize, group_key: &GroupKey) -> Option<Vec<String>> {
+        use sync::SourceClass;
+        let first = self.item_cutoff.map_or(0, sync::month_bucket);
+        let months = first..=sync::MAX_MONTH_BUCKET;
+        let classes = |kind: &str| -> &'static [SourceClass] {
+            match kind {
+                "calendar_event" if self.non_google_calendar_only => &[SourceClass::Other],
+                "calendar_event" => &[SourceClass::Google, SourceClass::Other],
+                _ => &[SourceClass::None],
+            }
+        };
+        let count: usize = kinds.iter().map(|k| classes(k).len() * months.len()).sum();
+        if type_count + kinds.len() + count > MAX_TAG_QUERY_VARIABLES {
+            if !SLICE_TAGS_TOO_MANY_LOGGED.swap(true, Ordering::Relaxed) {
+                eprintln!("[sync] {count} slice tags would make the pull query too long: it filters items by kind only");
+            }
+            return None;
+        }
+        let mut tags = Vec::with_capacity(count);
+        for kind in kinds {
+            for class in classes(kind) {
+                tags.extend(months.clone().map(|month| sync::slice_tag(group_key, kind, *class, month)));
+            }
+        }
+        Some(tags)
     }
 
     /// The kind tags to put in the relay query: none without a kind restriction, or once this pull has
@@ -2931,10 +3364,30 @@ impl RowFilter {
         self.kind_tags.as_deref()
     }
 
-    /// Whether a kind-filtered query failed only because the relay has no `kind_tag`; if so, the rest of
-    /// this round queries without tags (the post-decrypt kind check still filters).
-    fn kind_tag_column_missing(&self, error: &SyncEngineError) -> bool {
-        let missing = is_no_such_kind_tag_column(&error.to_string());
+    /// The slice tags to put in the relay query beside [`RowFilter::query_kind_tags`]: never without them (the
+    /// slice clause falls back to the kind tag), and none once this round has found the relay without the
+    /// `slice_tag` column.
+    fn query_slice_tags(&self) -> Option<&[String]> {
+        if self.no_slice_tag_column.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.query_kind_tags()?;
+        self.slice_tags.as_deref()
+    }
+
+    /// Whether a tag-filtered query failed only because the relay has no `slice_tag` or no `kind_tag`; if so,
+    /// the rest of this round queries without slice tags, or without any tags (the post-decrypt checks still
+    /// filter). A missing `slice_tag` counts once, so the retry without slices can never loop.
+    fn tag_column_missing(&self, error: &SyncEngineError) -> bool {
+        let error = error.to_string();
+        if is_no_such_slice_tag_column(&error) {
+            let first = !self.no_slice_tag_column.swap(true, Ordering::Relaxed);
+            if first {
+                eprintln!("[sync] the relay has no slice_tag column: this round filters items by kind only");
+            }
+            return first;
+        }
+        let missing = is_no_such_kind_tag_column(&error);
         if missing && !self.no_kind_tag_column.swap(true, Ordering::Relaxed) {
             eprintln!("[sync] the relay has no kind_tag column: this round fetches every item kind");
         }
@@ -3010,15 +3463,63 @@ pub(crate) async fn runner_pull_round(
     store: &Store,
     own_device_id: &str,
     options: &PullOptions,
-) -> Result<(bool, usize, usize), SyncEngineError> {
+) -> Result<RunnerRound, SyncEngineError> {
     let mut stats = Vec::new();
     let result = pull_round_mode(conn, group_key, store, own_device_id, CATCH_UP_PACE, options, true, true, &mut stats).await;
     if let (Ok(json), Ok(mut last)) = (serde_json::to_string(&stats), LAST_PULL_STATS.lock()) {
         *last = json;
     }
-    let applied = stats.iter().map(|s| s.applied).sum();
-    let fetched = stats.iter().map(|s| s.fetched + s.gap_fetched).sum();
-    result.map(|more| (more, applied, fetched))
+    let mut round = RunnerRound {
+        applied: stats.iter().map(|s| s.applied).sum(),
+        fetched: stats.iter().map(|s| s.fetched + s.gap_fetched).sum(),
+        already_applied: stats.iter().map(|s| s.already_applied).sum(),
+        undecodable: stats.iter().map(|s| s.undecodable).sum(),
+        skipped_allowlist: stats.iter().map(|s| s.skipped_allowlist).sum(),
+        skipped_window: stats.iter().map(|s| s.skipped_window).sum(),
+        skip_mcp: stats.iter().map(|s| s.skip_mcp).sum(),
+        skip_kind: stats.iter().map(|s| s.skip_kind).sum(),
+        skip_google_cal: stats.iter().map(|s| s.skip_google_cal).sum(),
+        skip_item_window: stats.iter().map(|s| s.skip_item_window).sum(),
+        refetch: stats.iter().map(|s| s.refetch).sum(),
+        deferred: stats.iter().map(|s| s.deferred).sum(),
+        fetch_ms: stats.iter().map(|s| s.fetch_ms + s.gap_fetch_us / 1000).sum(),
+        apply_ms: stats.iter().map(|s| s.apply_ms + s.gap_apply_us / 1000).sum(),
+        slice_tags: stats.iter().map(|s| s.slice_tags).max().unwrap_or(0),
+        pull_index: stats.iter().any(|s| s.pull_index),
+        ..Default::default()
+    };
+    for s in &stats {
+        for (total, add) in round.by_type.iter_mut().zip(s.by_type) {
+            total.fetched += add.fetched;
+            total.applied += add.applied;
+        }
+    }
+    result.map(|more| RunnerRound { more, ..round })
+}
+
+/// What one [`runner_pull_round`] read: counts and milliseconds only.
+#[derive(Default)]
+pub(crate) struct RunnerRound {
+    pub more: bool,
+    pub applied: usize,
+    pub fetched: usize,
+    pub by_type: [crate::PullTypeCounts; crate::PULL_TYPE_NAMES.len()],
+    pub already_applied: usize,
+    pub undecodable: usize,
+    pub skipped_allowlist: usize,
+    pub skipped_window: usize,
+    pub skip_mcp: usize,
+    pub skip_kind: usize,
+    pub skip_google_cal: usize,
+    pub skip_item_window: usize,
+    pub refetch: usize,
+    pub deferred: usize,
+    pub fetch_ms: u64,
+    pub apply_ms: u64,
+    /// The slice tags a query carried (the same every query of a round): the most any peer's did.
+    pub slice_tags: usize,
+    /// An indexed fetch ran for at least one query this round.
+    pub pull_index: bool,
 }
 
 /// Whether every other device on the relay has announced the topics capability. A sender holds its client
@@ -3139,6 +3640,15 @@ struct PeerPullStats {
     /// phone's or desktop's stats read as before.
     #[serde(skip_serializing_if = "is_zero")]
     skipped_allowlist: usize,
+    /// Of `skipped_allowlist`/`skipped_window`: why an `items` row was left out (runner diagnostics; not in the JSON).
+    #[serde(skip)]
+    skip_mcp: usize,
+    #[serde(skip)]
+    skip_kind: usize,
+    #[serde(skip)]
+    skip_google_cal: usize,
+    #[serde(skip)]
+    skip_item_window: usize,
     deferred: usize,
     pending_before: usize,
     pending_after: usize,
@@ -3147,6 +3657,24 @@ struct PeerPullStats {
     /// Time fetching the forward page from the relay, and applying it.
     fetch_ms: u64,
     apply_ms: u64,
+    /// Rows fetched and applied per row type (the runner's pull diagnostics); not in the JSON.
+    /// Rows of a page left unhandled (a budget stopped it), to be fetched again.
+    #[serde(skip)]
+    refetch: usize,
+    /// Gap pages' fetch and apply time in microseconds (the forward page's are `fetch_ms`/`apply_ms`); the
+    /// runner's report adds both to its totals.
+    #[serde(skip)]
+    gap_fetch_us: u64,
+    #[serde(skip)]
+    gap_apply_us: u64,
+    #[serde(skip)]
+    by_type: [crate::PullTypeCounts; crate::PULL_TYPE_NAMES.len()],
+    /// How many slice tags this peer's queries carried (after any fallback): the runner's diagnostics.
+    #[serde(skip)]
+    slice_tags: usize,
+    /// An indexed fetch (not the span-window scan) served at least one of this peer's queries.
+    #[serde(skip)]
+    pull_index: bool,
     /// The page was full (this peer is behind), so its items were stored without embeddings.
     deferred_embedding: bool,
     /// Newest first only (#572): this round recorded the peer's gap and moved the live cursor
@@ -3162,6 +3690,13 @@ struct PeerPullStats {
     gap_closed_peer_gone: bool,
 }
 
+impl PeerPullStats {
+    /// Called after a fetch, so a query that fell back for a missing `slice_tag` column counts none.
+    fn note_slice_tags(&mut self, filter: &RowFilter) {
+        self.slice_tags = self.slice_tags.max(filter.query_slice_tags().map_or(0, <[String]>::len));
+    }
+}
+
 /// Set by each pull round: one entry per peer, as JSON.
 static LAST_PULL_STATS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
@@ -3172,6 +3707,19 @@ pub fn last_pull_stats_json() -> String {
         .lock()
         .map(|s| s.clone())
         .unwrap_or_default()
+}
+
+impl PeerPullStats {
+    fn count_fetched(&mut self, envelopes: &[RowEnvelope]) {
+        for env in envelopes {
+            self.by_type[crate::pull_type_index(&env.row_type)].fetched += 1;
+        }
+    }
+
+    fn count_applied(&mut self, row_type: &str) {
+        self.applied += 1;
+        self.by_type[crate::pull_type_index(row_type)].applied += 1;
+    }
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -3365,7 +3913,8 @@ async fn pull_round_mode(
         let rows = if spent { 1 } else { pace.rows };
         // The runner's kind filter reads the live range in windows of `local_seq` up to the peer's top as
         // read here ([`FILTERED_PULL_SPAN`]). Without it (every phone and desktop pull) this loop runs once,
-        // exactly as before.
+        // exactly as before. Keyed on the kind tags alone: slice tags are only ever queried beside them, and
+        // narrow the same query further.
         let windowed_top = match filter.query_kind_tags() {
             Some(_) => peer_top_seq(conn, peer).await?,
             None => None,
@@ -3373,14 +3922,29 @@ async fn pull_round_mode(
         let pass_started = std::time::Instant::now();
         let mut from = cursor;
         let (full_page, processed_through) = loop {
-            let window_hi = windowed_top.map(|top| from.saturating_add(filtered_pull_span()).min(top));
+            let mut window_hi = windowed_top.map(|top| from.saturating_add(filtered_pull_span()).min(top));
             let fetch_started = std::time::Instant::now();
-            let (envelopes, windowed) =
-                fetch_rows_since(conn, peer, from, window_hi.unwrap_or(i64::MAX), rows, skip_skins, &filter).await?;
+            // With the relay's pull indexes the window is the whole range up to the peer's top. Its cost tracks
+            // matches, not positions, but not linearly (Q1/Q2 ~ matches^2 / limit, Q3 ~ unsliced rows; see
+            // [`fetch_rows_indexed`]). If the indexed fetch gives way, this page scans its span window.
+            let indexed = match windowed_top {
+                Some(top) if filter.use_pull_indexes(conn).await => {
+                    fetch_rows_indexed(conn, peer, from, top, rows, &filter).await?.inspect(|_| window_hi = Some(top))
+                }
+                _ => None,
+            };
+            let indexed_used = indexed.is_some();
+            let (envelopes, windowed) = match indexed {
+                Some(envelopes) => (envelopes, true),
+                None => fetch_rows_since(conn, peer, from, window_hi.unwrap_or(i64::MAX), rows, skip_skins, &filter).await?,
+            };
             stats.fetch_ms += fetch_started.elapsed().as_millis() as u64;
+            stats.pull_index |= indexed_used;
+            stats.note_slice_tags(&filter);
             let full_page = envelopes.len() as i64 >= rows;
             more |= spent || full_page;
             stats.fetched += envelopes.len();
+            stats.count_fetched(&envelopes);
             stats.fetched_through = envelopes.last().map_or(from, |e| e.local_seq);
             let apply_started = std::time::Instant::now();
             // A full page means this peer is behind: on a desktop its items are stored without
@@ -3403,6 +3967,7 @@ async fn pull_round_mode(
             .await;
             let page = page?;
             stats.apply_ms += apply_started.elapsed().as_millis() as u64;
+            stats.refetch += envelopes.len() - page.handled;
             more |= page.stopped;
             // The highest local_seq this pass handled (applied, skipped, or deferred to the
             // dependency pass): where the cursor goes, since the pass can stop early.
@@ -3411,8 +3976,10 @@ async fn pull_round_mode(
                 .checked_sub(1)
                 .map_or(from, |last| envelopes[last].local_seq);
             // A short window handled to its end: every row up to the window's end was read (the query
-            // left out only rows the kind check would skip), so the cursor moves to it, as an unfiltered
-            // pull's would over the skipped rows.
+            // left out only rows the post-decrypt checks would skip: another kind's, and with slice tags a
+            // Google event the pull leaves out or an item from before the cutoff's month, judged on the same
+            // source and date the push tagged), so the cursor moves to it, as an unfiltered pull's would over
+            // the skipped rows.
             let window_read = windowed && !full_page && page.handled == envelopes.len();
             match (window_hi, windowed_top) {
                 (Some(hi), Some(top)) if window_read && hi > from => {
@@ -3507,7 +4074,7 @@ async fn pull_round_mode(
                 .into_iter()
                 .filter_map(|env| decode_pending_segment(group_key, peer, &env).map(|p| (env, p)))
                 .collect();
-            resolve_segments(conn, group_key, store, peer, pending).await?;
+            resolve_segments(conn, group_key, store, peer, pending, &filter, stats).await?;
         }
         stats.pending_after = store
             .list_sync_pending_dependencies(peer)
@@ -3588,20 +4155,47 @@ async fn pull_gaps(
         // not a page it can't apply.
         let mut rows = gap_page_rows(pace, budget);
         let mut gap_hi = gap_hi;
-        // Without the runner's kind filter this loop runs once, exactly as before. With it, each page
-        // reads one window of `local_seq` below the gap's top ([`FILTERED_PULL_SPAN`]); a short window
-        // handled to its end lowers the gap's top to the window's floor and the next window follows while
-        // the gap's budget lasts.
+        // Without the runner's kind filter this loop runs once, exactly as before. With it (and its slice
+        // tags, which never come without it), a page on the scan reads one window of `local_seq` below the gap's
+        // top ([`FILTERED_PULL_SPAN`]); a short window handled to its end lowers the gap's top to the window's
+        // floor and the next window follows while the gap's budget lasts. With the relay's pull indexes as well
+        // ([`fetch_gap_rows_indexed`]) the window is the whole gap, where span windows over ~98M positions would
+        // take thousands of rounds. Its cost is bounded by matches, not positions, but not linearly: Q1 and Q2 sort
+        // every match left in the gap on each page (about `matches^2 / limit` over the gap), and Q3 tracks the
+        // peer's unsliced `items` rows (`kind_tag` is not in the index). Against the span scan's one read per
+        // position the crossover is about `sqrt(positions * limit)`: ~220k matches per device gap at 98M
+        // positions and `limit` 500. A short page closes the gap. If the indexed fetch gives way, later pages go
+        // back to span windows from the gap's current top.
         loop {
-            let window_lo = match filter.query_kind_tags() {
+            let mut window_lo = match filter.query_kind_tags() {
                 Some(_) => gap_lo.max(gap_hi.saturating_sub(filtered_pull_span()).saturating_sub(1)),
                 None => gap_lo,
             };
-            let (envelopes, windowed) =
-                fetch_gap_rows(conn, peer, gap_lo, window_lo, gap_hi, rows, skip_skins, filter).await?;
+            let fetch_started = std::time::Instant::now();
+            // With the relay's pull indexes the window is the whole gap (see above). If they give way, this page
+            // scans its span window.
+            let indexed = match filter.query_kind_tags() {
+                Some(_) if filter.use_pull_indexes(conn).await => {
+                    fetch_gap_rows_indexed(conn, peer, gap_lo, gap_hi, rows, filter).await?
+                }
+                _ => None,
+            };
+            if indexed.is_some() {
+                window_lo = gap_lo;
+            }
+            let indexed_used = indexed.is_some();
+            let (envelopes, windowed) = match indexed {
+                Some(envelopes) => (envelopes, true),
+                None => fetch_gap_rows(conn, peer, gap_lo, window_lo, gap_hi, rows, skip_skins, filter).await?,
+            };
+            stats.gap_fetch_us += fetch_started.elapsed().as_micros() as u64;
+            stats.pull_index |= indexed_used;
+            stats.note_slice_tags(filter);
             stats.gap_fetched += envelopes.len();
+            stats.count_fetched(&envelopes);
             // The fetch is part of the gap's budget.
             let page_budget = budget.saturating_sub(peer_started.elapsed());
+            let apply_started = std::time::Instant::now();
             let page = apply_page(
                 conn,
                 group_key,
@@ -3613,6 +4207,8 @@ async fn pull_gaps(
                 stats,
             )
             .await?;
+            stats.gap_apply_us += apply_started.elapsed().as_micros() as u64;
+            stats.refetch += envelopes.len() - page.handled;
             let floor = if windowed { window_lo } else { gap_lo };
             if page.handled == envelopes.len() && (envelopes.len() as i64) < rows {
                 if floor == gap_lo {
@@ -3775,15 +4371,29 @@ async fn apply_page(
                 stats.undecodable += 1;
                 continue;
             };
+            // Added items stay on the computer that received them (bridge spec 8.2): handled,
+            // never applied, like a kind the allowlist does not grant.
+            if decoded.item.kind == memory::MCP_ITEM_KIND {
+                stats.skipped_allowlist += 1;
+                stats.skip_mcp += 1;
+                continue;
+            }
             // Not granted (the runner's allowlist names item kinds): handled, never applied.
-            if !filter.kind_allowed(&decoded.item.kind)
+            let kind_out = !filter.kind_allowed(&decoded.item.kind);
+            if kind_out
                 || filter.drops_calendar_source(&decoded.item.kind, decoded.item.source.as_deref())
             {
                 stats.skipped_allowlist += 1;
+                if kind_out {
+                    stats.skip_kind += 1;
+                } else {
+                    stats.skip_google_cal += 1;
+                }
                 continue;
             }
             if filter.outside_item_window(&decoded.item.kind, decoded.item.ts_unix_ms) {
                 stats.skipped_window += 1;
+                stats.skip_item_window += 1;
                 continue;
             }
             if decoded.item.kind == "transcript" {
@@ -3802,7 +4412,7 @@ async fn apply_page(
             } else if forgotten_item(store, peer, env.local_seq, &decoded.item)? {
                 // A client delete forgot it (here or on a peer): dropped, counted as handled like a
                 // forgotten meeting's late row.
-                stats.applied += 1;
+                stats.count_applied(&env.row_type);
             } else {
                 let local_id = store
                     .apply_synced_item(peer, env.local_seq, None, &decoded.item)
@@ -3810,7 +4420,7 @@ async fn apply_page(
                 store
                     .record_sync_row_map(peer, env.local_seq, &env.row_type, local_id)
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-                stats.applied += 1;
+                stats.count_applied(&env.row_type);
             }
             continue;
         }
@@ -3859,9 +4469,11 @@ async fn apply_page(
             continue;
         }
         apply_parent_row(store, peer, env.local_seq, &env.row_type, &plaintext)?;
-        stats.applied += 1;
+        stats.count_applied(&env.row_type);
     }
-    resolve_segments(conn, group_key, store, peer, segments).await?;
+    // A legacy line the window dropped was counted as deferred when it was set aside: take it back.
+    let dropped = resolve_segments(conn, group_key, store, peer, segments, filter, stats).await?;
+    stats.deferred = stats.deferred.saturating_sub(dropped);
     Ok(PageOutcome { handled, stopped })
 }
 
@@ -3963,13 +4575,25 @@ fn remembered_parent_meeting(store: &Store, peer: &str, source_id: i64) -> Resul
 /// whose exact `meeting_local_seq` is known is fetched by key first (batched): it may never
 /// have been in a fetch window at all, e.g. the cursor advanced past its local_seq while
 /// the meeting was still in flight to the relay.
+///
+/// With an item window (the runner), a legacy line has no timestamp of its own: it is dated by its
+/// meeting's start plus `start_cs * 10` ms, and one before the window is dropped for good (counted in
+/// `skipped_window`, never pending). A fetched meeting is applied only as the parent of a line that is
+/// applied. Lines applied here count in `stats` under their own row type. Returns how many legacy
+/// lines the window dropped.
 async fn resolve_segments(
     conn: &Connection,
     group_key: &GroupKey,
     store: &Store,
     peer: &str,
     segments: Vec<(RowEnvelope, PendingSegment)>,
-) -> Result<(), SyncEngineError> {
+    filter: &RowFilter,
+    stats: &mut PeerPullStats,
+) -> Result<usize, SyncEngineError> {
+    let cutoff = filter.item_cutoff;
+    // (local_seq, source_meeting_id, start_unix_ms) of each meeting fetched by key, windowed pulls only.
+    let mut fetched_starts: Vec<(i64, Option<i64>, i64)> = Vec::new();
+    let mut dropped = 0usize;
     let fallback = |pending: &PendingSegment| match pending {
         PendingSegment::Legacy {
             source_meeting_id,
@@ -4033,18 +4657,53 @@ async fn resolve_segments(
             }
         }
     }
+    // Every copy of a meeting fetched here, decrypted first so a windowed pull dates a line by the same
+    // copy (the newest, highest `local_seq`) whether it decides to apply the meeting or to drop the line.
+    let mut fetched: Vec<(RowEnvelope, Vec<u8>)> = Vec::new();
     for chunk in missing_meetings.chunks(PENDING_LOOKUP_CHUNK) {
         for meeting_env in fetch_rows_by_key(conn, peer, chunk).await? {
             if let Some(plaintext) = decrypt_row(group_key, peer, &meeting_env) {
-                apply_parent_row(
-                    store,
-                    peer,
-                    meeting_env.local_seq,
-                    &meeting_env.row_type,
-                    &plaintext,
-                )?;
+                if cutoff.is_some() {
+                    if let Ok(payload) = serde_json::from_slice::<MeetingPayload>(&plaintext) {
+                        fetched_starts.push((meeting_env.local_seq, payload.source_meeting_id, payload.meeting.start_unix_ms));
+                    }
+                }
+                fetched.push((meeting_env, plaintext));
             }
         }
+    }
+    // The start of the newest fetched copy of the meeting a line names.
+    let fetched_start = |source_id: Option<i64>, seq: Option<i64>| {
+        fetched_starts
+            .iter()
+            .filter(|(s, src, _)| seq == Some(*s) || (source_id.is_some() && *src == source_id))
+            .max_by_key(|(s, _, _)| *s)
+            .map(|(_, _, start)| *start)
+    };
+    for (meeting_env, plaintext) in &fetched {
+        if let Some(cutoff) = cutoff {
+            if let Ok(payload) = serde_json::from_slice::<MeetingPayload>(plaintext) {
+                // Only the parent of a line that gets applied: an item line is already in the window.
+                let needed = segments.iter().zip(&forgotten).any(|((_, pending), forgotten)| {
+                    let (source_id, seq) = fallback(pending);
+                    let names_it = (source_id.is_some() && source_id == payload.source_meeting_id)
+                        || seq == Some(meeting_env.local_seq);
+                    !*forgotten
+                        && names_it
+                        && match pending {
+                            PendingSegment::Item { .. } => true,
+                            PendingSegment::Legacy { segment, .. } => {
+                                let start = fetched_start(source_id, seq).unwrap_or(payload.meeting.start_unix_ms);
+                                segment.start_cs * 10 + start >= cutoff
+                            }
+                        }
+                });
+                if !needed {
+                    continue;
+                }
+            }
+        }
+        apply_parent_row(store, peer, meeting_env.local_seq, &meeting_env.row_type, plaintext)?;
     }
 
     // The transcript lines apply one write each, back to back: pause now and then, as the
@@ -4061,6 +4720,24 @@ async fn resolve_segments(
                 .delete_sync_pending_dependency(peer, env.local_seq, &env.row_type)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             continue;
+        }
+        // A legacy line before the window: dropped for good. A meeting nobody has (yet) leaves it pending.
+        if let (Some(cutoff), PendingSegment::Legacy { segment, .. }) = (cutoff, pending) {
+            let start = match fetched_start(source_meeting_id, fallback_local_seq) {
+                Some(start) => Some(start),
+                None => match resolve(source_meeting_id, fallback_local_seq)? {
+                    Some(id) => store.get_meeting(id).map_err(query_err)?.map(|m| m.start_unix_ms),
+                    None => None,
+                },
+            };
+            if start.is_some_and(|start| start + segment.start_cs * 10 < cutoff) {
+                stats.skipped_window += 1;
+                dropped += 1;
+                store
+                    .delete_sync_pending_dependency(peer, env.local_seq, &env.row_type)
+                    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+                continue;
+            }
         }
         // No forgotten check once resolved: a tombstone deletes the meeting and its map entry, so a
         // meeting that still resolves is alive, and an epoch-less check here could only over-drop.
@@ -4096,6 +4773,7 @@ async fn resolve_segments(
                 store
                     .record_sync_row_map(peer, env.local_seq, &env.row_type, local_id)
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+                stats.count_applied(&env.row_type);
                 // A no-op if this row wasn't pending (the common case: it resolved
                 // on its first pass and never got here via list_sync_pending_dependencies).
                 store
@@ -4113,7 +4791,7 @@ async fn resolve_segments(
             }
         }
     }
-    Ok(())
+    Ok(dropped)
 }
 
 #[cfg(test)]
@@ -5916,6 +6594,192 @@ pub(crate) mod tests {
         assert!(!is_missing_kind_tag_column("database is locked"));
     }
 
+    async fn slice_tag_of(conn: &Connection, filter: &str) -> Option<String> {
+        let mut rows = conn
+            .query(&format!("SELECT slice_tag FROM sync_row WHERE {filter}"), ())
+            .await
+            .unwrap();
+        rows.next().await.unwrap().unwrap().get::<Option<String>>(0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_fresh_relay_has_the_slice_tag_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        assert!(has_column(&conn, "slice_tag").await);
+        assert!(SLICE_TAG_COLUMN_SEEN.get());
+    }
+
+    #[tokio::test]
+    async fn ensure_slice_tag_column_upgrades_a_kind_tag_relay_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        assert!(ensure_entity_tag_column(&conn).await);
+        assert!(ensure_kind_tag_column(&conn).await);
+        assert!(!has_column(&conn, "slice_tag").await);
+        assert!(ensure_slice_tag_column(&conn).await);
+        assert!(has_column(&conn, "slice_tag").await);
+        assert!(ensure_slice_tag_column(&conn).await, "a second call is a no-op");
+        ensure_content_schema(&conn).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pushed_items_carry_their_slice_tag_and_other_rows_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let key = GroupKey::generate();
+        let store = push_fixture_store();
+
+        push_content(&conn, &key, &store, "dev-a").await.unwrap();
+
+        let calendar = sync::slice_tag(&key, "calendar_event", sync::SourceClass::Google, sync::month_bucket(5000));
+        let capture = sync::slice_tag(&key, "capture", sync::SourceClass::None, sync::month_bucket(1000));
+        for tag in [calendar, capture] {
+            let sql = format!("SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND slice_tag = '{tag}'");
+            assert_eq!(single_i64(&conn, &sql).await, 1);
+        }
+        assert_eq!(slice_tag_of(&conn, "row_type = 'meeting'").await, None);
+        assert_eq!(
+            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE slice_tag IS NOT NULL AND row_type != 'items'").await,
+            0
+        );
+    }
+
+    /// The push-time tag and the backfill's payload-derived tag must be the same function of the item.
+    #[tokio::test]
+    async fn slice_tag_for_equals_the_tag_derived_from_the_encoded_payload() {
+        let key = GroupKey::generate();
+        let store = Store::open_in_memory().unwrap();
+        store.insert_capture_item(&sample_new_capture_item("a capture")).unwrap();
+        for source in ["google_calendar", "outlook"] {
+            store
+                .upsert_calendar_event_items(&[memory::NewCalendarEventItem {
+                    device_id: "dev-a".to_string(),
+                    source: source.to_string(),
+                    external_id: format!("evt-{source}"),
+                    ts_unix_ms: 1_700_000_000_000,
+                    title: "Planning".to_string(),
+                    actors: vec![],
+                }])
+                .unwrap();
+        }
+        let rows = store.unpushed_item_rows("dev-a", 0).unwrap();
+        assert_eq!(rows.len(), 3);
+        let mut seen = std::collections::HashSet::new();
+        for row in &rows {
+            let (_, _, payload_json) = encode_row(row).unwrap();
+            let pushed = slice_tag_for(&key, row);
+            assert!(pushed.is_some());
+            assert_eq!(pushed, item_payload_slice_tag(&key, payload_json.as_bytes()));
+            seen.insert(pushed);
+        }
+        assert_eq!(seen.len(), 3, "capture, google and other calendar are three distinct slices");
+        let meetings = store.unpushed_meeting_rows("dev-a", 0).unwrap();
+        assert!(meetings.iter().all(|r| slice_tag_for(&key, r).is_none()));
+    }
+
+    #[test]
+    fn a_missing_source_is_google_only_for_calendar_events() {
+        let key = GroupKey::generate();
+        let op = |payload: &str, row_type: &str| memory::ClaimedOutboxOperation {
+            operation_id: "op".to_string(),
+            device_id: "device-a".to_string(),
+            local_seq: 1,
+            row_type: row_type.to_string(),
+            aggregate_type: row_type.to_string(),
+            aggregate_id: "1".to_string(),
+            operation_kind: memory::OutboxOperationKind::Upsert,
+            payload_json: payload.to_string(),
+            connector: memory::OUTBOX_CONNECTOR.to_string(),
+            attempts: 0,
+        };
+        let month = sync::month_bucket(1_700_000_000_000);
+        let cal = op(r#"{"kind":"calendar_event","ts_unix_ms":1700000000000}"#, ROW_TYPE_ITEMS);
+        assert_eq!(
+            outbox_slice_tag(&key, &cal),
+            Some(sync::slice_tag(&key, "calendar_event", sync::SourceClass::Google, month))
+        );
+        let other = op(r#"{"kind":"calendar_event","source":"outlook","ts_unix_ms":1700000000000}"#, ROW_TYPE_ITEMS);
+        assert_eq!(
+            outbox_slice_tag(&key, &other),
+            Some(sync::slice_tag(&key, "calendar_event", sync::SourceClass::Other, month))
+        );
+        let capture = op(r#"{"kind":"capture","ts_unix_ms":1700000000000}"#, ROW_TYPE_ITEMS);
+        assert_eq!(
+            outbox_slice_tag(&key, &capture),
+            Some(sync::slice_tag(&key, "capture", sync::SourceClass::None, month))
+        );
+        let no_ts = op(r#"{"kind":"capture"}"#, ROW_TYPE_ITEMS);
+        assert_eq!(outbox_slice_tag(&key, &no_ts), None, "no ts_unix_ms: left NULL, not guessed");
+        let meeting = op(r#"{"kind":"capture","ts_unix_ms":1}"#, ROW_TYPE_MEETING);
+        assert_eq!(outbox_slice_tag(&key, &meeting), None);
+    }
+
+    /// A relay with the older columns but no `slice_tag`: the latch says yes, the INSERT fails once and the
+    /// push goes on untagged (kind_tag survives).
+    #[tokio::test]
+    async fn a_relay_without_slice_tag_still_takes_the_push_untagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row ADD COLUMN kind_tag TEXT", ()).await.unwrap();
+        KIND_TAG_COLUMN_SEEN.set();
+        SLICE_TAG_COLUMN_SEEN.set();
+        let store = push_fixture_store();
+        FAILED_TAGGED_INSERTS.with(|c| c.set(0));
+
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 2);
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL").await, 2);
+        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1, "one slice_tag miss, then no more asking");
+    }
+
+    /// `kind_tag` missing but `slice_tag` present: the kind arm fires first, slice_tag is still written.
+    #[tokio::test]
+    async fn a_relay_with_slice_tag_but_no_kind_tag_still_tags_by_slice() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row ADD COLUMN slice_tag TEXT", ()).await.unwrap();
+        KIND_TAG_COLUMN_SEEN.set();
+        SLICE_TAG_COLUMN_SEEN.set();
+        let store = push_fixture_store();
+        FAILED_TAGGED_INSERTS.with(|c| c.set(0));
+
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE slice_tag IS NOT NULL").await, 2);
+        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1, "one kind_tag miss, then slice-only");
+    }
+
+    /// Both newer columns missing with both latches set: two misses (one per arm), then untagged.
+    #[tokio::test]
+    async fn a_relay_with_neither_kind_nor_slice_tag_pushes_untagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        KIND_TAG_COLUMN_SEEN.set();
+        SLICE_TAG_COLUMN_SEEN.set();
+        let store = push_fixture_store();
+        FAILED_TAGGED_INSERTS.with(|c| c.set(0));
+
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 2);
+        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 2);
+    }
+
+    #[test]
+    fn missing_slice_tag_column_is_recognized() {
+        assert!(is_missing_slice_tag_column("table sync_row has no column named slice_tag"));
+        assert!(!is_missing_slice_tag_column("table sync_row has no column named kind_tag"));
+        assert!(!is_missing_slice_tag_column("database is locked"));
+    }
+
     /// A relay as ops leaves it: the column plus the out-of-band index.
     pub(crate) async fn compacting_relay(dir: &tempfile::TempDir) -> Connection {
         let conn = local_connection(&dir.path().join("relay.db")).await;
@@ -7531,6 +8395,103 @@ pub(crate) mod tests {
             .unwrap();
             seed_content_row(conn, group_key, "dev-a", seq, ROW_TYPE_ITEMS, &json).await;
         }
+    }
+
+    fn mcp_item_writer() -> memory::mcp_items::McpWriter {
+        memory::mcp_items::McpWriter { token_id: 1, client_name: "Claude Code".to_string() }
+    }
+
+    fn mcp_new_item(id: &str) -> memory::mcp_items::NewMcpItem {
+        memory::mcp_items::NewMcpItem {
+            label: "outlook-work".to_string(),
+            external_id: id.to_string(),
+            kind: "email".to_string(),
+            ts: "2026-11-21T14:03:00Z".to_string(),
+            title: Some("Quokka forecast".to_string()),
+            text: "quokkacanary numbers".to_string(),
+            url: None,
+            people: vec![],
+        }
+    }
+
+    /// A peer that pushes an `items` row of kind `mcp_item` (a bug, or a newer build) never
+    /// creates a row here: added items stay on the computer that received them.
+    #[tokio::test]
+    async fn a_pulled_mcp_item_row_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let group_key = GroupKey::generate();
+        let now = crate::now_unix_ms();
+        for (seq, kind, text) in [(1, memory::MCP_ITEM_KIND, "quokkacanary added"), (2, "capture", "plain peer capture")] {
+            let json = serde_json::to_string(&ItemPayload {
+                source_meeting_id: None,
+                meeting_local_seq: None,
+                item: applied_item(kind, now, text),
+            })
+            .unwrap();
+            seed_content_row(&conn, &group_key, "dev-a", seq, ROW_TYPE_ITEMS, &json).await;
+        }
+        let store = Store::open_in_memory().unwrap();
+        let mut stats = Vec::new();
+        pull_round(&conn, &group_key, &store, "dev-b", NORMAL_PACE, &PullOptions::default(), true, &mut stats)
+            .await
+            .unwrap();
+        assert!(applied(&store, 2, ROW_TYPE_ITEMS), "the capture applies, so the pull ran");
+        assert!(!applied(&store, 1, ROW_TYPE_ITEMS));
+        assert_eq!(captures_with_text(&store, "quokkacanary added"), 0);
+        assert!(store.search_keyword("quokkacanary", 10).unwrap().is_empty());
+        // The catch-up replay applies rows one by one through `apply_parent_row`: ignored there too.
+        let body = serde_json::to_vec(&ItemPayload {
+            source_meeting_id: None,
+            meeting_local_seq: None,
+            item: applied_item(memory::MCP_ITEM_KIND, now, "quokkacanary replayed"),
+        })
+        .unwrap();
+        apply_parent_row(&store, "dev-c", 9, ROW_TYPE_ITEMS, &body).unwrap();
+        assert!(store.resolve_sync_row_map("dev-c", 9, ROW_TYPE_ITEMS).unwrap().is_none());
+        assert!(store.search_keyword("quokkacanary", 10).unwrap().is_empty());
+    }
+
+    /// Checked at the relay, not only in `unpushed_item_rows`: after added items are written,
+    /// updated and deleted and a full push round runs, no relay row decrypts to one.
+    #[tokio::test]
+    async fn no_relay_row_decrypts_to_an_mcp_item_after_a_full_round() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let group_key = GroupKey::generate();
+        let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id("device-a");
+        store.insert_capture_item(&sample_new_capture_item("a capture that is pushed")).unwrap();
+        let clock = memory::mcp_items::WriteClock { now_unix_ms: 1_795_269_780_000, day_start_unix_ms: 1_795_219_200_000 };
+        { let live: &memory::Store = &store; while live.list_mcp_client_tokens().unwrap().len() < 12 { live.insert_mcp_client_token(&memory::NewMcpClientToken { name: "t".into(), token_hash: "h".into(), token_salt: "s".into(), scopes: vec!["write".into()] }).unwrap(); } }
+        let items: Vec<_> = (0..5).map(|i| mcp_new_item(&format!("m{i}"))).collect();
+        store.upsert_mcp_items(&mcp_item_writer(), &items, &Default::default(), clock).unwrap();
+        let mut changed = mcp_new_item("m0");
+        changed.text = "quokkacanary revised".to_string();
+        store.upsert_mcp_items(&mcp_item_writer(), &[changed], &Default::default(), clock).unwrap();
+        store.delete_mcp_items(1, "outlook-work", &["m1".to_string()], 1_800_000_000_000).unwrap();
+
+        push_content(&conn, &group_key, &store, "device-a").await.unwrap();
+
+        let mut rows = conn
+            .query("SELECT device_id, local_seq, row_type, ciphertext FROM sync_row", ())
+            .await
+            .unwrap();
+        let mut decrypted = 0;
+        while let Some(row) = rows.next().await.unwrap() {
+            let device: String = row.get(0).unwrap();
+            let seq: i64 = row.get(1).unwrap();
+            let row_type: String = row.get(2).unwrap();
+            let ciphertext: String = row.get(3).unwrap();
+            let aad = content_row_aad(&device, seq, &row_type);
+            let plain = sync::decrypt_payload(&group_key, &STANDARD.decode(&ciphertext).unwrap(), &aad).unwrap();
+            let text = String::from_utf8_lossy(&plain);
+            assert!(!text.contains("mcp_item") && !text.contains("quokkacanary"), "{row_type}: {text}");
+            decrypted += 1;
+        }
+        assert!(decrypted >= 1, "the capture was pushed, so the round ran");
     }
 
     fn applied(store: &Store, local_seq: i64, row_type: &str) -> bool {
@@ -9533,7 +10494,7 @@ mod relay_query_tests {
         (dir, conn)
     }
 
-    async fn assert_seeks(conn: &Connection, sql: &str) {
+    pub(super) async fn assert_seeks(conn: &Connection, sql: &str) {
         let mut rows = conn
             .query(&format!("EXPLAIN QUERY PLAN {sql}"), ())
             .await
@@ -9566,8 +10527,8 @@ mod relay_query_tests {
         assert_seeks(&conn, &compaction_delete_sql(3)).await;
         assert_seeks(&conn, &forgotten_rows_delete_sql(3)).await;
         assert_seeks(&conn, FORGOTTEN_MEETING_TAG_DELETE_SQL).await;
-        assert_seeks(&conn, &fetch_allowed_rows_sql(3, 0)).await;
-        assert_seeks(&conn, &fetch_allowed_gap_rows_sql(3, 0)).await;
+        assert_seeks(&conn, &fetch_allowed_rows_sql(3, 0, 0)).await;
+        assert_seeks(&conn, &fetch_allowed_gap_rows_sql(3, 0, 0)).await;
         assert_seeks(&conn, "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq IN (?2, ?3)").await;
     }
 
@@ -10269,6 +11230,192 @@ mod runner_round_tests {
         }
     }
 
+    fn legacy_line_json(meeting_local_seq: i64, source_meeting_id: i64, start_cs: i64, text: &str) -> String {
+        serde_json::to_string(&TranscriptSegmentPayload {
+            meeting_local_seq,
+            source_meeting_id: Some(source_meeting_id),
+            segment: memory::AppliedTranscriptSegment { start_cs, speaker_label: "Alice".to_string(), text: text.to_string() },
+        })
+        .unwrap()
+    }
+
+    fn has_line(store: &Store, text: &str) -> bool {
+        !store.search_transcript_keyword(text, 10).unwrap().is_empty()
+    }
+
+    #[tokio::test]
+    async fn a_legacy_line_of_a_meeting_older_than_the_window_applies_neither_line_nor_meeting() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS)).await;
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 100, "stale legacy words")).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
+        assert!(titles(&store).is_empty(), "{:?}", titles(&store));
+        assert!(!has_line(&store, "stale"));
+        assert!(store.list_sync_pending_dependencies(PEER).unwrap().is_empty(), "dropped for good, not pending");
+    }
+
+    #[tokio::test]
+    async fn a_legacy_line_inside_the_window_of_an_older_started_meeting_applies_with_its_meeting() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        // Started 7 days ago; the line is 6.5 days in, so it is 12 hours old.
+        let offset_cs = (6 * DAY_MS + DAY_MS / 2) / 10;
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Started last week", now - 7 * DAY_MS)).await;
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "early legacy words")).await;
+        seed(&conn, &key, 3, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, offset_cs, "late legacy words")).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
+        assert_eq!(titles(&store), vec!["Started last week".to_string()]);
+        assert!(has_line(&store, "late"));
+        assert!(!has_line(&store, "early"), "the line before the window is dropped");
+    }
+
+    #[tokio::test]
+    async fn a_legacy_line_of_a_meeting_started_twelve_hours_ago_applies() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "This morning", now - DAY_MS / 2)).await;
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "morning legacy words")).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
+        assert_eq!(titles(&store), vec!["This morning".to_string()]);
+        assert!(has_line(&store, "morning"));
+    }
+
+    #[tokio::test]
+    async fn only_the_meeting_of_an_in_window_legacy_line_is_pulled() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Old", now - 20 * DAY_MS)).await;
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "old one")).await;
+        seed(&conn, &key, 3, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 500, "old two")).await;
+        seed(&conn, &key, 4, ROW_TYPE_MEETING, &meeting_at(8, "Today", now - 60_000)).await;
+        seed(&conn, &key, 5, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(4, 8, 0, "fresh one")).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
+        assert_eq!(titles(&store), vec!["Today".to_string()]);
+        assert!(has_line(&store, "fresh"));
+        assert!(!has_line(&store, "old"));
+    }
+
+    #[tokio::test]
+    async fn without_a_window_an_old_legacy_line_and_its_meeting_apply_as_before() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS)).await;
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 100, "ancient legacy words")).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &allow(&["items:transcript"])).await;
+        assert_eq!(titles(&store), vec!["Twenty days ago".to_string()]);
+        assert!(has_line(&store, "ancient"));
+    }
+
+    #[tokio::test]
+    async fn lines_applied_when_resolving_are_counted_and_a_windowed_out_one_is_skipped_not_deferred() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Today", now - 60_000)).await;
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "first words")).await;
+        seed(&conn, &key, 3, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 10, "second words")).await;
+        seed(&conn, &key, 4, ROW_TYPE_MEETING, &meeting_at(8, "Old", now - 20 * DAY_MS)).await;
+        seed(&conn, &key, 5, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(4, 8, 0, "stale words")).await;
+        let store = runner_store();
+        let report = crate::runner_pull_with_connection(&conn, &key, &store, RUNNER, &windowed(&["items:transcript"])).await.unwrap();
+        let at = |name: &str| report.by_type[crate::PULL_TYPE_NAMES.iter().position(|n| *n == name).unwrap()];
+        assert_eq!(at("transcript_segment").fetched, 3);
+        assert_eq!(at("transcript_segment").applied, 2);
+        assert_eq!(report.skipped_window, 1);
+        assert_eq!(report.deferred, 2, "the two lines set aside for their meeting; the dropped one is not among them");
+        assert_eq!(report.by_type.iter().map(|c| c.applied).sum::<usize>() + report.own_results_applied, report.rows_applied);
+    }
+
+    #[tokio::test]
+    async fn an_old_legacy_line_of_a_meeting_applied_earlier_is_dropped() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Started last week", now - 7 * DAY_MS)).await;
+        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("transcript", now, "live words", Some(7))).await;
+        let store = runner_store();
+        let opts = windowed(&["items:transcript"]);
+        pull(&conn, &key, &store, &opts).await;
+        assert_eq!(titles(&store), vec!["Started last week".to_string()]);
+        seed(&conn, &key, 3, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 100, "week old legacy words")).await;
+        pull(&conn, &key, &store, &opts).await;
+        assert!(!has_line(&store, "week"), "the meeting is local, the line is still before the window");
+        assert!(store.list_sync_pending_dependencies(PEER).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_windowed_legacy_line_whose_meeting_is_not_on_the_relay_stays_pending() {
+        let (_dir, conn, key) = relay().await;
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(99, 99, 0, "orphan words")).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
+        assert_eq!(
+            store.list_sync_pending_dependencies(PEER).unwrap(),
+            vec![(2, ROW_TYPE_TRANSCRIPT_SEGMENT.to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pending_legacy_line_whose_meeting_arrives_older_than_the_window_is_dropped_by_the_retry() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "late arrival words")).await;
+        let store = runner_store();
+        let opts = windowed(&["items:transcript"]);
+        pull(&conn, &key, &store, &opts).await;
+        assert_eq!(store.list_sync_pending_dependencies(PEER).unwrap().len(), 1);
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS)).await;
+        pull(&conn, &key, &store, &opts).await;
+        assert!(store.list_sync_pending_dependencies(PEER).unwrap().is_empty());
+        assert!(titles(&store).is_empty());
+        assert!(!has_line(&store, "late"));
+    }
+
+    #[tokio::test]
+    async fn an_in_window_items_line_applied_while_resolving_counts_under_items() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Today", now - 60_000)).await;
+        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("transcript", now, "fresh line", Some(7))).await;
+        let store = runner_store();
+        let report = crate::runner_pull_with_connection(&conn, &key, &store, RUNNER, &windowed(&["items:transcript"])).await.unwrap();
+        let at = |name: &str| report.by_type[crate::PULL_TYPE_NAMES.iter().position(|n| *n == name).unwrap()];
+        assert_eq!(at("items").applied, 1);
+        assert_eq!(bodies(&store, "transcript"), vec!["fresh line".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_held_old_meeting_is_not_applied_for_an_old_legacy_line_regression_guard() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS)).await;
+        // Regression guard (it also passes without the fix wave): the line's own meeting_local_seq (50) names no
+        // row, so only the held meeting row (seq 1) leads to the meeting.
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(50, 7, 0, "held path words")).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
+        assert!(titles(&store).is_empty());
+        assert!(!has_line(&store, "held"));
+        assert!(store.list_sync_pending_dependencies(PEER).unwrap().is_empty(), "dated by the held meeting, then dropped");
+    }
+
+    #[tokio::test]
+    async fn a_legacy_line_is_dated_by_the_newest_copy_of_its_meeting() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Restarted", now - 20 * DAY_MS)).await;
+        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "newest copy words")).await;
+        seed(&conn, &key, 3, ROW_TYPE_MEETING, &meeting_at(7, "Restarted", now - 60 * 60 * 1000)).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
+        assert!(has_line(&store, "newest"), "dated by the newer copy, so in the window");
+        assert_eq!(titles(&store), vec!["Restarted".to_string()], "the meeting is applied exactly when its line is");
+    }
+
     #[tokio::test]
     async fn an_explicit_meeting_grant_respects_the_window() {
         let (_dir, conn, key) = relay().await;
@@ -10371,14 +11518,19 @@ mod filtered_pull_tests {
     }
 
     fn item_json(kind: &str, body: &str) -> String {
+        item_json_at(kind, body, (kind == "calendar_event").then_some("outlook"), now_unix_ms())
+    }
+
+    /// An `items` payload of `kind` with this `source` and date.
+    fn item_json_at(kind: &str, body: &str, source: Option<&str>, ts_unix_ms: i64) -> String {
         let calendar = kind == "calendar_event";
         serde_json::to_string(&ItemPayload {
             source_meeting_id: None,
             meeting_local_seq: None,
             item: memory::AppliedItem {
                 kind: kind.to_string(),
-                source: calendar.then(|| "outlook".to_string()),
-                ts_unix_ms: now_unix_ms(),
+                source: source.map(str::to_string),
+                ts_unix_ms,
                 actors: Some("[\"Me\"]".to_string()),
                 title: calendar.then(|| body.to_string()),
                 body_text: body.to_string(),
@@ -10481,6 +11633,112 @@ mod filtered_pull_tests {
                 assert_eq!(filtered.get_sync_cursor(device).unwrap(), 24, "span {span:?}: at the peer's top");
             }
         }
+    }
+
+    /// The runner's per-type diagnostics: a known mix of items, meetings and tombstones, per type fetched and
+    /// applied counts match the mix, and their sums equal the report's totals.
+    #[tokio::test]
+    async fn pull_report_counts_rows_fetched_and_applied_per_type() {
+        let (_dir, conn, key) = relay().await;
+        for i in 1..=5 {
+            seed(&conn, &key, "dev-a", i, ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("ev {i}")), None).await;
+        }
+        // Four more items of a kind the allowlist leaves out: fetched, not applied.
+        for i in 6..=9 {
+            seed(&conn, &key, "dev-a", i, ROW_TYPE_ITEMS, &item_json("capture", &format!("cap {i}")), None).await;
+        }
+        let meeting = serde_json::to_string(&MeetingPayload {
+            source_meeting_id: Some(1),
+            origin_epoch: None,
+            meeting: memory::AppliedMeeting {
+                attendee_details: vec![],
+                start_unix_ms: now_unix_ms(),
+                end_unix_ms: None,
+                title: "Standup".to_string(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Detected,
+                status: memory::MeetingStatus::Completed,
+                transcript_path: None,
+                notes: None,
+                summary_tldr: None,
+                summary_decisions: vec![],
+                summary_action_items: vec![],
+                summary_open_questions: vec![],
+                summary_provider: None,
+                summary_model: None,
+                keep_media: None,
+                trimmed_keep_ms: None,
+            },
+        })
+        .unwrap();
+        for i in 10..=11 {
+            seed(&conn, &key, "dev-a", i, ROW_TYPE_MEETING, &meeting, None).await;
+        }
+        for i in 12..=14 {
+            let (kind, opaque_id) = memory::client_forget::pulled_capture_identity("dev-a", i);
+            let json = serde_json::to_string(&memory::ClientItemForgotten { kind: kind.to_string(), opaque_id, forgotten_at_unix_ms: 1 }).unwrap();
+            seed(&conn, &key, "dev-a", i, ROW_TYPE_CLIENT_ITEM_FORGOTTEN, &json, None).await;
+        }
+        let store = runner_store();
+        let report = pull(&conn, &key, &store, &allow(&["items:calendar_event", "meeting"])).await;
+        assert!(report.complete);
+        let at = |name: &str| report.by_type[crate::PULL_TYPE_NAMES.iter().position(|n| *n == name).unwrap()];
+        assert_eq!(at("items").fetched, 9);
+        assert_eq!(at("items").applied, 5, "the four captures are not granted");
+        assert_eq!(at("meeting").fetched, 2);
+        assert_eq!(at("meeting").applied, 2);
+        assert_eq!(at("tombstone").fetched, 3);
+        assert_eq!(report.skipped_allowlist, 4);
+        assert_eq!((report.skip_kind, report.skip_mcp, report.skip_google_cal, report.skip_item_window), (4, 0, 0, 0));
+        assert_eq!(report.by_type.iter().map(|c| c.fetched).sum::<usize>(), report.rows_fetched);
+        assert_eq!(report.by_type.iter().map(|c| c.applied).sum::<usize>() + report.own_results_applied, report.rows_applied);
+        assert!(report.rounds >= 1);
+    }
+
+    /// A newest-first pull in small pages reads most rows as gap pages: they count per type, and their fetch and
+    /// apply time is recorded.
+    #[tokio::test]
+    async fn gap_pages_count_per_type_and_are_timed() {
+        let (_dir, conn, key) = relay().await;
+        for i in 1..=12 {
+            seed(&conn, &key, "dev-a", i, ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("ev {i}")), None).await;
+        }
+        let store = runner_store();
+        let opts = allow(&["items:calendar_event"]);
+        let pace = Pace { rows: 3, peer_budget: std::time::Duration::from_secs(60), round_budget: None };
+        let (mut fetched, mut applied, mut gap_fetched, mut gap_us) = (0, 0, 0, 0);
+        for _ in 0..20 {
+            let mut stats = Vec::new();
+            let more = pull_round_mode(&conn, &key, &store, RUNNER, pace, &opts, true, true, &mut stats).await.unwrap();
+            for s in &stats {
+                fetched += s.by_type[0].fetched;
+                applied += s.by_type[0].applied;
+                gap_fetched += s.gap_fetched;
+                gap_us += s.gap_fetch_us + s.gap_apply_us;
+            }
+            if !more {
+                break;
+            }
+        }
+        assert_eq!((fetched, applied), (12, 12));
+        assert!(gap_fetched > 0, "newest first leaves older rows to gap pages");
+        assert!(gap_us > 0, "gap fetch and apply are timed");
+    }
+
+    /// A page the time budget stops is fetched again later: its unhandled rows count as refetch.
+    #[tokio::test]
+    async fn a_budget_stopped_page_counts_refetch() {
+        let (_dir, conn, key) = relay().await;
+        for i in 1..=6 {
+            seed(&conn, &key, "dev-a", i, ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("ev {i}")), None).await;
+        }
+        let store = runner_store();
+        let spent = Pace { rows: MAX_ROWS_PER_PULL_PASS, peer_budget: std::time::Duration::ZERO, round_budget: None };
+        let mut stats = Vec::new();
+        let more = pull_round(&conn, &key, &store, RUNNER, spent, &allow(&["items:calendar_event"]), true, &mut stats).await.unwrap();
+        assert!(more);
+        assert_eq!(stats[0].fetched, 6);
+        assert_eq!(stats[0].refetch, 5, "one row handled, five left for the next pass");
     }
 
     async fn pull_with_span(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions, span: Option<i64>) -> crate::RunnerPullReport {
@@ -10624,8 +11882,9 @@ mod filtered_pull_tests {
             }
             fetched.push(report.rows_fetched);
         }
-        // The same pulls with every tag cleared fetch exactly the two other kinds' items more.
-        conn.execute("UPDATE sync_row SET kind_tag = NULL", ()).await.unwrap();
+        // The same pulls with every tag cleared (as rows from before tags) fetch exactly the two other kinds'
+        // items more.
+        conn.execute("UPDATE sync_row SET kind_tag = NULL, slice_tag = NULL", ()).await.unwrap();
         for (kind, filtered) in kinds.iter().zip(fetched) {
             let store = runner_store();
             let report = pull(&conn, &key, &store, &allow(&[&format!("items:{kind}")])).await;
@@ -10737,27 +11996,1003 @@ mod filtered_pull_tests {
         );
     }
 
+    const DAY: i64 = 86_400_000;
+    /// 2026-11-24T00:00:00Z.
+    const FIXED_NOW: i64 = 1_795_478_400_000;
+    /// 2031-01-15T00:00:00Z, after the last month bucket (2029-12).
+    const AFTER_2029: i64 = 1_926_201_600_000;
+
+    /// The runner's options for a calendar grant: a window of `days` and no Google Calendar event.
+    fn runner_calendar_options(days: i64) -> PullOptions {
+        PullOptions { item_window_ms: Some(days * DAY), non_google_calendar_only: true, ..allow(&["items:calendar_event"]) }
+    }
+
+    /// The `slice_tag` a push gives an item of `kind` with `source` dated `ts`.
+    fn slice_of(key: &GroupKey, kind: &str, source: Option<&str>, ts: i64) -> String {
+        sync::slice_tag(key, kind, sync::source_class(kind, source), sync::month_bucket(ts))
+    }
+
+    /// The first millisecond of `ts`'s UTC month.
+    fn month_start(ts: i64) -> i64 {
+        let mut day = ts.div_euclid(DAY) * DAY;
+        while sync::month_bucket(day - DAY) == sync::month_bucket(day) {
+            day -= DAY;
+        }
+        day
+    }
+
+    /// One `items` row of `dev-a` at `seq`: `kind_tagged` sets its `kind_tag`, `sliced` its `slice_tag`.
+    #[allow(clippy::too_many_arguments)]
+    async fn seed_item(
+        conn: &Connection,
+        key: &GroupKey,
+        seq: i64,
+        kind: &str,
+        body: &str,
+        source: Option<&str>,
+        ts: i64,
+        (kind_tagged, sliced): (bool, bool),
+    ) {
+        seed(conn, key, "dev-a", seq, ROW_TYPE_ITEMS, &item_json_at(kind, body, source, ts), kind_tagged.then_some(kind)).await;
+        if sliced {
+            conn.execute(
+                "UPDATE sync_row SET slice_tag = ?1 WHERE device_id = 'dev-a' AND local_seq = ?2",
+                params![slice_of(key, kind, source, ts), seq],
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    /// Kind, body, source, date, and (kind tagged, sliced).
+    type SliceRow = (&'static str, &'static str, Option<&'static str>, i64, (bool, bool));
+
+    /// Thirteen `items` rows for a 60-day calendar grant. Seven are fetched: an in-window event, one in the
+    /// cutoff's month (before the cutoff), one dated after 2029 (bucket 359), an old client's (kind tag only),
+    /// two untagged rows and an old client's Google event. Six never are: Google and blank-source events, an
+    /// event two months before the cutoff's month, a Google event after 2029, and a capture tagged either way.
+    async fn seed_slice_relay(conn: &Connection, key: &GroupKey) {
+        let now = now_unix_ms();
+        let boundary = month_start(now - 60 * DAY);
+        let old = month_start(boundary - 40 * DAY);
+        let both = (true, true);
+        let rows: [SliceRow; 13] = [
+            ("calendar_event", "google in window", Some("google_calendar"), now - DAY, both),
+            ("calendar_event", "blank source", Some(" "), now - DAY, both),
+            ("calendar_event", "outlook old month", Some("outlook"), old, both),
+            ("calendar_event", "outlook in window", Some("outlook"), now - DAY, both),
+            ("calendar_event", "outlook boundary month", Some("outlook"), boundary, both),
+            ("calendar_event", "outlook after 2029", Some("outlook"), AFTER_2029, both),
+            ("calendar_event", "google after 2029", Some("google_calendar"), AFTER_2029, both),
+            ("capture", "capture sliced", None, now - DAY, both),
+            ("calendar_event", "outlook old client", Some("outlook"), now - DAY, (true, false)),
+            ("calendar_event", "outlook untagged", Some("outlook"), now - DAY, (false, false)),
+            ("capture", "capture untagged", None, now - DAY, (false, false)),
+            ("calendar_event", "google old client", Some("google_calendar"), now - DAY, (true, false)),
+            ("capture", "capture old client", None, now - DAY, (true, false)),
+        ];
+        for (i, (kind, body, source, ts, tags)) in rows.into_iter().enumerate() {
+            seed_item(conn, key, i as i64 + 1, kind, body, source, ts, tags).await;
+        }
+    }
+
+    /// (a), (b), (c), (e): Google-class and old-month slices are not fetched; non-Google in-window, boundary-month
+    /// and after-2029 rows are, and so are rows with no slice tag (an old client's, or untagged). What applies is
+    /// what the same relay without slice tags applies, at the default span and at spans that put rows on window
+    /// edges.
+    #[tokio::test]
+    async fn runner_slice_filter_leaves_out_google_and_old_months_and_applies_what_unsliced_does() {
+        for span in [None, Some(1), Some(3)] {
+            let (_dir, conn, key) = relay().await;
+            seed_slice_relay(&conn, &key).await;
+            let opts = runner_calendar_options(60);
+            let sliced = runner_store();
+            let report = pull_with_span(&conn, &key, &sliced, &opts, span).await;
+            assert!(report.complete, "span {span:?}");
+            assert_eq!(report.rows_fetched, 7, "span {span:?}");
+            let months = usize::from(sync::MAX_MONTH_BUCKET - sync::month_bucket(now_unix_ms() - 60 * DAY)) + 1;
+            assert_eq!(report.slice_tags, months, "one non-Google calendar slice a month from the cutoff's through 359");
+            let applied = bodies(&sliced, "calendar_event");
+            for body in ["outlook in window", "outlook after 2029", "outlook old client", "outlook untagged"] {
+                assert!(applied.contains(&body.to_string()), "span {span:?}: {body} in {applied:?}");
+            }
+            assert_eq!(sliced.get_sync_cursor("dev-a").unwrap(), 13, "span {span:?}: at the peer's top");
+            assert_eq!(sliced.sync_gap("dev-a").unwrap(), None);
+
+            conn.execute("UPDATE sync_row SET slice_tag = NULL", ()).await.unwrap();
+            let unsliced = runner_store();
+            let base = pull_with_span(&conn, &key, &unsliced, &opts, span).await;
+            assert!(base.complete);
+            assert_eq!(base.rows_fetched, 11, "kind tags alone leave out only the two tagged captures");
+            assert_eq!(applied, bodies(&unsliced, "calendar_event"), "span {span:?}");
+            assert_eq!(report.rows_applied, base.rows_applied, "span {span:?}");
+            assert!(bodies(&sliced, "capture").is_empty());
+        }
+    }
+
+    /// (d) A relay without `slice_tag` (and whose column cannot be added this run) pulls with the kind filter
+    /// alone, without an error, and applies the same rows; one without either column pulls unfiltered.
+    #[tokio::test]
+    async fn runner_slice_filter_on_a_relay_without_slice_tag_falls_back_to_kind_tags() {
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let with = runner_store();
+        let sliced = pull(&conn, &key, &with, &opts).await;
+
+        SLICE_TAG_COLUMN_SEEN.set();
+        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ()).await.unwrap();
+        for span in [None, Some(1)] {
+            let store = runner_store();
+            let report = pull_with_span(&conn, &key, &store, &opts, span).await;
+            assert!(report.complete, "span {span:?}");
+            assert_eq!(report.rows_fetched, 11, "span {span:?}: the kind filter still applies");
+            assert_eq!(report.slice_tags, 0, "the query carried no slice tags");
+            assert_eq!(report.rows_applied, sliced.rows_applied);
+            assert_eq!(bodies(&store, "calendar_event"), bodies(&with, "calendar_event"));
+            assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 13);
+        }
+
+        KIND_TAG_COLUMN_SEEN.set();
+        conn.execute("ALTER TABLE sync_row DROP COLUMN kind_tag", ()).await.unwrap();
+        let store = runner_store();
+        let report = pull(&conn, &key, &store, &opts).await;
+        assert!(report.complete);
+        assert_eq!(report.rows_fetched, 13, "unfiltered: every items row");
+        assert_eq!(report.rows_applied, sliced.rows_applied);
+        assert_eq!(bodies(&store, "calendar_event"), bodies(&with, "calendar_event"));
+        let mut cols = conn
+            .query("SELECT COUNT(*) FROM pragma_table_info('sync_row') WHERE name IN ('kind_tag', 'slice_tag')", ())
+            .await
+            .unwrap();
+        assert_eq!(cols.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0, "the pull added no column");
+        SLICE_TAG_COLUMN_SEEN.reset();
+        KIND_TAG_COLUMN_SEEN.reset();
+    }
+
+    /// A row with a `slice_tag` and a NULL `kind_tag` (the slice backfill reached it, the kind backfill did not) is
+    /// judged by its slice alone: fetched when its slice is asked for, left out when not, though a NULL `kind_tag`
+    /// alone would fetch it.
+    #[tokio::test]
+    async fn runner_a_sliced_row_without_a_kind_tag_is_judged_by_its_slice_alone() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        let slice_only = (false, true);
+        seed_item(&conn, &key, 1, "calendar_event", "outlook in window", Some("outlook"), now - DAY, slice_only).await;
+        seed_item(&conn, &key, 2, "calendar_event", "google in window", Some("google_calendar"), now - DAY, slice_only).await;
+        seed_item(&conn, &key, 3, "calendar_event", "outlook old month", Some("outlook"), now - 400 * DAY, slice_only).await;
+        seed_item(&conn, &key, 4, "capture", "capture", None, now - DAY, slice_only).await;
+        let opts = runner_calendar_options(60);
+
+        let store = runner_store();
+        let report = pull(&conn, &key, &store, &opts).await;
+        assert!(report.complete);
+        assert_eq!(report.rows_fetched, 1, "only the asked-for slice");
+        assert_eq!(bodies(&store, "calendar_event"), ["outlook in window"]);
+        assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 4);
+
+        // The same rows without their slice: the NULL kind tag fetches every one.
+        conn.execute("UPDATE sync_row SET slice_tag = NULL", ()).await.unwrap();
+        let unsliced = runner_store();
+        let base = pull(&conn, &key, &unsliced, &opts).await;
+        assert_eq!(base.rows_fetched, 4);
+        assert_eq!(bodies(&unsliced, "calendar_event"), bodies(&store, "calendar_event"));
+    }
+
+    #[test]
+    fn runner_no_such_slice_tag_column_is_recognized() {
+        assert!(is_no_such_slice_tag_column("SQLite failure: `no such column: slice_tag`"));
+        assert!(!is_no_such_slice_tag_column("no such column: kind_tag"));
+        assert!(!is_no_such_slice_tag_column("table sync_row has no column named slice_tag"));
+    }
+
+    /// The slices a pull asks for, at a fixed now (2026-11-24, bucket 322): each granted kind, each source class
+    /// it may carry, each month from the cutoff's (60 days back: 2026-09, bucket 320) through 359.
+    #[test]
+    fn runner_slice_tags_cover_granted_kinds_classes_and_months() {
+        use sync::SourceClass::{Google, None as NoClass, Other};
+        let key = GroupKey::generate();
+        let slices = |opts: &PullOptions| RowFilter::new(opts, true, FIXED_NOW, &key).slice_tags;
+        let expect = |kinds: &[(&str, &[sync::SourceClass])], first: u16| -> Vec<String> {
+            let mut out = Vec::new();
+            for (kind, classes) in kinds {
+                for class in *classes {
+                    for month in first..=sync::MAX_MONTH_BUCKET {
+                        out.push(sync::slice_tag(&key, kind, *class, month));
+                    }
+                }
+            }
+            out
+        };
+        assert_eq!(sync::month_bucket(FIXED_NOW - 60 * DAY), 320);
+        let runner = runner_calendar_options(60);
+        assert_eq!(slices(&runner), Some(expect(&[("calendar_event", &[Other])], 320)));
+        assert_eq!(slices(&runner).unwrap().len(), 40);
+        let every_source = PullOptions { non_google_calendar_only: false, ..runner_calendar_options(60) };
+        assert_eq!(slices(&every_source), Some(expect(&[("calendar_event", &[Google, Other])], 320)));
+        let two_kinds = PullOptions { item_window_ms: Some(60 * DAY), non_google_calendar_only: true, ..allow(&["items:transcript", "items:calendar_event"]) };
+        assert_eq!(slices(&two_kinds), Some(expect(&[("transcript", &[NoClass]), ("calendar_event", &[Other])], 320)));
+        // No item window: every month, so Google events are still left out.
+        let unwindowed = PullOptions { item_window_ms: None, ..runner_calendar_options(60) };
+        assert_eq!(slices(&unwindowed), Some(expect(&[("calendar_event", &[Other])], 0)));
+        // Never for a phone or desktop pull, nor without a kind restriction.
+        assert_eq!(slices(&PullOptions::default()), None);
+        assert_eq!(slices(&PullOptions { item_window_ms: Some(DAY), ..allow(&[ROW_TYPE_ITEMS]) }), None);
+        // Over 900 query variables (1,440 slices here): no slice clause, the kind tags stay.
+        let too_many = allow(&["items:capture", "items:transcript", "items:calendar_event"]);
+        let filter = RowFilter::new(&too_many, true, FIXED_NOW, &key);
+        assert_eq!(filter.slice_tags, None);
+        assert_eq!(filter.kind_tags.as_ref().map(Vec::len), Some(3));
+        // The query's slices drop with the kind tags' fallback.
+        let filter = RowFilter::new(&runner, true, FIXED_NOW, &key);
+        assert_eq!(filter.query_slice_tags().map(<[String]>::len), Some(40));
+        filter.no_kind_tag_column.store(true, Ordering::Relaxed);
+        assert_eq!(filter.query_slice_tags(), None);
+    }
+
+    /// (f) The slice clause: numbered after the kind tags, and the query still seeks the primary key.
+    #[tokio::test]
+    async fn runner_slice_sql_numbers_after_the_kind_tags_and_seeks() {
+        assert_eq!(
+            fetch_allowed_rows_sql(2, 1, 2),
+            "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 \
+             AND row_type IN (?4, ?5) AND local_seq <= ?6 AND (row_type != 'items' OR (slice_tag IS NULL AND \
+             (kind_tag IS NULL OR kind_tag IN (?7))) OR slice_tag IN (?8, ?9)) ORDER BY local_seq ASC LIMIT ?3"
+        );
+        assert_eq!(
+            fetch_allowed_gap_rows_sql(2, 1, 2),
+            "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq < ?2 \
+             AND local_seq > ?3 AND row_type IN (?5, ?6) AND (row_type != 'items' OR (slice_tag IS NULL AND \
+             (kind_tag IS NULL OR kind_tag IN (?7))) OR slice_tag IN (?8, ?9)) ORDER BY local_seq DESC LIMIT ?4"
+        );
+        // Without slices, exactly the kind-only SQL (the fallback's).
+        assert!(!fetch_allowed_rows_sql(3, 2, 0).contains("slice_tag"));
+        assert!(!fetch_allowed_gap_rows_sql(3, 2, 0).contains("slice_tag"));
+        let (_dir, conn, _key) = relay().await;
+        for sql in [fetch_allowed_rows_sql(3, 2, 5), fetch_allowed_gap_rows_sql(3, 2, 5)] {
+            assert!(sql.contains("slice_tag IN (?"), "{sql}");
+            super::relay_query_tests::assert_seeks(&conn, &sql).await;
+        }
+    }
+
     /// Without tags the allowlist SQL is unchanged; with them it still seeks the primary key.
     #[tokio::test]
     async fn filtered_pull_sql_is_unchanged_without_tags_and_seeks_with_them() {
         assert_eq!(
-            fetch_allowed_rows_sql(2, 0),
+            fetch_allowed_rows_sql(2, 0, 0),
             "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 \
              AND row_type IN (?4, ?5) ORDER BY local_seq ASC LIMIT ?3"
         );
         assert_eq!(
-            fetch_allowed_gap_rows_sql(2, 0),
+            fetch_allowed_gap_rows_sql(2, 0, 0),
             "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq < ?2 \
              AND local_seq > ?3 AND row_type IN (?5, ?6) ORDER BY local_seq DESC LIMIT ?4"
         );
         let (_dir, conn, _key) = relay().await;
-        for sql in [fetch_allowed_rows_sql(3, 2), fetch_allowed_gap_rows_sql(3, 2)] {
+        for sql in [fetch_allowed_rows_sql(3, 2, 0), fetch_allowed_gap_rows_sql(3, 2, 0)] {
             let mut rows = conn.query(&format!("EXPLAIN QUERY PLAN {sql}"), ()).await.unwrap();
             while let Some(row) = rows.next().await.unwrap() {
                 let detail: String = row.get(3).unwrap();
                 assert!(!detail.starts_with("SCAN"), "{detail}\nin: {sql}");
             }
         }
+    }
+
+    // ---- The indexed window fetch (runner-pull-index spec) ----
+
+    const CREATE_SLICE_INDEX: &str =
+        "CREATE INDEX IF NOT EXISTS idx_sync_row_slice ON sync_row(device_id, slice_tag, local_seq) WHERE row_type = 'items'";
+    const CREATE_TYPE_INDEX: &str =
+        "CREATE INDEX IF NOT EXISTS idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'items'";
+
+    async fn create_pull_indexes(conn: &Connection) {
+        conn.execute(CREATE_SLICE_INDEX, ()).await.unwrap();
+        conn.execute(CREATE_TYPE_INDEX, ()).await.unwrap();
+    }
+
+    /// The runner's filter for a 60-day non-Google calendar grant.
+    fn runner_filter(key: &GroupKey) -> RowFilter {
+        RowFilter::new(&runner_calendar_options(60), true, now_unix_ms(), key)
+    }
+
+    /// What a row is to the runner's calendar pull.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Class {
+        /// An allowed non-`items` row (Q1).
+        NonItem,
+        /// An `items` row with an asked-for slice (Q2).
+        Sliced,
+        /// An `items` row with no slice and a NULL or asked kind tag (Q3).
+        Unsliced,
+        /// A row the query leaves out.
+        Unwanted,
+    }
+
+    /// One row of every shape with its class: every allowed non-`items` type, `items` rows of asked and unasked
+    /// slices (Google, an old month, another kind), old-client rows (NULL/NULL, kind only, slice only), and
+    /// row types the pull does not ask for.
+    fn row_shapes(key: &GroupKey, filter: &RowFilter) -> Vec<(String, Option<String>, Option<String>, Class)> {
+        let now = now_unix_ms();
+        let ev = Some(sync::kind_tag(key, "calendar_event"));
+        let cap = Some(sync::kind_tag(key, "capture"));
+        let asked = Some(slice_of(key, "calendar_event", Some("outlook"), now - DAY));
+        let google = Some(slice_of(key, "calendar_event", Some("google_calendar"), now - DAY));
+        let old = Some(slice_of(key, "calendar_event", Some("outlook"), now - 400 * DAY));
+        let cap_slice = Some(slice_of(key, "capture", None, now - DAY));
+        let item = |k: &Option<String>, s: &Option<String>, class| (ROW_TYPE_ITEMS.to_string(), k.clone(), s.clone(), class);
+        let mut shapes = vec![
+            item(&ev, &asked, Class::Sliced),
+            item(&ev, &google, Class::Unwanted),
+            item(&ev, &old, Class::Unwanted),
+            item(&cap, &cap_slice, Class::Unwanted),
+            item(&None, &None, Class::Unsliced),
+            item(&ev, &None, Class::Unsliced),
+            item(&cap, &None, Class::Unwanted),
+            item(&None, &asked, Class::Sliced),
+            item(&None, &google, Class::Unwanted),
+        ];
+        for t in filter.row_types.as_ref().unwrap().iter().filter(|t| *t != ROW_TYPE_ITEMS) {
+            shapes.push((t.clone(), None, None, Class::NonItem));
+        }
+        for t in [ROW_TYPE_SKIN, "routine_run"] {
+            assert!(!filter.row_types.as_ref().unwrap().iter().any(|have| have == t), "{t} is not asked for");
+            shapes.push((t.to_string(), None, None, Class::Unwanted));
+        }
+        shapes
+    }
+
+    /// A row with junk ciphertext: the direct fetch tests never decrypt.
+    async fn raw(conn: &Connection, device: &str, seq: i64, (row_type, kind, slice): (&str, Option<&str>, Option<&str>)) {
+        conn.execute(
+            "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, kind_tag, slice_tag) \
+             VALUES (?1, ?2, ?3, 'junk', 0, ?4, ?5)",
+            params![device, seq, row_type, kind, slice],
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Seeds `rows` of `device` (one row of the first shape of `class` at each seq) and returns the seqs a pull fetches.
+    async fn seed_classes(conn: &Connection, key: &GroupKey, filter: &RowFilter, device: &str, rows: &[(i64, Class)]) -> Vec<i64> {
+        let shapes = row_shapes(key, filter);
+        let mut wanted = Vec::new();
+        for (seq, class) in rows {
+            let (t, k, s, _) = shapes.iter().find(|s| s.3 == *class).unwrap();
+            raw(conn, device, *seq, (t, k.as_deref(), s.as_deref())).await;
+            if *class != Class::Unwanted {
+                wanted.push(*seq);
+            }
+        }
+        wanted
+    }
+
+    /// Pages `device` from 0 to `top` as the windowed loop does (a full page continues from its last row), through
+    /// the indexed fetch or the scan, and returns every `(local_seq, row_type)` read.
+    async fn page_through(conn: &Connection, filter: &RowFilter, device: &str, top: i64, limit: i64, indexed: bool) -> Vec<(i64, String)> {
+        let mut from = 0;
+        let mut out = Vec::new();
+        loop {
+            let page = if indexed {
+                fetch_rows_indexed(conn, device, from, top, limit, filter).await.unwrap().expect("the indexed fetch ran")
+            } else {
+                fetch_rows_since(conn, device, from, top, limit, true, filter).await.unwrap().0
+            };
+            out.extend(page.iter().map(|e| (e.local_seq, e.row_type.clone())));
+            if (page.len() as i64) < limit {
+                return out;
+            }
+            from = page.last().unwrap().local_seq;
+        }
+    }
+
+    /// Rounds of the live range (oldest first, so the windowed loop reads every row) in pages of `rows`, until no
+    /// more waits. Returns the rows fetched.
+    async fn pull_live(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions, rows: i64) -> usize {
+        let pace = Pace { rows, peer_budget: std::time::Duration::from_secs(60), round_budget: None };
+        let mut fetched = 0;
+        for _ in 0..500 {
+            let mut stats = Vec::new();
+            let more = pull_round(conn, key, store, RUNNER, pace, opts, true, &mut stats).await.unwrap();
+            fetched += stats.iter().map(|s| s.fetched + s.gap_fetched).sum::<usize>();
+            if !more {
+                return fetched;
+            }
+        }
+        panic!("the pull never finished");
+    }
+
+    /// Two tombstones beside `seed_slice_relay`'s thirteen items, at 14 and 15: Q1 has real rows to apply.
+    async fn seed_slice_relay_with_tombstones(conn: &Connection, key: &GroupKey) {
+        seed_slice_relay(conn, key).await;
+        for i in 14..=15 {
+            let (kind, opaque_id) = memory::client_forget::pulled_capture_identity("dev-a", i);
+            let json = serde_json::to_string(&memory::ClientItemForgotten { kind: kind.to_string(), opaque_id, forgotten_at_unix_ms: 1 }).unwrap();
+            seed(conn, key, "dev-a", i, ROW_TYPE_CLIENT_ITEM_FORGOTTEN, &json, None).await;
+        }
+    }
+
+    /// The indexed fetch reads exactly the scan's rows, in its order, for every shape of row and every page size,
+    /// device by device; and a whole live pull over real rows applies what the scan's pull applies.
+    #[tokio::test]
+    async fn indexed_fetch_returns_the_same_applied_set_as_the_scan() {
+        let (_dir, conn, key) = relay().await;
+        let filter = runner_filter(&key);
+        let shapes = row_shapes(&key, &filter);
+        let mut expected = std::collections::HashMap::new();
+        for (d, device) in ["dev-a", "dev-b"].into_iter().enumerate() {
+            let mut want = Vec::new();
+            for seq in 1..=120i64 {
+                let (t, k, s, class) = &shapes[((seq * 7 + d as i64 * 3) as usize) % shapes.len()];
+                raw(&conn, device, seq, (t, k.as_deref(), s.as_deref())).await;
+                if *class != Class::Unwanted {
+                    want.push((seq, t.clone()));
+                }
+            }
+            expected.insert(device, want);
+        }
+        create_pull_indexes(&conn).await;
+        assert!(filter.use_pull_indexes(&conn).await);
+        for device in ["dev-a", "dev-b"] {
+            for limit in [1, 2, 3, 7, 500] {
+                let scan = page_through(&conn, &filter, device, 120, limit, false).await;
+                let indexed = page_through(&conn, &filter, device, 120, limit, true).await;
+                assert_eq!(scan, expected[device], "{device} limit {limit}: the scan reads every wanted row");
+                assert_eq!(indexed, scan, "{device} limit {limit}");
+            }
+        }
+
+        // The whole live pull over real rows, with the indexes and without.
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay_with_tombstones(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let without = runner_store();
+        let base = pull_live(&conn, &key, &without, &opts, 2).await;
+        create_pull_indexes(&conn).await;
+        take_pull_sql();
+        let with = runner_store();
+        let fetched = pull_live(&conn, &key, &with, &opts, 2).await;
+        assert!(take_pull_sql().iter().any(|sql| sql.contains("INDEXED BY")), "the indexed fetch ran");
+        assert_eq!(fetched, base);
+        assert_eq!(fetched, 9, "seven items and two tombstones");
+        assert_eq!(bodies(&with, "calendar_event"), bodies(&without, "calendar_event"));
+        assert!(bodies(&with, "calendar_event").contains(&"outlook old client".to_string()));
+        assert_eq!(with.get_sync_cursor("dev-a").unwrap(), 15);
+        assert_eq!(without.get_sync_cursor("dev-a").unwrap(), 15);
+    }
+
+    /// A sub-query that comes back full caps the page at its last row: paging by the returned cursor reads every
+    /// row once, whichever sub-query is dense, and a short page holds every wanted row up to the window's top.
+    #[tokio::test]
+    async fn a_full_subquery_caps_the_page_so_no_row_is_skipped() {
+        use Class::*;
+        let layouts: Vec<Vec<(i64, Class)>> = vec![
+            // Q2 dense, Q1 and Q3 sparse.
+            (1..=9).map(|s| (s, Sliced)).chain([(5_000, NonItem), (12, NonItem), (20, NonItem), (25, Unsliced), (30, Unwanted)]).collect(),
+            // Q1 dense, Q2 sparse.
+            (1..=9).map(|s| (s, NonItem)).chain([(4_000, Sliced), (11, Sliced), (13, Unsliced), (14, Unwanted)]).collect(),
+            // Q3 dense, the others interleaved above.
+            (1..=9).map(|s| (s, Unsliced)).chain([(10, Sliced), (12, NonItem), (15, Sliced), (16, NonItem), (17, Unsliced)]).collect(),
+            // Every sub-query full at once.
+            (1..=30).map(|s| (s, [NonItem, Sliced, Unsliced, Unwanted][(s % 4) as usize])).collect(),
+        ];
+        for (n, layout) in layouts.into_iter().enumerate() {
+            let (_dir, conn, key) = relay().await;
+            let filter = runner_filter(&key);
+            let mut wanted = seed_classes(&conn, &key, &filter, "dev-a", &layout).await;
+            wanted.sort();
+            create_pull_indexes(&conn).await;
+            let top = layout.iter().map(|r| r.0).max().unwrap();
+            let limit = 3;
+            let mut from = 0;
+            let mut visited: Vec<i64> = Vec::new();
+            loop {
+                let page = fetch_rows_indexed(&conn, "dev-a", from, top, limit, &filter).await.unwrap().unwrap();
+                let seqs: Vec<i64> = page.iter().map(|e| e.local_seq).collect();
+                assert!(seqs.windows(2).all(|w| w[0] < w[1]), "layout {n}: ascending {seqs:?}");
+                visited.extend(&seqs);
+                if (page.len() as i64) < limit {
+                    let rest: Vec<i64> = wanted.iter().copied().filter(|s| *s > from).collect();
+                    assert_eq!(seqs, rest, "layout {n}: a short page holds every wanted row above {from}");
+                    break;
+                }
+                from = *seqs.last().unwrap();
+            }
+            assert_eq!(visited, wanted, "layout {n}: every row once, in order");
+        }
+    }
+
+    /// The bounds are `since < local_seq <= window_hi` for each sub-query; a live pull in small pages reads each
+    /// row once, ends at the top, and later rows just above it are read once more.
+    #[tokio::test]
+    async fn rows_on_the_cursor_and_window_edges_are_not_lost_or_repeated() {
+        use Class::*;
+        let (_dir, conn, key) = relay().await;
+        let filter = runner_filter(&key);
+        let layout = [(4, NonItem), (5, NonItem), (6, NonItem), (14, Sliced), (15, Sliced), (16, Sliced), (24, Unsliced), (25, Unsliced), (26, Unsliced)];
+        seed_classes(&conn, &key, &filter, "dev-a", &layout).await;
+        create_pull_indexes(&conn).await;
+        let seqs = |page: Vec<RowEnvelope>| page.into_iter().map(|e| e.local_seq).collect::<Vec<_>>();
+        let fetch = |since, hi| fetch_rows_indexed(&conn, "dev-a", since, hi, 500, &filter);
+        assert_eq!(seqs(fetch(4, 25).await.unwrap().unwrap()), [5, 6, 14, 15, 16, 24, 25]);
+        assert_eq!(seqs(fetch(25, 26).await.unwrap().unwrap()), [26]);
+        assert_eq!(seqs(fetch(14, 16).await.unwrap().unwrap()), [15, 16]);
+        assert_eq!(seqs(fetch(5, 5).await.unwrap().unwrap()), Vec::<i64>::new());
+        assert_eq!(seqs(fetch(26, 1_000).await.unwrap().unwrap()), Vec::<i64>::new());
+
+        // A whole live pull: small pages put rows on the cursor, the top row is on the window's edge.
+        for rows in [1, 2, 3, 500] {
+            let (_dir, conn, key) = relay().await;
+            seed_slice_relay_with_tombstones(&conn, &key).await;
+            create_pull_indexes(&conn).await;
+            let opts = runner_calendar_options(60);
+            let store = runner_store();
+            assert_eq!(pull_live(&conn, &key, &store, &opts, rows).await, 9, "rows {rows}: each wanted row once");
+            assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 15, "rows {rows}");
+            seed(&conn, &key, "dev-a", 16, ROW_TYPE_ITEMS, &item_json("calendar_event", "late ev"), Some("calendar_event")).await;
+            seed(&conn, &key, "dev-a", 17, ROW_TYPE_ITEMS, &item_json("capture", "late cap"), Some("capture")).await;
+            assert_eq!(pull_live(&conn, &key, &store, &opts, rows).await, 1, "rows {rows}: only the late event");
+            assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 17, "rows {rows}");
+            assert!(bodies(&store, "calendar_event").contains(&"late ev".to_string()));
+        }
+    }
+
+    /// Without both indexes (or without slice tags, or on a phone's pull) every query is today's scan, SQL for SQL.
+    #[tokio::test]
+    async fn without_the_indexes_the_scan_runs_unchanged() {
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay_with_tombstones(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let filter = runner_filter(&key);
+        let today = fetch_allowed_rows_sql(
+            filter.row_types.as_ref().unwrap().len(),
+            filter.kind_tags.as_ref().unwrap().len(),
+            filter.slice_tags.as_ref().unwrap().len(),
+        );
+        let check = |label: &str, expected: &str| {
+            let sql = take_pull_sql();
+            assert!(!sql.is_empty(), "{label}");
+            assert!(sql.iter().all(|s| s == expected), "{label}: {sql:?}");
+        };
+
+        take_pull_sql();
+        let store = runner_store();
+        assert_eq!(pull_live(&conn, &key, &store, &opts, 2).await, 9);
+        check("no indexes", &today);
+        // One index alone is no indexes.
+        conn.execute(CREATE_SLICE_INDEX, ()).await.unwrap();
+        let store = runner_store();
+        assert_eq!(pull_live(&conn, &key, &store, &opts, 2).await, 9);
+        check("slice index only", &today);
+        // Both indexes, but a grant too wide for slice tags: the kind-only scan.
+        conn.execute(CREATE_TYPE_INDEX, ()).await.unwrap();
+        let wide = allow(&["items:capture", "items:transcript", "items:calendar_event"]);
+        let wide_filter = RowFilter::new(&wide, true, now_unix_ms(), &key);
+        assert_eq!(wide_filter.slice_tags, None);
+        let store = runner_store();
+        pull_live(&conn, &key, &store, &wide, 2).await;
+        check(
+            "no slice tags",
+            &fetch_allowed_rows_sql(wide_filter.row_types.as_ref().unwrap().len(), 3, 0),
+        );
+        // A phone's pull (no allowlist) never reaches the tag-filtered queries.
+        let store = runner_store();
+        pull_live(&conn, &key, &store, &PullOptions::default(), 2).await;
+        assert!(take_pull_sql().is_empty(), "the phone's pull is untouched");
+    }
+
+    /// Indexes by name on a relay without `slice_tag`, or a missing or unusable index: the pull falls back to the
+    /// scan, without an error, and reads what it would have.
+    #[tokio::test]
+    async fn a_relay_without_slice_tag_falls_back() {
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay_with_tombstones(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let with = runner_store();
+        assert_eq!(pull_live(&conn, &key, &with, &opts, 2).await, 9);
+
+        // The slice index by name only, on a relay whose slice_tag is gone.
+        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ()).await.unwrap();
+        conn.execute("CREATE INDEX idx_sync_row_slice ON sync_row(device_id, local_seq) WHERE row_type = 'items'", ())
+            .await
+            .unwrap();
+        conn.execute(CREATE_TYPE_INDEX, ()).await.unwrap();
+        take_pull_sql();
+        let store = runner_store();
+        assert_eq!(pull_live(&conn, &key, &store, &opts, 2).await, 13, "the kind filter alone: eleven items, two tombstones");
+        let filter = runner_filter(&key);
+        let kind_only = fetch_allowed_rows_sql(filter.row_types.as_ref().unwrap().len(), 1, 0);
+        let sql = take_pull_sql();
+        assert!(sql.iter().any(|s| s.contains("INDEXED BY")), "the indexed fetch was tried");
+        assert!(sql.contains(&kind_only), "then the kind-only scan: {sql:?}");
+        assert_eq!(bodies(&store, "calendar_event"), bodies(&with, "calendar_event"));
+        assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 15);
+    }
+
+    /// A filter that found the indexes, on a relay where one is missing or cannot serve the query: the indexed
+    /// fetch gives way to the scan (`None`), and the rest of the round stops using it.
+    #[tokio::test]
+    async fn a_missing_or_unusable_pull_index_falls_back() {
+        for broken in [None, Some("CREATE INDEX idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'x'")] {
+            let (_dir, conn, key) = relay().await;
+            raw(&conn, "dev-a", 1, (ROW_TYPE_CLIENT_ITEM_FORGOTTEN, None, None)).await;
+            conn.execute(CREATE_SLICE_INDEX, ()).await.unwrap();
+            if let Some(sql) = broken {
+                conn.execute(sql, ()).await.unwrap();
+            }
+            let filter = RowFilter { pull_indexes: tokio::sync::OnceCell::new_with(Some(true)), ..runner_filter(&key) };
+            assert!(filter.use_pull_indexes(&conn).await);
+            let got = fetch_rows_indexed(&conn, "dev-a", 0, 10, 500, &filter).await.unwrap();
+            assert!(got.is_none(), "{broken:?}: falls back");
+            assert!(!filter.use_pull_indexes(&conn).await, "{broken:?}: not tried again this round");
+            // The scan still reads the row.
+            assert_eq!(fetch_rows_since(&conn, "dev-a", 0, 10, 500, true, &filter).await.unwrap().0.len(), 1);
+        }
+    }
+
+    // ---- The indexed gap fetch (Task 3b) ----
+
+    /// Pages `device`'s gap `(0, gap_hi)` downward as `pull_gaps` does (a full page lowers the gap's top to its last
+    /// row), through the indexed gap fetch or the scan over the whole gap, and returns every `(local_seq, row_type)`.
+    async fn page_down(conn: &Connection, filter: &RowFilter, device: &str, gap_hi: i64, limit: i64, indexed: bool) -> Vec<(i64, String)> {
+        let mut hi = gap_hi;
+        let mut out = Vec::new();
+        loop {
+            let page = if indexed {
+                fetch_gap_rows_indexed(conn, device, 0, hi, limit, filter).await.unwrap().expect("the indexed gap fetch ran")
+            } else {
+                fetch_gap_rows(conn, device, 0, 0, hi, limit, true, filter).await.unwrap().0
+            };
+            out.extend(page.iter().map(|e| (e.local_seq, e.row_type.clone())));
+            if (page.len() as i64) < limit {
+                return out;
+            }
+            hi = page.last().unwrap().local_seq;
+        }
+    }
+
+    /// Newest-first rounds (the runner's mode) in pages of `rows` until no more waits. Returns the rows fetched,
+    /// live and gap.
+    async fn pull_newest_first(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions, rows: i64) -> usize {
+        let pace = Pace { rows, peer_budget: std::time::Duration::from_secs(60), round_budget: None };
+        let mut fetched = 0;
+        for _ in 0..500 {
+            let mut stats = Vec::new();
+            let more = pull_round_mode(conn, key, store, RUNNER, pace, opts, true, true, &mut stats).await.unwrap();
+            fetched += stats.iter().map(|s| s.fetched + s.gap_fetched).sum::<usize>();
+            if !more {
+                return fetched;
+            }
+        }
+        panic!("the pull never finished");
+    }
+
+    /// The tag-filtered gap SQL of the runner's calendar filter, as today.
+    fn today_gap_sql(filter: &RowFilter) -> String {
+        fetch_allowed_gap_rows_sql(
+            filter.row_types.as_ref().unwrap().len(),
+            filter.kind_tags.as_ref().unwrap().len(),
+            filter.slice_tags.as_ref().unwrap().len(),
+        )
+    }
+
+    /// The indexed gap fetch reads exactly the scan's rows over a gap, in its (descending) order, for every shape
+    /// of row and page size, device by device; and a newest-first pull over real rows applies what the scan does.
+    #[tokio::test]
+    async fn indexed_gap_fetch_returns_the_same_applied_set_as_the_scan() {
+        let (_dir, conn, key) = relay().await;
+        let filter = runner_filter(&key);
+        let shapes = row_shapes(&key, &filter);
+        let mut expected = std::collections::HashMap::new();
+        for (d, device) in ["dev-a", "dev-b"].into_iter().enumerate() {
+            let mut want = Vec::new();
+            for seq in 1..=120i64 {
+                let (t, k, s, class) = &shapes[((seq * 5 + d as i64 * 2) as usize) % shapes.len()];
+                raw(&conn, device, seq, (t, k.as_deref(), s.as_deref())).await;
+                if *class != Class::Unwanted {
+                    want.push((seq, t.clone()));
+                }
+            }
+            want.reverse();
+            expected.insert(device, want);
+        }
+        create_pull_indexes(&conn).await;
+        for device in ["dev-a", "dev-b"] {
+            for limit in [1, 2, 3, 7, 500] {
+                let scan = page_down(&conn, &filter, device, 121, limit, false).await;
+                let indexed = page_down(&conn, &filter, device, 121, limit, true).await;
+                assert_eq!(scan, expected[device], "{device} limit {limit}: the scan reads every wanted row");
+                assert_eq!(indexed, scan, "{device} limit {limit}");
+            }
+        }
+
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay_with_tombstones(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let without = runner_store();
+        let base = pull_newest_first(&conn, &key, &without, &opts, 2).await;
+        create_pull_indexes(&conn).await;
+        take_pull_sql();
+        let with = runner_store();
+        let fetched = pull_newest_first(&conn, &key, &with, &opts, 2).await;
+        assert!(take_pull_sql().iter().any(|sql| sql.contains("INDEXED BY") && sql.contains("DESC")), "the indexed gap fetch ran");
+        assert_eq!(fetched, base);
+        assert_eq!(fetched, 9, "seven items and two tombstones");
+        assert_eq!(bodies(&with, "calendar_event"), bodies(&without, "calendar_event"));
+        assert_eq!(with.sync_gap("dev-a").unwrap(), None, "the gap is closed");
+        assert_eq!(with.get_sync_cursor("dev-a").unwrap(), 15);
+    }
+
+    /// A gap sub-query that comes back full caps the page at its last (lowest) row: paging down reads every row
+    /// once, whichever sub-query is dense, and a short page holds every wanted row below the gap's top.
+    #[tokio::test]
+    async fn a_full_gap_subquery_caps_the_page_so_no_row_is_skipped() {
+        use Class::*;
+        let layouts: Vec<Vec<(i64, Class)>> = vec![
+            // Q2 dense at the top, Q1 and Q3 sparse below.
+            (100..=108).map(|s| (s, Sliced)).chain([(1, NonItem), (88, NonItem), (80, NonItem), (75, Unsliced), (70, Unwanted)]).collect(),
+            // Q1 dense at the top, Q2 sparse below.
+            (100..=108).map(|s| (s, NonItem)).chain([(1, Sliced), (89, Sliced), (87, Unsliced), (86, Unwanted)]).collect(),
+            // Q3 dense at the top, the others interleaved below.
+            (100..=108).map(|s| (s, Unsliced)).chain([(99, Sliced), (97, NonItem), (95, Sliced), (94, NonItem), (93, Unsliced)]).collect(),
+            // Every sub-query full at once.
+            (1..=30).map(|s| (s, [NonItem, Sliced, Unsliced, Unwanted][(s % 4) as usize])).collect(),
+        ];
+        for (n, layout) in layouts.into_iter().enumerate() {
+            let (_dir, conn, key) = relay().await;
+            let filter = runner_filter(&key);
+            let mut wanted = seed_classes(&conn, &key, &filter, "dev-a", &layout).await;
+            wanted.sort();
+            wanted.reverse();
+            create_pull_indexes(&conn).await;
+            let gap_hi = layout.iter().map(|r| r.0).max().unwrap() + 1;
+            let limit = 3;
+            let mut hi = gap_hi;
+            let mut visited: Vec<i64> = Vec::new();
+            loop {
+                let page = fetch_gap_rows_indexed(&conn, "dev-a", 0, hi, limit, &filter).await.unwrap().unwrap();
+                let seqs: Vec<i64> = page.iter().map(|e| e.local_seq).collect();
+                assert!(seqs.windows(2).all(|w| w[0] > w[1]), "layout {n}: descending {seqs:?}");
+                visited.extend(&seqs);
+                if (page.len() as i64) < limit {
+                    let rest: Vec<i64> = wanted.iter().copied().filter(|s| *s < hi).collect();
+                    assert_eq!(seqs, rest, "layout {n}: a short page holds every wanted row below {hi}");
+                    break;
+                }
+                hi = *seqs.last().unwrap();
+            }
+            assert_eq!(visited, wanted, "layout {n}: every row once, in order");
+        }
+    }
+
+    /// The gap bounds are `gap_lo < local_seq < gap_hi` for each sub-query; a newest-first pull in small pages reads
+    /// each row once and closes the gap, and later rows are read once more.
+    #[tokio::test]
+    async fn gap_rows_on_gap_hi_and_gap_lo_are_not_lost_or_repeated() {
+        use Class::*;
+        let (_dir, conn, key) = relay().await;
+        let filter = runner_filter(&key);
+        let layout = [(4, NonItem), (5, NonItem), (6, NonItem), (14, Sliced), (15, Sliced), (16, Sliced), (24, Unsliced), (25, Unsliced), (26, Unsliced)];
+        seed_classes(&conn, &key, &filter, "dev-a", &layout).await;
+        create_pull_indexes(&conn).await;
+        let seqs = |page: Vec<RowEnvelope>| page.into_iter().map(|e| e.local_seq).collect::<Vec<_>>();
+        let fetch = |lo, hi| fetch_gap_rows_indexed(&conn, "dev-a", lo, hi, 500, &filter);
+        assert_eq!(seqs(fetch(4, 25).await.unwrap().unwrap()), [24, 16, 15, 14, 6, 5]);
+        assert_eq!(seqs(fetch(5, 27).await.unwrap().unwrap()), [26, 25, 24, 16, 15, 14, 6]);
+        assert_eq!(seqs(fetch(14, 16).await.unwrap().unwrap()), [15]);
+        assert_eq!(seqs(fetch(5, 6).await.unwrap().unwrap()), Vec::<i64>::new());
+        assert_eq!(seqs(fetch(0, 4).await.unwrap().unwrap()), Vec::<i64>::new());
+
+        for rows in [1, 2, 3, 500] {
+            let (_dir, conn, key) = relay().await;
+            seed_slice_relay_with_tombstones(&conn, &key).await;
+            create_pull_indexes(&conn).await;
+            let opts = runner_calendar_options(60);
+            let store = runner_store();
+            assert_eq!(pull_newest_first(&conn, &key, &store, &opts, rows).await, 9, "rows {rows}: each wanted row once");
+            assert_eq!(store.sync_gap("dev-a").unwrap(), None, "rows {rows}");
+            seed(&conn, &key, "dev-a", 16, ROW_TYPE_ITEMS, &item_json("calendar_event", "late ev"), Some("calendar_event")).await;
+            seed(&conn, &key, "dev-a", 17, ROW_TYPE_ITEMS, &item_json("capture", "late cap"), Some("capture")).await;
+            assert_eq!(pull_newest_first(&conn, &key, &store, &opts, rows).await, 1, "rows {rows}: only the late event");
+            assert!(bodies(&store, "calendar_event").contains(&"late ev".to_string()));
+        }
+    }
+
+    /// Without both indexes (or without slice tags) the gap pass runs today's scan, SQL for SQL.
+    #[tokio::test]
+    async fn without_the_indexes_the_gap_scan_runs_unchanged() {
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay_with_tombstones(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let filter = runner_filter(&key);
+        let (gap, live) = (today_gap_sql(&filter), fetch_allowed_rows_sql(
+            filter.row_types.as_ref().unwrap().len(),
+            filter.kind_tags.as_ref().unwrap().len(),
+            filter.slice_tags.as_ref().unwrap().len(),
+        ));
+        let check = |label: &str, gap: &str, live: &str| {
+            let sql = take_pull_sql();
+            assert!(sql.iter().any(|s| s == gap), "{label}: the gap scan ran: {sql:?}");
+            assert!(sql.iter().all(|s| s == gap || s == live), "{label}: {sql:?}");
+        };
+        take_pull_sql();
+        assert_eq!(pull_newest_first(&conn, &key, &runner_store(), &opts, 2).await, 9);
+        check("no indexes", &gap, &live);
+        conn.execute(CREATE_TYPE_INDEX, ()).await.unwrap();
+        assert_eq!(pull_newest_first(&conn, &key, &runner_store(), &opts, 2).await, 9);
+        check("type index only", &gap, &live);
+        conn.execute(CREATE_SLICE_INDEX, ()).await.unwrap();
+        let wide = allow(&["items:capture", "items:transcript", "items:calendar_event"]);
+        let wide_filter = RowFilter::new(&wide, true, now_unix_ms(), &key);
+        assert_eq!(wide_filter.slice_tags, None);
+        let types = wide_filter.row_types.as_ref().unwrap().len();
+        pull_newest_first(&conn, &key, &runner_store(), &wide, 2).await;
+        check("no slice tags", &fetch_allowed_gap_rows_sql(types, 3, 0), &fetch_allowed_rows_sql(types, 3, 0));
+    }
+
+    /// Indexes by name on a relay without `slice_tag`: the gap pass falls back to the kind-only scan without an
+    /// error and reads what it would have; a missing or unusable index makes the gap fetch give way too.
+    #[tokio::test]
+    async fn a_relay_without_slice_tag_falls_back_on_the_gap() {
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay_with_tombstones(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let with = runner_store();
+        assert_eq!(pull_newest_first(&conn, &key, &with, &opts, 2).await, 9);
+
+        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ()).await.unwrap();
+        conn.execute("CREATE INDEX idx_sync_row_slice ON sync_row(device_id, local_seq) WHERE row_type = 'items'", ())
+            .await
+            .unwrap();
+        conn.execute(CREATE_TYPE_INDEX, ()).await.unwrap();
+        take_pull_sql();
+        let store = runner_store();
+        assert_eq!(pull_newest_first(&conn, &key, &store, &opts, 2).await, 13, "the kind filter alone: eleven items, two tombstones");
+        let filter = runner_filter(&key);
+        let kind_only = fetch_allowed_gap_rows_sql(filter.row_types.as_ref().unwrap().len(), 1, 0);
+        let sql = take_pull_sql();
+        assert!(sql.iter().any(|s| s.contains("INDEXED BY")), "the indexed fetch was tried");
+        assert!(sql.contains(&kind_only), "then the kind-only gap scan: {sql:?}");
+        assert_eq!(bodies(&store, "calendar_event"), bodies(&with, "calendar_event"));
+        assert_eq!(store.sync_gap("dev-a").unwrap(), None);
+
+        for broken in [None, Some("CREATE INDEX idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'x'")] {
+            let (_dir, conn, key) = relay().await;
+            raw(&conn, "dev-a", 1, (ROW_TYPE_CLIENT_ITEM_FORGOTTEN, None, None)).await;
+            conn.execute(CREATE_SLICE_INDEX, ()).await.unwrap();
+            if let Some(sql) = broken {
+                conn.execute(sql, ()).await.unwrap();
+            }
+            let filter = RowFilter { pull_indexes: tokio::sync::OnceCell::new_with(Some(true)), ..runner_filter(&key) };
+            assert!(fetch_gap_rows_indexed(&conn, "dev-a", 0, 10, 500, &filter).await.unwrap().is_none(), "{broken:?}");
+            assert!(!filter.use_pull_indexes(&conn).await, "{broken:?}: not tried again this round");
+            assert_eq!(fetch_gap_rows(&conn, "dev-a", 0, 0, 10, 500, true, &filter).await.unwrap().0.len(), 1);
+        }
+    }
+
+    /// The indexed gap fetch reads some pages, then gives way (the type index is replaced by one of the same name
+    /// that cannot serve the query): the gap resumes in span windows from its lowered top, and every row is still
+    /// read once, as the scan's pull reads them.
+    #[tokio::test]
+    async fn a_gap_that_falls_back_midway_resumes_in_span_windows_and_reads_every_row_once() {
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay_with_tombstones(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let scan_store = runner_store();
+        assert_eq!(pull_newest_first(&conn, &key, &scan_store, &opts, 2).await, 9);
+
+        create_pull_indexes(&conn).await;
+        FILTERED_PULL_TEST_SPAN.with(|c| c.set(Some(2)));
+        let pace = Pace { rows: 2, peer_budget: std::time::Duration::from_secs(60), round_budget: None };
+        let store = runner_store();
+        async fn one_round(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions, pace: Pace) -> (bool, usize) {
+            let mut stats = Vec::new();
+            let more = pull_round_mode(conn, key, store, RUNNER, pace, opts, true, true, &mut stats).await.unwrap();
+            (more, stats.iter().map(|s| s.fetched + s.gap_fetched).sum::<usize>())
+        }
+        // Two indexed rounds: each reads one full page of the gap and lowers its top.
+        take_pull_sql();
+        let mut fetched = 0;
+        for _ in 0..2 {
+            let (more, n) = one_round(&conn, &key, &store, &opts, pace).await;
+            assert!(more);
+            fetched += n;
+        }
+        assert_eq!(fetched, 4);
+        let (_, hi) = store.sync_gap("dev-a").unwrap().expect("the gap is still open");
+        assert!(hi < 16, "the indexed pages lowered the gap's top: {hi}");
+        let sql = take_pull_sql();
+        let gap_sql: Vec<&String> = sql.iter().filter(|s| s.contains("DESC")).collect();
+        assert!(!gap_sql.is_empty() && gap_sql.iter().all(|s| s.contains("INDEXED BY")), "{gap_sql:?}");
+
+        // The type index now has its name but not its shape: the indexed fetch gives way.
+        conn.execute("DROP INDEX idx_sync_row_type", ()).await.unwrap();
+        conn.execute("CREATE INDEX idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'x'", ())
+            .await
+            .unwrap();
+        let mut done = false;
+        for _ in 0..100 {
+            let (more, n) = one_round(&conn, &key, &store, &opts, pace).await;
+            fetched += n;
+            if !more {
+                done = true;
+                break;
+            }
+        }
+        FILTERED_PULL_TEST_SPAN.with(|c| c.set(None));
+        assert!(done, "the pull finished on span windows");
+        assert!(take_pull_sql().contains(&today_gap_sql(&runner_filter(&key))), "the span-windowed gap scan ran");
+        assert_eq!(fetched, 9, "every wanted row once");
+        assert_eq!(store.sync_gap("dev-a").unwrap(), None);
+        assert_eq!(bodies(&store, "calendar_event"), bodies(&scan_store, "calendar_event"));
+        assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 15);
+    }
+
+    /// An indexed sub-query that fails for any reason (here an injected error, not a missing index or column) never
+    /// fails the pull: the fetch gives way, the rest of the round scans, and the live and gap pulls read the same
+    /// rows as without the indexes.
+    #[tokio::test]
+    async fn any_indexed_query_error_falls_back_to_the_scan() {
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay_with_tombstones(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let live_scan = runner_store();
+        assert_eq!(pull_live(&conn, &key, &live_scan, &opts, 2).await, 9);
+        let gap_scan = runner_store();
+        assert_eq!(pull_newest_first(&conn, &key, &gap_scan, &opts, 2).await, 9);
+        create_pull_indexes(&conn).await;
+
+        INDEXED_QUERY_FAILS.with(|c| c.set(true));
+        let filter = runner_filter(&key);
+        assert!(filter.use_pull_indexes(&conn).await);
+        assert!(fetch_rows_indexed(&conn, "dev-a", 0, 15, 500, &filter).await.unwrap().is_none(), "live gives way");
+        assert!(!filter.use_pull_indexes(&conn).await, "the rest of the round scans");
+        let filter = runner_filter(&key);
+        assert!(fetch_gap_rows_indexed(&conn, "dev-a", 0, 16, 500, &filter).await.unwrap().is_none(), "gap gives way");
+        assert!(!filter.use_pull_indexes(&conn).await, "the rest of the round scans");
+
+        take_pull_sql();
+        let live = runner_store();
+        let live_fetched = pull_live(&conn, &key, &live, &opts, 2).await;
+        let gap = runner_store();
+        let gap_fetched = pull_newest_first(&conn, &key, &gap, &opts, 2).await;
+        INDEXED_QUERY_FAILS.with(|c| c.set(false));
+        let sql = take_pull_sql();
+        assert!(sql.contains(&today_gap_sql(&runner_filter(&key))), "the gap scan ran");
+        assert!(!sql.iter().any(|s| s.contains("INDEXED BY")), "no indexed query got through: {sql:?}");
+        assert_eq!((live_fetched, gap_fetched), (9, 9));
+        assert_eq!(bodies(&live, "calendar_event"), bodies(&live_scan, "calendar_event"));
+        assert_eq!(bodies(&gap, "calendar_event"), bodies(&gap_scan, "calendar_event"));
+        assert_eq!(live.get_sync_cursor("dev-a").unwrap(), 15);
+        assert_eq!(gap.sync_gap("dev-a").unwrap(), None);
+    }
+
+    /// The runner's real shape: an empty store, the first round newest first (the whole range becomes a gap), over
+    /// a relay with the indexes. It applies what the scan's pull applies, and the gap pages use the indexed SQL.
+    #[tokio::test]
+    async fn the_runners_first_pull_reads_its_gap_through_the_indexes() {
+        let (_dir, conn, key) = relay().await;
+        seed_slice_relay_with_tombstones(&conn, &key).await;
+        let opts = runner_calendar_options(60);
+        let scan_store = runner_store();
+        let scan = pull(&conn, &key, &scan_store, &opts).await;
+        assert!(scan.complete);
+
+        create_pull_indexes(&conn).await;
+        take_pull_sql();
+        let store = runner_store();
+        assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 0, "an empty store");
+        let report = pull(&conn, &key, &store, &opts).await;
+        let sql = take_pull_sql();
+        assert!(report.complete);
+        let gap_sql: Vec<&String> = sql.iter().filter(|s| s.contains("DESC")).collect();
+        assert!(!gap_sql.is_empty(), "the backlog was read as a gap: {sql:?}");
+        assert!(gap_sql.iter().all(|s| s.contains("INDEXED BY")), "every gap page indexed: {gap_sql:?}");
+        assert!(!sql.contains(&today_gap_sql(&runner_filter(&key))), "never the gap scan");
+        assert_eq!(report.rows_fetched, scan.rows_fetched);
+        assert_eq!(report.rows_applied, scan.rows_applied);
+        assert_eq!(bodies(&store, "calendar_event"), bodies(&scan_store, "calendar_event"));
+        assert_eq!(store.sync_gap("dev-a").unwrap(), None);
+        assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 15);
     }
 }
 
@@ -10797,5 +13032,273 @@ mod defer_embedding_guard_tests {
         let seen = with_defer_embedding(&store, true, async { store.set_defer_embedding(true) }).await;
         assert!(seen, "deferred while the page ran");
         assert!(!store.set_defer_embedding(false), "back to off after");
+    }
+
+    /// Query-shape measurement for the runner's relay pull (see the runner-pull-index spec). Not a test of
+    /// behavior: builds a large local `sync_row`, times the current windowed scan against shapes A and B, and
+    /// prints rows returned and elapsed. Run: `cargo test -p sync-engine --lib measure_pull_shapes -- --ignored --nocapture`.
+    /// `MEASURE_ROWS_PER_DEVICE` overrides the 500,000 default.
+    #[tokio::test]
+    #[ignore]
+    async fn measure_pull_shapes() {
+        use std::collections::BTreeSet;
+        use std::time::Instant;
+
+        const DEVICES: [&str; 3] = ["dev-a", "dev-b", "dev-c"];
+        const SLICES: usize = 76;
+        const PAGE: i64 = 500;
+        let per_device: i64 = std::env::var("MEASURE_ROWS_PER_DEVICE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2_000_000);
+        let other_types = ["meeting", "capture_item", "transcript_segment", "routine_run", "live_alert"];
+        let asked_slices: Vec<String> = ["slice-3", "slice-41"].iter().map(|s| s.to_string()).collect();
+        let asked_kinds: Vec<String> = ["kind-7", "kind-23"].iter().map(|s| s.to_string()).collect();
+        let types: Vec<String> = std::iter::once("items".to_string())
+            .chain(other_types.iter().map(|t| t.to_string()))
+            .collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let conn = libsql::Builder::new_local(dir.path().join("measure.db")).build().await.unwrap().connect().unwrap();
+        ensure_content_schema(&conn).await.unwrap();
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = OFF;").await.ok();
+
+        let build_started = Instant::now();
+        conn.execute("BEGIN", ()).await.unwrap();
+        for dev in DEVICES {
+            // Deterministic spread from local_seq: 95% items; of those 50% carry one of 76 slice tags, and
+            // each has one of 40 kind tags (1 in 200 untagged, an old client's row).
+            let sql = format!(
+                "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {per_device}) \
+                 INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, entity_tag, kind_tag, slice_tag) \
+                 SELECT '{dev}', i, \
+                   CASE WHEN i % 20 = 0 THEN CASE (i / 20) % 5 WHEN 0 THEN 'meeting' WHEN 1 THEN 'capture_item' \
+                        WHEN 2 THEN 'transcript_segment' WHEN 3 THEN 'routine_run' ELSE 'live_alert' END ELSE 'items' END, \
+                   hex(randomblob(100)), i, \
+                   NULL, \
+                   CASE WHEN i % 20 = 0 THEN NULL WHEN i % 200 = 7 THEN NULL ELSE 'kind-' || ((i * 31 + i / 20) % 40) END, \
+                   CASE WHEN i % 20 != 0 AND (i * 13) % 100 < 50 THEN 'slice-' || ((i * 17) % {SLICES}) ELSE NULL END \
+                 FROM n"
+            );
+            conn.execute(&sql, ()).await.unwrap();
+        }
+        conn.execute("COMMIT", ()).await.unwrap();
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sync_row_slice ON sync_row(device_id, slice_tag, local_seq) WHERE row_type = 'items'",
+            (),
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'items'",
+            (),
+        )
+        .await
+        .unwrap();
+        conn.execute("ANALYZE", ()).await.unwrap();
+        async fn single_i64(conn: &Connection, sql: &str) -> i64 {
+            let mut rows = conn.query(sql, ()).await.unwrap();
+            rows.next().await.unwrap().unwrap().get(0).unwrap()
+        }
+        let distinct_kinds = single_i64(&conn, "SELECT COUNT(DISTINCT kind_tag) FROM sync_row").await;
+        let null_kind_items = single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await;
+        assert_eq!(distinct_kinds, 40, "every kind tag occurs");
+        assert!(null_kind_items > 0, "old-client rows (NULL kind) are exercised");
+        println!("distinct kinds {distinct_kinds}, items with NULL kind {null_kind_items}");
+        println!(
+            "built {} devices x {per_device} rows in {:.1}s",
+            DEVICES.len(),
+            build_started.elapsed().as_secs_f64()
+        );
+
+        type Key = (String, i64, String);
+        async fn run(conn: &Connection, sql: &str, values: Vec<Value>) -> Vec<(i64, String)> {
+            let mut rows = conn.query(sql, Params::Positional(values)).await.unwrap();
+            let mut out = Vec::new();
+            while let Some(r) = rows.next().await.unwrap() {
+                let _ct: String = r.get(2).unwrap();
+                out.push((r.get::<i64>(0).unwrap(), r.get::<String>(1).unwrap()));
+            }
+            out
+        }
+
+        // Current: the windowed 50k-span scan with the real fetch SQL.
+        let cur_sql = fetch_allowed_rows_sql(types.len(), asked_kinds.len(), asked_slices.len());
+        let started = Instant::now();
+        let mut current: BTreeSet<Key> = BTreeSet::new();
+        let mut cur_queries = 0usize;
+        for dev in DEVICES {
+            let top = per_device;
+            let mut from = 0i64;
+            while from < top {
+                let hi = from.saturating_add(filtered_pull_span()).min(top);
+                let mut values = vec![Value::Text(dev.into()), Value::Integer(from), Value::Integer(PAGE)];
+                values.extend(types.iter().map(|t| Value::Text(t.clone())));
+                values.push(Value::Integer(hi));
+                values.extend(asked_kinds.iter().chain(&asked_slices).map(|t| Value::Text(t.clone())));
+                let got = run(&conn, &cur_sql, values).await;
+                cur_queries += 1;
+                let full = got.len() as i64 >= PAGE;
+                let last = got.last().map(|g| g.0);
+                for (s, t) in got {
+                    current.insert((dev.into(), s, t));
+                }
+                from = if full { last.unwrap() } else { hi };
+            }
+        }
+        let cur_ms = started.elapsed().as_millis();
+
+        // Shared B/A sub-queries, each ORDER BY local_seq LIMIT 500, paged by cursor to the end.
+        let non_items_sql = format!(
+            "SELECT local_seq, row_type, ciphertext FROM sync_row INDEXED BY idx_sync_row_type \
+             WHERE device_id = ?1 AND row_type != 'items' AND row_type IN ({}) AND local_seq > ?2 \
+             ORDER BY local_seq ASC LIMIT ?3",
+            numbered_placeholders(4, other_types.len())
+        );
+        let sliced_sql = |n: usize| {
+            format!(
+                "SELECT local_seq, row_type, ciphertext FROM sync_row INDEXED BY idx_sync_row_slice \
+                 WHERE device_id = ?1 AND row_type = 'items' AND slice_tag IN ({}) AND local_seq > ?2 \
+                 ORDER BY local_seq ASC LIMIT ?3",
+                numbered_placeholders(4, n)
+            )
+        };
+        let unsliced_sql = format!(
+            "SELECT local_seq, row_type, ciphertext FROM sync_row INDEXED BY idx_sync_row_slice \
+             WHERE device_id = ?1 AND row_type = 'items' AND slice_tag IS NULL \
+             AND (kind_tag IS NULL OR kind_tag IN ({})) AND local_seq > ?2 ORDER BY local_seq ASC LIMIT ?3",
+            numbered_placeholders(4, asked_kinds.len())
+        );
+        let ntext = |v: &[String]| v.iter().map(|t| Value::Text(t.clone())).collect::<Vec<_>>();
+        async fn page_all(
+            conn: &Connection,
+            sql: &str,
+            dev: &str,
+            page: i64,
+            extra: Vec<Value>,
+            out: &mut BTreeSet<(String, i64, String)>,
+            queries: &mut usize,
+        ) {
+            let mut from = 0i64;
+            loop {
+                let mut values = vec![Value::Text(dev.into()), Value::Integer(from), Value::Integer(page)];
+                values.extend(extra.clone());
+                let got = run(conn, sql, values).await;
+                *queries += 1;
+                let full = got.len() as i64 >= page;
+                if let Some(l) = got.last() {
+                    from = l.0;
+                }
+                for (s, t) in got {
+                    out.insert((dev.into(), s, t));
+                }
+                if !full {
+                    break;
+                }
+            }
+        }
+
+        // Shape B: three queries per device.
+        let (mut b_set, mut b_q) = (BTreeSet::new(), 0usize);
+        let (mut b_non, mut b_sliced, mut b_unsliced) = (0u128, 0u128, 0u128);
+        let started = Instant::now();
+        for dev in DEVICES {
+            let t = Instant::now();
+            page_all(&conn, &non_items_sql, dev, PAGE, ntext(&other_types.map(String::from)), &mut b_set, &mut b_q).await;
+            b_non += t.elapsed().as_millis();
+            let t = Instant::now();
+            page_all(&conn, &sliced_sql(asked_slices.len()), dev, PAGE, ntext(&asked_slices), &mut b_set, &mut b_q).await;
+            b_sliced += t.elapsed().as_millis();
+            let t = Instant::now();
+            page_all(&conn, &unsliced_sql, dev, PAGE, ntext(&asked_kinds), &mut b_set, &mut b_q).await;
+            b_unsliced += t.elapsed().as_millis();
+        }
+        let b_ms = started.elapsed().as_millis();
+
+        // Shape A: non-items and unsliced as in B, but one sliced query per slice tag.
+        let (mut a_set, mut a_q) = (BTreeSet::new(), 0usize);
+        let mut a_sliced = 0u128;
+        let started = Instant::now();
+        for dev in DEVICES {
+            page_all(&conn, &non_items_sql, dev, PAGE, ntext(&other_types.map(String::from)), &mut a_set, &mut a_q).await;
+            let t = Instant::now();
+            for tag in &asked_slices {
+                page_all(&conn, &sliced_sql(1), dev, PAGE, vec![Value::Text(tag.clone())], &mut a_set, &mut a_q).await;
+            }
+            a_sliced += t.elapsed().as_millis();
+            page_all(&conn, &unsliced_sql, dev, PAGE, ntext(&asked_kinds), &mut a_set, &mut a_q).await;
+        }
+        let a_ms = started.elapsed().as_millis();
+
+        println!("rows/device={per_device} slices asked={} kinds asked={}", asked_slices.len(), asked_kinds.len());
+        println!("current : {cur_ms:>7} ms  {} rows  {cur_queries} queries", current.len());
+        println!("shape B : {b_ms:>7} ms  {} rows  {b_q} queries (non-items {b_non} ms, sliced {b_sliced} ms, unsliced {b_unsliced} ms)", b_set.len());
+        println!("shape A : {a_ms:>7} ms  {} rows  {a_q} queries (sliced per-tag {a_sliced} ms)", a_set.len());
+        println!("B == current: {}   A == current: {}", b_set == current, a_set == current);
+        assert_eq!(b_set, current, "shape B returns the same set as the current pull");
+        assert_eq!(a_set, current, "shape A returns the same set as the current pull");
+    }
+}
+
+#[cfg(test)]
+mod pull_index_detection_tests {
+    use super::*;
+
+    async fn relay() -> (tempfile::TempDir, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        ensure_content_schema(&conn).await.unwrap();
+        (dir, conn)
+    }
+
+    const SLICE: &str = "CREATE INDEX idx_sync_row_slice ON sync_row(device_id, slice_tag, local_seq) WHERE row_type = 'items'";
+    const TYPE: &str = "CREATE INDEX idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'items'";
+
+    #[tokio::test]
+    async fn pull_indexes_are_detected_only_when_both_exist() {
+        let (_dir, conn) = relay().await;
+        assert!(!relay_has_pull_indexes(&conn).await, "none");
+        conn.execute(SLICE, ()).await.unwrap();
+        assert!(!relay_has_pull_indexes(&conn).await, "slice only");
+        conn.execute("DROP INDEX idx_sync_row_slice", ()).await.unwrap();
+        conn.execute(TYPE, ()).await.unwrap();
+        assert!(!relay_has_pull_indexes(&conn).await, "type only");
+        conn.execute(SLICE, ()).await.unwrap();
+        assert!(relay_has_pull_indexes(&conn).await, "both");
+        // The name is the contract: a different predicate still counts.
+        conn.execute("DROP INDEX idx_sync_row_type", ()).await.unwrap();
+        conn.execute(
+            "CREATE INDEX idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'x'",
+            (),
+        )
+        .await
+        .unwrap();
+        assert!(relay_has_pull_indexes(&conn).await, "wrong predicate");
+    }
+
+    #[tokio::test]
+    async fn an_error_while_checking_means_no_indexes() {
+        let (_dir, conn) = relay().await;
+        conn.execute(SLICE, ()).await.unwrap();
+        conn.execute(TYPE, ()).await.unwrap();
+        assert!(!pull_indexes_exist(&conn, "SELECT name FROM no_such_table").await);
+    }
+
+    #[tokio::test]
+    async fn use_pull_indexes_is_false_without_slice_tags_and_read_once() {
+        let (_dir, conn) = relay().await;
+        conn.execute(SLICE, ()).await.unwrap();
+        conn.execute(TYPE, ()).await.unwrap();
+        let none = RowFilter::default();
+        assert!(!none.use_pull_indexes(&conn).await);
+        let filter = RowFilter {
+            kind_tags: Some(vec!["k".into()]),
+            slice_tags: Some(vec!["s".into()]),
+            ..Default::default()
+        };
+        assert!(filter.use_pull_indexes(&conn).await);
+        conn.execute("DROP INDEX idx_sync_row_type", ()).await.unwrap();
+        assert!(filter.use_pull_indexes(&conn).await, "read once per pull");
     }
 }

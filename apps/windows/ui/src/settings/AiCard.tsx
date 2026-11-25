@@ -131,7 +131,9 @@ export function AiCard() {
         </p>
       ))}
       <WhimbrelAiCard view={whimbrel} refreshModels={loadWhimbrelModels} />
-      <h3 className="section-label">{t("API keys")}</h3>
+      <h3 className="section-label" data-settings-anchor="ai.keys">
+        {t("API keys")}
+      </h3>
       <p className="muted small">{t("Stored in Windows Credential Manager under the same names the Mac's Keychain uses.")}</p>
       {settings.keys.map((k) => (
         <KeyRow
@@ -183,13 +185,13 @@ export function AiCard() {
         }
       />
     </section>
-    <section className="card about" aria-labelledby="ai-instructions-heading">
+    <section className="card about" aria-labelledby="ai-instructions-heading" data-settings-anchor="ai.instructions">
       <h2 id="ai-instructions-heading" className="section-label">
         {t("Instructions")}
       </h2>
       <Instructions settings={settings} onError={setError} />
     </section>
-    <section className="card about" aria-labelledby="ai-usage-heading">
+    <section className="card about" aria-labelledby="ai-usage-heading" data-settings-anchor="ai.usage">
       <h2 id="ai-usage-heading" className="section-label">
         {t("Model usage")}
       </h2>
@@ -258,7 +260,7 @@ function WhimbrelAiCard(props: { view: WhimbrelAiView | null; refreshModels: () 
       .finally(() => setBusy(false));
   };
   return (
-    <div className="stack-sm key-block" data-testid="whimbrel-ai-card">
+    <div className="stack-sm key-block" data-testid="whimbrel-ai-card" data-settings-anchor="ai.whimbrelAI">
       <h3 className="section-label">{providerLabel("whimbrel")}</h3>
       {view?.signedIn ? (
         <>
@@ -384,7 +386,11 @@ function Routing(props: {
 
   return (
     <div className="stack-sm">
-      <label className="field">
+      <label className="toggle" data-settings-anchor="ai.localOnly">
+        <input type="checkbox" checked={routing.localOnly} onChange={(e) => onChange({ ...routing, localOnly: e.target.checked })} />
+        {t("Local-only mode (send nothing to hosted providers)")}
+      </label>
+      <label className="field" data-settings-anchor="ai.provider">
         <span>{t("Preferred provider")}</span>
         <select
           className="input"
@@ -452,10 +458,6 @@ function Routing(props: {
           </span>
         )}
       </div>
-      <label className="toggle">
-        <input type="checkbox" checked={routing.localOnly} onChange={(e) => onChange({ ...routing, localOnly: e.target.checked })} />
-        {t("Local-only mode (send nothing to hosted providers)")}
-      </label>
       <label className="toggle">
         <input type="checkbox" checked={routing.useLocalModel} onChange={(e) => onChange({ ...routing, useLocalModel: e.target.checked })} />
         {t("Use local model (Ollama)")}

@@ -24,7 +24,7 @@ import {
 import { App } from "../App";
 import type { LaunchAnswer, LaunchView } from "../generated/types";
 import { t } from "../l10n";
-import { useRedesign } from "../redesign";
+import { recheckRedesign, useRedesign } from "../redesign";
 import { RedesignedLaunch } from "./redesign/RedesignedLaunch";
 import { StartingScreen as StartingScreenR } from "./redesign/screens";
 import { BlockingScreen, KeyUnavailableScreen, MigratingScreen, StartingScreen } from "./LaunchScreens";
@@ -195,8 +195,31 @@ export function LaunchGate() {
   );
 }
 
-/** The app, once the launch opened. The good-launch counter runs after this first render. */
+/** The app, once the launch opened, drawn after the redesign switch was asked again, so neither shell flashes
+ *  before the other. main.tsx asked before the first render, which on a fresh install is before the onboarding,
+ *  while the shell cannot answer yet; without this the early false held until a restart. A second ask (a remount,
+ *  React's strict-mode double effect) only reads the same setting again. The good-launch counter runs after the
+ *  app's first render. */
 function Opened({ noStore }: { noStore: boolean }) {
+  const [asked, setAsked] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void recheckRedesign().finally(() => {
+      if (live) setAsked(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return asked ? <OpenedApp noStore={noStore} /> : <StartingScreenFor />;
+}
+
+/** The starting screen in the look the switch has now. */
+function StartingScreenFor() {
+  return useRedesign() ? <StartingScreenR /> : <StartingScreen />;
+}
+
+function OpenedApp({ noStore }: { noStore: boolean }) {
   useEffect(() => {
     if (!noStore) void launchFirstWindowRendered().catch(() => {});
   }, [noStore]);
@@ -206,4 +229,3 @@ function Opened({ noStore }: { noStore: boolean }) {
     </NoStoreContext.Provider>
   );
 }
-

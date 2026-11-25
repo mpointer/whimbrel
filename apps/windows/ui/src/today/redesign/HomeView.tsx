@@ -3,8 +3,10 @@
 // greeting, the search and ask bar, the next meeting, the time line for the day, then the sections that have content.
 
 import { Fragment, useEffect, useState, type ReactNode } from "react";
+import type { DayBlock } from "../../api";
 import type { MeetingRow, TodayOverview, TodayRecap, UpcomingView } from "../../generated/types";
 import { useL10n } from "../../l10n";
+import { requestFindWith } from "../../library/redesign/findStore";
 import { timeLabel } from "../../library/rows";
 import {
   captureLabel,
@@ -45,6 +47,7 @@ import {
   dayIsEmpty,
   heroOf,
   minutesLabel,
+  NO_FILTER,
   soonLabel,
   type EarlierGroup,
   type Hero,
@@ -204,6 +207,11 @@ export function RedesignedHome(p: RedesignedHomeProps) {
       />
     </WSpineStop>
   );
+  // Open on a memory block: Find, with the block's time as the date filter, listing the captures in it by time.
+  const openBlock = (block: DayBlock, label: string) => {
+    requestFindWith("", "search", { ...NO_FILTER, dates: { kind: "span", start: block.start_unix_ms, end: block.end_unix_ms + 1, label } });
+    p.onOpenSection("library");
+  };
   const renderStop = (s: (typeof stops)[number], last: boolean) => {
     if (s.kind === "meeting") return renderMeeting(s, last);
     if (s.kind !== "memory") return null;
@@ -212,7 +220,7 @@ export function RedesignedHome(p: RedesignedHomeProps) {
       <WSpineStop key={s.key} time={timeLabel(s.at, locale)} timeNote={minutesLabel(s.block) ?? undefined} node="past" connector="solid" last={last}>
         <div className="th-block">
           <WMemoryBlock range={range} items={blockItems(s.block)} />
-          <WButton variant="quiet" link={links} aria-label={t("Open memory, {range}", { range })} onClick={() => p.onOpenSection("library")}>
+          <WButton variant="quiet" link={links} aria-label={t("Open memory, {range}", { range })} onClick={() => openBlock(s.block, range)}>
             {t("Open")}
           </WButton>
         </div>
@@ -343,7 +351,7 @@ export function RedesignedHome(p: RedesignedHomeProps) {
               </WButton>
             ) : null}
           </div>
-          {overview.briefRecap ? <BriefRecapBody brief={overview.briefRecap} /> : p.recap ? <RecapBody recap={p.recap} /> : p.writing ? <p role="status">{t("Writing today's recap…")}</p> : null}
+          {overview.briefRecap ? <BriefRecapBody brief={overview.briefRecap} formatted /> : p.recap ? <RecapBody recap={p.recap} formatted /> : p.writing ? <p role="status">{t("Writing today's recap…")}</p> : null}
           {p.recapError ? <p role="alert">{p.recapError}</p> : null}
         </section>
       ) : null}

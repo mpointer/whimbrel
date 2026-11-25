@@ -573,7 +573,14 @@ fn recovery_words_through_the_commands_open_the_database() {
             outcome
         })
     };
-    assert_eq!(unlock_words(&launch, &words, Duration::from_secs(30)), UseKeyResult::Opened);
+    // The proof open stores the proven key under `db_key::ENCRYPTION`, one lock for the whole
+    // process. The migration tests in this binary hold it through each migration, and on a
+    // loaded Windows runner they ran 60 to 200 s. A 30 s wait ran out behind them with the recovery
+    // screen still up, and that read as KeyRejected (now `Failed`). The wait only bounds a hung
+    // launch: it returns as soon as the launch moves on.
+    let t = Instant::now();
+    let unlocked = unlock_words(&launch, &words, Duration::from_secs(600));
+    assert_eq!(unlocked, UseKeyResult::Opened, "after {:?}, stage {:?}", t.elapsed(), launch.presenter.snapshot());
     let LaunchOutcome::Opened(o) = finisher.join().unwrap() else { panic!() };
     assert_eq!(o.key.as_ref(), Some(&key));
     assert_eq!(secrets.get(SYNC_SERVICE, "db-key").unwrap().as_deref(), Some(&key.as_bytes()[..]), "stored after the proof");

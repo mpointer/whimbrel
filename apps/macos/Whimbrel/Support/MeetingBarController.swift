@@ -19,8 +19,9 @@ final class MeetingBarPanel: NSPanel {
 final class MeetingBarController {
     static let frameName = "WhimbrelMeetingBar"
     private static let margin: CGFloat = 16
-    /// True keeps the window out of screen shares and recordings, so other people on a shared screen do not see it.
-    /// The owner decided this on 2026-11-18: the ask box holds private text.
+    /// True asks macOS to leave the window out of screen sharing and screen recordings (`sharingType = .none`). Some sharing
+    /// apps ignore the request, so it is not a promise that other people on a shared screen cannot see the window.
+    /// The owner decided on 2026-11-18 to ask: the ask box holds private text.
     static let hidesFromScreenSharing = true
 
     private unowned let appState: AppState
@@ -78,7 +79,7 @@ final class MeetingBarController {
         panel.isMovableByWindowBackground = true
         // Whimbrel's own capture leaves this window out: its ask box holds text. Screen text capture already skips
         // Whimbrel's own windows (`CaptureExclusions.alwaysExcludedBundleIds`); snapshots take only the meeting app's
-        // window. This keeps it out of any other screen capture too.
+        // window. This also asks macOS to leave it out of other screen capture; some sharing apps ignore the request.
         panel.sharingType = Self.hidesFromScreenSharing ? .none : .readOnly
         panel.setAccessibilityLabel(String(localized: "Whimbrel, in-meeting window"))
         panel.contentViewController = host

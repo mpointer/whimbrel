@@ -61,7 +61,7 @@ impl Store {
             (sql, vals)
         };
         if semantic {
-            let Ok(embedding) = self.embed(query) else {
+            let Ok(embedding) = self.embed_query(query) else {
                 return Ok(Vec::new());
             };
             let total_items: i64 = self.conn.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0))?;

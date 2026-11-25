@@ -24,6 +24,7 @@
 //! dispatch queue on macOS, an actor task on Windows).
 
 pub mod ask;
+pub mod conversations;
 pub mod window_ask;
 pub mod window_read;
 pub mod recap;
@@ -44,6 +45,8 @@ pub mod exclusion;
 pub mod foreign_files;
 #[cfg(test)]
 mod exclusion_sweep;
+#[cfg(test)]
+mod mcp_item_coverage;
 pub mod hosted_models;
 pub mod inference;
 pub mod jobs;

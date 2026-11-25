@@ -1,0 +1,18 @@
+/* The Topics tab's empty state ("Open Topics settings") in the redesigned shell. Scoped under .w-shell, a class only the
+   redesigned shell draws (RedesignedShell: WRoot className "shell w-shell"), so the old shell is untouched. It uses the
+   tokens WButton primary uses (.w-button-primary in system/system.css), and sits above app.css .mode--active and any
+   skin or palette rule that reaches the button. */
+.w-shell .topics-empty .mode.mode--active {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: var(--color-text-on-accent);
+}
+.w-shell .topics-empty .mode.mode--active:hover {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: var(--color-text-on-accent);
+  filter: brightness(0.92);
+}
+.w-shell .topics-empty .mode.mode--active:active {
+  filter: brightness(0.84);
+}

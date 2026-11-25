@@ -174,9 +174,8 @@ pub mod keys {
     /// Cloud" before a Whimbrel Cloud is on the account (author-only phase). Off unless set to `true` by hand
     /// in settings.json, as the Mac's `com.mpointer.whimbrel.cloudRoutines.enabled` default.
     pub const CLOUD_ROUTINES_ENABLED: &str = "cloudRoutines.enabled";
-    /// Device-local, never synced, no UI: the hidden switch that shows the redesign (the Thread skin, and the
-    /// new screens as each is migrated). Off unless set to `true` by hand in settings.json, as the Mac's
-    /// `com.mpointer.whimbrel.redesign.enabled` default. Nothing in the app changes while it is off.
+    /// Device-local, never synced, no UI: the old hidden switch for the redesign. Nothing reads it any more
+    /// (`redesign_enabled()` is always true); the key stays so a stored value is left alone.
     pub const REDESIGN_ENABLED: &str = "redesign.enabled";
 }
 
@@ -328,6 +327,12 @@ impl RoutingSettings {
         // builds its config here from the current settings, so setting them here keeps core current
         // at startup and after any AI settings change, before any prompt is built.
         api::routing::set_limited_use_settings(self.limited_use());
+        self.routing_config_unpublished(keys, instructions)
+    }
+
+    /// [`RoutingSettings::routing_config`] without publishing the Limited Use switches to core. For a route
+    /// preview, which sends nothing and must not change process-wide state.
+    pub fn routing_config_unpublished(&self, keys: &ApiKeys, instructions: &Instructions) -> api::RoutingConfig {
         api::RoutingConfig {
             anthropic_key: keys.anthropic.clone(),
             openai_key: keys.openai.clone(),
@@ -628,6 +633,8 @@ impl SettingsFile {
     /// The UI's half of the routing settings; the cached OpenRouter prices stay as they are
     /// (`set_openrouter_prices` is the only writer).
     pub fn set_routing(&mut self, r: &RoutingSettings) {
+        // A route preview keeps what it learned about Ollama for a few seconds; new settings may change it.
+        crate::chat::forget_ollama_probe();
         self.set(keys::PREFERRED_PROVIDER, Some(r.preferred_provider));
         // The in-memory stand-in isn't the user's choice: a save of other routing fields that
         // sends it back leaves the stored model as it was, so the pick is never saved or synced.
@@ -669,9 +676,10 @@ impl SettingsFile {
         self.get(keys::CLOUD_ROUTINES_ENABLED).unwrap_or(false)
     }
 
-    /// The hidden redesign switch ([`keys::REDESIGN_ENABLED`]). Off unless set to `true` by hand.
+    /// The redesign switch: on for everyone. The stored [`keys::REDESIGN_ENABLED`] value is no longer read and is left
+    /// in the file. The old branches that test this go in the clean-up (docs/ui-redesign/screens/switch-removal.md, B).
     pub fn redesign_enabled(&self) -> bool {
-        self.get(keys::REDESIGN_ENABLED).unwrap_or(false)
+        true
     }
 
     /// Whether the user has the MCP server switched on. Off by default: it opens memory to other programs.
@@ -847,8 +855,7 @@ impl SettingsFile {
         self.get(keys::RECORDING_NOTICE_ENABLED).unwrap_or(false)
     }
 
-    /// What the notice shows: a stored choice always wins; with none stored it is on with the redesign switch on and
-    /// off with it off, as before. It becomes on for everyone when the switch is removed.
+    /// What the notice shows: a stored choice always wins; with none stored it is on (the redesign switch is on for everyone).
     pub fn recording_notice_on(&self) -> bool {
         self.get(keys::RECORDING_NOTICE_ENABLED).unwrap_or_else(|| self.redesign_enabled())
     }
@@ -1328,17 +1335,18 @@ mod tests {
     }
 
     #[test]
-    fn the_hidden_redesign_switch_is_off_unless_set_to_true_by_hand_and_never_synced() {
+    fn the_redesign_switch_is_on_for_everyone_whatever_is_stored_and_never_synced() {
         let path = temp_path("redesign");
         let mut s = SettingsFile::load(&path);
-        assert!(!s.redesign_enabled(), "off by default");
+        assert!(s.redesign_enabled(), "on with nothing stored");
         assert_eq!(keys::REDESIGN_ENABLED, "redesign.enabled");
+        s.set(keys::REDESIGN_ENABLED, Some(false));
+        assert!(s.redesign_enabled(), "a stored false is no longer read");
+        s.set(keys::REDESIGN_ENABLED, Some("yes"));
+        assert!(s.redesign_enabled(), "a stored value that is not a bool does not turn it off");
         s.set(keys::REDESIGN_ENABLED, Some(true));
         assert!(s.redesign_enabled());
-        s.set(keys::REDESIGN_ENABLED, Some("yes"));
-        assert!(!s.redesign_enabled(), "only a JSON true turns it on");
-        s.set(keys::REDESIGN_ENABLED, Some(false));
-        assert!(!s.redesign_enabled());
+        assert_eq!(s.get::<bool>(keys::REDESIGN_ENABLED), Some(true), "the stored value is left alone");
         assert!(!crate::syncing::settings::synced_keys().iter().any(|k| k == keys::REDESIGN_ENABLED));
     }
 

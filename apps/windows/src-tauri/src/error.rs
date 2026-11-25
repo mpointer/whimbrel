@@ -224,6 +224,10 @@ impl From<api::ApiError> for CommandError {
             api::ApiError::ProviderFailure => CommandError::ProviderFailure { reason: api::last_provider_failure().map(Into::into) },
             // Uncompiled on macOS: the Windows shell has not built this edit.
             api::ApiError::NotFound => CommandError::invalid_input("Not found."),
+            // A filter on a sourced call that could widen a search (nothing was read or sent): the page's own input.
+            api::ApiError::InvalidFilter => CommandError::invalid_input("The filters are not valid: nothing was searched. Change them and try again."),
+            // A read of the memory database failed part way, so no answer was made from what could still be read.
+            api::ApiError::StoreFailure => CommandError::store("The memory database could not be read just now, so the question was not answered. Try again."),
             api::ApiError::BudgetSpent(spent) => CommandError::BudgetSpent {
                 provider: spent.provider.as_str().to_string(),
                 spent_cents: spent.spent_cents,
@@ -314,6 +318,20 @@ mod tests {
             serde_json::json!({"kind": "model_unavailable", "provider": "google", "model": "gemini-2.5-pro"})
         );
         assert_eq!(gone.message().unwrap(), "Google doesn't offer the model gemini-2.5-pro to your key. Choose another in Settings → AI.");
+    }
+
+    #[test]
+    fn an_invalid_filter_and_a_failed_read_have_messages_of_their_own() {
+        // Not "Not found.", and not a provider failure: the page says what happened.
+        match CommandError::from(api::ApiError::InvalidFilter) {
+            CommandError::InvalidInput { message } => assert!(message.starts_with("The filters are not valid"), "{message}"),
+            other => panic!("an invalid filter is the page's own input: {other:?}"),
+        }
+        match CommandError::from(api::ApiError::StoreFailure) {
+            CommandError::Store { message } => assert!(message.contains("could not be read"), "{message}"),
+            other => panic!("a failed read is a store failure: {other:?}"),
+        }
+        assert_eq!(envelope_error(api::ApiError::InvalidFilter), serde_json::json!({"kind": "invalid_filter"}));
     }
 
     #[test]

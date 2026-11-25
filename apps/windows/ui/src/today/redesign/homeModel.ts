@@ -4,7 +4,7 @@
 import type { DayBlock } from "../../api";
 import type { MeetingRow, ScheduleEvent, ScheduleView } from "../../generated/types";
 import { timeLabel } from "../../library/rows";
-import { t } from "../../l10n";
+import { currentLocale, t } from "../../l10n";
 import type { WIconName } from "../../system";
 import type { CaptureState } from "../../shell/redesign/captureModel";
 import { pauseEndLabel } from "../../shell/redesign/captureModel";
@@ -204,12 +204,25 @@ const APP_NAMES: Record<string, string> = {
   explorer: "File Explorer",
 };
 
-/** A readable app name from the identity capture stores (`excel.exe`, `MSEdge`, `MSEdge.profile2.Default`). */
+/** The app id a note imported from a folder is stored under (core's `import.rs`). */
+const IMPORTED_APP_ID = "import.markdown";
+
+/** A readable app name from the identity capture stores (`excel.exe`, `MSEdge`, `MSEdge.profile2.Default`). A note imported from a
+ *  folder is an imported note. */
 export function appName(id: string): string {
+  if (id === IMPORTED_APP_ID) return t("Imported note");
   const base = id.split(".")[0] === "" ? id : id.split(".")[0];
   const known = APP_NAMES[base.toLowerCase()];
   if (known) return known;
   return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+/** What a capture's detail header says about it: the app, and how its text was read from the screen. An imported note was read from
+ *  no screen: it says only that it is one. */
+export function captureHeader(c: { app: string; source?: string | null }): { app: string; how: string | null } {
+  if (c.source === "import" || c.app === IMPORTED_APP_ID) return { app: t("Imported note"), how: null };
+  const how = c.source === "ocr" ? t("OCR fallback") : c.source === "ax" || c.source === "uia" ? t("Accessibility") : null;
+  return { app: appName(c.app), how };
 }
 
 const DOTS = ["blue", "green", "purple", "amber"] as const;
@@ -289,7 +302,9 @@ export type DateChoice =
   | { kind: "yesterday" }
   | { kind: "last7" }
   /** Local dates as `YYYY-MM-DD`, both included. */
-  | { kind: "custom"; from: string; to: string };
+  | { kind: "custom"; from: string; to: string }
+  /** A span of one day, `[start, end)` in unix ms, with its words ("10:00 AM to 11:30 AM"): what a memory block's Open filters by. */
+  | { kind: "span"; start: number; end: number; label: string };
 
 export interface SearchFilter {
   /** A person from the attendees of recent meetings, or null for anyone. */
@@ -326,6 +341,8 @@ export function dateRange(choice: DateChoice, now: number): { start: number; end
       if (from === null || to === null || to < from) return null;
       return { start: from, end: next(to) };
     }
+    case "span":
+      return choice.end > choice.start ? { start: choice.start, end: choice.end } : null;
   }
 }
 
@@ -353,7 +370,39 @@ export function peopleFrom(attendeeLists: string[][]): string[] {
   return [...seen.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).map((x) => x.name);
 }
 
-export function dateChoiceLabel(choice: DateChoice): string {
+/** Where focus goes in a filter chip's menu of `count` choices when `key` is pressed with focus on choice `at` (-1: not on a choice):
+ *  the arrows move and wrap, Home and End go to the ends. Null for any other key. (The WAI-ARIA menu pattern.) */
+export function menuStep(key: string, at: number, count: number): number | null {
+  if (count === 0) return null;
+  switch (key) {
+    case "Home":
+      return 0;
+    case "End":
+      return count - 1;
+    case "ArrowDown":
+      return at < 0 ? 0 : (at + 1) % count;
+    case "ArrowUp":
+      return at < 0 ? count - 1 : (at - 1 + count) % count;
+    default:
+      return null;
+  }
+}
+
+/** A custom range in the chips' date words: "Nov 16 to Nov 22", "Nov 16" for one day, the years when they differ. A stored date
+ *  that does not read stays as stored. */
+function customRangeLabel(from: string, to: string, locale: string): string {
+  const day = (ymd: string): Date | null => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+  };
+  const [a, b] = [day(from), day(to)];
+  if (!a || !b) return t("{from} to {to}", { from, to });
+  const years = a.getFullYear() !== b.getFullYear();
+  const words = (d: Date) => new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", ...(years ? { year: "numeric" } : {}) }).format(d);
+  return from === to ? words(a) : t("{from} to {to}", { from: words(a), to: words(b) });
+}
+
+export function dateChoiceLabel(choice: DateChoice, locale: string = currentLocale()): string {
   switch (choice.kind) {
     case "today":
       return t("Today");
@@ -362,7 +411,9 @@ export function dateChoiceLabel(choice: DateChoice): string {
     case "last7":
       return t("Last 7 days");
     case "custom":
-      return t("{from} to {to}", { from: choice.from, to: choice.to });
+      return customRangeLabel(choice.from, choice.to, locale);
+    case "span":
+      return choice.label;
   }
 }
 

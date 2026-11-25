@@ -84,9 +84,11 @@ export interface WFilterChipProps {
   onPress: () => void;
   /** When set, the chip can be removed, and a Remove button appears beside it. */
   onRemove?: () => void;
+  /** For a chip that opens a menu: whether it is open. */
+  expanded?: boolean;
 }
 
-export function WFilterChip({ label, icon, menu, selected, onPress, onRemove }: WFilterChipProps) {
+export function WFilterChip({ label, icon, menu, selected, onPress, onRemove, expanded }: WFilterChipProps) {
   return (
     <span className={selected ? "w-chip w-chip-selected" : "w-chip"}>
       <button
@@ -94,6 +96,7 @@ export function WFilterChip({ label, icon, menu, selected, onPress, onRemove }: 
         className="w-chip-main"
         aria-pressed={menu ? undefined : !!selected}
         aria-haspopup={menu ? "menu" : undefined}
+        aria-expanded={expanded}
         onClick={onPress}
       >
         {icon ? <WIcon name={icon} size={16} /> : null}
@@ -106,67 +109,5 @@ export function WFilterChip({ label, icon, menu, selected, onPress, onRemove }: 
         </button>
       ) : null}
     </span>
-  );
-}
-
-export interface WSettingsRowProps {
-  label: string;
-  description?: string;
-  variant: "toggle" | "value" | "button" | "destructive";
-  /** Toggle: on or off. */
-  checked?: boolean;
-  onToggle?: (next: boolean) => void;
-  /** Value: the current value, shown before the chevron. */
-  value?: string;
-  /** Value, button, destructive: what happens on press. */
-  onPress?: () => void;
-  /** Button and destructive: the button's words. Defaults to the label. */
-  actionLabel?: string;
-}
-
-export function WSettingsRow({ label, description, variant, checked, onToggle, value, onPress, actionLabel }: WSettingsRowProps) {
-  const text = (
-    <span className="w-setting-text">
-      <span className="w-setting-label">{label}</span>
-      {description ? <span className="w-setting-desc">{description}</span> : null}
-    </span>
-  );
-  if (variant === "value") {
-    return (
-      <div className="w-setting w-setting-click">
-        <button type="button" className="w-setting-press" onClick={onPress}>
-          {text}
-          <span className="w-setting-value">
-            {value}
-            <WIcon name="chevronRight" size={16} />
-          </span>
-        </button>
-      </div>
-    );
-  }
-  if (variant === "toggle") {
-    return (
-      <div className="w-setting">
-        {text}
-        <span className="w-switch-wrap">
-          <button
-            type="button"
-            role="switch"
-            className="w-switch"
-            aria-checked={!!checked}
-            aria-label={label}
-            onClick={() => onToggle?.(!checked)}
-          />
-        </span>
-      </div>
-    );
-  }
-  return (
-    <div className={variant === "destructive" ? "w-setting w-setting-destructive" : "w-setting"}>
-      {text}
-      <WButton variant={variant === "destructive" ? "destructive" : "secondary"} onClick={onPress} aria-label={actionLabel ? `${actionLabel}, ${label}` : undefined}>
-        {actionLabel ?? label}
-      </WButton>
-    </div>
   );
 }

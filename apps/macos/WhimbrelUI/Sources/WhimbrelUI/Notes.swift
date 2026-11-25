@@ -135,11 +135,22 @@ public struct WNoteBlock: View {
 
 public enum WSourceKind: Sendable {
     case transcriptMoment, seenOnScreen
+    /// An email thread.
+    case email
+    /// A routine's result.
+    case routineRun
+    /// The kinds Find adds: a slide, an episode and a whole meeting.
+    case slide, episode, meeting
 
     public func label(using strings: WStrings) -> String {
         switch self {
         case .transcriptMoment: return strings.transcriptMoment
         case .seenOnScreen: return strings.seenOnScreen
+        case .email: return strings.sourceEmail
+        case .routineRun: return strings.sourceRoutineRun
+        case .slide: return strings.find.kindSlide
+        case .episode: return strings.find.kindEpisode
+        case .meeting: return strings.find.kindMeeting
         }
     }
 }
@@ -166,9 +177,10 @@ public struct WSourceCard: View {
     /// False where the mark on the line already speaks the source: the card then exposes only its Open button.
     let speaksContent: Bool
     let onSelect: () -> Void
-    let onOpen: () -> Void
+    /// Nil when the source has nothing to open: the card then shows no Open control.
+    let onOpen: (() -> Void)?
 
-    public init(number: Int, size: WSourceCardSize = .margin, appGlyph: String = "waveform", appName: String? = nil, kind: WSourceKind = .transcriptMoment, title: String, time: String, quote: String, openTitle: String? = nil, isSelected: Bool = false, quoteLineLimit: Int? = nil, speaksContent: Bool = true, onSelect: @escaping () -> Void, onOpen: @escaping () -> Void) {
+    public init(number: Int, size: WSourceCardSize = .margin, appGlyph: String = "waveform", appName: String? = nil, kind: WSourceKind = .transcriptMoment, title: String, time: String, quote: String, openTitle: String? = nil, isSelected: Bool = false, quoteLineLimit: Int? = nil, speaksContent: Bool = true, onSelect: @escaping () -> Void, onOpen: (() -> Void)?) {
         self.quoteLineLimit = quoteLineLimit
         self.speaksContent = speaksContent
         self.number = number
@@ -218,7 +230,7 @@ public struct WSourceCard: View {
                     .lineLimit(isSelected ? nil : quoteLineLimit)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityHidden(!speaksContent)
-                if size == .card || isSelected {
+                if size == .card || isSelected, let onOpen {
                     let openLabel = openTitle ?? strings.open
                     Button(action: onOpen) {
                         HStack(spacing: theme.space(4)) {

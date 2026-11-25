@@ -3,13 +3,15 @@ import { todayRecap } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { TodayRecap } from "../generated/types";
 import { t } from "../l10n";
+import { RecapMarkdown } from "./redesign/RecapMarkdown";
 import { recapNote } from "./todayModel";
 
 /** A recap's text, shared by Today and the Library's Digest mode. */
-export function RecapBody({ recap }: { recap: TodayRecap }) {
+export function RecapBody({ recap, formatted = false }: { recap: TodayRecap; formatted?: boolean }) {
   return (
     <>
-      <p className="recap">{recap.summary}</p>
+      {/* `formatted` is the redesigned Today only: the summary's Markdown is drawn as text. Off, the line is as it always was. */}
+      {formatted ? <RecapMarkdown text={recap.summary} /> : <p className="recap">{recap.summary}</p>}
       {recap.openLoops.length > 0 && (
         <>
           <h3 className="section-label">{t("Still open from today")}</h3>

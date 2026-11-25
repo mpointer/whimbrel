@@ -1,0 +1,17 @@
+/* memtop: the top half of Memory & Privacy. New classes only. */
+.rs-memtop-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-sm);
+  max-width: 100%;
+}
+.rs-memtop-announce:empty {
+  padding: 0;
+}
+.rs-memtop-announce {
+  padding: var(--w-space-sm) var(--w-space-lg);
+  background: var(--color-background-card);
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+}

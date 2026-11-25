@@ -85,6 +85,25 @@ describe("formatOffset", () => {
 });
 
 describe("headline", () => {
+  it("a meeting whose recording is paused reads paused, not recording", () => {
+    const live: LibraryRow = {
+      kind: "meeting",
+      id: 2,
+      tsUnixMs: 0,
+      endUnixMs: null,
+      title: "Standup",
+      status: "recording",
+      trigger: "manual",
+      hasSummary: false,
+      attendeeCount: 0,
+      actionItemCount: 0,
+      device,
+    };
+    expect(headline(live, 2).meta).toBe("Meeting · paused");
+    expect(headline(live, 9).meta).toBe("Meeting · recording");
+    expect(headline(live).meta).toBe("Meeting · recording");
+    expect(headline({ ...live, status: "completed" }, 2).meta).toBe("Meeting · completed");
+  });
   it("labels each kind", () => {
     expect(headline(capture(1, 0))).toEqual({ title: "main.rs - Whimbrel", meta: "code.exe" });
     expect(headline(capture(1, 0, "ocr")).meta).toBe("code.exe · OCR");

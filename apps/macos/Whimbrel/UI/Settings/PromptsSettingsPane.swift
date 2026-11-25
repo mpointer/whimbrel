@@ -13,7 +13,7 @@ struct PromptsSettingsPane: View {
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.whimbrelBorder, lineWidth: 1))
 
             VStack(alignment: .leading, spacing: Spacing.lg) {
-                Text("Prompts").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text("Prompts").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("ai.prompts")
                 Text("Tune the instructions folded into each surface's prompt. Each surface is independent and syncs across your devices.")
                     .font(.whimbrelBody(.caption))
                     .foregroundStyle(Color.whimbrelTextSecondary)

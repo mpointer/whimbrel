@@ -49,7 +49,7 @@ export function GoogleClientCard() {
   const saved = status?.clientId ?? null;
 
   return (
-    <section className="card about">
+    <section className="card about" data-settings-anchor="connectors.ownClient">
       <details open={saved != null}>
         <summary className="small">{t("Advanced")}</summary>
         <h3>{t("Use your own Google Cloud project")}</h3>

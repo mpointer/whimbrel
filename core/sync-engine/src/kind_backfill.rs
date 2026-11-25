@@ -22,8 +22,8 @@ use std::time::{Duration, Instant};
 use sync::GroupKey;
 
 use crate::content::{
-    content_row_aad, distinct_peer_device_ids, ensure_kind_tag_column, item_payload_kind_tag, peer_has_marker,
-    KIND_TAG_COLUMN_SEEN,
+    content_row_aad, distinct_peer_device_ids, ensure_sync_row_column, item_payload_kind_tag, peer_has_marker,
+    KIND_TAG_COLUMN_SEEN, Latch,
     refresh_marker, ROW_TYPE_ITEMS, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_KIND_BACKFILL_CLAIM,
 };
 use crate::{now_unix_ms, SyncEngineError};
@@ -36,19 +36,73 @@ const KIND_BACKFILL_VERSION: &str = "1";
 /// `"<version>:<total>:<undecryptable>"`, the last progress, which a finished step reports.
 const KIND_BACKFILL_DONE_KEY: &str = "kind_backfill_done";
 
-/// kv: undecryptable rows seen so far, over all steps.
-fn kind_backfill_undecryptable_key() -> String {
-    format!("kind_backfill_undecryptable:{KIND_BACKFILL_VERSION}")
+/// One backfill pass over the relay's `items` rows: the column it fills and the keys and claim it keeps. The kind
+/// pass is [`KIND_PASS`]; the runner's slice pass (`slice_backfill`) shares the walk, claim, retries and progress.
+pub(crate) struct Pass {
+    /// The `sync_row` column it fills (one of our own constant names, never input).
+    pub(crate) column: &'static str,
+    /// Part of every progress key; a done marker of another version does not count.
+    pub(crate) version: &'static str,
+    /// kv: `<prefix>:<version>:<peer>` per peer and `<prefix>_undecryptable:<version>`.
+    pub(crate) kv_prefix: &'static str,
+    /// kv: set once every peer is done, `"<version>:<total>:<undecryptable>"`.
+    pub(crate) done_key: &'static str,
+    /// Its advisory claim's row type, at `local_seq` 0 under the claimer's id.
+    pub(crate) claim_row_type: &'static str,
+    /// One chunk of a peer's window: `items` rows whose column is still NULL.
+    pub(crate) chunk_sql: &'static str,
+    /// Set once this process has seen the column.
+    pub(crate) column_seen: &'static Latch,
+    /// The tag of a decrypted `items` payload, `None` when it does not decode.
+    pub(crate) tag: fn(&GroupKey, &[u8]) -> Option<String>,
 }
+
+impl Pass {
+    /// The pass's name in log lines: `kind` or `slice`.
+    pub(crate) fn name(&self) -> &'static str {
+        self.column.strip_suffix("_tag").unwrap_or(self.column)
+    }
+
+    /// kv per peer: how far the walk has gone through that peer's rows (`local_seq`), or `done` at its top.
+    fn peer_key(&self, peer: &str) -> String {
+        format!("{}:{}:{peer}", self.kv_prefix, self.version)
+    }
+
+    /// kv: undecryptable rows seen so far, over all steps.
+    fn undecryptable_key(&self) -> String {
+        format!("{}_undecryptable:{}", self.kv_prefix, self.version)
+    }
+
+    /// Tags one chunk's rows of one tag by primary key (`device_id` plus each `local_seq`), only while each is
+    /// still NULL: running again, or two devices at once, changes nothing, and a row tagged since the chunk was read
+    /// keeps its tag. One statement per distinct tag in a chunk, not one per row: a round trip per row would be
+    /// about 2M round trips over the relay. `?3..` are the chunk's `local_seq`s: at most [`CHUNK_ROWS`] (500), so
+    /// with the two others well under SQLite's 999-variable floor.
+    fn update_sql(&self, seq_count: usize) -> String {
+        let seqs = (0..seq_count).map(|i| format!("?{}", i + 3)).collect::<Vec<_>>().join(", ");
+        let column = self.column;
+        format!(
+            "UPDATE sync_row SET {column} = ?1 \
+             WHERE device_id = ?2 AND row_type = 'items' AND {column} IS NULL AND local_seq IN ({seqs})"
+        )
+    }
+}
+
+/// The `kind_tag` pass, the apps' and the runner's.
+pub(crate) static KIND_PASS: Pass = Pass {
+    column: "kind_tag",
+    version: KIND_BACKFILL_VERSION,
+    kv_prefix: "kind_backfill",
+    done_key: KIND_BACKFILL_DONE_KEY,
+    claim_row_type: ROW_TYPE_KIND_BACKFILL_CLAIM,
+    chunk_sql: CHUNK_SQL,
+    column_seen: &KIND_TAG_COLUMN_SEEN,
+    tag: item_payload_kind_tag,
+};
 
 /// A hard stop past the budget for a relay call that never returns, as `CATCH_UP_BACKSTOP_SLACK`: what was saved
 /// before it stays, and the step returns an error.
 pub(crate) const BACKSTOP_SLACK: Duration = Duration::from_secs(3);
-
-/// kv per peer: how far the backfill has walked that peer's rows (`local_seq`), or `done` at its top.
-fn kind_backfill_peer_key(peer: &str) -> String {
-    format!("kind_backfill:{KIND_BACKFILL_VERSION}:{peer}")
-}
 
 /// Rows one chunk reads (and at most updates) before the pause.
 const CHUNK_ROWS: i64 = 500;
@@ -78,19 +132,6 @@ fn claim_is_fresh(age_ms: i64) -> bool {
 const CHUNK_SQL: &str = "SELECT local_seq, ciphertext FROM sync_row \
      WHERE device_id = ?1 AND local_seq > ?2 AND local_seq <= ?3 AND row_type = 'items' AND kind_tag IS NULL \
      ORDER BY local_seq LIMIT ?4";
-
-/// Tags one chunk's rows of one kind by primary key (`device_id` plus each `local_seq`), only while each is still an
-/// untagged `items` row: running again, or two devices at once, changes nothing, and a row tagged since the chunk
-/// was read keeps its tag. One statement per distinct tag in a chunk, not one per row: a round trip per row would be
-/// about 2M round trips over the relay. `?3..` are the chunk's `local_seq`s: at most [`CHUNK_ROWS`] (500), so with
-/// the two others well under SQLite's 999-variable floor.
-fn update_sql(seq_count: usize) -> String {
-    let seqs = (0..seq_count).map(|i| format!("?{}", i + 3)).collect::<Vec<_>>().join(", ");
-    format!(
-        "UPDATE sync_row SET kind_tag = ?1 \
-         WHERE device_id = ?2 AND row_type = 'items' AND kind_tag IS NULL AND local_seq IN ({seqs})"
-    )
-}
 
 const _: () = assert!(CHUNK_ROWS + 2 <= 999, "a chunk's UPDATE must stay under SQLite's variable limit");
 
@@ -218,16 +259,29 @@ pub async fn kind_backfill_step(
     own_device_id: &str,
     budget: Duration,
 ) -> Result<KindBackfillProgress, SyncEngineError> {
-    if let Some(done) = store.get_meta(KIND_BACKFILL_DONE_KEY).map_err(local_err)?.as_deref().and_then(finished_progress) {
+    pass_step(&KIND_PASS, conn, group_key, store, own_device_id, budget).await
+}
+
+/// One bounded step of `pass` ([`kind_backfill_step`] for [`KIND_PASS`]).
+pub(crate) async fn pass_step(
+    pass: &Pass,
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    own_device_id: &str,
+    budget: Duration,
+) -> Result<KindBackfillProgress, SyncEngineError> {
+    if let Some(done) = store.get_meta(pass.done_key).map_err(local_err)?.as_deref().and_then(|v| finished_progress(pass, v)) {
         return Ok(done);
     }
-    match tokio::time::timeout(budget + BACKSTOP_SLACK, step(conn, group_key, store, own_device_id, budget)).await {
+    match tokio::time::timeout(budget + BACKSTOP_SLACK, step(pass, conn, group_key, store, own_device_id, budget)).await {
         Ok(result) => result,
-        Err(_) => Err(SyncEngineError::Query("kind_tag backfill: a relay call took too long".into())),
+        Err(_) => Err(SyncEngineError::Query(format!("{} backfill: a relay call took too long", pass.column))),
     }
 }
 
 async fn step(
+    pass: &Pass,
     conn: &Connection,
     group_key: &GroupKey,
     store: &Store,
@@ -236,15 +290,15 @@ async fn step(
 ) -> Result<KindBackfillProgress, SyncEngineError> {
     // Without the column there is nothing to write into; a later step tries again. Once this process has seen
     // the column (the latch `ensure_content_schema` sets), a step does no PRAGMA.
-    if !KIND_TAG_COLUMN_SEEN.get() {
-        if !ensure_kind_tag_column(conn).await {
+    if !pass.column_seen.get() {
+        if !ensure_sync_row_column(conn, pass.column).await {
             return Ok(KindBackfillProgress::default());
         }
-        KIND_TAG_COLUMN_SEEN.set();
+        pass.column_seen.set();
     }
     let deadline = Instant::now() + budget;
     let mut undecryptable = store
-        .get_meta(&kind_backfill_undecryptable_key())
+        .get_meta(&pass.undecryptable_key())
         .map_err(local_err)?
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0);
@@ -257,7 +311,7 @@ async fn step(
     let mut walks = Vec::with_capacity(peers.len());
     for peer in peers {
         let end = peer_end(conn, &peer).await?;
-        let after = match store.get_meta(&kind_backfill_peer_key(&peer)).map_err(local_err)?.as_deref() {
+        let after = match store.get_meta(&pass.peer_key(&peer)).map_err(local_err)?.as_deref() {
             Some("done") => end,
             Some(seq) => seq.parse::<i64>().unwrap_or(0),
             None => 0,
@@ -271,32 +325,225 @@ async fn step(
         if !peer_has_marker(conn, own_device_id, ROW_TYPE_ITEMS_CAPABILITY).await? {
             return Ok(progress(&walks, undecryptable, false));
         }
-        if !claims_ignored() && another_fresh_claim(conn, &walks, own_device_id).await? {
+        if !claims_ignored() && another_fresh_claim(pass, conn, &walks, own_device_id).await? {
             return Ok(progress(&walks, undecryptable, false));
         }
-        refresh_marker(conn, group_key, own_device_id, ROW_TYPE_KIND_BACKFILL_CLAIM).await?;
+        refresh_marker(conn, group_key, own_device_id, pass.claim_row_type).await?;
         let mut moved = false;
         for walk in walks.iter_mut() {
-            if !walk_peer(conn, group_key, store, walk, deadline, &mut moved, &mut undecryptable).await? {
+            if !walk_peer(pass, conn, group_key, store, walk, deadline, &mut moved, &mut undecryptable).await? {
                 return Ok(progress(&walks, undecryptable, false));
             }
         }
     }
 
     for walk in &walks {
-        store.set_meta(&kind_backfill_peer_key(&walk.peer), "done").map_err(local_err)?;
+        store.set_meta(&pass.peer_key(&walk.peer), "done").map_err(local_err)?;
     }
     let done = progress(&walks, undecryptable, true);
     store
-        .set_meta(KIND_BACKFILL_DONE_KEY, &format!("{KIND_BACKFILL_VERSION}:{}:{}", done.total, done.undecryptable))
+        .set_meta(pass.done_key, &format!("{}:{}:{}", pass.version, done.total, done.undecryptable))
         .map_err(local_err)?;
     Ok(done)
 }
 
+/// Why a runner backfill run stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackfillStop {
+    /// Every position was walked.
+    Finished,
+    /// The total budget was spent (or too little was left to start another step).
+    Budget,
+    /// Two steps in a row moved nothing: another device's fresh claim holds the walk.
+    ClaimHeld,
+    /// The pass was not run at all (the runner's `backfill --slice-only` skips the kind pass). No pass returns it.
+    Skipped,
+}
+
+/// A step that fails is retried this many times in a row (same store: progress is saved per chunk) before the run
+/// gives up with the last error.
+const STEP_RETRIES: u32 = 3;
+
+/// Below this much of the total budget left, no new step starts.
+pub(crate) const MIN_STEP_REMAINING: Duration = Duration::from_secs(10);
+
+/// The pause before retry `n` (1-based): 1 s, 2 s, 4 s. None in tests.
+fn retry_pause(n: u32) -> Duration {
+    if cfg!(test) {
+        Duration::ZERO
+    } else {
+        Duration::from_secs(1 << (n - 1).min(2))
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: how many of the next steps fail with a relay error before one is allowed to run.
+    pub(crate) static TEST_FAIL_STEPS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// The cloud runner's one-off long run (`runner_kind_backfill`): [`kind_backfill_step`] again and again, each for at
+/// most `step_budget` (and no more than what is left of `total_budget`; at least one step always runs), until it
+/// finishes, `total_budget` is spent (no step starts with under [`MIN_STEP_REMAINING`] left), or two steps in a row
+/// move nothing (another device's fresh claim holds the walk: stop and report, never spin). A failed step is retried
+/// up to [`STEP_RETRIES`] times in a row with the same store, then its error is returned; a step that succeeds resets
+/// the count. `on_step` sees each step's progress and the step count so far.
+///
+/// Announces the runner's pull-only markers first (the same single idempotent statement `runner_pull` runs every
+/// time, `DO NOTHING` on conflict, so a marker already there is untouched): without its `items_capability` marker
+/// a step does nothing. A relay still without it after that is an error, not a silent no-op.
+pub(crate) async fn run_runner_backfill(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    device_id: &str,
+    total_budget: Duration,
+    step_budget: Duration,
+    on_step: &mut dyn FnMut(&KindBackfillProgress, usize),
+) -> Result<(KindBackfillProgress, BackfillStop), SyncEngineError> {
+    run_runner_pass(&KIND_PASS, conn, group_key, store, device_id, total_budget, step_budget, on_step).await
+}
+
+/// [`run_runner_backfill`] for any [`Pass`]: the same markers, steps, retries, stall rule and floor.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_runner_pass(
+    pass: &Pass,
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    device_id: &str,
+    total_budget: Duration,
+    step_budget: Duration,
+    on_step: &mut dyn FnMut(&KindBackfillProgress, usize),
+) -> Result<(KindBackfillProgress, BackfillStop), SyncEngineError> {
+    crate::content::ensure_content_schema(conn).await?;
+    crate::content::announce_pull_only_markers(conn, group_key, device_id).await;
+    if !peer_has_marker(conn, device_id, ROW_TYPE_ITEMS_CAPABILITY).await? {
+        return Err(SyncEngineError::Query(format!(
+            "{} backfill: the runner's capability marker is not on the relay",
+            pass.column
+        )));
+    }
+    // The runner's store is new each execution: take the walk's saved position back from the relay.
+    load_cursors(pass, conn, group_key, store, device_id).await;
+    let deadline = Instant::now() + total_budget;
+    let (mut steps, mut stalled, mut prev_done, mut failures) = (0usize, 0u8, 0u64, 0u32);
+    loop {
+        let budget = step_budget.min(deadline.saturating_duration_since(Instant::now()));
+        let result = {
+            #[cfg(test)]
+            let injected = TEST_FAIL_STEPS.with(|c| {
+                let n = c.get();
+                c.set(n.saturating_sub(1));
+                n > 0
+            });
+            #[cfg(not(test))]
+            let injected = false;
+            if injected {
+                Err(SyncEngineError::Query("injected relay error".into()))
+            } else {
+                pass_step(pass, conn, group_key, store, device_id, budget).await
+            }
+        };
+        let p = match result {
+            Ok(p) => {
+                failures = 0;
+                p
+            }
+            Err(e) => {
+                failures += 1;
+                if failures > STEP_RETRIES {
+                    return Err(e);
+                }
+                eprintln!("backfill: {} step failed, retrying ({failures}/{STEP_RETRIES})", pass.name());
+                tokio::time::sleep(retry_pause(failures)).await;
+                continue;
+            }
+        };
+        steps += 1;
+        save_cursors(pass, conn, group_key, store, device_id).await;
+        on_step(&p, steps);
+        if p.finished {
+            return Ok((p, BackfillStop::Finished));
+        }
+        stalled = if p.done > prev_done { 0 } else { stalled + 1 };
+        prev_done = p.done;
+        if stalled >= 2 {
+            return Ok((p, BackfillStop::ClaimHeld));
+        }
+        if deadline.saturating_duration_since(Instant::now()) < MIN_STEP_REMAINING {
+            return Ok((p, BackfillStop::Budget));
+        }
+    }
+}
+
+/// The walk's saved position as the runner's claim row's payload (the claim row of the pass, `local_seq` 0, which
+/// only carries "1" until a runner saves its position there; its `created_at_unix_ms` is what other devices read).
+/// Positions only: no row content, kind or date. Encrypted like every row.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct SavedCursors {
+    /// The pass's version; another version's cursors do not count.
+    v: String,
+    /// kv value per peer key (`local_seq` or `done`).
+    peers: std::collections::BTreeMap<String, String>,
+    /// The done marker, once finished.
+    done: Option<String>,
+    undecryptable: Option<String>,
+}
+
+/// Puts the cursors saved on the relay into `store`, unless it already has a position for the pass (it is not new).
+/// Best effort: a payload that is missing, will not open or is another version's leaves the walk starting at 0,
+/// which is only slower, never wrong (the walk skips rows that already have the column).
+async fn load_cursors(pass: &Pass, conn: &Connection, group_key: &GroupKey, store: &Store, device_id: &str) {
+    let Ok(existing) = store.list_meta_with_prefix(pass.kv_prefix) else { return };
+    if !existing.is_empty() {
+        return;
+    }
+    let Ok(mut rows) = query(conn, CLAIM_PAYLOAD_SQL, params![device_id, pass.claim_row_type]).await else { return };
+    let Ok(Some(row)) = rows.next().await else { return };
+    let Ok(text) = row.get::<String>(0) else { return };
+    let Ok(sealed) = STANDARD.decode(text) else { return };
+    let aad = content_row_aad(device_id, 0, pass.claim_row_type);
+    let Ok(plain) = sync::decrypt_payload(group_key, &sealed, &aad) else { return };
+    let Ok(saved) = serde_json::from_slice::<SavedCursors>(&plain) else { return };
+    if saved.v != pass.version {
+        return;
+    }
+    for (key, value) in saved.peers {
+        let _ = store.set_meta(&key, &value);
+    }
+    if let Some(done) = saved.done {
+        let _ = store.set_meta(pass.done_key, &done);
+    }
+    if let Some(u) = saved.undecryptable {
+        let _ = store.set_meta(&pass.undecryptable_key(), &u);
+    }
+}
+
+/// Saves the walk's position into the runner's claim row after a step (the row `step` refreshed; a step that
+/// walked nothing has none, so nothing is written). Best effort: a failed save costs only a longer next walk.
+async fn save_cursors(pass: &Pass, conn: &Connection, group_key: &GroupKey, store: &Store, device_id: &str) {
+    let prefix = format!("{}:{}:", pass.kv_prefix, pass.version);
+    let Ok(list) = store.list_meta_with_prefix(&prefix) else { return };
+    let saved = SavedCursors {
+        v: pass.version.to_string(),
+        peers: list.into_iter().collect(),
+        done: store.get_meta(pass.done_key).ok().flatten(),
+        undecryptable: store.get_meta(&pass.undecryptable_key()).ok().flatten(),
+    };
+    let Ok(json) = serde_json::to_vec(&saved) else { return };
+    let aad = content_row_aad(device_id, 0, pass.claim_row_type);
+    let sealed = STANDARD.encode(sync::encrypt_payload(group_key, &json, &aad));
+    let _ = execute(conn, SAVE_CURSORS_SQL, params![sealed.as_str(), device_id, pass.claim_row_type]).await;
+}
+
+const CLAIM_PAYLOAD_SQL: &str = "SELECT ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq = 0 AND row_type = ?2";
+const SAVE_CURSORS_SQL: &str = "UPDATE sync_row SET ciphertext = ?1 WHERE device_id = ?2 AND local_seq = 0 AND row_type = ?3";
+
 /// The progress a `kind_backfill_done` value records, or `None` when it is another version's (walk again).
-fn finished_progress(value: &str) -> Option<KindBackfillProgress> {
+fn finished_progress(pass: &Pass, value: &str) -> Option<KindBackfillProgress> {
     let mut parts = value.split(':');
-    if parts.next() != Some(KIND_BACKFILL_VERSION) {
+    if parts.next() != Some(pass.version) {
         return None;
     }
     let mut numbers = parts.map(|p| p.parse::<u64>().unwrap_or(0));
@@ -325,10 +572,10 @@ async fn peer_end(conn: &Connection, peer: &str) -> Result<i64, SyncEngineError>
 
 /// Whether a device other than this one claimed the backfill less than [`CLAIM_FRESH_MS`] ago (and not more than
 /// [`CLAIM_SKEW_MS`] in the future).
-async fn another_fresh_claim(conn: &Connection, walks: &[Walk], own_device_id: &str) -> Result<bool, SyncEngineError> {
+async fn another_fresh_claim(pass: &Pass, conn: &Connection, walks: &[Walk], own_device_id: &str) -> Result<bool, SyncEngineError> {
     let now = now_unix_ms();
     for walk in walks.iter().filter(|w| w.peer != own_device_id) {
-        let mut rows = query(conn, CLAIM_SQL, params![walk.peer.as_str(), ROW_TYPE_KIND_BACKFILL_CLAIM]).await?;
+        let mut rows = query(conn, CLAIM_SQL, params![walk.peer.as_str(), pass.claim_row_type]).await?;
         if let Some(row) = rows.next().await.map_err(relay_err)? {
             let at: i64 = row.get(0).map_err(relay_err)?;
             if claim_is_fresh(now.saturating_sub(at)) {
@@ -340,15 +587,17 @@ async fn another_fresh_claim(conn: &Connection, walks: &[Walk], own_device_id: &
 }
 
 /// The tag for one `items` row, or `None` when it does not open or decode.
-fn row_tag(group_key: &GroupKey, peer: &str, local_seq: i64, ciphertext: &str) -> Option<String> {
+fn row_tag(pass: &Pass, group_key: &GroupKey, peer: &str, local_seq: i64, ciphertext: &str) -> Option<String> {
     let sealed = STANDARD.decode(ciphertext).ok()?;
     let plaintext = sync::decrypt_payload(group_key, &sealed, &content_row_aad(peer, local_seq, ROW_TYPE_ITEMS)).ok()?;
-    item_payload_kind_tag(group_key, &plaintext)
+    (pass.tag)(group_key, &plaintext)
 }
 
 /// One peer's walk, chunk by chunk from its saved progress, saved after every chunk is written (and at the end of
 /// every window). `Ok(true)`: done; `Ok(false)`: `deadline` passed (after at least one chunk or window this step).
+#[allow(clippy::too_many_arguments)]
 async fn walk_peer(
+    pass: &Pass,
     conn: &Connection,
     group_key: &GroupKey,
     store: &Store,
@@ -358,7 +607,7 @@ async fn walk_peer(
     undecryptable: &mut u64,
 ) -> Result<bool, SyncEngineError> {
     let (chunk_rows, span, pause) = pace();
-    let key = kind_backfill_peer_key(&walk.peer);
+    let key = pass.peer_key(&walk.peer);
     loop {
         if walk.after >= walk.end {
             store.set_meta(&key, "done").map_err(local_err)?;
@@ -370,7 +619,7 @@ async fn walk_peer(
         let window_end = walk.after.saturating_add(span.max(1)).min(walk.end);
         let chunk: Vec<(i64, String)> = {
             let mut rows =
-                query(conn, CHUNK_SQL, params![walk.peer.as_str(), walk.after, window_end, chunk_rows]).await?;
+                query(conn, pass.chunk_sql, params![walk.peer.as_str(), walk.after, window_end, chunk_rows]).await?;
             let mut out = Vec::new();
             while let Some(row) = rows.next().await.map_err(relay_err)? {
                 out.push((row.get(0).map_err(relay_err)?, row.get(1).map_err(relay_err)?));
@@ -387,7 +636,7 @@ async fn walk_peer(
         let mut by_tag: std::collections::BTreeMap<String, Vec<i64>> = std::collections::BTreeMap::new();
         let mut chunk_undecryptable = 0u64;
         for (local_seq, ciphertext) in &chunk {
-            match row_tag(group_key, &walk.peer, *local_seq, ciphertext) {
+            match row_tag(pass, group_key, &walk.peer, *local_seq, ciphertext) {
                 Some(tag) => by_tag.entry(tag).or_default().push(*local_seq),
                 // Left NULL for good (the pull still fetches it), and counted.
                 None => chunk_undecryptable += 1,
@@ -398,14 +647,14 @@ async fn walk_peer(
             values.push(tag.into());
             values.push(walk.peer.as_str().into());
             values.extend(seqs.into_iter().map(libsql::Value::Integer));
-            execute(conn, &update_sql(values.len() - 2), libsql::params::Params::Positional(values)).await?;
+            execute(conn, &pass.update_sql(values.len() - 2), libsql::params::Params::Positional(values)).await?;
         }
         // The chunk is written: its progress is saved before the next one is read, so a step cut short (or a
-        // relay error mid-chunk) re-reads at most this chunk, whose tagged rows the `kind_tag IS NULL` read skips.
+        // relay error mid-chunk) re-reads at most this chunk, whose tagged rows the `IS NULL` read skips.
         if chunk_undecryptable > 0 {
             *undecryptable += chunk_undecryptable;
             store
-                .set_meta(&kind_backfill_undecryptable_key(), &undecryptable.to_string())
+                .set_meta(&pass.undecryptable_key(), &undecryptable.to_string())
                 .map_err(local_err)?;
         }
         walk.after = if full { last_seq.unwrap_or(window_end) } else { window_end };
@@ -1231,5 +1480,218 @@ mod tests {
 
     async fn count_untagged(conn: &Connection) -> i64 {
         count(conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await
+    }
+    // ---- The cloud runner's one-off, long run ----
+
+    const RUNNER: &str = "dev-runner";
+
+    /// The fixture plus the runner's own `items` rows (NULL), as a runner that has pushed before has.
+    async fn runner_fixture(conn: &Connection, key: &GroupKey) {
+        fixture(conn, key).await;
+        for seq in 1..=10 {
+            seed(conn, key, RUNNER, seq, ROW_TYPE_ITEMS, &item_json("capture", &format!("runner {seq}")), None).await;
+        }
+    }
+
+    async fn runner_run(
+        conn: &Connection,
+        key: &GroupKey,
+        store: &Store,
+        total: Duration,
+        step: Duration,
+    ) -> (KindBackfillProgress, usize) {
+        let mut steps = 0;
+        let (p, _) = crate::runner_kind_backfill_observed_with_connection(conn, key, store, RUNNER, total, step, &mut |_, n| steps = n)
+            .await
+            .unwrap();
+        (p, steps)
+    }
+
+    // (a)
+    #[tokio::test]
+    async fn the_runner_backfill_tags_every_row_of_other_devices_and_its_own() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        let store = Store::open_in_memory().unwrap();
+
+        let p = crate::runner_kind_backfill_with_connection(&conn, &key, &store, RUNNER, LONG, LONG).await.unwrap();
+
+        assert!(p.finished);
+        assert_eq!(p.undecryptable, 0);
+        assert_eq!(p.total, (3 * ROWS_PER_DEVICE + 10) as u64);
+        assert_eq!(p.done, p.total);
+        assert_eq!(count_untagged(&conn).await, 0);
+        // Meetings stay untagged; the runner's rows carry the capture tag.
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND kind_tag IS NOT NULL").await, 0);
+        let capture = sync::kind_tag(&key, "capture");
+        assert_eq!(
+            count(&conn, &format!("SELECT COUNT(*) FROM sync_row WHERE device_id = '{RUNNER}' AND row_type = 'items' AND kind_tag = '{capture}'")).await,
+            10
+        );
+    }
+
+    // (b)
+    #[tokio::test]
+    async fn a_fresh_claim_by_another_device_stops_the_runner_backfill_without_looping() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        claim_at(&conn, &key, "dev-b", now_unix_ms() - 60_000).await;
+        let store = Store::open_in_memory().unwrap();
+        let untagged = count_untagged(&conn).await;
+
+        let (p, steps) = runner_run(&conn, &key, &store, LONG, LONG).await;
+
+        assert!(!p.finished);
+        assert_eq!(p.done, 0);
+        assert_eq!(steps, 2, "two steps without progress, then it stops");
+        assert_eq!(count_untagged(&conn).await, untagged);
+        assert_eq!(claim_of(&conn, RUNNER).await, None, "it never took the claim");
+    }
+
+    // (c)
+    #[tokio::test]
+    async fn a_spent_total_budget_returns_unfinished_with_progress_and_a_second_call_completes() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+
+        let (p, _) = runner_run(&conn, &key, &Store::open_in_memory().unwrap(), Duration::ZERO, Duration::ZERO).await;
+        assert!(!p.finished);
+        assert!(p.done > 0 && p.done < p.total, "one step moved, not all: {p:?}");
+        let left = count_untagged(&conn).await;
+        assert!(left > 0);
+
+        // A new store (a new process): it walks again, skipping the rows already tagged.
+        let second = crate::runner_kind_backfill_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG)
+            .await
+            .unwrap();
+        assert!(second.finished);
+        assert_eq!(count_untagged(&conn).await, 0);
+    }
+
+    // (d)
+    #[tokio::test]
+    async fn the_runners_marker_is_pushed_once_and_a_second_call_does_not_duplicate_it() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        let markers = format!("SELECT COUNT(*) FROM sync_row WHERE device_id = '{RUNNER}' AND row_type = '{ROW_TYPE_ITEMS_CAPABILITY}'");
+        let stamp = format!("SELECT created_at_unix_ms FROM sync_row WHERE device_id = '{RUNNER}' AND row_type = '{ROW_TYPE_ITEMS_CAPABILITY}'");
+        assert_eq!(count(&conn, &markers).await, 0);
+
+        let _ = runner_run(&conn, &key, &Store::open_in_memory().unwrap(), Duration::ZERO, Duration::ZERO).await;
+        assert_eq!(count(&conn, &markers).await, 1);
+        let all_five = format!("SELECT COUNT(*) FROM sync_row WHERE device_id = '{RUNNER}' AND local_seq = 0 AND row_type IN ('items_capability', 'topics_capability', 'topic_page_capability', 'topic_snapshot_capability', 'client_controls_capability')");
+        assert_eq!(count(&conn, &all_five).await, 5, "all five pull-only markers are announced");
+        let first = count(&conn, &stamp).await;
+
+        crate::runner_kind_backfill_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG).await.unwrap();
+        assert_eq!(count(&conn, &markers).await, 1);
+        // The unchanged timestamp is what proves DO NOTHING (a DO UPDATE would move it to now).
+        assert_eq!(count(&conn, &stamp).await, first, "an existing marker is left as it is");
+    }
+
+    #[tokio::test]
+    async fn a_step_that_fails_twice_then_succeeds_still_finishes() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        TEST_FAIL_STEPS.with(|c| c.set(2));
+        let p = crate::runner_kind_backfill_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG).await.unwrap();
+        assert!(p.finished);
+        assert_eq!(count_untagged(&conn).await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_fourth_consecutive_failure_returns_the_error() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        TEST_FAIL_STEPS.with(|c| c.set(4));
+        let r = crate::runner_kind_backfill_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG).await;
+        assert!(r.is_err());
+        TEST_FAIL_STEPS.with(|c| c.set(0));
+    }
+
+    #[tokio::test]
+    async fn a_success_resets_the_failure_count() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        let store = Store::open_in_memory().unwrap();
+        // 3 failures, a success, then 3 more would exceed 3 only if the count were not reset.
+        let mut seen = 0;
+        TEST_FAIL_STEPS.with(|c| c.set(3));
+        let r = crate::runner_kind_backfill_observed_with_connection(&conn, &key, &store, RUNNER, LONG, Duration::ZERO, &mut |_, _| {
+            seen += 1;
+            if seen == 1 {
+                TEST_FAIL_STEPS.with(|c| c.set(3));
+            }
+        })
+        .await;
+        TEST_FAIL_STEPS.with(|c| c.set(0));
+        assert!(r.unwrap().0.finished);
+    }
+
+    // I2
+    #[tokio::test]
+    async fn a_zero_step_budget_still_walks_to_the_end_one_chunk_per_step() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        let (p, steps) = runner_run(&conn, &key, &Store::open_in_memory().unwrap(), LONG, Duration::ZERO).await;
+        assert!(p.finished);
+        assert!(steps > 2, "steps {steps}");
+        assert_eq!(count_untagged(&conn).await, 0);
+    }
+
+    #[tokio::test]
+    async fn the_stop_reason_says_finished_budget_or_claim_held() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        let budget = crate::runner_kind_backfill_observed_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, Duration::ZERO, Duration::ZERO, &mut |_, _| {})
+            .await
+            .unwrap()
+            .1;
+        assert_eq!(budget, BackfillStop::Budget);
+        let finished = crate::runner_kind_backfill_observed_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, Duration::ZERO, &mut |_, _| {})
+            .await
+            .unwrap()
+            .1;
+        assert_eq!(finished, BackfillStop::Finished);
+
+    }
+
+    #[tokio::test]
+    async fn a_held_claim_reports_claim_held() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        claim_at(&conn, &key, "dev-b", now_unix_ms() - 60_000).await;
+        let mut steps = 0;
+        let r = crate::runner_kind_backfill_observed_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG, &mut |_, n| steps = n)
+            .await
+            .unwrap();
+        assert_eq!(r.1, BackfillStop::ClaimHeld);
+        assert_eq!(steps, 2);
+    }
+
+    #[tokio::test]
+    async fn no_step_starts_with_under_10_s_of_the_total_budget_left() {
+        small_pace();
+        let (_dir, _db, conn, key) = relay().await;
+        runner_fixture(&conn, &key).await;
+        let mut steps = 0;
+        let (p, stop) = crate::runner_kind_backfill_observed_with_connection(
+            &conn, &key, &Store::open_in_memory().unwrap(), RUNNER, Duration::from_secs(5), Duration::ZERO, &mut |_, n| steps = n,
+        )
+        .await
+        .unwrap();
+        assert!(!p.finished);
+        assert_eq!(steps, 1);
+        assert_eq!(stop, BackfillStop::Budget);
     }
 }

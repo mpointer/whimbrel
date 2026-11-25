@@ -169,6 +169,7 @@ pub fn delete_client(
             ItemKind::Episode => store.client_item_exists(Some(ClientItemKind::Episode), &item.id),
             ItemKind::Conversation => store.client_item_exists(Some(ClientItemKind::Conversation), &item.id),
             ItemKind::Step => store.client_item_exists(Some(ClientItemKind::Step), &item.id),
+            ItemKind::McpItem => store.client_item_exists(Some(ClientItemKind::McpItem), &item.id),
         };
         if !matches!(still_here, Ok(false)) {
             tally.fail(item.kind);
@@ -208,6 +209,7 @@ pub fn delete_client(
             ItemKind::Conversation => {
                 row_id.and_then(|_| store.delete_client_item(ClientItemKind::Conversation, &item.id))
             }
+            ItemKind::McpItem => row_id.and_then(|_| store.delete_client_item(ClientItemKind::McpItem, &item.id)),
         };
         match done {
             Ok(Some(outcome)) => tally.deleted(item.kind, outcome),
@@ -1185,6 +1187,44 @@ mod tests {
             }
         }
         hits
+    }
+
+    #[test]
+    fn deleting_a_ticked_added_item_removes_it_and_counts_it() {
+        let e = env(Some("dev-a"));
+        let a = e.store.create_seed_topic(NAME, &[], None).unwrap();
+        let ticked = crate::test_store::add_mcp_item(&e.store, "a", &format!("{NAME} renewal"), "numbers", None);
+        let unticked = crate::test_store::add_mcp_item(&e.store, "b", "Notes", &format!("call {NAME} back"), None);
+        let inv = crate::client_inventory::inventory(&e.store, &a.key).unwrap();
+        let pick: Vec<ClientItem> = inv.possible.iter().filter(|p| p.kind == ItemKind::McpItem && p.id == ticked.to_string()).cloned().collect();
+        assert_eq!(pick.len(), 1);
+        let outbox = count(&e, "SELECT COUNT(*) FROM sync_outbox");
+        let sel = DeleteSelection { key: a.key.clone(), include_possible: pick, delete_exports: false, vault: None, vault_off: false };
+        let r = run(&e, &sel, &[]).unwrap();
+        assert!(r.complete(), "{r:?}");
+        assert_eq!(r.counts.iter().find(|(k, _)| *k == ItemKind::McpItem).map(|x| x.1), Some(1), "{r:?}");
+        assert_eq!(r.local_only.iter().find(|(k, _)| *k == ItemKind::McpItem).map(|x| x.1), Some(1), "{r:?}");
+        assert_eq!(count(&e, &format!("SELECT COUNT(*) FROM items WHERE id = {ticked}")), 0);
+        assert_eq!(count(&e, &format!("SELECT COUNT(*) FROM items WHERE id = {unticked}")), 1, "unticked stays");
+        assert_eq!(count(&e, "SELECT COUNT(*) FROM sync_outbox"), outbox, "no tombstone");
+        // The same item, sent again: not accepted.
+        { let live: &memory::Store = &e.store; while live.list_mcp_client_tokens().unwrap().len() < 12 { live.insert_mcp_client_token(&memory::NewMcpClientToken { name: "t".into(), token_hash: "h".into(), token_salt: "s".into(), scopes: vec!["write".into()] }).unwrap(); } }
+        let w = memory::mcp_items::McpWriter { token_id: 1, client_name: "Claude Code".into() };
+        let clock = memory::mcp_items::WriteClock { now_unix_ms: 1_795_269_780_000, day_start_unix_ms: 1_795_219_200_000 };
+        let again = memory::mcp_items::NewMcpItem {
+            label: "outlook-work".into(),
+            external_id: "a".into(),
+            kind: "email".into(),
+            ts: "2026-11-21T14:03:00Z".into(),
+            title: Some(format!("{NAME} renewal")),
+            text: "numbers".into(),
+            url: None,
+            people: vec![],
+        };
+        let rep = e.store.upsert_mcp_items(&w, &[again], &Default::default(), clock).unwrap();
+        // It reads as an ordinary create to the client (security review M7), and is not stored.
+        assert_eq!(rep.results[0].status, memory::mcp_items::McpItemStatus::Created);
+        assert_eq!(count(&e, "SELECT COUNT(*) FROM items WHERE kind = 'mcp_item' AND external_id = 'a'"), 0, "and not stored");
     }
 
     #[test]

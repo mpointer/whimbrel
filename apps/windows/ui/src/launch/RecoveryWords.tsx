@@ -42,21 +42,29 @@ export function WordsQr({ words, px }: { words: readonly string[]; px: number })
   );
 }
 
+/** The two sentences of the printed page that name what the words open. Left out, the launch's own ("the memory
+ *  database"); the redesigned Settings card passes "your library" ones. */
+export interface PrintCopy {
+  notice: string;
+  footer: string;
+}
+
 /** The printed page (port of the Mac's EncryptionPrintPage): title, the words-are-the-key notice,
  *  the words, the QR at 200 px and the footer. Black on white; only visible in print media. */
-export function PrintPage({ words }: { words: readonly string[] }) {
+export function PrintPage({ words, copy }: { words: readonly string[]; copy?: PrintCopy }) {
   return (
     <div className="print-page" aria-hidden="true">
       <h1>{t("Whimbrel recovery words")}</h1>
       <p className="print-page-notice">
-        {t(
-          "These words are the key itself. Your passphrase does not protect them. Anyone who has these words or this QR code can read the memory database. Write them down or print them, and keep them somewhere safe and offline.",
-        )}
+        {copy?.notice ??
+          t(
+            "These words are the key itself. Your passphrase does not protect them. Anyone who has these words or this QR code can read the memory database. Write them down or print them, and keep them somewhere safe and offline.",
+          )}
       </p>
       <WordsGrid words={words} className="print-page-words" />
       <WordsQr words={words} px={200} />
       <p className="print-page-footer">
-        {t("Keep this page somewhere safe and offline. Anyone who has it can read the memory database of the PC it was made on.")}
+        {copy?.footer ?? t("Keep this page somewhere safe and offline. Anyone who has it can read the memory database of the PC it was made on.")}
       </p>
     </div>
   );
@@ -64,7 +72,7 @@ export function PrintPage({ words }: { words: readonly string[] }) {
 
 /** The print page, beside the app's root so `@media print` can hide everything else. Rendered only
  *  while the words exist, and gone when they are cleared. */
-export function PrintPortal({ words }: { words: readonly string[] }) {
+export function PrintPortal({ words, copy }: { words: readonly string[]; copy?: PrintCopy }) {
   if (typeof document === "undefined") return null;
-  return createPortal(<PrintPage words={words} />, document.body);
+  return createPortal(<PrintPage words={words} copy={copy} />, document.body);
 }

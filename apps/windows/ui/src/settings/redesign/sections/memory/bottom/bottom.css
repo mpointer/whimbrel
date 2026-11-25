@@ -1,0 +1,51 @@
+/* Memory & Privacy, bottom half. New classes only, prefixed rs-membottom-. Tokens only; sizes in rem. */
+.rs-membottom-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--w-space-sm);
+  padding: 0 var(--w-space-md) var(--w-space-sm);
+  min-width: 0;
+}
+.rs-membottom-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  overflow-wrap: anywhere;
+}
+.rs-membottom-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  min-width: 0;
+  padding: var(--w-space-sm) var(--w-space-md);
+}
+.rs-membottom-block p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+/* A live region that is always in the page (never display:none, which would hide it from a screen reader); it takes no room until it has words. */
+.rs-membottom-announce:empty {
+  padding: 0;
+}
+.rs-membottom-announce {
+  padding: var(--w-space-sm) var(--w-space-lg);
+  background: var(--color-background-card);
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+}
+
+/* The encrypt wizard inside the Library encryption card: flat steps divided by hairlines, not cards inside a card. */
+.setup-embedded {
+  gap: var(--w-space-md);
+}
+.setup-embedded .setup-title,
+.setup-embedded .setup-step > h5 {
+  margin: 0;
+  font-size: var(--w-text-body-size);
+  font-weight: 600;
+}
+.setup-embedded .setup-step {
+  border-top: var(--sx-line);
+  padding-top: var(--w-space-md);
+}

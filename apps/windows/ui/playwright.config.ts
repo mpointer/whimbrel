@@ -11,6 +11,15 @@ export default defineConfig({
   timeout: 60_000,
   workers: 4,
   reporter: [["list"]],
-  use: { channel: "msedge", baseURL: `http://localhost:${port}`, reducedMotion: "reduce" },
+  // Headless, and with no accessibility tree on CI: the Windows runner runs in a person's desktop session, and each test page
+  // (titled "Whimbrel") taking focus had Narrator say "Whimbrel" over and over on that PC. The tests query the DOM, not the
+  // browser's accessibility tree, so they don't need it.
+  use: {
+    channel: process.env.MATRIX_CHANNEL || "msedge",
+    baseURL: `http://localhost:${port}`,
+    reducedMotion: "reduce",
+    headless: true,
+    launchOptions: { args: process.env.CI ? ["--disable-renderer-accessibility"] : [] },
+  },
   webServer: { command: `npx vite preview --port ${port} --strictPort`, url: `http://localhost:${port}`, reuseExistingServer: !process.env.CI, timeout: 60_000 },
 });

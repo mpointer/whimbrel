@@ -24,6 +24,13 @@ pub enum ApiError {
     BudgetSpent(crate::budget::BudgetSpent),
     /// The thing asked about does not exist (for example a client that is not a live seed).
     NotFound,
+    /// A filter on a sourced call is not valid (a blank app or person, a person key with no person, an empty
+    /// date range): nothing was read or sent. Envelope kind `invalid_filter`.
+    InvalidFilter,
+    /// A read of the store failed part way (a database error such as a busy file) so the call stopped rather
+    /// than answer from what could still be read. The envelope is a bare NULL at the C layer, the same as any
+    /// other internal failure; a Rust shell shows its own store-failure message.
+    StoreFailure,
 }
 
 impl From<crate::budget::BudgetSpent> for ApiError {
@@ -39,6 +46,12 @@ impl From<llm::SpendCapError> for ApiError {
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
+
+/// The `invalid_filter` envelope: a sourced call was given a filter that could widen a search, so nothing
+/// was read or sent. Additive: no existing call returns this kind.
+pub fn invalid_filter_error_envelope() -> String {
+    r#"{"ok":false,"error":{"kind":"invalid_filter"}}"#.to_string()
+}
 
 /// Wraps an already-serialized JSON payload as `{"ok":true,"data":<payload>}`.
 /// `data_json` must already be valid JSON (a serialized struct), not raw text.
@@ -127,9 +140,9 @@ pub fn budget_spent_error_envelope(err: &crate::budget::BudgetSpent) -> String {
     )
 }
 
-/// Encodes a typed result as the envelope. Returns `None` only if `data` fails to
-/// serialize — the C layer maps that to a bare NULL, its existing convention for
-/// "internal encoding failure" as distinct from a well-formed `{"ok":false,…}`.
+/// Encodes a typed result as the envelope. Returns `None` if `data` fails to serialize, or for
+/// [`ApiError::StoreFailure`]: the C layer maps that to a bare NULL, its existing convention for
+/// "internal failure" as distinct from a well-formed `{"ok":false,…}`.
 pub fn envelope_json<T: Serialize>(result: &ApiResult<T>) -> Option<String> {
     match result {
         Ok(data) => serde_json::to_string(data)
@@ -139,6 +152,9 @@ pub fn envelope_json<T: Serialize>(result: &ApiResult<T>) -> Option<String> {
         Err(ApiError::ProviderFailure) => Some(provider_failure_envelope()),
         Err(ApiError::BudgetSpent(err)) => Some(budget_spent_error_envelope(err)),
         Err(ApiError::NotFound) => Some(r#"{"ok":false,"error":{"kind":"not_found"}}"#.to_string()),
+        Err(ApiError::InvalidFilter) => Some(invalid_filter_error_envelope()),
+        // The C layer's convention for an internal failure (see above): a bare NULL.
+        Err(ApiError::StoreFailure) => None,
     }
 }
 

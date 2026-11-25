@@ -221,7 +221,7 @@ enum SkinDefaults {
     }
 
     static let whimbrel = Skin(
-        id: "whimbrel", name: "Whimbrel", author: "Whimbrel",
+        id: "whimbrel", name: "Classic", author: "Whimbrel",
         paletteIds: ["default", "slate", "sepia"],
         typography: SkinTypography(
             display: SkinFace(.newYork, .semibold), body: SkinFace(.sfPro),

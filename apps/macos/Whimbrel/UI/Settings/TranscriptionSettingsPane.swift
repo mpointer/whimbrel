@@ -19,7 +19,7 @@ struct TranscriptionSettingsPane: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text("Transcription").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Transcription").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("meetings.transcription")
             Picker("Quality", selection: $quality) {
                 Text("Automatic").tag(TranscriptionQuality.automatic)
                 Text("Better").tag(TranscriptionQuality.better)
@@ -48,7 +48,7 @@ struct TranscriptionSettingsPane: View {
             Button("Choose Model File…") { chooseModel() }
                 .buttonStyle(.whimbrelSecondary)
 
-            Toggle("I have meetings in other languages", isOn: $multilingual)
+            Toggle("I have meetings in other languages", isOn: $multilingual).settingsAnchor("meetings.multilingual")
                 .onChange(of: multilingual) { _, on in
                     UserDefaults.standard.set(on, forKey: AppLanguage.multilingualKey)
                     if on, !ModelDownloadService.allModelsPresent { showModelSetup = true }

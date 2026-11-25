@@ -486,6 +486,7 @@ impl Store {
             ))),
             own_device_id: Default::default(),
             defer_embedding: Default::default(),
+            person_ctx_builds: Default::default(),
             exclusion_cache: Default::default(),
             exclusion_unconfirmed: Default::default(),
             _open: registration,
@@ -505,6 +506,7 @@ impl Store {
             embedder,
             own_device_id: Default::default(),
             defer_embedding: Default::default(),
+            person_ctx_builds: Default::default(),
             exclusion_cache: Default::default(),
             exclusion_unconfirmed: Default::default(),
             _open: registration,
@@ -528,6 +530,7 @@ impl Store {
             embedder,
             own_device_id: Default::default(),
             defer_embedding: Default::default(),
+            person_ctx_builds: Default::default(),
             exclusion_cache: Default::default(),
             exclusion_unconfirmed: Default::default(),
             _open: registration,
@@ -967,6 +970,12 @@ mod tests {
 
     /// Two first-run creates at once (app and slow lane) must not delete each other's temp
     /// file or replace each other's result: both open the same keyed store.
+    ///
+    /// Each connection writes only after every open returned. An open waits up to
+    /// `OPEN_BUSY_TIMEOUT` behind the others' `Store::init`, then hands back the 5 s default
+    /// (the apps set their own). A write straight after its own open raced the opens still
+    /// running and failed with "database is locked" on a loaded Windows runner: the opens
+    /// had all succeeded, only the test's write gave up.
     #[test]
     #[cfg(feature = "sqlcipher")]
     fn concurrent_first_run_creates_all_succeed_on_one_file() {
@@ -980,15 +989,16 @@ mod tests {
                     std::thread::spawn(move || {
                         b.wait();
                         open_keyed_connection(&p, &DbKey::new([8; 32]), &KeyedOpenOptions::default(), &[])
-                            .map(|c| {
-                                c.execute_batch("CREATE TABLE IF NOT EXISTS t(x)").unwrap();
-                            })
                     })
                 })
                 .collect();
-            for h in handles {
-                h.join().unwrap().unwrap_or_else(|e| panic!("round {round}: {e}"));
+            let conns: Vec<Connection> =
+                handles.into_iter().map(|h| h.join().unwrap().unwrap_or_else(|e| panic!("round {round}: {e}"))).collect();
+            // Every connection is a usable store on the one file.
+            for c in &conns {
+                c.execute_batch("CREATE TABLE IF NOT EXISTS t(x)").unwrap_or_else(|e| panic!("round {round}: {e}"));
             }
+            drop(conns);
             assert_eq!(names(dir.path()), vec!["w.sqlite".to_string()], "round {round}");
             drop(open_keyed_connection(&p, &DbKey::new([8; 32]), &KeyedOpenOptions::default(), &[]).unwrap());
         }

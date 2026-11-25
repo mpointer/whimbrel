@@ -192,7 +192,8 @@ pub fn hide(app: &AppHandle) {
 }
 
 fn open(app: &AppHandle) -> tauri::Result<()> {
-    let (w, h) = SIZE;
+    let redesign = app.state::<crate::state::AppState>().settings.lock().unwrap().redesign_enabled();
+    let (w, h) = crate::text_scale::size_for_look(SIZE, redesign);
     let popup = WebviewWindowBuilder::new(app, STILL_HERE, WebviewUrl::App("index.html".into()))
         .title(tr("Still in a meeting?", &[]))
         .inner_size(w, h)
@@ -203,6 +204,11 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
         .focused(false)
         .visible(false)
         .build()?;
+    if redesign {
+        crate::text_scale::place_corner_alert(app, &popup, (w, h), MARGIN)?;
+        crate::text_scale::show_corner_alert(&popup)?;
+        return Ok(());
+    }
     if let Some(monitor) = popup.primary_monitor()? {
         let scale = monitor.scale_factor();
         let area = monitor.work_area();
@@ -211,7 +217,7 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
             (area.position.x, area.position.y, area.size.width, area.size.height),
             (MARGIN * scale).round() as i32,
         );
-        for (label, height) in [(crate::alert::ALERT, 190.0), (crate::question_alert::QUESTION_ALERT, 210.0)] {
+        for (label, height) in [(crate::alert::ALERT, crate::alert::alert_height(app)), (crate::question_alert::QUESTION_ALERT, 210.0)] {
             if app.get_webview_window(label).is_some() {
                 y += ((height + MARGIN) * scale).round() as i32;
             }
@@ -235,7 +241,13 @@ pub async fn still_here_stop(app: AppHandle) -> Result<(), crate::error::Command
     hide(&app);
     let state = app.state::<crate::state::AppState>();
     let meetings = state.meetings()?.clone();
-    tauri::async_runtime::spawn_blocking(move || meetings.stop_quiet().map(|_| ()))
+    // The tray and the in-meeting window follow at once, as after the Stop button (`commands::meetings`), not on the next tick.
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let stopped = meetings.stop_quiet().map(|_| ());
+        crate::tray::refresh(&handle);
+        stopped
+    })
         .await
         .map_err(|e| crate::error::CommandError::store(e.to_string()))?
 }

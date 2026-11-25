@@ -1,0 +1,54 @@
+/* Sync & Devices (redesigned Settings). Tokens only; sizes in rem. */
+.rs-devconn-phone {
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-lg);
+  flex-wrap: wrap;
+}
+.rs-devconn-qr {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--w-space-xs);
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-caption-size);
+  line-height: var(--w-text-caption-line);
+}
+.rs-devconn-qr img {
+  width: 5.25rem;
+  height: 5.25rem;
+  background: var(--color-background-card);
+  border-radius: var(--sx-radius-control);
+}
+.rs-devconn-name {
+  display: flex;
+  gap: var(--w-space-sm);
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+}
+.rs-devconn-name input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.rs-devconn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-sm);
+  align-items: center;
+}
+.rs-devconn-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  width: 100%;
+  min-width: 0;
+}
+.rs-devconn-qr {
+  padding: var(--w-space-sm) var(--w-space-lg) var(--w-space-md);
+  align-items: flex-start;
+}
+.rs-devconn-qr figcaption {
+  margin-top: var(--w-space-xs);
+}

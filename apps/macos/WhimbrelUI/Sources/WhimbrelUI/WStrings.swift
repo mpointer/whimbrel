@@ -191,6 +191,123 @@ public struct WLiveStrings: Sendable {
     )
 }
 
+/// The words Library's Find page and its other views draw themselves (docs/ui-redesign/screens/ask.md). Text that belongs to
+/// one app screen (the notes under an answer, the messages of a failed ask, the line while asking) arrives in the model.
+/// Every field has its English default, so the gallery and the tests need nothing; the app sets each one from its catalog.
+public struct WFindStrings: Sendable {
+    // Library views
+    public var viewSwitchName: String = "Library view"
+    public var viewFind: String = "Find"
+    public var viewRecent: String = "Recent"
+    public var viewEpisodes: String = "Episodes"
+    public var viewDigest: String = "Digest"
+    // Kinds of result
+    public var kindSlide: String = "Slide"
+    public var kindEmailThread: String = "Email thread"
+    public var kindEpisode: String = "Episode"
+    public var kindAutomationRun: String = "Automation run"
+    public var kindMeeting: String = "Meeting"
+    /// What a transcript moment comes from, in the place an app name takes on other cards.
+    public var meetingAudio: String = "Meeting audio"
+    // Header of the results
+    public var resultCount: @Sendable (Int) -> String = { "Results: \($0)" }
+    public var sourceCount: @Sendable (Int) -> String = { $0 == 1 ? "1 source found" : "\($0) sources found" }
+    public var moreMayExist: String = "More may exist"
+    public var orderName: String = "Order"
+    public var orderByDay: String = "By day"
+    public var orderBestFirst: String = "Best matches first"
+    // The Ask row
+    public var askButton: String = "Ask"
+    public var askOnThisMac: String = "Ask, on this Mac"
+    public var askProvider: @Sendable (String) -> String = { "Ask \($0)" }
+    public var askHint: String = "Enter searches. Ask writes an answer from what it finds."
+    public var newConversationShortcut: String = "\u{2318}N"
+    /// Date templates for the day headings (this year, another year). Notation, not words.
+    public static let dayTemplate = "EEEMMMd"
+    public static let dayTemplateWithYear = "yMMMEEEd"
+    public var askShortcutHint: String = "\u{2318}\u{21A9}"
+    // States
+    public var emptyTitle: String = "Find anything you worked on"
+    public var emptyHelp: String = "Type a few words or a question. Results come from this device: meetings, what was on screen, slides, email threads and episodes."
+    public var startersName: String = "Ideas to start with"
+    public var searching: String = "Searching"
+    public var noResultsTitle: String = "Nothing found"
+    public var noResultsHelp: String = "Nothing on this device matches those words. Try fewer words, or a different spelling."
+    public var noResultsWithFilters: @Sendable (String) -> String = { "Nothing matches with these filters on: \($0)." }
+    public var clearFilters: String = "Clear filters"
+    public var searchFailedTitle: String = "The search did not finish"
+    public var noMeaningSearch: String = "The search model is not installed, so results match your words only."
+    public var answeredOnThisMac: String = "Answered on this Mac."
+    /// The same note on an answer opened from a saved conversation: only the saved flag is known, not where.
+    public var answeredByLocalModel: String = "Answered by a local model."
+    public var stoppedNote: String = "Stopped. Your question is back in the field."
+    /// After an ask was held back: the button had said where the answer would come from, and a fresh look at the route says otherwise.
+    public var routeChanged: String = "Nothing was sent. The answer would no longer come from where the Ask button said. The button now shows where it would come from. Check it, then ask again."
+    public var newConversationNote: String = "You changed the filters, so this is a new conversation."
+    // The answer
+    public var answerTitle: String = "Answer"
+    public var fromMemory: String = "From your work memory"
+    public var fromMemoryRange: @Sendable (String) -> String = { "From your work memory, \($0)" }
+    public var copyAnswer: String = "Copy answer"
+    public var copiedAnswer: String = "Copied"
+    public var answersCanBeWrong: String = "Answers can be wrong. Open the sources to check."
+    public var answerIn: @Sendable (String) -> String = { "Answer: \($0)" }
+    public var yourQuestion: @Sendable (String) -> String = { "Your question: \($0)" }
+    public var legacySourcesHeading: String = "Sources"
+    // The time line
+    public var sourcesHeading: String = "Sources for this answer"
+    public var otherResultsHeading: String = "Other results"
+    public var mentionsHeading: @Sendable (String) -> String = { "Mentions of \($0)" }
+    public var mentionsHelp: String = "Screen captures whose text holds the name. They are listed apart from meetings."
+    public var loadMore: String = "Load more"
+    public var loadingMore: String = "Loading more"
+    // Cards
+    public var open: String = "Open"
+    public var opensSavedCapture: String = "Opens the saved capture"
+    public var opensNoteAt: @Sendable (String) -> String = { "Opens the note at \($0)" }
+    public var opensMeeting: String = "Opens the meeting"
+    public var opensEpisode: String = "Opens the episode"
+    public var opensThread: String = "Opens the thread summary"
+    public var noLongerOnDevice: String = "No longer on this device"
+    /// A source whose row could not be read just now: not the same as one that is gone.
+    public var couldNotRead: String = "Could not read this just now."
+    /// The heading of the group those sources sit in on the time line.
+    public var couldNotReadHeading: String = "Could not read just now"
+    public var showMore: String = "Show more"
+    public var showLess: String = "Show less"
+    public var spokenBy: @Sendable (String) -> String = { "Spoken by \($0)" }
+    public var inMeetingTheyAttended: String = "In a meeting they attended"
+    // Follow up and conversations
+    public var followUpPlaceholder: String = "Ask a follow-up question"
+    public var followUpButton: String = "Ask"
+    public var conversationsHeading: String = "Conversations"
+    public var showConversations: String = "Show Conversations"
+    public var hideConversations: String = "Hide Conversations"
+    public var newConversation: String = "New Conversation"
+    public var noConversations: String = "No conversations yet."
+    public var starConversation: String = "Star conversation"
+    public var unstarConversation: String = "Unstar conversation"
+    public var renameConversation: String = "Rename"
+    public var deleteConversation: String = "Delete"
+    /// The reason Delete is off for a conversation that is being answered.
+    public var deleteBusyHint: String = "An answer is being written in this conversation. Delete it when the answer is done."
+    /// The reason the header's Ask button is off while an answer is being written.
+    public var askBusyReason: String = "An answer is being written. Ask again when it is done."
+    // Recent, Episodes and Digest
+    public var showScreenCaptures: String = "Show screen captures"
+    public var showHiddenEpisodes: String = "Show hidden episodes"
+    public var hiddenEpisode: String = "Hidden"
+    public var openInNewWindow: String = "Open in new window"
+    public var forgetMeeting: String = "Forget meeting"
+    public var generateDigest: String = "Generate Today's Digest"
+    public var regenerateDigest: String = "Regenerate today's digest"
+    public var openLoops: String = "Open loops"
+
+    public init() {}
+
+    public static let english = WFindStrings()
+}
+
 /// The words the finished note page and its transcript view draw themselves. Text that belongs to one meeting
 /// (the title, the notices, a placeholder) arrives in the model instead.
 public struct WNoteStrings: Sendable {
@@ -306,7 +423,10 @@ public struct WStrings: Sendable {
     // Capture state
     public var memoryOn: String
     public var memoryOff: String
-    /// "Paused until 10:52". The argument is a clock time the caller formatted.
+    /// Memory is on, but screen text is not being saved (a permission is off, or capture is not running).
+    public var memoryNotCapturing: String
+    /// "Memory paused until 10:52". The argument is a clock time the caller formatted. It says "Memory" because a recording can be
+    /// paused on the same screen, and "Paused" alone would be read as that.
     public var pausedUntil: @Sendable (String) -> String
     public var whatIsCaptured: String
     public var opensPauseChoices: String
@@ -336,6 +456,10 @@ public struct WStrings: Sendable {
     public var selectsThisSource: String
     public var transcriptMoment: String
     public var seenOnScreen: String
+    /// Kind of a source card: an email thread.
+    public var sourceEmail: String
+    /// Kind of a source card: a routine's result.
+    public var sourceRoutineRun: String
     /// The default app name on a source card.
     public var transcript: String
     public var open: String
@@ -367,6 +491,15 @@ public struct WStrings: Sendable {
     // The finished note page and its transcript view
     public var note: WNoteStrings
 
+    // Library: Find, Recent, Episodes and Digest
+    public var find: WFindStrings
+
+    // The menu bar menu, the small alert windows and the hotkey panel
+    public var menu: WMenuStrings
+
+    // The settings parts: nav, rows, secrets, lists, sheets. Defaults to English; the app can leave it out.
+    public var settings: WSettingsStrings
+
     public init(
         recording: String, starting: String, resuming: String, recordingPaused: String, paused: String, processing: String, off: String, problem: String,
         pause: String, resume: String, stop: String,
@@ -375,7 +508,7 @@ public struct WStrings: Sendable {
         seconds: @escaping @Sendable (Int) -> String,
         joinDetails: @escaping @Sendable ([String]) -> String,
         joinDuration: @escaping @Sendable ([String]) -> String,
-        memoryOn: String, memoryOff: String,
+        memoryOn: String, memoryOff: String, memoryNotCapturing: String,
         pausedUntil: @escaping @Sendable (String) -> String,
         whatIsCaptured: String, opensPauseChoices: String,
         consentMessage: String, copyNotice: String, copied: String, done: String, notDone: String,
@@ -384,7 +517,8 @@ public struct WStrings: Sendable {
         timeline: String, now: String,
         whimbrelWrote: @escaping @Sendable (String) -> String,
         sourceNumber: @escaping @Sendable (Int) -> String,
-        selectsThisSource: String, transcriptMoment: String, seenOnScreen: String, transcript: String, open: String,
+        selectsThisSource: String, transcriptMoment: String, seenOnScreen: String,
+        sourceEmail: String = "Email", sourceRoutineRun: String = "Routine run", transcript: String, open: String,
         sourceAt: @escaping @Sendable (String) -> String,
         quoted: @escaping @Sendable (String) -> String,
         cited: String, listening: String, spokenListening: String, spokenCited: String, liveTranscript: String,
@@ -392,8 +526,14 @@ public struct WStrings: Sendable {
         onboarding: WOnboardingStrings,
         home: WHomeStrings,
         live: WLiveStrings,
-        note: WNoteStrings
+        note: WNoteStrings,
+        find: WFindStrings,
+        menu: WMenuStrings,
+        settings: WSettingsStrings = .english
     ) {
+        self.settings = settings
+        self.menu = menu
+        self.find = find
         self.live = live
         self.note = note
         self.starting = starting
@@ -413,6 +553,7 @@ public struct WStrings: Sendable {
         self.joinDetails = joinDetails
         self.joinDuration = joinDuration
         self.memoryOn = memoryOn
+        self.memoryNotCapturing = memoryNotCapturing
         self.memoryOff = memoryOff
         self.pausedUntil = pausedUntil
         self.whatIsCaptured = whatIsCaptured
@@ -432,6 +573,8 @@ public struct WStrings: Sendable {
         self.selectsThisSource = selectsThisSource
         self.transcriptMoment = transcriptMoment
         self.seenOnScreen = seenOnScreen
+        self.sourceEmail = sourceEmail
+        self.sourceRoutineRun = sourceRoutineRun
         self.transcript = transcript
         self.open = open
         self.sourceAt = sourceAt
@@ -458,8 +601,8 @@ public struct WStrings: Sendable {
         seconds: { "\($0) \($0 == 1 ? "second" : "seconds")" },
         joinDetails: { $0.joined(separator: ", ") },
         joinDuration: { $0.joined(separator: " ") },
-        memoryOn: "Memory on", memoryOff: "Memory off",
-        pausedUntil: { "Paused until \($0)" },
+        memoryOn: "Memory on", memoryOff: "Memory off", memoryNotCapturing: "Memory on, but not capturing",
+        pausedUntil: { "Memory paused until \($0)" },
         whatIsCaptured: "What is captured", opensPauseChoices: "Opens pause choices",
         consentMessage: "You are recording. Tell the others before you go on.",
         copyNotice: "Copy notice", copied: "Copied", done: "Done", notDone: "Not done",
@@ -469,6 +612,7 @@ public struct WStrings: Sendable {
         whimbrelWrote: { "Whimbrel wrote: \($0)" },
         sourceNumber: { "Source \($0)" },
         selectsThisSource: "Selects this source", transcriptMoment: "Transcript moment", seenOnScreen: "Seen on screen",
+        sourceEmail: "Email", sourceRoutineRun: "Routine run",
         transcript: "Transcript", open: "Open",
         sourceAt: { "Open source at \($0)" },
         quoted: { "\u{201C}\($0)\u{201D}" },
@@ -478,7 +622,135 @@ public struct WStrings: Sendable {
         onboarding: .english,
         home: .english,
         live: .english,
-        note: .english
+        note: .english,
+        find: .english,
+        menu: .english,
+        settings: .english
+    )
+}
+
+/// The words the menu bar menu, the small alert windows and the hotkey panel draw themselves. Text that
+/// belongs to one situation (a meeting's title, a permission's reason, a time) arrives in the model instead.
+public struct WMenuStrings: Sendable {
+    public var appName: String
+    /// Spoken name of the menu.
+    public var menuName: String
+    public var needsAttention: String
+    public var nextMeeting: String
+    public var workingOn: String
+    /// Spoken names of the recording buttons. "Pause" alone would be ambiguous next to the memory pause.
+    public var pauseRecording: String
+    public var resumeRecording: String
+    public var stopRecording: String
+    /// "Recording: Pricing review". The first value is the state word, the second the meeting's title. Spoken only.
+    public var stateWithTitle: @Sendable (String, String) -> String
+    /// The state words of the recording section, which say a recording is open ("Recording paused", not "Paused").
+    public var recordingProblem: String
+    public var startingRecording: String
+    public var resumingRecording: String
+    /// Under a start whose audio is already on: the recording is running and Stop works once the meeting row is saved.
+    public var stopWaitsForMeeting: String
+    /// The line for a problem when the app gave no reason. It claims only what is known.
+    public var problemUnknown: String
+    /// Which streams are live, under the recording state.
+    public var streamsBoth: String
+    public var streamsMicrophone: String
+    public var streamsSystemAudio: String
+    public var streamsNone: String
+    /// Spoken name of the memory control while paused: "Memory paused until 3:10 PM".
+    public var memoryPausedUntil: @Sendable (String) -> String
+    public var turnOnMemory: String
+    public var turnOffMemory: String
+    public var startMeeting: String
+    public var openBrief: String
+    /// "Open brief for Pricing review".
+    public var openBriefFor: @Sendable (String) -> String
+    /// "Open topic Pricing", the spoken name of the topic chip.
+    public var openTopic: @Sendable (String) -> String
+    public var askAboutWindow: String
+    public var openWhimbrel: String
+    public var settings: String
+    public var quit: String
+    // Alert windows
+    public var cancel: String
+    public var alertWindowName: String
+    // Hotkey panel
+    public var hotkeyWindowName: String
+    public var close: String
+    public var copy: String
+    public var answering: String
+    /// The word on the disabled button that stands where Stop was once a Stop has been asked for and the meeting is still being
+    /// saved. The old menu says the same.
+    public var saving: String
+
+    public init(
+        appName: String, menuName: String, needsAttention: String, nextMeeting: String, workingOn: String,
+        pauseRecording: String, resumeRecording: String, stopRecording: String,
+        stateWithTitle: @escaping @Sendable (String, String) -> String,
+        recordingProblem: String, startingRecording: String, resumingRecording: String, stopWaitsForMeeting: String, problemUnknown: String,
+        streamsBoth: String, streamsMicrophone: String, streamsSystemAudio: String, streamsNone: String,
+        memoryPausedUntil: @escaping @Sendable (String) -> String,
+        turnOnMemory: String, turnOffMemory: String, startMeeting: String, openBrief: String,
+        openBriefFor: @escaping @Sendable (String) -> String,
+        openTopic: @escaping @Sendable (String) -> String,
+        askAboutWindow: String, openWhimbrel: String, settings: String, quit: String,
+        cancel: String, alertWindowName: String, hotkeyWindowName: String, close: String, copy: String, answering: String,
+        saving: String = "Saving\u{2026}"
+    ) {
+        self.saving = saving
+        self.appName = appName
+        self.menuName = menuName
+        self.needsAttention = needsAttention
+        self.nextMeeting = nextMeeting
+        self.workingOn = workingOn
+        self.pauseRecording = pauseRecording
+        self.resumeRecording = resumeRecording
+        self.stopRecording = stopRecording
+        self.stateWithTitle = stateWithTitle
+        self.recordingProblem = recordingProblem
+        self.startingRecording = startingRecording
+        self.resumingRecording = resumingRecording
+        self.stopWaitsForMeeting = stopWaitsForMeeting
+        self.problemUnknown = problemUnknown
+        self.streamsBoth = streamsBoth
+        self.streamsMicrophone = streamsMicrophone
+        self.streamsSystemAudio = streamsSystemAudio
+        self.streamsNone = streamsNone
+        self.memoryPausedUntil = memoryPausedUntil
+        self.turnOnMemory = turnOnMemory
+        self.turnOffMemory = turnOffMemory
+        self.startMeeting = startMeeting
+        self.openBrief = openBrief
+        self.openBriefFor = openBriefFor
+        self.openTopic = openTopic
+        self.askAboutWindow = askAboutWindow
+        self.openWhimbrel = openWhimbrel
+        self.settings = settings
+        self.quit = quit
+        self.cancel = cancel
+        self.alertWindowName = alertWindowName
+        self.hotkeyWindowName = hotkeyWindowName
+        self.close = close
+        self.copy = copy
+        self.answering = answering
+    }
+
+    public static let english = WMenuStrings(
+        appName: "Whimbrel", menuName: "Whimbrel menu", needsAttention: "Needs attention", nextMeeting: "Next meeting", workingOn: "Working on",
+        pauseRecording: "Pause recording", resumeRecording: "Resume recording", stopRecording: "Stop recording",
+        stateWithTitle: { "\($0): \($1)" },
+        recordingProblem: "Recording problem", startingRecording: "Starting recording", resumingRecording: "Resuming recording",
+        stopWaitsForMeeting: "Recording has started. Stop is not available until the meeting is saved.",
+        problemUnknown: "Some audio may not be recording.",
+        streamsBoth: "Microphone and system audio", streamsMicrophone: "Microphone only", streamsSystemAudio: "System audio only",
+        streamsNone: "No audio is being captured.",
+        memoryPausedUntil: { "Memory paused until \($0)" },
+        turnOnMemory: "Turn on memory", turnOffMemory: "Turn off memory", startMeeting: "Start Meeting", openBrief: "Open brief",
+        openBriefFor: { "Open brief for \($0)" },
+        openTopic: { "Open topic \($0)" },
+        askAboutWindow: "Ask about this window", openWhimbrel: "Open Whimbrel", settings: "Settings", quit: "Quit",
+        cancel: "Cancel", alertWindowName: "Whimbrel alert", hotkeyWindowName: "Whimbrel, ask about this window",
+        close: "Close", copy: "Copy", answering: "Answering"
     )
 }
 

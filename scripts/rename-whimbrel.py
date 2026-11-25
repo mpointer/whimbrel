@@ -130,7 +130,7 @@ RETIRED = ["com.mpointer.kestrel.mobile"]
 
 # The self-hosted runner label is the same text as the Windows crate name. It stays
 # only where it is a label: the workflows and the runner install script.
-RUNNER_LABEL_FILES = {".github/workflows", "apps/windows/scripts/install-actions-runner.ps1"}
+RUNNER_LABEL_FILES = {".github/workflows", "apps/windows/scripts/install-actions-runner.ps1", "docs/ci-windows-runner.md"}
 
 REPLACEMENTS = [("Kestrel", "Whimbrel"), ("KESTREL", "WHIMBREL"), ("kestrel", "whimbrel")]
 PLACEHOLDER = "\u0000KEEP{}\u0000"

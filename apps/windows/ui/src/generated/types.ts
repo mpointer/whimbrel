@@ -96,6 +96,26 @@ export type ChatEvent =
       excludedClient: boolean;
       kind: "answered_by";
       model: string;
+    }
+  | {
+      answeredLocally: boolean;
+      /**
+       * The date range retrieval used (the filter's own, or a day question's window); null for no date bound.
+       */
+      dateRange?: UsedRangeView | null;
+      kind: "sourced";
+      provider: string;
+      sources: NumberedSourceView[];
+    }
+  | {
+      answeredLocally: boolean;
+      cited: number[];
+      kind: "cited";
+      leftOut: number;
+      provider: string;
+    }
+  | {
+      kind: "scope_empty";
     };
 /**
  * A citation pointing back to one retrieved context item, tagged with which table
@@ -131,6 +151,10 @@ export type ContextItemRef =
   | {
       id: number;
       kind: "snapshot";
+    }
+  | {
+      id: number;
+      kind: "mcp_item";
     };
 /**
  * A Library detail view a citation can open (the UI's `Selection`).
@@ -267,6 +291,24 @@ export type ChosenFile =
     }
   | {
       kind: "refused";
+    };
+/**
+ * What a conversation asks about: everything, one topic, or one meeting.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ConversationScopeView".
+ */
+export type ConversationScopeView =
+  | {
+      kind: "everything";
+    }
+  | {
+      id: number;
+      kind: "topic";
+    }
+  | {
+      id: number;
+      kind: "meeting";
     };
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -438,6 +480,13 @@ export type FileActionView =
   | {
       result: "failed";
     };
+/**
+ * How a page of results is ordered.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "FindOrderInput".
+ */
+export type FindOrderInput = "time" | "rank";
 /**
  * What was read, without the text.
  *
@@ -1444,6 +1493,14 @@ export interface CaptureStatus {
   lastApp?: string | null;
   lastError?: string | null;
   lastStoredAtMs?: number | null;
+  /**
+   * How screen-text reading (OCR) last went wrong: "unavailable" (it could not start this session) or "failed" (a window's picture could not be read). Cleared when an OCR read works again.
+   */
+  ocrProblem?: string | null;
+  /**
+   * When `ocr_problem` was recorded (unix ms).
+   */
+  ocrProblemAtUnixMs?: number | null;
   ocrRuns: number;
   /**
    * Why capture is paused right now, if it is.
@@ -1486,6 +1543,88 @@ export interface ContextEntry {
   tsUnixMs?: number | null;
 }
 /**
+ * The date range retrieval used: the filter's own, or a day question's window. A side is null when left open.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "UsedRangeView".
+ */
+export interface UsedRangeView {
+  /**
+   * Exclusive.
+   */
+  endUnixMs?: number | null;
+  /**
+   * Inclusive.
+   */
+  startUnixMs?: number | null;
+}
+/**
+ * One item the model was given, by its number in the prompt.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "NumberedSourceView".
+ */
+export interface NumberedSourceView {
+  card: FoundCard;
+  n: number;
+  /**
+   * The row could not be read just now (a database error). Not the same as gone: `card.found` is false either
+   * way, but an unreadable source may well exist, so the page must not say it is no longer on this PC.
+   */
+  unreadable?: boolean;
+}
+/**
+ * One result or source, read from its live row. Keys that do not apply are null.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "FoundCard".
+ */
+export interface FoundCard {
+  /**
+   * Captures and episodes: the app, as stored.
+   */
+  app?: string | null;
+  device?: DeviceTag | null;
+  /**
+   * False when the row is gone from this PC: no title, no text.
+   */
+  found: boolean;
+  id: number;
+  /**
+   * `capture`, `transcript`, `snapshot` (a slide), `thread`, `episode`, `routine_run` or `meeting`.
+   */
+  kind: string;
+  /**
+   * Transcript lines, slides and meetings.
+   */
+  meetingId?: number | null;
+  meetingStartUnixMs?: number | null;
+  meetingTitle?: string | null;
+  /**
+   * An email thread's last sender.
+   */
+  sender?: string | null;
+  /**
+   * A transcript line's speaker, as the meeting names it.
+   */
+  speaker?: string | null;
+  speakerIsGuess?: boolean | null;
+  /**
+   * A transcript line's offset into its meeting, in centiseconds.
+   */
+  startCs?: number | null;
+  /**
+   * The stored text, cut to length. Never a model's wording.
+   */
+  text?: string | null;
+  title: string;
+  tsUnixMs?: number | null;
+  /**
+   * Why a transcript line matched a person: `speaker` or `attendee`.
+   */
+  via?: string | null;
+}
+/**
  * One message in a skin's chat, stored as `chat.json` in the skin's folder in the Mac's shape.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1515,6 +1654,15 @@ export interface ChatSpend {
    */
   capCents?: number | null;
   userCents: number;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "CitedPointerInput".
+ */
+export interface CitedPointerInput {
+  id: number;
+  kind: string;
+  n: number;
 }
 /**
  * What a compaction did, for Settings.
@@ -1559,6 +1707,95 @@ export interface CompressView {
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ConversationListRow".
+ */
+export interface ConversationListRow {
+  id: number;
+  latestAnswerLine?: string | null;
+  starred: boolean;
+  title: string;
+  topic?: TopicRefView | null;
+  updatedAtUnixMs: number;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicRefView".
+ */
+export interface TopicRefView {
+  key: string;
+  name: string;
+  topicId: number;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ConversationPageView".
+ */
+export interface ConversationPageView {
+  citedTopics: TopicRefView[];
+  conversation: SourcedConversationView;
+  localOnly: boolean[];
+  scope: ConversationScopeView;
+  scopeMeetingStartUnixMs?: number | null;
+  scopeMeetingTitle?: string | null;
+  scopeTopicName?: string | null;
+  topic?: TopicRefView | null;
+  topicSetByUser: boolean;
+  topics: TopicRefView[];
+}
+/**
+ * A saved conversation with its cited sources read from the live rows now.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SourcedConversationView".
+ */
+export interface SourcedConversationView {
+  exchanges: SourcedExchangeView[];
+  id: number;
+  starred: boolean;
+  title: string;
+}
+/**
+ * One saved exchange. `legacy` ones were saved before numbered sources: they carry `citations` (what the old Ask
+ * saved) and no `sources`.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SourcedExchangeView".
+ */
+export interface SourcedExchangeView {
+  answer: string;
+  answeredLocally?: boolean | null;
+  citations: ContextEntry[];
+  /**
+   * The numbers the saved answer cited (the `n` of each source): the page draws a mark for `[n]` only for these.
+   */
+  cited: number[];
+  createdAtUnixMs: number;
+  leftOut?: number | null;
+  legacy: boolean;
+  model?: string | null;
+  /**
+   * The provider that answered, an id such as `anthropic`.
+   */
+  provider?: string | null;
+  query: string;
+  sources: SavedSourceView[];
+}
+/**
+ * One source a saved answer cited.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SavedSourceView".
+ */
+export interface SavedSourceView {
+  card: FoundCard;
+  n: number;
+  /**
+   * The card could not be read just now (a database error): not a deleted row, so never "no longer on this PC".
+   */
+  unreadable?: boolean;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "ConversationRow".
  */
 export interface ConversationRow {
@@ -1566,6 +1803,14 @@ export interface ConversationRow {
   starred: boolean;
   title: string;
   updatedAtUnixMs: number;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ConversationTopicView".
+ */
+export interface ConversationTopicView {
+  setByUser: boolean;
+  topic?: TopicRefView | null;
 }
 /**
  * A saved conversation.
@@ -1801,6 +2046,33 @@ export interface FeedbackResult {
   bundlePath?: string | null;
 }
 /**
+ * The filters the page holds: dates (`[start, end)` in unix ms), one app, one person. Leave a filter out (null) to
+ * leave it off. A filter that could widen a search is refused, not read as no filter: an unknown key, an app or
+ * person that is present but blank, a person key with no person, or a range whose start is not before its end.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "FindFilterInput".
+ */
+export interface FindFilterInput {
+  /**
+   * The app's id, as captures store it.
+   */
+  app?: string | null;
+  /**
+   * Exclusive.
+   */
+  endUnixMs?: number | null;
+  /**
+   * The person's name, as the People filter offers it.
+   */
+  person?: string | null;
+  personKey?: string | null;
+  /**
+   * Inclusive.
+   */
+  startUnixMs?: number | null;
+}
+/**
  * What Whimbrel keeps on this PC, by part, in bytes.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1848,6 +2120,48 @@ export interface ForeignFilesDeleted {
 export interface ForeignFilesView {
   bytes: number;
   count: number;
+}
+/**
+ * One page of results.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "FoundPage".
+ */
+export interface FoundPage {
+  /**
+   * A list hit its pool: more may exist beyond the candidates.
+   */
+  capped: boolean;
+  /**
+   * Candidates per kind, and `mentions`.
+   */
+  counts: {
+    [k: string]: number;
+  };
+  /**
+   * Meaning search ran while new rows still wait for their embedding: the same words can find more soon. The page searches
+   * again then and replaces these results.
+   */
+  meaningCatchingUp: boolean;
+  /**
+   * With a person: captures that mention them, listed apart.
+   */
+  mentions: FoundCard[];
+  mentionsTotal: number;
+  /**
+   * More results follow this page.
+   */
+  more: boolean;
+  results: FoundCard[];
+  semanticAvailable: boolean;
+  /**
+   * The search model is installed and was used.
+   */
+  semanticUsed: boolean;
+  /**
+   * How many candidates there are across pages.
+   */
+  total: number;
 }
 /**
  * What each Free up space row would free at `days`, for the dialog. `None` hides a row.
@@ -2359,15 +2673,6 @@ export interface MeetingChipsView {
   meetingId: number;
   prepKey?: string | null;
   topic?: TopicRefView | null;
-}
-/**
- * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
- * via the `definition` "TopicRefView".
- */
-export interface TopicRefView {
-  key: string;
-  name: string;
-  topicId: number;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -2985,6 +3290,22 @@ export interface RetentionView {
   settings: RetentionSettings;
 }
 /**
+ * Where a question would be answered. `destination` is `local`, `hosted`, `refused` or `unknown`; the button says
+ * "on this PC" only for `local`. `require_local` says to pass it to the ask.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "RoutePreviewView".
+ */
+export interface RoutePreviewView {
+  destination: string;
+  local: boolean;
+  mayFallBack: boolean;
+  model?: string | null;
+  provider?: string | null;
+  reason: string;
+  requireLocal: boolean;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "RoutineView".
  */
@@ -3047,6 +3368,30 @@ export interface RunView {
    * What the routine reported: the brief itself, or why it failed.
    */
   summary: string;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SavedExchangeInput".
+ */
+export interface SavedExchangeInput {
+  answer: string;
+  answeredLocally: boolean;
+  cited: CitedPointerInput[];
+  leftOut: number;
+  model: string;
+  provider: string;
+  query: string;
+  requireLocal: boolean;
+  routedLocally: boolean;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SavedExchangeResult".
+ */
+export interface SavedExchangeResult {
+  citedTopics: TopicRefView[];
+  conversationId: number;
+  topic?: TopicRefView | null;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -3804,6 +4149,10 @@ export interface TranscriptionQualityStatus {
 export interface TrayStatus {
   captureEnabled: boolean;
   /**
+   * A Calendar or Gmail sign-in expired and needs signing in again (redesign only; false with the switch off).
+   */
+  googleSignInExpired: boolean;
+  /**
    * "Capturing · Synced 2:05 PM", also the tray tooltip.
    */
   line: string;
@@ -3823,6 +4172,14 @@ export interface TrayStatus {
    * When a timed capture pause ends, if one is running.
    */
   resumeAtUnixMs?: number | null;
+  /**
+   * Sync is in error: the same fact as the tooltip's "Sync error" (`SyncLine::Error`).
+   */
+  syncError: boolean;
+  /**
+   * The sync half of `line` in the words people see ("Synced 2:05 PM", "Sync setting up"), or empty while sync is off or in error.
+   */
+  syncText: string;
 }
 /**
  * Whether "Trim recording…" is offered for a meeting, and its length on the transcript clock.

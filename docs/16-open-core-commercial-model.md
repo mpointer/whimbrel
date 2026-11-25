@@ -1,7 +1,7 @@
 # 16. Open source, and what people pay for
 
 Status: **proposal for decision**, 2026-10-21, revised the same day after the investor
-review gate. It replaces the tier structure in [14-pricing-proposal.md](14-pricing-proposal.md)
+review gate. It replaces the tier structure in doc 14 (an internal pricing analysis)
 and the planned Pro and Power plans on the website. Nothing here is on sale; the website
 still says "free during early access."
 
@@ -218,6 +218,39 @@ self-hosted relay with a support contract, sold against a prepaid pilot.
 - Nothing paid is ever written into the public tree and later removed.
 - Every paid feature needs the company's server or the company's time. Anything that
   runs fine on the user's device goes into the open app.
+
+## Keeping the boundary
+
+The rule above has two halves, and each has a guard that runs without anyone remembering it.
+
+**What the public tree holds.** The public repository is published from the private one at
+each release by `scripts/publish-public.sh`, as one commit of the whole tree minus the
+paths in `scripts/public-exclude.txt`: design plans, redesign research, the internal
+pricing, competitive and roadmap analyses and the agent briefs drawn from them, the CI
+runner setup, and translation review sheets. Everything
+else, this document included, is public. Two guards keep that list honest:
+
+1. **The exclude list is checked.** Every path on it must exist at the tag being
+   published, or the publish stops, so a renamed document cannot go out under its new
+   name. A public file never links to a path on the list; it names the document in words.
+2. **Every publish is reviewed before it is pushed.** The script prints the top-level and
+   second-level paths that are new or gone since the last public release, every file
+   the list kept out, and anything that looks private (`scripts/public-review.py`:
+   credentials in known formats, lines that label themselves private or confidential,
+   `.env` and key files). A private-material hit stops the publish, even with `--yes`.
+   Otherwise the maintainer types the tag to confirm. `--dry-run` shows the same review
+   and stops before committing, tagging or pushing.
+
+**What the apps decide.** A paid feature needs the company's server or time, so the apps
+never decide on their own what a plan unlocks: they ask the server and show its answer,
+and the server enforces the limit.
+
+3. **The paywall check.** `scripts/check-paywalls.py` runs in CI on every pull request. It
+   fails when app or core code uses a plan value (Cloud, Plus, a plan tier, an
+   entitlement) outside the files that decode, fetch or render the server's answer. Those
+   files are listed in `scripts/paywall-allow.txt` with the reason for each. A new hit is
+   either display of the server's answer (add the file, with the reason) or a feature
+   that runs on the device kept behind a plan, which goes into the open app instead.
 
 ## The arithmetic
 

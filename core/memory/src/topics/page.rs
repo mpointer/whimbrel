@@ -181,7 +181,7 @@ fn live_topic(
     .optional()
 }
 
-fn topic_ref(conn: &Connection, topic_id: i64) -> rusqlite::Result<Option<TopicRef>> {
+pub(crate) fn topic_ref(conn: &Connection, topic_id: i64) -> rusqlite::Result<Option<TopicRef>> {
     Ok(live_topic(conn, topic_id)?.map(|(t, _)| t))
 }
 
@@ -464,6 +464,12 @@ impl Store {
             .collect())
     }
 
+    /// Live topic `topic_id` as a `TopicRef`, a merged topic followed to the topic it became;
+    /// `None` for an unknown or dead topic.
+    pub fn live_topic_ref(&self, topic_id: i64) -> rusqlite::Result<Option<TopicRef>> {
+        topic_ref(&self.conn, topic_id)
+    }
+
     /// The primary topic of the meeting's source.
     pub fn topic_for_meeting(&self, meeting_id: i64) -> rusqlite::Result<Option<TopicRef>> {
         let sid: Option<i64> = self
@@ -481,6 +487,119 @@ impl Store {
             },
             None => Ok(None),
         }
+    }
+
+    /// The topic item (`topic_source.kind`, `topic_source.ref_id`) an Ask citation of `kind`
+    /// belongs to, as the topic index keys it. `kind` is the `llm::ContextItemRef` tag.
+    /// `transcript` and `snapshot` ids are `items` ids (what citations carry): a transcript
+    /// line is its meeting, a snapshot is its own `snapshot` item. `episode` is itself. A
+    /// `capture` is its `capture` source if one exists, else the episode whose item range holds
+    /// it. A `thread` (a `threads` id) is its first indexed email. A routine run, or a row that
+    /// is missing (a live or foreign id), is `None`.
+    pub fn topic_item_for_citation(
+        &self,
+        kind: &str,
+        id: i64,
+    ) -> rusqlite::Result<Option<(String, i64)>> {
+        let has_source = |k: &str, r: i64| -> rusqlite::Result<bool> {
+            Ok(self
+                .conn
+                .query_row(
+                    "SELECT 1 FROM topic_source WHERE kind = ?1 AND ref_id = ?2",
+                    params![k, r],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some())
+        };
+        let one = |sql: &str, p: &[&dyn rusqlite::ToSql]| -> rusqlite::Result<Option<i64>> {
+            self.conn.query_row(sql, p, |r| r.get(0)).optional()
+        };
+        match kind {
+            "transcript" => Ok(one(
+                "SELECT thread_id FROM items WHERE id = ?1 AND kind = 'transcript' AND thread_id IS NOT NULL",
+                &[&id],
+            )?
+            .map(|m| ("meeting".to_string(), m))),
+            "snapshot" => Ok(one(
+                "SELECT id FROM items WHERE id = ?1 AND kind = 'snapshot'",
+                &[&id],
+            )?
+            .map(|i| ("snapshot".to_string(), i))),
+            "episode" => Ok(one("SELECT id FROM episodes WHERE id = ?1", &[&id])?
+                .map(|e| ("episode".to_string(), e))),
+            "capture" => {
+                if has_source("capture", id)? {
+                    return Ok(Some(("capture".to_string(), id)));
+                }
+                Ok(one(
+                    "SELECT e.id FROM episodes e JOIN items i ON i.device_id = e.device_id \
+                     WHERE i.id = ?1 AND i.kind = 'capture' \
+                       AND i.id BETWEEN e.start_item_id AND e.end_item_id \
+                     ORDER BY e.id LIMIT 1",
+                    &[&id],
+                )?
+                .map(|e| ("episode".to_string(), e)))
+            }
+            "thread" => Ok(one(
+                "SELECT i.id FROM threads t JOIN items i ON i.kind = 'email' \
+                   AND json_extract(i.refs, '$.gmail_thread_id') = t.external_thread_id \
+                   AND json_extract(i.refs, '$.account_email') = t.account_email \
+                 JOIN topic_source s ON s.kind = 'email' AND s.ref_id = i.id \
+                 WHERE t.id = ?1 ORDER BY i.id LIMIT 1",
+                &[&id],
+            )?
+            .map(|i| ("email".to_string(), i))),
+            _ => Ok(None),
+        }
+    }
+
+    /// The live topic holding the `topic_source` (`kind`, `ref_id`): a non-removed member,
+    /// preferring the user's own filing, then a seed's, with a merged topic followed to the
+    /// topic it became.
+    pub fn live_topic_of_item(&self, kind: &str, ref_id: i64) -> rusqlite::Result<Option<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT m.topic_id FROM topic_source s JOIN topic_member m ON m.source_id = s.id \
+             WHERE s.kind = ?1 AND s.ref_id = ?2 AND m.origin != 'removed' \
+             ORDER BY CASE m.origin WHEN 'user' THEN 0 WHEN 'seed' THEN 1 WHEN 'jev' THEN 2 ELSE 3 END, \
+                      m.topic_id",
+        )?;
+        let ids = stmt
+            .query_map(params![kind, ref_id], |r| r.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for id in ids {
+            if let Some(t) = topic_ref(&self.conn, id)? {
+                return Ok(Some(t.topic_id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Whether the `topic_source` (`kind`, `ref_id`) is a non-removed member of live topic
+    /// `topic_id`, whichever topic it prefers: every topic holding it counts, each merged topic
+    /// followed to the topic it became (as [`Store::live_topic_of_item`] does). A `topic_id`
+    /// merged away resolves to its survivor; an unknown or dead one holds nothing.
+    pub fn item_in_topic(&self, kind: &str, ref_id: i64, topic_id: i64) -> rusqlite::Result<bool> {
+        let Some(want) = topic_ref(&self.conn, topic_id)? else { return Ok(false) };
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT m.topic_id FROM topic_source s JOIN topic_member m ON m.source_id = s.id \
+             WHERE s.kind = ?1 AND s.ref_id = ?2 AND m.origin != 'removed'",
+        )?;
+        let ids = stmt
+            .query_map(params![kind, ref_id], |r| r.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for id in ids {
+            if topic_ref(&self.conn, id)?.is_some_and(|t| t.topic_id == want.topic_id) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The key of live topic `topic_id` (its seed's key), a merged topic followed to the topic it
+    /// became; `None` for an unknown or dead topic.
+    pub fn topic_key(&self, topic_id: i64) -> rusqlite::Result<Option<String>> {
+        Ok(topic_ref(&self.conn, topic_id)?.map(|t| t.key))
     }
 
     /// A calendar event's topic: its series' primary topic (Apple or Google ids), else the
@@ -1176,5 +1295,37 @@ mod tests {
         );
         assert_eq!(s.topic_for_meeting(mid).unwrap(), Some(a));
         assert_eq!(s.topic_for_meeting(mid + 1).unwrap(), None);
+    }
+
+    #[test]
+    fn an_item_is_in_every_live_topic_holding_it_not_only_its_preferred_one() {
+        let s = Store::open_in_memory().unwrap();
+        let (t, u, v) = (seed(&s, "Tea"), seed(&s, "Umber"), seed(&s, "Vale"));
+        let sid = filed(&s, t.topic_id, "meeting", Some(7), 1, "seed");
+        sql(&s, "INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'user')", params![u.topic_id, sid]);
+        assert_eq!(s.live_topic_of_item("meeting", 7).unwrap(), Some(u.topic_id), "U is preferred");
+        assert!(s.item_in_topic("meeting", 7, t.topic_id).unwrap(), "still in T");
+        assert!(s.item_in_topic("meeting", 7, u.topic_id).unwrap());
+        assert!(!s.item_in_topic("meeting", 7, v.topic_id).unwrap());
+        assert!(!s.item_in_topic("meeting", 8, t.topic_id).unwrap(), "an item not indexed");
+        assert!(!s.item_in_topic("episode", 7, t.topic_id).unwrap(), "the kind counts");
+        filed(&s, v.topic_id, "meeting", Some(9), 1, "removed");
+        assert!(!s.item_in_topic("meeting", 9, v.topic_id).unwrap(), "a removed member is not in the topic");
+
+        // T merged into V: the item is in V, and T's old id resolves to V.
+        s.merge_topics(v.topic_id, t.topic_id).unwrap();
+        assert!(s.item_in_topic("meeting", 7, v.topic_id).unwrap());
+        assert!(s.item_in_topic("meeting", 7, t.topic_id).unwrap());
+        assert!(!s.item_in_topic("meeting", 9, t.topic_id).unwrap(), "the removed tombstone stays out");
+    }
+
+    #[test]
+    fn a_topics_key_is_its_live_seed_key_following_merges() {
+        let s = Store::open_in_memory().unwrap();
+        let (t, v) = (seed(&s, "Tea"), seed(&s, "Vale"));
+        assert_eq!(s.topic_key(t.topic_id).unwrap(), Some(t.key.clone()));
+        assert_eq!(s.topic_key(999_999).unwrap(), None);
+        s.merge_topics(v.topic_id, t.topic_id).unwrap();
+        assert_eq!(s.topic_key(t.topic_id).unwrap(), Some(v.key.clone()));
     }
 }

@@ -10,6 +10,7 @@ export const TAB_ICON: Record<TabId, IconRole | null> = {
   meetings: "meetings",
   library: "ask",
   topics: null,
+  conversations: null,
   automations: "routines",
   settings: "settings",
 };
@@ -18,7 +19,7 @@ export const TAB_ICON: Record<TabId, IconRole | null> = {
 export function TabIcon({ id }: { id: TabId }) {
   const role = TAB_ICON[id];
   if (role) return <SkinIcon role={role} />;
-  const tag = ICON_TABLE.find((e) => e.symbol === "tag");
+  const tag = ICON_TABLE.find((e) => e.symbol === (id === "conversations" ? "bubble.left.and.bubble.right" : "tag"));
   return (
     <span className="skin-icon" style={{ fontFamily: ICON_FONT }} aria-hidden="true">
       {tag ? String.fromCodePoint(tag.fluent) : ""}

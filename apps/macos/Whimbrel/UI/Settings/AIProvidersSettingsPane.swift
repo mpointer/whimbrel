@@ -36,6 +36,19 @@ struct AIProvidersSettingsPane: View {
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            Toggle("Local-only mode", isOn: Binding(
+                get: { appState.routing.localOnlyMode },
+                set: { appState.routing.localOnlyMode = $0 }
+            ))
+            .settingsAnchor("ai.localOnly")
+            .tint(Color.whimbrelAccentPrimary)
+            Text("When on, every conversation uses Ollama only, regardless of the provider picked in Ask or Digest. Hosted providers are never called.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(Color.whimbrelBorder)
+
             if Self.showsOnRamp(routing: appState.routing) {
                 onRamp
             }
@@ -77,6 +90,7 @@ struct AIProvidersSettingsPane: View {
                     anthropicStatusIsError = false
                 }
             )
+            .settingsAnchor("ai.anthropicKey")
             providerNotes(for: "anthropic")
             monthlyBudget(for: "anthropic")
             Toggle("Sync to devices", isOn: $appState.routing.anthropicKeySyncEnabled)
@@ -120,6 +134,7 @@ struct AIProvidersSettingsPane: View {
                     openaiStatusIsError = false
                 }
             )
+            .settingsAnchor("ai.openaiKey")
             providerNotes(for: "openai")
             monthlyBudget(for: "openai")
             Toggle("Sync to devices", isOn: $appState.routing.openaiKeySyncEnabled)
@@ -163,6 +178,7 @@ struct AIProvidersSettingsPane: View {
                     googleStatusIsError = false
                 }
             )
+            .settingsAnchor("ai.googleKey")
             providerNotes(for: "google")
             monthlyBudget(for: "google")
             Toggle("Sync to devices", isOn: $appState.routing.googleKeySyncEnabled)
@@ -213,6 +229,7 @@ struct AIProvidersSettingsPane: View {
                     openrouterStatusIsError = false
                 }
             )
+            .settingsAnchor("ai.openrouterKey")
             Text("One key for any model on OpenRouter's catalogue, free ones included. Pick the model below; until you do, OpenRouter is left out of every chain, because their catalogue changes weekly and there is no fallback model to substitute.")
                 .font(.whimbrelBody(.caption2))
                 .foregroundStyle(Color.whimbrelTextSecondary)
@@ -260,7 +277,7 @@ struct AIProvidersSettingsPane: View {
                     .foregroundStyle(Color.whimbrelTextSecondary)
             }
 
-            Text("Ollama").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Ollama").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("ai.ollama")
             Text("Local server, no API key needed. Runs on this Mac and nothing leaves it.")
                 .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
             Toggle("Use local model", isOn: Binding(
@@ -337,6 +354,7 @@ struct AIProvidersSettingsPane: View {
             Divider().overlay(Color.whimbrelBorder)
 
             Text("Reply priorities (TypeSafe)")
+                .settingsAnchor("ai.typesafe")
                 .font(.whimbrelBody(.headline))
                 .foregroundStyle(Color.whimbrelTextPrimary)
             keyRow(
@@ -445,11 +463,13 @@ struct AIProvidersSettingsPane: View {
                 .labelsHidden()
                 .frame(width: 420)
             }
+            .settingsAnchor("ai.provider")
 
             HStack {
                 Text("Default model:").frame(width: 160, alignment: .leading)
                 defaultModelControl
             }
+            .settingsAnchor("ai.model")
             ForEach([RoutingSettings.Provider.anthropic, .openai, .google]) { provider in
                 if let note = appState.routing.unavailableNote(for: provider) {
                     Text("\(note.model) isn't available to your \(provider.displayName) key; using \(note.using) for now.")
@@ -468,6 +488,7 @@ struct AIProvidersSettingsPane: View {
                     set: { appState.routing.userDailyCapCents = $0 }
                 )
             )
+            .settingsAnchor("ai.dailyCap")
             capRow(
                 label: "Daily cap, global (cents)",
                 value: Binding(
@@ -481,20 +502,8 @@ struct AIProvidersSettingsPane: View {
 
             Divider().overlay(Color.whimbrelBorder)
 
-            Toggle("Local-only mode", isOn: Binding(
-                get: { appState.routing.localOnlyMode },
-                set: { appState.routing.localOnlyMode = $0 }
-            ))
-            .tint(Color.whimbrelAccentPrimary)
-            Text("When on, every conversation uses Ollama only, regardless of the provider picked in Ask or Digest. Hosted providers are never called.")
-                .font(.whimbrelBody(.caption))
-                .foregroundStyle(Color.whimbrelTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Divider().overlay(Color.whimbrelBorder)
-
             HStack {
-                Text("Spend today:").font(.whimbrelBody(.callout))
+                Text("Spend today:").font(.whimbrelBody(.callout)).settingsAnchor("ai.spend")
                 if let spendToday {
                     Text("\(spendToday.userCents)¢ (this identity) / \(spendToday.globalCents)¢ (global)")
                         .font(.whimbrelBody(.callout).bold())
@@ -556,7 +565,7 @@ struct AIProvidersSettingsPane: View {
     private var whimbrelAICard: some View {
         let syncState = appState.syncState
         return VStack(alignment: .leading, spacing: Spacing.xs) {
-            Text("Whimbrel AI").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Whimbrel AI").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("ai.whimbrelAI")
             if case .ready = syncState.status {
                 if let balance = syncState.aiBalance {
                     if let allowance = PlusCopy.allowanceLine(balance, renews: syncState.plan?.renews) {
@@ -864,7 +873,7 @@ struct AIProvidersSettingsPane: View {
     /// Model usage: what every call cost, from the ledger the spend caps already keep.
     private var usageSection: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            Text("Model usage").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Model usage").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("ai.usage")
             if let usageTotals {
                 Text("Today \(Self.dollars(usageTotals.todayCents)), last 30 days \(Self.dollars(usageTotals.last30DaysCents)), this month \(Self.dollars(usageTotals.monthToDateCents)). Local calls are not metered.")
                     .font(.whimbrelBody(.caption))

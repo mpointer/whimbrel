@@ -25,9 +25,12 @@ public struct WShellItem: Identifiable, Equatable, Sendable {
 public struct WShellRecording: Equatable, Sendable {
     public var state: WRecordingState
     public var elapsedSeconds: Int?
-    public init(state: WRecordingState, elapsedSeconds: Int? = nil) {
+    /// While the recording is starting: whether Stop works, is replaced by "Saving...", or is off (the default). See `WStopOffer`.
+    public var startingStop: WStopOffer
+    public init(state: WRecordingState, elapsedSeconds: Int? = nil, startingStop: WStopOffer = .unavailable) {
         self.state = state
         self.elapsedSeconds = elapsedSeconds
+        self.startingStop = startingStop
     }
 }
 
@@ -52,6 +55,18 @@ public struct WPauseChoices: View {
             Divider()
             Button(action: onResume) { Label(strings.home.resumeNow, systemImage: "play") }
         }
+    }
+}
+
+/// A request to set the header field and the chips. The counter makes a repeat of the same values a new request.
+public struct WShellPush: Equatable, Sendable {
+    public var token: Int
+    public var query: String
+    public var filter: WHomeFilter
+    public init(token: Int, query: String, filter: WHomeFilter) {
+        self.token = token
+        self.query = query
+        self.filter = filter
     }
 }
 
@@ -122,7 +137,13 @@ struct WShellHeaderRow<Choices: View>: View {
     let onSubmit: (String, WHomeFilter) -> Void
     @Binding var query: String
     @Binding var filter: WHomeFilter
+    let focus: FocusState<Bool>.Binding
     let choices: Choices
+    /// A button beside the field that asks with its text ("Ask", with the Command Return keycap). Nil draws none.
+    let onAskButton: ((String, WHomeFilter) -> Void)?
+    /// An answer is being written: the Ask button stays, switched off, and says why to assistive technology.
+    let askBusy: Bool
+    @Environment(\.wStrings) private var strings
 
     var body: some View {
         HStack(alignment: .center, spacing: theme.space(16)) {
@@ -137,15 +158,24 @@ struct WShellHeaderRow<Choices: View>: View {
                 switch header.ask {
                 case .available(let placeholder):
                     if askStyle == .prompt {
-                        WPromptField(text: $query, placeholder: placeholder, onSubmit: submit)
+                        WPromptField(text: $query, placeholder: placeholder, focus: focus, onSubmit: submit)
                     } else {
-                        WSearchBar(text: $query, placeholder: placeholder, onSubmit: submit)
+                        WSearchBar(text: $query, placeholder: placeholder, focus: focus, onSubmit: submit)
                     }
                 case .needsSetup(let title):
                     WAction(title, glyph: "sparkles", kind: .secondary, action: onSetUpAsk)
                 }
             }
             .frame(maxWidth: 520 * k)
+            if let onAskButton, case .available = header.ask {
+                let empty = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                WButton(strings.find.askButton, glyph: "sparkles", shortcutHint: strings.find.askShortcutHint, kind: .secondary) {
+                    onAskButton(query.trimmingCharacters(in: .whitespacesAndNewlines), filter)
+                }
+                .disabled(empty || askBusy)
+                .accessibilityHint(askBusy ? strings.find.askBusyReason : "")
+                .help(askBusy ? strings.find.askBusyReason : "")
+            }
             Spacer(minLength: 0)
             WCaptureState(state: memory, onWhatIsCaptured: onWhatIsCaptured) { choices }
         }
@@ -162,8 +192,9 @@ public struct WShell<Choices: View, Footer: View, Banner: View, Content: View>: 
     @Environment(\.wTheme) private var theme
     @Environment(\.wTextScale) private var k
     @Environment(\.wStrings) private var strings
-    @State private var query = ""
-    @State private var filter = WHomeFilter()
+    @State private var ownQuery = ""
+    @State private var ownFilter = WHomeFilter()
+    @FocusState private var fieldFocused: Bool
     let items: [WShellItem]
     let selection: String
     let onSelect: (String) -> Void
@@ -187,6 +218,24 @@ public struct WShell<Choices: View, Footer: View, Banner: View, Content: View>: 
     let footer: Footer
     let banner: Banner
     let content: Content
+    /// Told on each change of the field and of the chips (Library's Find page keeps a copy, without redrawing the shell on a keystroke).
+    let onQueryChange: ((String) -> Void)?
+    let onFilterChange: ((WHomeFilter) -> Void)?
+    /// A new `token` sets the field and the chips to these (the page starting a search of its own).
+    let push: WShellPush?
+    /// Cmd Return in the window: the text and filters as they are. Nil leaves the key alone.
+    let onAsk: ((String, WHomeFilter) -> Void)?
+    /// A change moves the keyboard focus to the field (the app's Search Library command).
+    let focusRequest: Int
+    /// At the right of the filter chips ("3 results").
+    let filterTrailing: String?
+    /// Command Return asks only while the header field has the keyboard, or while this is true (the Find page is showing). Anywhere else the
+    /// key belongs to what is there: an editor, a sheet.
+    let askKeyActive: Bool
+    /// Draws an Ask button beside the field (Home and the other sections, where Enter only searches).
+    let showsAskButton: Bool
+    /// An answer is being written on Find: the Ask button beside the field is off, with the reason available to assistive technology.
+    let askBusy: Bool
 
     public init(
         items: [WShellItem], selection: String, onSelect: @escaping (String) -> Void,
@@ -197,8 +246,23 @@ public struct WShell<Choices: View, Footer: View, Banner: View, Content: View>: 
         memory: WMemoryState, onWhatIsCaptured: @escaping () -> Void,
         recording: WShellRecording? = nil, level: Float? = nil, onPause: (() -> Void)? = nil, onResume: (() -> Void)? = nil, onStop: (() -> Void)? = nil,
         @ViewBuilder pauseChoices: () -> Choices, @ViewBuilder footer: () -> Footer,
-        @ViewBuilder banner: () -> Banner, @ViewBuilder content: () -> Content
+        @ViewBuilder banner: () -> Banner, @ViewBuilder content: () -> Content,
+        initialQuery: String = "", initialFilter: WHomeFilter = WHomeFilter(),
+        onQueryChange: ((String) -> Void)? = nil, onFilterChange: ((WHomeFilter) -> Void)? = nil, push: WShellPush? = nil,
+        onAsk: ((String, WHomeFilter) -> Void)? = nil, focusRequest: Int = 0, filterTrailing: String? = nil,
+        askKeyActive: Bool = false, showsAskButton: Bool = false, askBusy: Bool = false
     ) {
+        self.askBusy = askBusy
+        self.askKeyActive = askKeyActive
+        self.showsAskButton = showsAskButton
+        self._ownQuery = State(initialValue: initialQuery)
+        self._ownFilter = State(initialValue: initialFilter)
+        self.onQueryChange = onQueryChange
+        self.onFilterChange = onFilterChange
+        self.push = push
+        self.onAsk = onAsk
+        self.focusRequest = focusRequest
+        self.filterTrailing = filterTrailing
         self.items = items
         self.selection = selection
         self.onSelect = onSelect
@@ -223,6 +287,9 @@ public struct WShell<Choices: View, Footer: View, Banner: View, Content: View>: 
         self.banner = banner()
         self.content = content()
     }
+
+    private var query: Binding<String> { $ownQuery }
+    private var filter: Binding<WHomeFilter> { $ownFilter }
 
     private var searchAvailable: Bool {
         if case .available = header.ask { return true } else { return false }
@@ -250,7 +317,7 @@ public struct WShell<Choices: View, Footer: View, Banner: View, Content: View>: 
                 if let recording {
                     WRecordingIndicator(
                         state: recording.state, elapsedSeconds: recording.elapsedSeconds, size: .bar, level: level,
-                        onPause: onPause, onResume: onResume, onStop: onStop
+                        onPause: onPause, onResume: onResume, onStop: onStop, startingStop: recording.startingStop
                     )
                     .padding(.horizontal, theme.space(20))
                     .padding(.top, theme.space(12))
@@ -258,8 +325,9 @@ public struct WShell<Choices: View, Footer: View, Banner: View, Content: View>: 
                 VStack(alignment: .leading, spacing: theme.space(12)) {
                     WShellHeaderRow(
                         header: header, askStyle: elements.ask, memory: memory, onWhatIsCaptured: onWhatIsCaptured,
-                        onSetUpAsk: onSetUpAsk, onSubmit: onSubmit, query: $query, filter: $filter, choices: choices)
-                    if showsFilters && searchAvailable { WHomeFilterChips(people: people, apps: appChoices, filter: $filter) }
+                        onSetUpAsk: onSetUpAsk, onSubmit: onSubmit, query: query, filter: filter, focus: $fieldFocused, choices: choices,
+                        onAskButton: showsAskButton ? onAsk : nil, askBusy: askBusy)
+                    if showsFilters && searchAvailable { WHomeFilterChips(people: people, apps: appChoices, filter: filter, trailing: filterTrailing) }
                 }
                 .padding(.horizontal, theme.space(20))
                 .padding(.vertical, theme.space(12))
@@ -270,5 +338,27 @@ public struct WShell<Choices: View, Footer: View, Banner: View, Content: View>: 
             .background(theme.backgroundPage)
         }
         .background(theme.backgroundPage)
+        .background {
+            // Command K puts the keyboard in the field, as the keycap on it says. Command Return asks, where the app handles it.
+            Button("") { if searchAvailable { fieldFocused = true } }
+                .keyboardShortcut("k", modifiers: .command)
+                .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+            if let onAsk, fieldFocused || askKeyActive {
+                Button("") {
+                    let trimmed = query.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    onAsk(trimmed, filter.wrappedValue)
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+            }
+        }
+        .onChange(of: focusRequest) { _, _ in if searchAvailable { fieldFocused = true } }
+        .onChange(of: ownQuery) { _, new in onQueryChange?(new) }
+        .onChange(of: ownFilter) { _, new in onFilterChange?(new) }
+        .onChange(of: push) { _, new in
+            guard let new else { return }
+            ownQuery = new.query
+            ownFilter = new.filter
+        }
     }
 }

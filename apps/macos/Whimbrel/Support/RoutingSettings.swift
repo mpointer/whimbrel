@@ -756,6 +756,33 @@ final class RoutingSettings: ObservableObject {
     /// The output-language tag for each request (Settings → General).
     var outputLanguageProvider: () -> String = { AppLanguage.currentOutputTag() }
 
+    /// The provider keys a call carries, read from the Keychain. A call that must not wait on the Keychain on the main thread reads them
+    /// somewhere else and passes them to `routingConfig(keys:)`. Nothing here keeps them, and a caller holds them for the one call.
+    struct ProviderKeys: Equatable {
+        var anthropic: String?
+        var openai: String?
+        var google: String?
+        var openrouter: String?
+
+        /// Four Keychain reads: call off the main thread.
+        nonisolated static func load() -> ProviderKeys {
+            ProviderKeys(
+                anthropic: KeychainService.load(for: .anthropic), openai: KeychainService.load(for: .openai),
+                google: KeychainService.load(for: .google), openrouter: KeychainService.load(for: .openrouter))
+        }
+
+        /// The key for a provider a stream route asks about; none for the ones the Ask call has no use for.
+        func key(for provider: KeychainService.Provider) -> String? {
+            switch provider {
+            case .anthropic: return anthropic
+            case .openai: return openai
+            case .google: return google
+            case .openrouter: return openrouter
+            default: return nil
+            }
+        }
+    }
+
     func routingConfig(
         preferredProvider: Provider,
         preferredModel: String,
@@ -764,14 +791,32 @@ final class RoutingSettings: ObservableObject {
         weeklyDigestInstructions: String = "",
         typesafeKey: String? = nil
     ) -> CoreRoutingConfig {
-        let whimbrel = whimbrelCredentialsProvider()
+        routingConfig(
+            preferredProvider: preferredProvider, preferredModel: preferredModel, customInstructions: customInstructions,
+            dailyDigestInstructions: dailyDigestInstructions, weeklyDigestInstructions: weeklyDigestInstructions, typesafeKey: typesafeKey,
+            keys: ProviderKeys.load())
+    }
+
+    /// The same config with the provider keys given, so the caller chooses where the Keychain is read.
+    func routingConfig(
+        preferredProvider: Provider,
+        preferredModel: String,
+        customInstructions: String = "",
+        dailyDigestInstructions: String = "",
+        weeklyDigestInstructions: String = "",
+        typesafeKey: String? = nil,
+        keys: ProviderKeys,
+        whimbrelCredentials: Bool = true
+    ) -> CoreRoutingConfig {
+        // A call kept on this computer passes false: the Whimbrel sign-in is not even read.
+        let whimbrel = whimbrelCredentials ? whimbrelCredentialsProvider() : nil
         let streamedModel = Self.streamedOllamaModel(
             preferredProvider: preferredProvider, preferredModel: preferredModel, ollamaDefaultModel: ollamaDefaultModel
         )
         return CoreRoutingConfig(
-            anthropicKey: KeychainService.load(for: .anthropic),
-            openaiKey: KeychainService.load(for: .openai),
-            googleKey: KeychainService.load(for: .google),
+            anthropicKey: keys.anthropic,
+            openaiKey: keys.openai,
+            googleKey: keys.google,
             typesafeKey: typesafeKey,
             userDailyCapCents: userDailyCapCents,
             globalDailyCapCents: globalDailyCapCents,
@@ -784,7 +829,7 @@ final class RoutingSettings: ObservableObject {
             profile: profileProvider(),
             cheapFirst: cheapFirst,
             useLocalModel: useLocalModel,
-            openrouterKey: KeychainService.load(for: .openrouter),
+            openrouterKey: keys.openrouter,
             openrouterModel: openrouterDefaultModel,
             openrouterPrices: openrouterPrices,
             outputLanguage: outputLanguageProvider(),

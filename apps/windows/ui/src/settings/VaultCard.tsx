@@ -39,7 +39,7 @@ export function VaultCard() {
   const chosen = view.path.trim() !== "";
 
   return (
-    <section className="card about" aria-labelledby="vault-heading">
+    <section className="card about" aria-labelledby="vault-heading" data-settings-anchor="capture.obsidian">
       <h2 id="vault-heading" className="section-label">
         {t("Obsidian")}
       </h2>

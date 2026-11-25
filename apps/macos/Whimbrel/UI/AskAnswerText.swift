@@ -5,7 +5,21 @@ import SwiftUI
 /// bullet and numbered lists, bold, italic, code, links) for display and for "Copy as plain
 /// text"; "Copy" keeps the Markdown itself.
 enum AskMarkdown {
-    static func attributed(_ markdown: String, color: NSColor = .labelColor, size: CGFloat = NSFont.systemFontSize) -> NSAttributedString {
+    /// Whether an answer's links may be clickable: not when it drew on an item a local MCP client added
+    /// (a cited one, or one among the sources it was given), whose text could steer the model into a
+    /// link (review M12). Those answers show their links as plain text.
+    static func linksAllowed(citations: [CoreContextItemRef], sourceKinds: [String] = []) -> Bool {
+        !citations.contains { $0.kind == .mcpItem } && !sourceKinds.contains("mcp_item")
+    }
+
+    /// [`linksAllowed(citations:sourceKinds:)`] for one exchange: its citations and, for a sourced answer,
+    /// every numbered source and cited pointer.
+    static func linksAllowed(_ exchange: AskExchange) -> Bool {
+        let kinds = (exchange.sourced?.sources.map(\.card.kind) ?? []) + (exchange.sourced?.citedSources.map(\.kind) ?? [])
+        return linksAllowed(citations: exchange.citations, sourceKinds: kinds)
+    }
+
+    static func attributed(_ markdown: String, color: NSColor = .labelColor, size: CGFloat = NSFont.systemFontSize, allowLinks: Bool = true) -> NSAttributedString {
         let body = NSFont.systemFont(ofSize: size)
         let out = NSMutableAttributedString()
         let lines = markdown.components(separatedBy: "\n")
@@ -23,7 +37,7 @@ enum AskMarkdown {
                 prefix = String(repeating: "  ", count: indent / 2) + "• "
             }
             out.append(NSAttributedString(string: prefix, attributes: [.font: base, .foregroundColor: color]))
-            out.append(inline(String(line), base: base, color: color))
+            out.append(inline(String(line), base: base, color: color, allowLinks: allowLinks))
             if n < lines.count - 1 { out.append(NSAttributedString(string: "\n", attributes: [.font: body])) }
         }
         return out
@@ -37,7 +51,7 @@ enum AskMarkdown {
         return (1...6).contains(hashes) && line.dropFirst(hashes).first == " " ? hashes : nil
     }
 
-    private static func inline(_ text: String, base: NSFont, color: NSColor) -> NSAttributedString {
+    private static func inline(_ text: String, base: NSFont, color: NSColor, allowLinks: Bool) -> NSAttributedString {
         var options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         options.failurePolicy = .returnPartiallyParsedIfPossible
         let parsed = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
@@ -50,7 +64,7 @@ enum AskMarkdown {
             if intent.contains(.code) { font = NSFont.monospacedSystemFont(ofSize: base.pointSize - 1, weight: .regular) }
             var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
             // Answers can quote the meeting, so only web links are clickable (no file: or app schemes).
-            if let link = run.link, ["http", "https"].contains(link.scheme?.lowercased() ?? "") { attributes[.link] = link }
+            if allowLinks, let link = run.link, ["http", "https"].contains(link.scheme?.lowercased() ?? "") { attributes[.link] = link }
             out.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
         }
         return out
@@ -62,6 +76,8 @@ enum AskMarkdown {
 /// changes, so a selection survives those redraws. ⌘C on a selection copies rich text.
 struct AskAnswerText: NSViewRepresentable {
     let markdown: String
+    /// False for an answer drawn on an added item: its links show as plain text.
+    var allowLinks = true
 
     final class Coordinator { var shown: String? }
 
@@ -82,9 +98,10 @@ struct AskAnswerText: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSTextView, context: Context) {
-        guard context.coordinator.shown != markdown else { return }
-        context.coordinator.shown = markdown
-        view.textStorage?.setAttributedString(AskMarkdown.attributed(markdown, color: NSColor(Color.whimbrelTextPrimary)))
+        let key = "\(allowLinks)\u{0}\(markdown)"
+        guard context.coordinator.shown != key else { return }
+        context.coordinator.shown = key
+        view.textStorage?.setAttributedString(AskMarkdown.attributed(markdown, color: NSColor(Color.whimbrelTextPrimary), allowLinks: allowLinks))
     }
 
     /// Measured on a private copy of `markdown`, never on the view: SwiftUI can ask for a size

@@ -1,6 +1,6 @@
 //! The built-in Thread skin (`skins/thread.json`, `skins/palettes/thread.json`, both written by
 //! `design/tokens/build.mjs`): it loads with no repair, its palette passes the Standard layout's contrast
-//! pairs without being repaired, and it is listed only when the hidden redesign flag is on.
+//! pairs without being repaired, and it is listed whatever the old redesign flag says (the flag no longer hides it).
 
 use skins::format::Archetype;
 use skins::palette::{default_palette, load_palettes, parse_palette};
@@ -65,24 +65,26 @@ fn the_thread_palette_passes_the_standard_layout_unrepaired() {
 }
 
 #[test]
-fn thread_is_listed_only_when_the_redesign_flag_is_on() {
+fn thread_is_listed_whatever_the_old_redesign_flag_says() {
     let all = load_bundled(&repo().join("skins"));
-    assert!(all.iter().any(|s| s.id == "thread"), "the loader does not know about the flag");
-    let off: Vec<String> = visible_skins(all.clone(), false).into_iter().map(|s| s.id).collect();
-    assert!(!off.contains(&"thread".to_string()));
-    assert_eq!(off.len(), all.len() - 1);
-    assert_eq!(off[0], "whimbrel");
-    let on: Vec<String> = visible_skins(all.clone(), true).into_iter().map(|s| s.id).collect();
-    assert_eq!(on, all.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
-    assert!(on.contains(&"thread".to_string()));
+    assert!(all.iter().any(|s| s.id == "thread"), "the loader knows it");
+    let all_ids: Vec<String> = all.iter().map(|s| s.id.clone()).collect();
+    for flag in [false, true] {
+        let shown: Vec<String> = visible_skins(all.clone(), flag).into_iter().map(|s| s.id).collect();
+        assert_eq!(shown, all_ids, "flag {flag}");
+        assert_eq!(shown[0], "whimbrel");
+        assert!(shown.contains(&"thread".to_string()));
+    }
     assert!(is_redesign_skin("thread") && !is_redesign_skin("whimbrel") && !is_redesign_skin("user-thread-1"));
 }
 
 #[test]
-fn the_thread_palette_is_listed_only_when_the_redesign_flag_is_on() {
+fn the_thread_palette_is_listed_whatever_the_old_redesign_flag_says() {
     let pool = load_palettes(&repo().join("skins/palettes"), &default_palette());
     assert!(pool.iter().any(|p| p.id == "thread"));
-    assert!(!visible_palettes(pool.clone(), false).iter().any(|p| p.id == "thread"));
-    assert_eq!(visible_palettes(pool.clone(), true).len(), pool.len());
-    assert_eq!(visible_palettes(pool.clone(), false).len(), pool.len() - 1);
+    for flag in [false, true] {
+        let shown = visible_palettes(pool.clone(), flag);
+        assert!(shown.iter().any(|p| p.id == "thread"), "flag {flag}");
+        assert_eq!(shown.len(), pool.len(), "flag {flag}");
+    }
 }

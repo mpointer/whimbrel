@@ -1,0 +1,42 @@
+# Files where scripts/check-paywalls.py allows a plan value in a condition, each with the
+# reason. Read the help at the top of that script before adding an entry.
+#
+#   path  # reason                    every plan condition in the file is allowed
+#   path :: regex  # reason           only lines matching regex are allowed
+#   ! path  # reason                  a known violation with a decided fix: passes, but every
+#                                     run prints it, so it is never forgotten
+#
+# Prefer a narrow "::" entry in a big file, so a new gate elsewhere in it still fails.
+
+# ---- Decode the server's plan and AI balance answers, or call the server for them.
+apps/macos/Whimbrel/Support/SyncBilling.swift  # decodes /v1/account/plan and the AI balance; isCloud and isPlus read the server's fields
+apps/macos/Whimbrel/Support/SyncState.swift  # fetches the plan from the server, polls it after checkout, opens Stripe checkout
+apps/windows/src-tauri/src/syncing/billing.rs  # the Windows twin of SyncBilling.swift: decodes the server's plan, caches its last plan_tier for copy
+apps/windows/src-tauri/src/syncing/controller.rs  # fetches the plan and balance from the server; at the server's device limit, a paid plan triggers a new sign-in that the server decides
+apps/mobile/android/app/src/main/java/com/mpointer/whimbrel/mobile/core/SyncWire.kt  # decodes the server's plan answer on Android
+core/api/src/sync_ops/enrollment.rs  # the Worker client: decodes the plan and AI balance answers (plan_tier, plus_available)
+apps/windows/src-tauri/src/syncing/enrollment.rs  # calls the Worker for sign-in and checkout; its test fakes a free plan answer
+
+# ---- Render the server's answer: plan lines, upgrade and manage buttons, AI credit copy.
+apps/macos/Whimbrel/UI/Settings/DevicesSettingsPane.swift :: \bplan\??\.(isCloud|plusAvailable)\b  # shows the plan line and the upgrade or manage buttons from the server's plan
+apps/macos/Whimbrel/UI/Settings/PlanControls.swift :: \bplan\??\.plusAvailable\b  # shows the Get Plus buttons when the server's plan answer says Plus is available; the server enforces the plan
+apps/macos/Whimbrel/UI/Settings/PlanSettingsPane.swift :: \bplan\.isCloud\b  # shows the Manage subscription button for an account the server says is on a paid plan; the server enforces the plan
+apps/macos/Whimbrel/UI/Settings/AIProvidersSettingsPane.swift :: \b(plan|balance)\.isPlus\b|isPlusAccount|PlusFlag  # shows the Plus allowance and credit lines from the server's balance; PlusFlag keeps the server's last plan_tier for that wording
+apps/macos/Whimbrel/UI/Redesign/Settings/PlanSettingsRedesign.swift :: \bplan\??\.(isCloud|plusAvailable)\b  # the redrawn Plan & billing section: shows the Manage button for an account the server says is on a paid plan and picks the Plus or Cloud purchase buttons from the server's plus_available answer, as PlanSettingsPane and PlanControls do; the server enforces the plan
+apps/macos/Whimbrel/UI/PlusAiPrompt.swift  # offers Whimbrel AI (models the company hosts) to an account the server says is Plus; the server meters every request
+apps/macos/Whimbrel/Support/CoreBridge.swift :: PlusCopy\.isPlusAccount  # picks the wording after the server already refused a request for lack of credit
+apps/windows/ui/src/settings/syncModel.ts  # the Windows plan line and upgrade or manage buttons, from the server's plan
+apps/windows/src-tauri/src/error.rs :: plus_flag  # picks the wording after the server already refused a request for lack of credit
+apps/windows/src-tauri/src/state.rs :: plus_flag::load  # loads the server's last plan_tier, kept for that wording
+
+# ---- Same words, not a plan: routine placement, the cloud runner device, model names.
+apps/macos/Whimbrel/Support/CloudRoutineSettings.swift :: isCloud  # isCloud(template) says a routine runs on the cloud runner, not which plan the account has
+apps/macos/Whimbrel/UI/CloudRoutineModel.swift :: platform == "cloud"  # the cloud runner's device record
+apps/macos/Whimbrel/UI/Settings/RoutinesSettingsPane.swift :: \.isCloud\(routine\.template\)  # whether a routine runs on the cloud runner, not a plan
+apps/macos/Whimbrel/UI/Redesign/Settings/AutomationsSettingsRedesign.swift :: \.isCloud\(routine\.template\)  # the redrawn Automations section: whether a routine runs on the cloud runner, not a plan; the same read RoutinesSettingsPane makes
+apps/windows/src-tauri/src/syncing/settings.rs :: is_cloud\(  # is_cloud(file, template) is routine placement, not a plan
+apps/windows/src-tauri/src/commands/routines.rs :: settings::is_cloud\(  # routine placement, not a plan
+apps/windows/src-tauri/src/routines.rs :: platform  # the cloud runner's device record
+apps/windows/ui/src/automations/cloudRoutineModel.ts :: platform  # the cloud runner's device record
+core/llm/src/exclusion.rs :: == "cloud"  # the word "cloud" in a model name (Ollama cloud models), not a plan
+core/memory/src/topics/exclusion.rs :: == "cloud"  # the word "cloud" in a model name (Ollama cloud models), not a plan

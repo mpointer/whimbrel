@@ -483,7 +483,9 @@ fn expire_items_until(
             | ItemKind::Conversation
             | ItemKind::Step
             | ItemKind::VaultNote
-            | ItemKind::ExportFolder => continue,
+            | ItemKind::ExportFolder
+            // Added items are kept until the user deletes them (bridge spec 14.6).
+            | ItemKind::McpItem => continue,
         };
         if tally.outcome(item.kind, done) {
             gone.push(item);
@@ -845,6 +847,20 @@ mod tests {
     }
 
     /// Vault sync off: an expired meeting's vault note stays, even when a vault path comes along; on, it goes.
+    #[test]
+    fn retention_never_expires_an_added_item() {
+        let e = env();
+        let w = world(&e);
+        let added = crate::test_store::add_mcp_item(&e.store, "a", &format!("{NAME} renewal"), "old numbers", None);
+        e.c.execute("UPDATE items SET ts_unix_ms = ?1 WHERE id = ?2", params![ago(30), added]).unwrap();
+        assert!(due_of(&e, &w.a.key, NOW).iter().all(|(k, _)| *k != ItemKind::McpItem));
+        // Even handed one, the expiry leaves it.
+        let forged = ClientItem { kind: ItemKind::McpItem, id: added.to_string(), also_client: None, date_unix_ms: ago(30), removed: false, label: None, excerpt: None, app: None };
+        let sel = ExpirySelection { key: w.a.key.clone(), items: vec![forged], vault: None, vault_off: true };
+        expire_items(&e.store, &sel, &[], NOW, false, LONG).unwrap();
+        assert_eq!(count(&e, &format!("SELECT COUNT(*) FROM items WHERE id = {added}")), 1);
+    }
+
     #[test]
     fn an_expiry_touches_the_vault_only_while_vault_sync_is_on() {
         for off in [true, false] {

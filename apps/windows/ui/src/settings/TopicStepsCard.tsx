@@ -81,7 +81,7 @@ export function TopicStepsCard() {
   const chips = names ? nameChips(names, suggested, profileName) : [];
 
   return (
-    <section className="card about" aria-labelledby="topic-steps-heading">
+    <section className="card about" aria-labelledby="topic-steps-heading" data-settings-anchor="topics.names">
       <h2 id="topic-steps-heading" className="section-label">
         {t("Names I go by")}
       </h2>

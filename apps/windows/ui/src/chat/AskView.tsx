@@ -30,6 +30,7 @@ import {
   spendLine,
   answeredLocallyLine,
   statusLine,
+  conversationActionLabels,
   type AskRequest,
   type Turn,
 } from "./chatModel";
@@ -381,16 +382,16 @@ function ConversationItem(props: {
           <span className="conversation-actions">
             <button
               className={row.starred ? "icon icon--on" : "icon"}
-              aria-label={row.starred ? t("Unstar") : t("Star")}
+              aria-label={conversationActionLabels(row).star}
               aria-pressed={row.starred}
               onClick={() => act(chatStarConversation(row.id, !row.starred), onChange)}
             >
               {row.starred ? "★" : "☆"}
             </button>
-            <button className="icon" aria-label={t("Rename")} onClick={() => setEditing(true)}>
+            <button className="icon" aria-label={conversationActionLabels(row).rename} onClick={() => setEditing(true)}>
               ✎
             </button>
-            <button className="icon" aria-label={t("Delete")} onClick={() => setConfirmDelete(true)}>
+            <button className="icon" aria-label={conversationActionLabels(row).delete} onClick={() => setConfirmDelete(true)}>
               ✕
             </button>
           </span>

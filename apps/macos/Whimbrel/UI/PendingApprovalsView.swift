@@ -26,35 +26,35 @@ struct PendingApprovalsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             Text("Pending Approvals")
-                .font(.whimbrelDisplay())
+                .restyledFont(.display)
                 .foregroundStyle(Color.whimbrelTextPrimary)
             Text("Write actions your routines want to take, waiting for your review.")
-                .font(.whimbrelBody(.caption))
+                .restyledFont(.caption)
                 .foregroundStyle(Color.whimbrelTextSecondary)
 
             Divider().overlay(Color.whimbrelBorder)
 
             if pending.isEmpty {
                 Text("Nothing waiting on you.")
-                    .font(.whimbrelBody(.caption))
+                    .restyledFont(.caption)
                     .foregroundStyle(Color.whimbrelTextSecondary)
             } else {
                 ForEach(pending) { run in
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                         Text(run.displaySummary)
-                            .font(.whimbrelBody(.body))
+                            .restyledFont(.body)
                             .foregroundStyle(Color.whimbrelTextPrimary)
                         accountPicker(for: run)
                         if let error = approvalErrors[run.id] {
                             Text(error)
-                                .font(.whimbrelBody(.caption))
+                                .restyledFont(.caption)
                                 .foregroundStyle(Color.whimbrelError)
                         }
                         HStack {
                             Button("Approve") { approve(run) }
-                                .buttonStyle(.whimbrelPrimary)
+                                .restyledButton(.primary)
                             Button("Reject") { reject(run) }
-                                .buttonStyle(.whimbrelSecondary)
+                                .restyledButton(.secondary)
                                 .tint(Color.whimbrelError)
                         }
                     }
@@ -72,26 +72,18 @@ struct PendingApprovalsView: View {
         case .createCalendarEvent:
             let accounts = appState.calendarConnectorState.accounts
             if accounts.count > 1 {
-                Picker("Calendar account", selection: Binding(
+                RestyledAccountPicker(label: "Calendar account", emails: accounts.map(\.email), selection: Binding(
                     get: { selectedCalendarEmail[run.id] ?? appState.calendarConnectorState.defaultEmail ?? "" },
                     set: { selectedCalendarEmail[run.id] = $0 }
-                )) {
-                    ForEach(accounts) { account in Text(account.email).tag(account.email) }
-                }
-                .pickerStyle(.menu)
-                .font(.whimbrelBody(.caption))
+                ))
             }
         case .sendEmail:
             let accounts = appState.gmailConnectorState.accounts
             if accounts.count > 1 {
-                Picker("Gmail account", selection: Binding(
+                RestyledAccountPicker(label: "Gmail account", emails: accounts.map(\.email), selection: Binding(
                     get: { selectedGmailEmail[run.id] ?? appState.gmailConnectorState.defaultEmail ?? "" },
                     set: { selectedGmailEmail[run.id] = $0 }
-                )) {
-                    ForEach(accounts) { account in Text(account.email).tag(account.email) }
-                }
-                .pickerStyle(.menu)
-                .font(.whimbrelBody(.caption))
+                ))
             }
         case .none:
             EmptyView()

@@ -170,7 +170,11 @@ impl ContextFilter {
                     || set.find_in(&item.display_label())
                     || set.find_in(item.text())
                     || matches!(item, ContextItem::Capture(c)
-                        if set.find_in(&c.window_title) || c.url.as_deref().is_some_and(|u| set.find_in(u))))
+                        if set.find_in(&c.window_title) || c.url.as_deref().is_some_and(|u| set.find_in(u)))
+                    // Every field of an added item that reaches a prompt (the fenced text holds the
+                    // adding client's name, the label, the title and the text), and its link.
+                    || matches!(item, ContextItem::McpItem(a)
+                        if set.find_in(&item.prompt_text()) || a.url.as_deref().is_some_and(|u| set.find_in(u))))
             }
         };
         if !keep {
@@ -286,6 +290,7 @@ fn item_ref(item: &ContextItem) -> (&'static str, i64) {
         ContextItem::Episode(e) => ("episode", e.id),
         ContextItem::Thread(t) => ("thread", t.id),
         ContextItem::RoutineRun(r) => ("routine_run", r.id),
+        ContextItem::McpItem(a) => ("mcp_item", a.id),
     }
 }
 

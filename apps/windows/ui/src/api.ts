@@ -1,7 +1,7 @@
 // Typed wrappers over the shell's Tauri commands (src-tauri/src/commands).
 
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { AudioLevel, DeleteEverythingPreview, MeetingMarkerView, NoteSourcesView, TranscriptLinesView } from "./generated/types";
+import type { AudioLevel, ConversationListRow, ConversationPageView, ConversationScopeView, ConversationTopicView, DeleteEverythingPreview, FindFilterInput, FoundPage, MeetingMarkerView, NoteSourcesView, RoutePreviewView, SavedExchangeInput, SavedExchangeResult, SourcedConversationView, TranscriptLinesView } from "./generated/types";
 import type {
   ClientControl,
   ClientDeleteReceipt,
@@ -174,6 +174,8 @@ export const captureResumeNow = () => invoke<CaptureStatus>("capture_resume_now"
 export const trayStatus = () => invoke<TrayStatus>("tray_status");
 export const popupOpenMain = () => invoke<void>("popup_open_main");
 export const popupQuit = () => invoke<void>("popup_quit");
+/** Escape in the redesigned popup (redesign only). */
+export const popupClose = () => invoke<void>("popup_close");
 
 // Auto-update (M3.5): the version of a downloaded update, and "Restart now".
 export const updateReady = () => invoke<string | null>("update_ready");
@@ -413,6 +415,8 @@ export const meetingMarkerSetLabel = (id: number, label: string | null) => invok
 export const meetingBarAsk = (meetingId: number, text: string) => invoke<void>("meeting_bar_ask", { meetingId, text });
 export const meetingBarTakeAsk = (meetingId: number) => invoke<string | null>("meeting_bar_take_ask", { meetingId });
 export const meetingBarCancelAsk = () => invoke<void>("meeting_bar_cancel_ask");
+/** "Show in-meeting window" in the tray popup (redesign only): brings the window back after it was closed. */
+export const meetingBarShow = () => invoke<void>("meeting_bar_show");
 export const meetingAudioLevel = () => invoke<AudioLevel>("meeting_audio_level");
 export const todaySchedule = () => invoke<ScheduleView>("today_schedule");
 
@@ -589,7 +593,8 @@ export const mcpServerState = () => invoke<McpServerView>("mcp_server_state");
 export const mcpSetEnabled = (enabled: boolean) => invoke<McpServerView>("mcp_set_enabled", { enabled });
 export const mcpClients = () => invoke<McpClientView[]>("mcp_clients");
 export const mcpCreateClient = (name: string, scopes: string[]) => invoke<McpNewClient>("mcp_create_client", { name, scopes });
-export const mcpRevokeClient = (id: number) => invoke<McpClientView[]>("mcp_revoke_client", { id });
+export const mcpRevokeClient = (id: number, deleteItems = false) =>
+  invoke<McpClientView[]>("mcp_revoke_client", { id, deleteItems });
 export const calendarSyncNow = () => invoke<CalendarAccounts>("calendar_sync_now");
 
 export const retentionSettings = () => invoke<RetentionView>("retention_settings");
@@ -671,6 +676,31 @@ export function meetingAsk(meetingId: number, query: string, history: MeetingAsk
   return invoke<void>("meeting_ask", { meetingId, query, history, onEvent: channel });
 }
 export const chatConversations = () => invoke<ConversationRow[]>("chat_conversations");
+// Find and the Ask with numbered sources (redesign only; src-tauri/src/commands/find.rs).
+/** One page of results from this PC for `query` under `filter`. An empty query with a filter lists what is in it by time. Sends nothing anywhere. */
+export const libraryFind = (query: string, filter: FindFilterInput, order: "time" | "rank", offset: number, limit: number) =>
+  invoke<FoundPage>("library_find", { query, filter, order, offset, limit });
+/** Where `query` would be answered with these filters: the Ask button's name comes from this and nothing else. */
+export const chatRoutePreview = (query: string, conversationId: number | null, filter: FindFilterInput) =>
+  invoke<RoutePreviewView>("chat_route_preview", { query, conversationId, filter });
+/** Starts answering `query` inside `filter`; the events are `chatAsk`'s plus `sourced` and `cited`. `requireLocal` is the preview's word that the answer stays on this PC. */
+export function chatAskSourced(query: string, conversationId: number | null, filter: FindFilterInput, requireLocal: boolean, onEvent: (event: ChatEvent) => void, save?: boolean) {
+  const channel = new Channel<ChatEvent>();
+  channel.onmessage = onEvent;
+  // `save: false` (Today's answer) shows the answer and keeps nothing; left out, the answer is saved as the Find page's always was.
+  return invoke<void>("chat_ask_sourced", save === undefined ? { query, conversationId, filter, requireLocal, onEvent: channel } : { query, conversationId, filter, requireLocal, save, onEvent: channel });
+}
+export const chatConversationSourced = (id: number) => invoke<SourcedConversationView | null>("chat_conversation_sourced", { id });
+/** The filters a Find conversation kept, as core stores them (`find_filter_json`): the Dates as the bounds asked under and the App, never a
+ *  person, only whether a People filter was on. */
+export interface KeptFindFilter {
+  start_unix_ms?: number | null;
+  end_unix_ms?: number | null;
+  app_bundle_id?: string | null;
+  people_left_out?: boolean;
+}
+/** The Dates and Apps filters a Find conversation was asked under (never a person), or null. */
+export const chatConversationFindFilter = (id: number) => invoke<KeptFindFilter | null>("chat_conversation_find_filter", { id });
 export const chatConversation = (id: number) => invoke<ConversationView | null>("chat_conversation", { id });
 export const chatRenameConversation = (id: number, title: string) => invoke<ConversationRow[]>("chat_rename_conversation", { id, title });
 export const chatStarConversation = (id: number, starred: boolean) => invoke<ConversationRow[]>("chat_star_conversation", { id, starred });
@@ -738,3 +768,28 @@ export function speedCheckRun(onProgress: (overall: number) => void) {
 }
 export const speedCheckCancel = () => invoke<void>("speed_check_cancel");
 export const speedCheckSave = () => invoke<string | null>("speed_check_save");
+
+// Conversations (screen 6, redesign only; src-tauri/src/commands/conversations.rs).
+/** Every conversation, starred first, with its topic and the first line of its latest answer. */
+export const conversationsList = () => invoke<ConversationListRow[]>("conversations_list");
+/** The conversations linked to a topic, newest updated first. */
+export const topicConversationsList = (topicId: number) => invoke<ConversationRow[]>("topic_conversations_list", { topicId });
+/** What a stored conversation was started about. */
+export const conversationScope = (id: number) => invoke<ConversationScopeView>("conversation_scope", { id });
+/** A conversation's page: exchanges with their sources read live, scope, topic link and the topics to choose from; null when it is gone. */
+export const conversationPage = (id: number) => invoke<ConversationPageView | null>("conversation_page", { id });
+/** The person's topic for a conversation, or null to remove it. Final. */
+export const conversationSetTopic = (id: number, topicId: number | null) => invoke<ConversationTopicView>("conversation_set_topic", { id, topicId });
+/** Keeps an answer the page holds as a conversation (id null) or as a follow-up. No model is asked; a new conversation's title arrives as `titled`. */
+export function conversationSaveExchange(conversationId: number | null, scope: ConversationScopeView, exchange: SavedExchangeInput, onEvent: (event: ChatEvent) => void) {
+  const channel = new Channel<ChatEvent>();
+  channel.onmessage = onEvent;
+  return invoke<SavedExchangeResult>("conversation_save_exchange", { conversationId, scope, exchange, onEvent: channel });
+}
+/** Starts answering `query` from one topic's items; the events are the Ask's, with `scope_empty` when nothing in the topic matched. Nothing is saved. */
+/** `requireLocal`: the Ask control said this PC, so the call is held to it (never a hosted model). */
+export function chatAskTopic(topicId: number, query: string, conversationId: number | null, requireLocal: boolean, onEvent: (event: ChatEvent) => void) {
+  const channel = new Channel<ChatEvent>();
+  channel.onmessage = onEvent;
+  return invoke<void>("chat_ask_topic", { topicId, query, conversationId, requireLocal, onEvent: channel });
+}

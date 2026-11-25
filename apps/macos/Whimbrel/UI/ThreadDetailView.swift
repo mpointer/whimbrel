@@ -20,11 +20,11 @@ struct ThreadDetailView: View {
                 ThreadDetailContentView(thread: loadedThread)
             } else if loadFailed {
                 Text("This thread is no longer available.")
-                    .font(.whimbrelBody(.callout))
+                    .restyledFont(.callout)
                     .foregroundStyle(Color.whimbrelTextSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ProgressView()
+                RestyledProgress()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -37,7 +37,7 @@ struct ThreadDetailView: View {
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .accessibilityLabel("Close")
-                    .font(.system(size: 20))
+                    .restyledGlyph(classicSize: 20)
                     .foregroundStyle(Color.whimbrelTextSecondary)
             }
             .buttonStyle(.plain)
@@ -45,6 +45,7 @@ struct ThreadDetailView: View {
             .padding(Spacing.md)
         }
         .onAppear { loadThreadIfNeeded() }
+        .restyledScreen(redesign: appState.redesignEnabled)
     }
 
     private func loadThreadIfNeeded() {
@@ -73,30 +74,30 @@ private struct ThreadDetailContentView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
-                Text(thread.subject ?? thread.lastMessageFrom).font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text(thread.subject ?? thread.lastMessageFrom).restyledFont(.display).foregroundStyle(Color.whimbrelTextPrimary)
                 (Text("\(thread.messageCount) messages") + Text(verbatim: " · \(Self.statusLabel(thread.status))"))
-                    .font(.whimbrelBody(.caption))
+                    .restyledFont(.caption)
                     .foregroundStyle(Color.whimbrelTextSecondary)
                 Text(Self.formattedTime(thread.lastActivityTsUnixMs))
-                    .font(.whimbrelBody(.caption))
+                    .restyledFont(.caption)
                     .foregroundStyle(Color.whimbrelTextSecondary)
 
                 Divider().overlay(Color.whimbrelBorder)
 
-                Text("Summary").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text("Summary").restyledFont(.calloutStrong).foregroundStyle(Color.whimbrelTextPrimary)
                 switch thread.summarizeStatus {
                 case "summarized":
                     Text(thread.summary ?? String(localized: "Summary unavailable"))
-                        .font(.whimbrelBody(.callout))
+                        .restyledFont(.callout)
                         .foregroundStyle(Color.whimbrelTextPrimary)
                         .textSelection(.enabled)
                 case "summarize_failed":
                     Text("Summary unavailable.")
-                        .font(.whimbrelBody(.callout))
+                        .restyledFont(.callout)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 default:
                     Text("Summarizing…")
-                        .font(.whimbrelBody(.callout))
+                        .restyledFont(.callout)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }
             }

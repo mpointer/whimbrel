@@ -55,7 +55,7 @@ export function TopicsCard() {
     );
 
   return (
-    <section className="card about stack-sm" aria-labelledby="topics-heading">
+    <section className="card about stack-sm" aria-labelledby="topics-heading" data-settings-anchor="topics.topics">
       <h2 id="topics-heading" className="section-label">
         {t("Topics")}
       </h2>

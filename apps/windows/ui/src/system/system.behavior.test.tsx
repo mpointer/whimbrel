@@ -29,7 +29,17 @@ describe("recording indicator", () => {
   it("puts that name on a polite live region so a change is announced", () => {
     const out = html(<WRecordingIndicator state="recording" elapsedSeconds={848} />);
     expect(out).toContain('role="status"');
-    expect(out).toContain('aria-label="Recording, 14 minutes 8 seconds"');
+    // The live region names the state only; the time sits in a timer beside it, so the region doesn't change every second.
+    expect(out).toContain('role="status" aria-label="Recording"');
+    expect(out).toMatch(/role="timer">14 minutes 8 seconds</);
+  });
+
+  it("keeps the ticking time out of the live region, so a screen reader isn't told every second", () => {
+    const at = (s: number) => html(<WRecordingIndicator state="problem" elapsedSeconds={s} reason="Some audio may be missing" />);
+    const label = (out: string) => out.match(/role="status" aria-label="([^"]*)"/)?.[1];
+    expect(label(at(848))).toBe("Problem, Some audio may be missing");
+    expect(label(at(849))).toBe(label(at(848)));
+    expect(at(849)).not.toBe(at(848));
   });
 
   it("draws the state as a shape, not only a color", () => {

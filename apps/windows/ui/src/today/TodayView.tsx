@@ -26,6 +26,7 @@ import { useSkin } from "../useSkin";
 import { useRedesign } from "../redesign";
 import { RedesignedHome, type HomeSection } from "./redesign/HomeView";
 import { LiveOrHome } from "../meetings/redesign/LiveGate";
+import { TodayAnswer } from "../conversations/TodayAnswer";
 import { deviceLine, recapFor, shouldGenerate, threadLine } from "./todayModel";
 
 function message(e: unknown): string {
@@ -132,6 +133,9 @@ export function TodayView({
   if (selected) return <Detail selection={selected} onBack={() => setSelected(null)} />;
   if (redesign) {
     return (
+      <>
+      {/* Ask on Today (screen 6): the answer shows under the shell's bar, above Home. */}
+      <TodayAnswer onOpen={(open) => setSelected({ kind: open.kind, id: open.id, line: open.line })} />
       <LiveOrHome
         onOpenSettings={onOpenSettings}
         home={
@@ -154,6 +158,7 @@ export function TodayView({
           />
         }
       />
+      </>
     );
   }
   if (!overview) {

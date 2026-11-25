@@ -27,7 +27,7 @@ import { TrimSheet } from "../TrimSheet";
 import { FallbackNotice } from "../Workspace";
 import { displayOrder, transcriptionNoticeText, transcriptLanguageOptions } from "../workspaceModel";
 import { NoteMenu, type NoteMenuItem } from "./NoteMenu";
-import { buildNote, hasWhimbrelLines, noteState, offerSources, offsetClock, sourceName, sourceSpeaker, type LineTarget, type NoteMode } from "./noteModel";
+import { buildNote, hasWhimbrelLines, holdMargin, marginShown, noteState, offerSources, offsetClock, sourceName, sourceSpeaker, type LineTarget, type NoteMode } from "./noteModel";
 import { NoteTranscript, type TranscriptOpen } from "./NoteTranscript";
 import { useNoteData } from "./useNoteData";
 import "./finishedNote.css";
@@ -36,6 +36,8 @@ const message = (e: unknown): string => (isCommandError(e) ? describeError(e) : 
 
 export interface FinishedNoteProps {
   meetingId: number;
+  /** Open on the transcript at this line (its id as `meeting_transcript_lines` gives it): a search result or an Ask source. */
+  initialLine?: number;
   /** Where this page has a way back (a meeting opened from Home, Library, Ask or Topics). The Meetings tab has its list beside it. */
   onBack?: () => void;
   /** The meeting changed or went (forgotten): the list behind reloads. */
@@ -77,15 +79,15 @@ export function FinishedNote(props: FinishedNoteProps) {
   return <FinishedNoteBody key={props.meetingId} {...props} />;
 }
 
-function FinishedNoteBody({ meetingId, onBack, onChanged, onOpenSettings, onPhase }: FinishedNoteProps) {
+function FinishedNoteBody({ meetingId, initialLine, onBack, onChanged, onOpenSettings, onPhase }: FinishedNoteProps) {
   const { t, locale } = useL10n();
   const data = useNoteData(meetingId, onChanged);
   const { view } = data;
-  const [mode, setMode] = useState<NoteMode>("note");
+  const [mode, setMode] = useState<NoteMode>(initialLine != null ? "transcript" : "note");
   const [edit, setEdit] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
-  const [open, setOpen] = useState<TranscriptOpen | null>(null);
-  const openSeq = useRef(0);
+  const [open, setOpen] = useState<TranscriptOpen | null>(initialLine != null ? { seq: 1, target: { kind: "line", id: initialLine }, focus: true } : null);
+  const openSeq = useRef(initialLine != null ? 1 : 0);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [forgetting, setForgetting] = useState(false);
   const [trimming, setTrimming] = useState(false);
@@ -100,6 +102,8 @@ function FinishedNoteBody({ meetingId, onBack, onChanged, onOpenSettings, onPhas
   // What to focus when the page comes back from the transcript: a selector for the control that opened it, else the title.
   const returnTo = useRef<string | null>(null);
   const returnFocus = useRef(false);
+  // The margin's answer, taken when Edit began (see holdMargin).
+  const marginHeld = useRef<boolean | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -193,6 +197,9 @@ function FinishedNoteBody({ meetingId, onBack, onChanged, onOpenSettings, onPhas
   // Words typed into the summary are the person's from the first keystroke, saved or not.
   const summaryMine = view.summaryIsEdited || summaryText !== (view.summary ?? "");
   const aiWrote = hasWhimbrelLines(model, summaryText, summaryMine);
+  // The margin column does not fold or unfold while the person edits: its answer is taken when Edit began and held until Edit ends.
+  const margin = holdMargin(marginHeld.current, editing, marginShown(model, aiWrote));
+  marginHeld.current = margin.held;
   // "Written by Whimbrel" is said once with a section's heading. A section that mixes authors (action items) says it on each of Whimbrel's rows.
   const allActionsAi = model.actions.length > 0 && model.actions.every((a) => a.ai);
 
@@ -329,7 +336,7 @@ function FinishedNoteBody({ meetingId, onBack, onChanged, onOpenSettings, onPhas
   );
 
   const noteBody = (
-    <div className="th-fin-page" ref={pageRef} data-has-margin={model.entries.length > 0 ? "true" : "false"}>
+    <div className="th-fin-page" ref={pageRef} data-has-margin={margin.shown ? "true" : "false"}>
       <div className="th-fin-row th-fin-row-head">
         <header className="th-fin-head">
           <p className="th-fin-when">
@@ -506,6 +513,7 @@ function FinishedNoteBody({ meetingId, onBack, onChanged, onOpenSettings, onPhas
             live={false}
             disabledReason={disabledReason({ recording: false, liveLines: 0, processing, hasTranscript: view.hasTranscript })}
             onCite={(id) => showTranscript({ kind: "line", id }, true)}
+            continuable
           />
         </div>
       </div>

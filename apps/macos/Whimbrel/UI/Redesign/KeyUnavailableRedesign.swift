@@ -14,7 +14,7 @@ struct KeyUnavailableRedesignView: View {
     static func content(_ model: EncryptionKeyUnavailableModel, quit: (() -> Void)?, retry: @escaping () -> Void) -> WNoticeScreenModel {
         var m = WNoticeScreenModel()
         m.title = EncryptionCopy.unavailableTitle
-        m.paragraphs = [EncryptionCopy.unavailableBody]
+        m.paragraphs = [LibraryCopyRedesign.map(EncryptionCopy.unavailableBody)]
         m.hints = [EncryptionCopy.unavailableHint, EncryptionCopy.unavailableTouchesNothing]
         if !model.detail.isEmpty { m.hints.append(EncryptionCopy.unavailableDetail(model.detail)) }
         m.errorLine = model.stillUnavailable ? EncryptionCopy.stillUnavailable : nil

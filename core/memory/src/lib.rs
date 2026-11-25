@@ -17,14 +17,16 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 mod embedding;
 pub use embedding::{
-    embedding_model_dir, prune_stale_embedding_models, Embedder, EmbeddingError, EmbeddingModel,
-    LazyModelEmbedder, EMBEDDING_MODEL_FILES, EMBEDDING_MODEL_ID, EMBEDDING_MODEL_REPO,
+    embedding_model_dir, prune_stale_embedding_models, EmbedRole, Embedder, EmbeddingError, EmbeddingModel,
+    EmbeddingPrefixes, LazyModelEmbedder, EMBEDDING_MODEL_FILES, EMBEDDING_MODEL_PREFIXES, EMBEDDING_MODEL_ID, EMBEDDING_MODEL_REPO,
     EMBEDDING_MODEL_REVISION, EMBEDDING_OUTPUT_DIM,
 };
 
 pub mod background_gate;
 pub mod calendar_flags;
 pub mod capture_search;
+pub mod cards;
+pub mod find;
 pub mod day_blocks;
 pub mod calendar_presence;
 pub mod synced_calendar;
@@ -49,12 +51,16 @@ pub mod summary_fallback;
 pub mod recap_sent;
 pub mod token;
 pub mod topics;
+pub use topics::page::TopicRef;
 pub mod trim;
 pub mod words;
 
 pub mod client_forget;
 pub mod client_delete;
 pub mod client_export;
+pub mod mcp_items;
+pub use mcp_items::{ITEM_KINDS, MCP_ITEM_KIND};
+pub use find::AddedItemHit;
 mod forget;
 mod fs_atomic;
 pub use fs_atomic::move_no_replace;
@@ -192,10 +198,10 @@ const EMBEDDING_MODEL_VERSION: &str = "paraphrase-multilingual-minilm-l12-v2-v1"
 /// 85481 and the limit is 4096" — not merely a soft/theoretical ceiling). A full-corpus
 /// `k` (see `search_semantic`/`search_transcript_semantic`) must be clamped to this, or
 /// semantic search hard-errors on any real-sized database instead of degrading.
-/// ponytail: clamping means a same-kind row can still be missed once the corpus exceeds
-/// ~4096 rows and enough closer other-kind rows crowd it out of the top-k — upgrade path
-/// is per-kind `vec0` tables (reverts Slice 1's shared-table design) or a future
-/// sqlite-vec version with a higher/no cap, if this is ever measured as a real miss.
+/// Ask's capture, transcript and slide meaning searches bound the read to their own kind
+/// (`v.rowid IN (SELECT id FROM items WHERE kind = ...)`, which `vec0` applies before the
+/// nearest `k`), so other kinds (a backfill of items a local MCP client added) never crowd
+/// them out of the top-k.
 const ITEMS_VEC_MAX_K: i64 = 4096;
 
 /// Two consecutive same-app, same-device captures more than this far apart start a new
@@ -470,6 +476,142 @@ pub struct ConversationSummary {
     pub title: String,
     pub starred: bool,
     pub updated_at_unix_ms: i64,
+}
+
+/// One row of the Conversations list: the summary fields, the conversation's live topic (none
+/// when it has none or its topic is gone) and the first line of its latest answer (none before
+/// any answer). A separate type so `ConversationSummary` keeps its shape.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ConversationRow {
+    pub id: i64,
+    pub title: String,
+    pub starred: bool,
+    pub updated_at_unix_ms: i64,
+    pub topic: Option<topics::page::TopicRef>,
+    pub latest_answer_line: Option<String>,
+}
+
+/// The most of an answer's first line a list row carries.
+pub(crate) const ANSWER_LINE_MAX_CHARS: usize = 200;
+
+/// An answer's first line with any text, read as plain text (`plain_answer_line`) and cut to
+/// `ANSWER_LINE_MAX_CHARS`. A line with nothing left once its Markdown is gone (a rule, a lone
+/// citation) is skipped.
+pub(crate) fn first_answer_line(answer: &str) -> Option<String> {
+    let line = answer.lines().map(plain_answer_line).find(|l| !l.is_empty())?;
+    Some(line.chars().take(ANSWER_LINE_MAX_CHARS).collect())
+}
+
+/// One answer line without its Markdown, for a list row: leading heading, list and quote markers,
+/// `[n]` citation markers, links (their text stays), and bold, italic, strikethrough and code
+/// markers. Plain text is left alone (an intra-word `_`, a lone `*`, a bracketed word).
+fn plain_answer_line(line: &str) -> String {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static RES: OnceLock<[Regex; 10]> = OnceLock::new();
+    let [rule, block, link, cite, bold, under, strike, code, star, single_under] = RES.get_or_init(|| {
+        let re = |p: &str| Regex::new(p).expect("valid pattern");
+        [
+            re(r"^([-*_])(\s*[-*_]){2,}$"),
+            re(r"^(#{1,6}(\s+|$)|[-*+]\s+|\d+[.)]\s+|>\s*)"),
+            re(r"\[([^\]]+)\]\([^)]*\)"),
+            re(r"\s*\[\d+(\s*,\s*\d+)*\]"),
+            re(r"\*\*(.*?)\*\*"),
+            re(r"__(.*?)__"),
+            re(r"~~(.*?)~~"),
+            re(r"`([^`]*)`"),
+            re(r"(^|[^\w*])\*([^\s*](?:[^*]*[^\s*])?)\*"),
+            re(r"(^|[^\w_])_([^\s_](?:[^_]*[^\s_])?)_($|[^\w_])"),
+        ]
+    });
+    let mut text = line.trim().to_string();
+    if rule.is_match(&text) {
+        return String::new();
+    }
+    while let Some(m) = block.find(&text) {
+        if m.end() == 0 {
+            break;
+        }
+        text = text[m.end()..].trim_start().to_string();
+    }
+    let text = link.replace_all(&text, "$1");
+    let text = cite.replace_all(&text, "");
+    let text = bold.replace_all(&text, "$1");
+    let text = under.replace_all(&text, "$1");
+    let text = strike.replace_all(&text, "$1");
+    let text = code.replace_all(&text, "$1");
+    let text = star.replace_all(&text, "$1$2");
+    let text = single_under.replace_all(&text, "$1$2$3");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The Find filters an everything conversation was asked under, kept so a reopened conversation asks its
+/// follow-ups under them (docs/ui-redesign/screens/ask.md). Dates and Apps only: there is no field for a
+/// person (no new data about people is stored), only whether a People filter was left out. Local, never
+/// synced; a person or any other field sent along is ignored when read.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SavedFindFilter {
+    #[serde(default)]
+    pub start_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub end_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub app_bundle_id: Option<String>,
+    /// The question was asked under a People filter, which was not kept.
+    #[serde(default)]
+    pub people_left_out: bool,
+}
+
+impl SavedFindFilter {
+    pub fn is_empty(&self) -> bool {
+        self.start_unix_ms.is_none() && self.end_unix_ms.is_none() && self.app_bundle_id.is_none() && !self.people_left_out
+    }
+}
+
+/// What a conversation's Ask answers from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "ConversationScopeRepr", into = "ConversationScopeRepr")]
+pub enum ConversationScope {
+    Everything,
+    Topic(i64),
+    Meeting(i64),
+}
+
+/// The wire shape: `{"kind":"everything"}`, `{"kind":"topic","id":N}`, `{"kind":"meeting","id":N}`.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ConversationScopeRepr {
+    Everything,
+    Topic { id: i64 },
+    Meeting { id: i64 },
+}
+
+impl From<ConversationScopeRepr> for ConversationScope {
+    fn from(r: ConversationScopeRepr) -> Self {
+        match r {
+            ConversationScopeRepr::Everything => Self::Everything,
+            ConversationScopeRepr::Topic { id } => Self::Topic(id),
+            ConversationScopeRepr::Meeting { id } => Self::Meeting(id),
+        }
+    }
+}
+
+impl From<ConversationScope> for ConversationScopeRepr {
+    fn from(s: ConversationScope) -> Self {
+        match s {
+            ConversationScope::Everything => Self::Everything,
+            ConversationScope::Topic(id) => Self::Topic { id },
+            ConversationScope::Meeting(id) => Self::Meeting { id },
+        }
+    }
+}
+
+/// A conversation's topic link. `topic: None` with `set_by_user` records "the user
+/// removed it" (or that the linked topic is gone).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ConversationTopic {
+    pub topic: Option<topics::page::TopicRef>,
+    pub set_by_user: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1362,6 +1504,9 @@ pub struct DataCounts {
     pub entities: i64,
     pub usage_rows: i64,
     pub live_alerts: i64,
+    /// Items local MCP clients added (`mcp_item`).
+    #[serde(default)]
+    pub mcp_items: i64,
 }
 
 /// One `items` row as "export everything" writes it (`Store::export_items_page`).
@@ -1447,6 +1592,8 @@ pub struct Store {
     /// embeds them later. Sync sets it while catching up on a peer, so a backlog applies at
     /// row speed instead of embedding speed (~0.5 s a row on a laptop CPU).
     defer_embedding: std::cell::Cell<bool>,
+    /// How many person contexts `find` and the scoped reads have built on this connection (`find::person_context_builds`).
+    person_ctx_builds: std::cell::Cell<u64>,
     /// While set, the client exclusion settings read as unreadable (`exclusion_unreadable`), so every
     /// hosted path fails closed. The cloud runner sets it on its scratch store until it has read every
     /// exclusion row: an empty store would otherwise read as "nothing excluded".
@@ -1557,6 +1704,7 @@ impl Store {
             own_device_id: Default::default(),
             exclusion_cache: Default::default(),
             defer_embedding: Default::default(),
+            person_ctx_builds: Default::default(),
             exclusion_unconfirmed: Default::default(),
             _open: registration,
         })
@@ -1577,6 +1725,7 @@ impl Store {
             own_device_id: Default::default(),
             exclusion_cache: Default::default(),
             defer_embedding: Default::default(),
+            person_ctx_builds: Default::default(),
             exclusion_unconfirmed: Default::default(),
             _open: None,
         })
@@ -1739,6 +1888,7 @@ impl Store {
             own_device_id: Default::default(),
             exclusion_cache: Default::default(),
             defer_embedding: Default::default(),
+            person_ctx_builds: Default::default(),
             exclusion_unconfirmed: Default::default(),
             _open: registration,
         })
@@ -1810,11 +1960,17 @@ impl Store {
     }
 
     /// Lazily loads and memoizes the embedding model (success or failure — a missing
-    /// model doesn't retry expensively on every call), then embeds `text`. Every
-    /// caller treats `Err` as "skip the optional vector-index entry," never as a
-    /// reason to fail the surrounding operation.
-    fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
-        self.embedder.embed(text)
+    /// model doesn't retry expensively on every call), then embeds a stored row's `text`
+    /// with the model's passage prefix. Every caller treats `Err` as "skip the optional
+    /// vector-index entry," never as a reason to fail the surrounding operation.
+    pub(crate) fn embed_passage(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        self.embedder.embed_passage(text)
+    }
+
+    /// Embeds what someone searched for, with the model's query prefix, to compare against
+    /// the stored passages. `Err` means no meaning search, never a failed search.
+    pub(crate) fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        self.embedder.embed_query(text)
     }
 
     /// Turns deferred embedding for synced items on or off (see `defer_embedding`); returns
@@ -1913,6 +2069,11 @@ impl Store {
                 model TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_conversation_exchange_conversation ON conversation_exchange(conversation_id, created_at_unix_ms);
+            CREATE TABLE IF NOT EXISTS topic_conversation (
+                conversation_id INTEGER PRIMARY KEY REFERENCES conversation(id),
+                topic_id INTEGER,
+                set_by_user INTEGER NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS transcript_segment (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 meeting_id INTEGER NOT NULL,
@@ -2209,6 +2370,8 @@ impl Store {
         Self::ensure_meeting_snapshot_columns(conn)?;
         Self::ensure_capture_item_source_column(conn)?;
         Self::ensure_conversation_exchange_model_column(conn)?;
+        Self::ensure_conversation_scope_columns(conn)?;
+        Self::ensure_conversation_exchange_ask_columns(conn)?;
         Self::ensure_capture_item_local_seq_column(conn)?;
         Self::ensure_meeting_local_seq_column(conn)?;
         Self::ensure_meeting_estimated_speaker_count_column(conn)?;
@@ -2233,6 +2396,7 @@ impl Store {
         skin_sync::ensure_skin_sync_tables(conn)?;
         forget::ensure_forget_tables(conn)?;
         client_forget::ensure_client_forget_tables(conn)?;
+        mcp_items::ensure_mcp_item_tables(conn)?;
         sync_backfill::ensure_sync_backfill_schema(conn)?;
         provider_budget::ensure_provider_budget_tables(conn)?;
         meeting_parts::ensure_meeting_part_schema(conn)?;
@@ -2631,6 +2795,26 @@ impl Store {
 
     /// Adds `model` (the model that answered) to a `conversation_exchange` table that
     /// predates it. Older exchanges keep NULL.
+    /// Adds the nullable `scope_kind`/`scope_id` columns to `conversation`; NULL reads as
+    /// "everything".
+    fn ensure_conversation_scope_columns(conn: &Connection) -> rusqlite::Result<()> {
+        let existing: Vec<String> = conn
+            .prepare("PRAGMA table_info(conversation)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if !existing.iter().any(|c| c == "scope_kind") {
+            conn.execute("ALTER TABLE conversation ADD COLUMN scope_kind TEXT", [])?;
+        }
+        if !existing.iter().any(|c| c == "scope_id") {
+            conn.execute("ALTER TABLE conversation ADD COLUMN scope_id INTEGER", [])?;
+        }
+        // A Find conversation's Dates and Apps filters (`SavedFindFilter`); NULL for every other row.
+        if !existing.iter().any(|c| c == "find_filter_json") {
+            conn.execute("ALTER TABLE conversation ADD COLUMN find_filter_json TEXT", [])?;
+        }
+        Ok(())
+    }
+
     fn ensure_conversation_exchange_model_column(conn: &Connection) -> rusqlite::Result<()> {
         let has_model = conn
             .prepare("PRAGMA table_info(conversation_exchange)")?
@@ -3160,7 +3344,7 @@ impl Store {
             params![device_id, item.ts_unix_ms, item.app_bundle_id, item.window_title, item.url, item.text, item.hash, item.source, local_seq],
         )?;
         let id = self.conn.last_insert_rowid();
-        let embedding = self.embed(&item.text).ok();
+        let embedding = self.embed_passage(&item.text).ok();
         if let Some(embedding) = &embedding {
             self.conn.execute(
                 "INSERT INTO capture_item_vec(rowid, embedding) VALUES (?1, ?2)",
@@ -3316,7 +3500,7 @@ impl Store {
             params![local_meeting_id, segment.start_cs, segment.speaker_label, segment.text, local_seq],
         )?;
         let id = self.conn.last_insert_rowid();
-        let embedding = self.embed(&segment.text).ok();
+        let embedding = self.embed_passage(&segment.text).ok();
         if let Some(embedding) = &embedding {
             self.conn.execute(
                 "INSERT INTO transcript_segment_vec(rowid, embedding) VALUES (?1, ?2)",
@@ -3405,6 +3589,11 @@ impl Store {
         resolved_thread_id: Option<i64>,
         item: &AppliedItem,
     ) -> rusqlite::Result<i64> {
+        // Items a local MCP client added stay on the computer that received them: a peer's row of the
+        // kind is refused here too, whichever sync path calls (review M11).
+        if item.kind == mcp_items::MCP_ITEM_KIND {
+            return Err(rusqlite::Error::InvalidParameterName("a peer's mcp_item row is never applied".into()));
+        }
         let id = if item.kind == "calendar_event" {
             let updated: Option<i64> = self
                 .conn
@@ -3465,7 +3654,7 @@ impl Store {
             // row keeps its embedding, which is still right.
             return Ok(id);
         }
-        let embedding = self.embed(&item.body_text).ok();
+        let embedding = self.embed_passage(&item.body_text).ok();
         if let Some(embedding) = &embedding {
             // vec0 virtual tables don't implement SQLite's "ON CONFLICT" conflict resolution,
             // so we must use explicit delete-then-insert for upsert semantics (same as reindex_batch).
@@ -3793,7 +3982,7 @@ impl Store {
     /// temporarily un-mirrored (recoverable later via Phase 2's `reindex_batch` cursor,
     /// same graceful-degradation contract this file already has for a failed embed).
     /// Reuses `embedding` (already computed by the caller for its own vec table) instead
-    /// of calling `self.embed()` a second time.
+    /// of calling `self.embed_passage()` a second time.
     #[allow(clippy::too_many_arguments)]
     fn mirror_into_items(
         &self,
@@ -3870,7 +4059,7 @@ impl Store {
         }
         // Embeddings are slow: all computed before the transaction, never inside it.
         let embeddings: Vec<Option<Vec<f32>>> =
-            chunks.iter().map(|c| self.embed(&c.text).ok()).collect();
+            chunks.iter().map(|c| self.embed_passage(&c.text).ok()).collect();
         self.with_write_tx(|| {
             if self.capture_record_is_duplicate(first)? {
                 return Ok(None);
@@ -3951,7 +4140,7 @@ impl Store {
     /// reads `items`, so a mirror that committed after a higher `local_seq` was sent would
     /// never be pushed. The embedding runs before the transaction, never inside it.
     fn insert_capture_row(&self, item: &NewCaptureItem) -> rusqlite::Result<i64> {
-        let embedding = self.embed(&item.text).ok();
+        let embedding = self.embed_passage(&item.text).ok();
         self.with_write_tx(|| self.insert_capture_row_in_tx(item, embedding.as_deref()))
     }
 
@@ -4061,7 +4250,7 @@ impl Store {
 
     /// One (best-effort) embedding per segment, for `insert_transcript_segments_tx`.
     pub(crate) fn embed_segments(&self, segments: &[NewTranscriptSegment]) -> Vec<Option<Vec<f32>>> {
-        segments.iter().map(|s| self.embed(&s.text).ok()).collect()
+        segments.iter().map(|s| self.embed_passage(&s.text).ok()).collect()
     }
 
     /// Body of [`Store::insert_transcript_segments`], run inside the caller's transaction
@@ -4735,7 +4924,7 @@ impl Store {
         query_text: &str,
         limit: usize,
     ) -> rusqlite::Result<Vec<MeetingTranscriptSegment>> {
-        let Ok(embedding) = self.embed(query_text) else {
+        let Ok(embedding) = self.embed_query(query_text) else {
             return Ok(Vec::new());
         };
         let total_items: i64 = self
@@ -4747,7 +4936,7 @@ impl Store {
              FROM items_vec v \
              JOIN items i ON i.id = v.rowid \
              JOIN meeting m ON m.id = i.thread_id \
-             WHERE v.embedding MATCH ?1 AND k = ?2 AND i.kind = 'transcript' \
+             WHERE v.embedding MATCH ?1 AND k = ?2 AND v.rowid IN (SELECT id FROM items WHERE kind = 'transcript') AND i.kind = 'transcript' \
              ORDER BY v.distance \
              LIMIT ?3",
         )?;
@@ -4827,7 +5016,7 @@ impl Store {
         query_text: &str,
         limit: usize,
     ) -> rusqlite::Result<Vec<(MeetingTranscriptSegment, i64)>> {
-        let Ok(embedding) = self.embed(query_text) else {
+        let Ok(embedding) = self.embed_query(query_text) else {
             return Ok(Vec::new());
         };
         let total_items: i64 = self
@@ -4839,7 +5028,7 @@ impl Store {
              FROM items_vec v \
              JOIN items i ON i.id = v.rowid \
              JOIN meeting m ON m.id = i.thread_id \
-             WHERE v.embedding MATCH ?1 AND k = ?2 AND i.kind = 'transcript' \
+             WHERE v.embedding MATCH ?1 AND k = ?2 AND v.rowid IN (SELECT id FROM items WHERE kind = 'transcript') AND i.kind = 'transcript' \
              ORDER BY v.distance \
              LIMIT ?3",
         )?;
@@ -4903,7 +5092,7 @@ impl Store {
         query_text: &str,
         limit: usize,
     ) -> rusqlite::Result<Vec<(MeetingSnapshotHit, i64)>> {
-        let Ok(embedding) = self.embed(query_text) else {
+        let Ok(embedding) = self.embed_query(query_text) else {
             return Ok(Vec::new());
         };
         let total_items: i64 = self
@@ -4916,7 +5105,7 @@ impl Store {
              JOIN items i ON i.id = v.rowid \
              JOIN meeting m ON m.id = i.thread_id \
              JOIN meeting_snapshot s ON s.id = i.source_id \
-             WHERE v.embedding MATCH ?1 AND k = ?2 AND i.kind = 'snapshot' \
+             WHERE v.embedding MATCH ?1 AND k = ?2 AND v.rowid IN (SELECT id FROM items WHERE kind = 'snapshot') AND i.kind = 'snapshot' \
              ORDER BY v.distance \
              LIMIT ?3",
         )?;
@@ -4928,6 +5117,20 @@ impl Store {
             rows.collect::<rusqlite::Result<_>>()?,
             |(h, _): &(MeetingSnapshotHit, i64)| h.meeting_id,
         )
+    }
+
+    /// One slide by its `items` id, in full, as a prompt would carry it. `None` when the slide or its meeting is gone.
+    pub fn get_snapshot_hit(&self, id: i64) -> rusqlite::Result<Option<MeetingSnapshotHit>> {
+        self.conn
+            .query_row(
+                "SELECT i.id, i.thread_id, m.title, i.body_text, s.file_path, i.ts_unix_ms \
+                 FROM items i JOIN meeting m ON m.id = i.thread_id JOIN meeting_snapshot s ON s.id = i.source_id \
+                 WHERE i.id = ?1 AND i.kind = 'snapshot'",
+                [id],
+                Self::row_to_snapshot_hit,
+            )
+            .optional()
+            .map(|r| r.map(|(hit, _)| hit))
     }
 
     fn row_to_snapshot_hit(row: &rusqlite::Row) -> rusqlite::Result<(MeetingSnapshotHit, i64)> {
@@ -4950,7 +5153,7 @@ impl Store {
         query_text: &str,
         limit: usize,
     ) -> rusqlite::Result<Vec<CaptureItem>> {
-        let Ok(embedding) = self.embed(query_text) else {
+        let Ok(embedding) = self.embed_query(query_text) else {
             return Ok(Vec::new());
         };
         let total_items: i64 = self
@@ -4961,7 +5164,7 @@ impl Store {
             "SELECT i.id, i.device_id, i.ts_unix_ms, i.app_bundle_id, i.title, i.url, i.body_text, i.hash, i.source, NULL \
              FROM items_vec v \
              JOIN items i ON i.id = v.rowid \
-             WHERE v.embedding MATCH ?1 AND k = ?2 AND i.kind = 'capture' \
+             WHERE v.embedding MATCH ?1 AND k = ?2 AND v.rowid IN (SELECT id FROM items WHERE kind = 'capture') AND i.kind = 'capture' \
              ORDER BY v.distance \
              LIMIT ?3",
         )?;
@@ -4995,7 +5198,7 @@ impl Store {
     /// caller (Task 4's Swift background loop) should treat this `Err` as "try again
     /// later," not fatal.
     ///
-    /// Once the model IS loaded, a single row whose `self.embed()` call fails during
+    /// Once the model IS loaded, a single row whose `self.embed_passage()` call fails during
     /// inference (e.g. some pathological input) is still swallowed and the row is
     /// skipped-but-counted — that's an intentional, much narrower tradeoff (don't get
     /// stuck retrying one poison row forever), distinct from "no model at all."
@@ -5129,7 +5332,7 @@ impl Store {
             }
 
             for (id, text) in rows {
-                if let Ok(embedding) = self.embed(&text) {
+                if let Ok(embedding) = self.embed_passage(&text) {
                     // vec0 virtual tables don't implement SQLite's "OR REPLACE" conflict
                     // resolution — INSERT OR REPLACE against an already-indexed rowid
                     // throws "UNIQUE constraint failed" exactly like a plain INSERT
@@ -5186,7 +5389,7 @@ impl Store {
     /// is deliberately left untouched — new rows inserted after app restart will have
     /// ids above the cursor's current position, so `reindex_batch` reaches them naturally
     /// once the revived job becomes pending and starts processing again.
-    fn ensure_reindex_sweep_job_seeded(conn: &Connection) -> rusqlite::Result<()> {
+    pub(crate) fn ensure_reindex_sweep_job_seeded(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute(
             "INSERT INTO jobs (job_type, payload_json, priority, not_before, attempts, content_hash, status, created_at_unix_ms, updated_at_unix_ms) \
              VALUES ('reindex_sweep', NULL, 0, 0, 0, 'reindex_sweep', 'pending', 0, 0) \
@@ -7403,7 +7606,7 @@ impl Store {
             params![device_id, meeting_id, captured_unix_ms, ocr_text, snapshot_id],
         )?;
         let items_id = self.conn.last_insert_rowid();
-        if let Ok(embedding) = self.embed(ocr_text) {
+        if let Ok(embedding) = self.embed_passage(ocr_text) {
             self.conn.execute(
                 "INSERT INTO items_vec(rowid, embedding) VALUES (?1, ?2)",
                 params![items_id, embedding_to_json(&embedding)],
@@ -7504,6 +7707,28 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// `insert_conversation` for a Find conversation: the row is made with the filters it was asked under
+    /// (`SavedFindFilter`; an empty one stores none) in the same INSERT, so it never exists without them.
+    pub fn insert_conversation_with_find_filter(
+        &self,
+        first_query: &str,
+        now_unix_ms: i64,
+        filter: &SavedFindFilter,
+    ) -> rusqlite::Result<i64> {
+        let title: String = first_query.chars().take(60).collect();
+        let json = if filter.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(filter).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?)
+        };
+        self.conn.execute(
+            "INSERT INTO conversation (title, title_is_placeholder, starred, created_at_unix_ms, updated_at_unix_ms, find_filter_json) \
+             VALUES (?1, 1, 0, ?2, ?2, ?3)",
+            params![title, now_unix_ms, json],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
     /// Appends one exchange and bumps the parent conversation's `updated_at_unix_ms` so
     /// `list_conversations`' recency ordering reflects the latest activity, not just
     /// creation time.
@@ -7533,6 +7758,182 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_conversation_scope(
+        &self,
+        conversation_id: i64,
+        scope: &ConversationScope,
+    ) -> rusqlite::Result<()> {
+        let (kind, id): (&str, Option<i64>) = match scope {
+            ConversationScope::Everything => ("everything", None),
+            ConversationScope::Topic(id) => ("topic", Some(*id)),
+            ConversationScope::Meeting(id) => ("meeting", Some(*id)),
+        };
+        self.conn.execute(
+            "UPDATE conversation SET scope_kind = ?1, scope_id = ?2 WHERE id = ?3",
+            params![kind, id, conversation_id],
+        )?;
+        Ok(())
+    }
+
+    /// Keeps the Find filters an everything conversation was asked under; an empty filter clears them.
+    /// False (nothing written) for a missing conversation or one scoped to a topic or meeting: Find filters
+    /// never combine with those scopes.
+    pub fn set_conversation_find_filter(&self, conversation_id: i64, filter: &SavedFindFilter) -> rusqlite::Result<bool> {
+        let json = if filter.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(filter).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?)
+        };
+        let n = self.conn.execute(
+            "UPDATE conversation SET find_filter_json = ?1 \
+             WHERE id = ?2 AND (scope_kind IS NULL OR scope_kind = 'everything')",
+            params![json, conversation_id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// The Find filters an everything conversation was asked under; None when there are none, the row is
+    /// unreadable, or the conversation is scoped to a topic or meeting.
+    pub fn conversation_find_filter(&self, conversation_id: i64) -> rusqlite::Result<Option<SavedFindFilter>> {
+        let json: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT find_filter_json FROM conversation \
+                 WHERE id = ?1 AND (scope_kind IS NULL OR scope_kind = 'everything')",
+                [conversation_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(json.flatten().and_then(|j| serde_json::from_str::<SavedFindFilter>(&j).ok()).filter(|f| !f.is_empty()))
+    }
+
+    /// No row, or a NULL/unknown scope, reads as `Everything`.
+    pub fn conversation_scope(&self, conversation_id: i64) -> rusqlite::Result<ConversationScope> {
+        let row: Option<(Option<String>, Option<i64>)> = self
+            .conn
+            .query_row(
+                "SELECT scope_kind, scope_id FROM conversation WHERE id = ?1",
+                [conversation_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        Ok(match row {
+            Some((Some(kind), Some(id))) if kind == "topic" => ConversationScope::Topic(id),
+            Some((Some(kind), Some(id))) if kind == "meeting" => ConversationScope::Meeting(id),
+            _ => ConversationScope::Everything,
+        })
+    }
+
+    /// The scope a conversation's next question is asked with: its stored scope, with a topic
+    /// followed through merges to the topic it became, and a topic or meeting that no longer
+    /// exists read as `Everything`. The stored scope is not changed. A DB error is an error,
+    /// never a wider scope.
+    pub fn resolved_conversation_scope(&self, conversation_id: i64) -> rusqlite::Result<ConversationScope> {
+        Ok(match self.conversation_scope(conversation_id)? {
+            ConversationScope::Everything => ConversationScope::Everything,
+            ConversationScope::Topic(id) => match topics::page::topic_ref(&self.conn, id)? {
+                Some(live) => ConversationScope::Topic(live.topic_id),
+                None => ConversationScope::Everything,
+            },
+            ConversationScope::Meeting(id) => {
+                let exists = self
+                    .conn
+                    .query_row("SELECT 1 FROM meeting WHERE id = ?1", [id], |_| Ok(()))
+                    .optional()?
+                    .is_some();
+                if exists { ConversationScope::Meeting(id) } else { ConversationScope::Everything }
+            }
+        })
+    }
+
+    /// Links a conversation to a topic (`None` clears it). `by_user` records that the
+    /// user chose this, so an automatic rule leaves it alone.
+    pub fn set_conversation_topic(
+        &self,
+        conversation_id: i64,
+        topic_id: Option<i64>,
+        by_user: bool,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO topic_conversation (conversation_id, topic_id, set_by_user) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(conversation_id) DO UPDATE SET topic_id = excluded.topic_id, set_by_user = excluded.set_by_user",
+            params![conversation_id, topic_id, by_user],
+        )?;
+        Ok(())
+    }
+
+    /// The conversation's live topic, following merges; a topic that is gone reads as
+    /// `None`, keeping `set_by_user`.
+    pub fn conversation_topic(&self, conversation_id: i64) -> rusqlite::Result<ConversationTopic> {
+        let row: Option<(Option<i64>, bool)> = self
+            .conn
+            .query_row(
+                "SELECT topic_id, set_by_user FROM topic_conversation WHERE conversation_id = ?1",
+                [conversation_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((topic_id, set_by_user)) = row else {
+            return Ok(ConversationTopic { topic: None, set_by_user: false });
+        };
+        let topic = match topic_id {
+            Some(id) => topics::page::topic_ref(&self.conn, id)?,
+            None => None,
+        };
+        Ok(ConversationTopic { topic, set_by_user })
+    }
+
+    /// Whether any topic link row exists for the conversation (set by the user or by an
+    /// automatic attach, including a user's removal). `conversation_topic` cannot say: a row
+    /// whose topic has since died reads like no row.
+    pub fn conversation_has_topic_link(&self, conversation_id: i64) -> rusqlite::Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM topic_conversation WHERE conversation_id = ?1",
+                [conversation_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// The ids of the conversation's exchanges whose answer was made on this computer from an
+    /// excluded client's material (`local_only`), oldest first. Empty for an unknown conversation.
+    pub fn local_only_exchange_ids(&self, conversation_id: i64) -> rusqlite::Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM conversation_exchange WHERE conversation_id = ?1 AND local_only != 0 \
+             ORDER BY created_at_unix_ms ASC, id ASC",
+        )?;
+        let ids = stmt.query_map([conversation_id], |r| r.get::<_, i64>(0))?.collect();
+        ids
+    }
+
+    /// Conversations linked to this topic or to topics merged into it, newest updated first.
+    pub fn topic_conversations(&self, topic_id: i64) -> rusqlite::Result<Vec<ConversationSummary>> {
+        // A topic that is not live (deleted seed, unknown id) has no conversations, matching
+        // `conversation_topic`.
+        if topics::page::topic_ref(&self.conn, topic_id)?.is_none() {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.title, c.starred, c.updated_at_unix_ms FROM topic_conversation tc \
+             JOIN conversation c ON c.id = tc.conversation_id \
+             JOIN topic t ON t.id = tc.topic_id \
+             WHERE COALESCE(t.merged_into, t.id) = COALESCE((SELECT merged_into FROM topic WHERE id = ?1), ?1) \
+             ORDER BY c.updated_at_unix_ms DESC, c.id DESC",
+        )?;
+        let rows = stmt.query_map([topic_id], |row| {
+            Ok(ConversationSummary {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                starred: row.get::<_, i64>(2)? != 0,
+                updated_at_unix_ms: row.get(3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     /// Starred first (regardless of age), then most-recently-updated — matches
     /// `idx_conversation_starred_updated`.
     pub fn list_conversations(&self) -> rusqlite::Result<Vec<ConversationSummary>> {
@@ -7548,6 +7949,56 @@ impl Store {
             })
         })?;
         rows.collect()
+    }
+
+    /// Every conversation as a list row, in `list_conversations`' order (starred first, then
+    /// most recently updated): one query for the rows, their topic links and latest answers. A
+    /// linked topic follows merges and reads as none once gone, as `conversation_topic` does.
+    pub fn conversation_rows(&self) -> rusqlite::Result<Vec<ConversationRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.title, c.starred, c.updated_at_unix_ms, tc.topic_id, \
+             (SELECT e.answer FROM conversation_exchange e WHERE e.conversation_id = c.id \
+              ORDER BY e.created_at_unix_ms DESC, e.id DESC LIMIT 1) \
+             FROM conversation c LEFT JOIN topic_conversation tc ON tc.conversation_id = c.id \
+             ORDER BY c.starred DESC, c.updated_at_unix_ms DESC, c.id DESC",
+        )?;
+        let raw = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? != 0,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        // Each linked topic is resolved once, however many conversations share it. A lookup that
+        // fails leaves that row without a topic rather than failing the whole list.
+        let mut resolved: std::collections::HashMap<i64, Option<topics::page::TopicRef>> =
+            std::collections::HashMap::new();
+        let mut rows = Vec::with_capacity(raw.len());
+        for (id, title, starred, updated_at_unix_ms, topic_id, answer) in raw {
+            let topic = match topic_id {
+                Some(t) => {
+                    if !resolved.contains_key(&t) {
+                        resolved.insert(t, topics::page::topic_ref(&self.conn, t).ok().flatten());
+                    }
+                    resolved[&t].clone()
+                }
+                None => None,
+            };
+            rows.push(ConversationRow {
+                id,
+                title,
+                starred,
+                updated_at_unix_ms,
+                topic,
+                latest_answer_line: answer.as_deref().and_then(first_answer_line),
+            });
+        }
+        Ok(rows)
     }
 
     /// Full conversation including all exchanges, oldest first (chat reading order).
@@ -7640,6 +8091,10 @@ impl Store {
             "DELETE FROM conversation_exchange WHERE conversation_id = ?1",
             params![id],
         )?;
+        self.conn.execute(
+            "DELETE FROM topic_conversation WHERE conversation_id = ?1",
+            params![id],
+        )?;
         let rows_affected = self
             .conn
             .execute("DELETE FROM conversation WHERE id = ?1", params![id])?;
@@ -7661,6 +8116,13 @@ impl Store {
         self.conn.execute(
             &format!(
                 "DELETE FROM conversation_exchange WHERE conversation_id IN \
+                 (SELECT id FROM conversation WHERE {EXPIRED_CONVERSATIONS})"
+            ),
+            params![cutoff_unix_ms],
+        )?;
+        self.conn.execute(
+            &format!(
+                "DELETE FROM topic_conversation WHERE conversation_id IN \
                  (SELECT id FROM conversation WHERE {EXPIRED_CONVERSATIONS})"
             ),
             params![cutoff_unix_ms],
@@ -8032,6 +8494,7 @@ impl Store {
             entities: count("SELECT COUNT(*) FROM entity")?,
             usage_rows: count("SELECT COUNT(*) FROM usage_log")?,
             live_alerts: count("SELECT COUNT(*) FROM live_alert")?,
+            mcp_items: kind("mcp_item")?,
         })
     }
 
@@ -9595,7 +10058,8 @@ impl Store {
     pub fn revoke_mcp_client_token(&self, id: i64) -> rusqlite::Result<()> {
         let now = chrono::Utc::now().timestamp_millis();
         self.conn.execute(
-            "UPDATE mcp_client_token SET revoked_at_unix_ms = ?1 WHERE id = ?2",
+            // A second revoke keeps the first one's time.
+            "UPDATE mcp_client_token SET revoked_at_unix_ms = coalesce(revoked_at_unix_ms, ?1) WHERE id = ?2",
             params![now, id],
         )?;
         Ok(())
@@ -13089,6 +13553,175 @@ mod tests {
     }
 
     #[test]
+    fn local_only_exchange_ids_lists_the_answers_made_local_in_order() {
+        let s = Store::open_in_memory().unwrap();
+        let c = s.insert_conversation("q", 1).unwrap();
+        s.mark_local_only_text("A local answer.").unwrap();
+        s.mark_local_only_text("Another local answer.").unwrap();
+        s.append_conversation_exchange(c, "q1", "A local answer.", "[]", None, 2).unwrap();
+        s.append_conversation_exchange(c, "q2", "A hosted answer.", "[]", None, 3).unwrap();
+        s.append_conversation_exchange(c, "q3", "Another local answer.", "[]", None, 4).unwrap();
+        let ids: Vec<i64> = s.get_conversation(c).unwrap().unwrap().exchanges.iter().map(|e| e.id).collect();
+        assert_eq!(s.local_only_exchange_ids(c).unwrap(), vec![ids[0], ids[2]]);
+        // Another conversation's exchanges are not listed; an unknown conversation has none.
+        let other = s.insert_conversation("o", 1).unwrap();
+        s.append_conversation_exchange(other, "q", "A local answer.", "[]", None, 5).unwrap();
+        assert_eq!(s.local_only_exchange_ids(c).unwrap().len(), 2);
+        assert!(s.local_only_exchange_ids(9999).unwrap().is_empty());
+    }
+
+    #[test]
+    fn live_topic_ref_names_a_live_topic_and_nothing_for_an_unknown_one() {
+        let s = Store::open_in_memory().unwrap();
+        let acme = s.create_seed_topic("Acme", &[], None).unwrap();
+        let named = s.live_topic_ref(acme.topic_id).unwrap().unwrap();
+        assert_eq!((named.topic_id, named.name.as_str()), (acme.topic_id, "Acme"));
+        assert_eq!(s.live_topic_ref(9999).unwrap(), None);
+    }
+
+    #[test]
+    fn conversation_scope_round_trips_and_defaults_to_everything() {
+        let s = Store::open_in_memory().unwrap();
+        let c = s.insert_conversation("q", 1).unwrap();
+        assert_eq!(s.conversation_scope(c).unwrap(), ConversationScope::Everything);
+        assert_eq!(s.conversation_scope(9999).unwrap(), ConversationScope::Everything);
+        s.set_conversation_scope(c, &ConversationScope::Topic(7)).unwrap();
+        assert_eq!(s.conversation_scope(c).unwrap(), ConversationScope::Topic(7));
+        s.set_conversation_scope(c, &ConversationScope::Meeting(3)).unwrap();
+        assert_eq!(s.conversation_scope(c).unwrap(), ConversationScope::Meeting(3));
+        assert_eq!(
+            serde_json::to_string(&ConversationScope::Topic(7)).unwrap(),
+            r#"{"kind":"topic","id":7}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ConversationScope::Everything).unwrap(),
+            r#"{"kind":"everything"}"#
+        );
+    }
+
+    /// A Find conversation keeps the Dates and Apps filters it was asked under, never a person (ask.md: no
+    /// new data about people is stored), only whether a People filter was left out. Only an everything
+    /// conversation has one: Find filters never combine with a topic or meeting scope.
+    #[test]
+    fn a_find_conversation_keeps_its_dates_and_apps_filters_and_never_a_person() {
+        let s = Store::open_in_memory().unwrap();
+        let c = s.insert_conversation("q", 1).unwrap();
+        assert_eq!(s.conversation_find_filter(c).unwrap(), None);
+        let f = SavedFindFilter {
+            start_unix_ms: Some(100),
+            end_unix_ms: Some(200),
+            app_bundle_id: Some("com.tinyspeck.slackmacgap".into()),
+            people_left_out: true,
+        };
+        assert!(s.set_conversation_find_filter(c, &f).unwrap());
+        assert_eq!(s.conversation_find_filter(c).unwrap(), Some(f.clone()));
+        // The stored text holds the bounds, the app and a flag: no field can carry a name.
+        let raw: String = s
+            .conn
+            .query_row("SELECT find_filter_json FROM conversation WHERE id = ?1", [c], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            raw,
+            r#"{"start_unix_ms":100,"end_unix_ms":200,"app_bundle_id":"com.tinyspeck.slackmacgap","people_left_out":true}"#
+        );
+        // A person sent along by a caller is never read in.
+        let with_person: SavedFindFilter =
+            serde_json::from_str(r#"{"app_bundle_id":"a","person":{"name":"Sam Okafor"}}"#).unwrap();
+        assert_eq!(with_person, SavedFindFilter { app_bundle_id: Some("a".into()), ..Default::default() });
+        // An empty filter clears it.
+        assert!(s.set_conversation_find_filter(c, &SavedFindFilter::default()).unwrap());
+        assert_eq!(s.conversation_find_filter(c).unwrap(), None);
+
+        // A topic or meeting conversation takes none and reads none.
+        let t = s.insert_conversation("t", 1).unwrap();
+        s.set_conversation_scope(t, &ConversationScope::Topic(7)).unwrap();
+        assert!(!s.set_conversation_find_filter(t, &f).unwrap());
+        assert_eq!(s.conversation_find_filter(t).unwrap(), None);
+        let m = s.insert_conversation("m", 1).unwrap();
+        assert!(s.set_conversation_find_filter(m, &f).unwrap());
+        s.set_conversation_scope(m, &ConversationScope::Meeting(3)).unwrap();
+        assert_eq!(s.conversation_find_filter(m).unwrap(), None, "a scope set later wins");
+        assert!(!s.set_conversation_find_filter(9999, &f).unwrap());
+    }
+
+    /// A Find conversation is made with its filters in the same write: there is never a row without them.
+    #[test]
+    fn a_find_conversation_is_created_with_its_filters_in_one_write() {
+        let s = Store::open_in_memory().unwrap();
+        let f = SavedFindFilter { start_unix_ms: Some(1), end_unix_ms: Some(2), app_bundle_id: Some("a".into()), people_left_out: true };
+        let c = s.insert_conversation_with_find_filter("q", 1, &f).unwrap();
+        assert_eq!(s.conversation_find_filter(c).unwrap(), Some(f));
+        assert_eq!(s.get_conversation(c).unwrap().unwrap().title, "q");
+        // An empty filter makes a plain conversation.
+        let plain = s.insert_conversation_with_find_filter("p", 1, &SavedFindFilter::default()).unwrap();
+        assert_eq!(s.conversation_find_filter(plain).unwrap(), None);
+        let raw: Option<String> =
+            s.conn.query_row("SELECT find_filter_json FROM conversation WHERE id = ?1", [plain], |r| r.get(0)).unwrap();
+        assert_eq!(raw, None);
+    }
+
+    #[test]
+    fn resolved_conversation_scope_follows_merges_and_widens_only_when_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(&dir.path().join("t.sqlite"), &models_dir_for_tests()).unwrap();
+        let (acme, birch, gone) = (
+            s.create_seed_topic("Acme", &[], None).unwrap(),
+            s.create_seed_topic("Birch", &[], None).unwrap(),
+            s.create_seed_topic("Gone", &[], None).unwrap(),
+        );
+        let meeting = s
+            .insert_meeting(&NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: 1,
+                end_unix_ms: Some(2),
+                title: "Sync".into(),
+                attendees: vec![],
+                trigger: MeetingTrigger::Calendar,
+                audio_path: None,
+                status: MeetingStatus::Completed,
+            })
+            .unwrap();
+        let convo = |scope: ConversationScope| {
+            let c = s.insert_conversation("q", 1).unwrap();
+            s.set_conversation_scope(c, &scope).unwrap();
+            c
+        };
+        let everything = convo(ConversationScope::Everything);
+        let live = convo(ConversationScope::Topic(acme.topic_id));
+        let merged = convo(ConversationScope::Topic(birch.topic_id));
+        let deleted = convo(ConversationScope::Topic(gone.topic_id));
+        let in_meeting = convo(ConversationScope::Meeting(meeting));
+        let missing_meeting = convo(ConversationScope::Meeting(meeting + 99));
+        s.merge_topics(acme.topic_id, birch.topic_id).unwrap();
+        s.delete_seed_topic(&gone.key).unwrap();
+        // A chain of merges: Cedar into Dune, then Dune into Elm.
+        let (cedar, dune, elm) = (
+            s.create_seed_topic("Cedar", &[], None).unwrap(),
+            s.create_seed_topic("Dune", &[], None).unwrap(),
+            s.create_seed_topic("Elm", &[], None).unwrap(),
+        );
+        let chained = convo(ConversationScope::Topic(cedar.topic_id));
+        s.merge_topics(dune.topic_id, cedar.topic_id).unwrap();
+        s.merge_topics(elm.topic_id, dune.topic_id).unwrap();
+
+        let resolved = |c: i64| s.resolved_conversation_scope(c).unwrap();
+        assert_eq!(resolved(chained), ConversationScope::Topic(elm.topic_id), "followed to the end of the chain");
+        assert_eq!(resolved(everything), ConversationScope::Everything);
+        assert_eq!(resolved(live), ConversationScope::Topic(acme.topic_id));
+        // A merged-away topic is asked through the topic it became.
+        assert_eq!(resolved(merged), ConversationScope::Topic(acme.topic_id));
+        // A topic or meeting that is gone asks about everything.
+        assert_eq!(resolved(deleted), ConversationScope::Everything);
+        assert_eq!(resolved(in_meeting), ConversationScope::Meeting(meeting));
+        assert_eq!(resolved(missing_meeting), ConversationScope::Everything);
+        s.delete_meeting(meeting).unwrap();
+        assert_eq!(resolved(in_meeting), ConversationScope::Everything);
+        // The stored scope itself is untouched.
+        assert_eq!(s.conversation_scope(deleted).unwrap(), ConversationScope::Topic(gone.topic_id));
+        assert_eq!(resolved(9999), ConversationScope::Everything);
+    }
+
+    #[test]
     fn insert_conversation_creates_a_placeholder_titled_row() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("t.sqlite"), &models_dir_for_tests()).unwrap();
@@ -13158,6 +13791,97 @@ mod tests {
             vec![starred_but_oldest, newer_unstarred, old_unstarred],
             "starred first regardless of age, then recency descending"
         );
+    }
+
+    #[test]
+    fn conversation_rows_carry_the_topic_and_the_latest_answers_first_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("t.sqlite"), &models_dir_for_tests()).unwrap();
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        let gone = store.create_seed_topic("Gone", &[], None).unwrap();
+        let empty = store.insert_conversation("no answer yet", 1_000).unwrap();
+        let multi = store.insert_conversation("multi", 2_000).unwrap();
+        store
+            .append_conversation_exchange(multi, "q1", "An older answer.", "[]", None, 2_100)
+            .unwrap();
+        store
+            .append_conversation_exchange(multi, "q2", "\n  The renewal is due Friday. \nSecond line.\n", "[]", None, 2_200)
+            .unwrap();
+        store.set_conversation_topic(multi, Some(acme.topic_id), false).unwrap();
+        let orphan = store.insert_conversation("orphan", 3_000).unwrap();
+        store
+            .append_conversation_exchange(orphan, "q", "Only line", "[]", None, 3_100)
+            .unwrap();
+        store.set_conversation_topic(orphan, Some(gone.topic_id), true).unwrap();
+        store.delete_seed_topic(&gone.key).unwrap();
+        store.set_conversation_starred(empty, true).unwrap();
+
+        let rows = store.conversation_rows().unwrap();
+        let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+        // Starred first regardless of age, then most recently updated, as `list_conversations`.
+        assert_eq!(ids, vec![empty, orphan, multi]);
+        assert_eq!(rows[0].latest_answer_line, None);
+        assert_eq!(rows[0].topic, None);
+        assert!(rows[0].starred);
+        assert_eq!(rows[0].title, "no answer yet");
+        // A topic that is gone reads as none.
+        assert_eq!(rows[1].topic, None);
+        assert_eq!(rows[1].latest_answer_line.as_deref(), Some("Only line"));
+        // The latest answer's first non-blank line, trimmed.
+        assert_eq!(rows[2].topic.as_ref().map(|t| t.topic_id), Some(acme.topic_id));
+        assert_eq!(rows[2].topic.as_ref().map(|t| t.name.as_str()), Some("Acme"));
+        assert_eq!(rows[2].latest_answer_line.as_deref(), Some("The renewal is due Friday."));
+        assert_eq!(rows[2].updated_at_unix_ms, 2_200);
+    }
+
+    #[test]
+    fn one_unreadable_topic_leaves_its_row_without_a_topic_not_the_list_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.sqlite");
+        let store = Store::open(&path, &models_dir_for_tests()).unwrap();
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        let bad = store.create_seed_topic("Bad", &[], None).unwrap();
+        let good = store.insert_conversation("good", 1_000).unwrap();
+        let broken = store.insert_conversation("broken", 2_000).unwrap();
+        store.set_conversation_topic(good, Some(acme.topic_id), false).unwrap();
+        store.set_conversation_topic(broken, Some(bad.topic_id), false).unwrap();
+        // A topic name that cannot be read as text makes that one lookup fail.
+        let side = Connection::open(&path).unwrap();
+        side.execute("UPDATE topic SET name = X'00FF' WHERE id = ?1", [bad.topic_id]).unwrap();
+        assert!(store.live_topic_ref(bad.topic_id).is_err(), "the lookup itself fails");
+
+        let rows = store.conversation_rows().unwrap();
+        assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![broken, good]);
+        assert_eq!(rows[0].topic, None);
+        assert_eq!(rows[1].topic.as_ref().map(|t| t.topic_id), Some(acme.topic_id));
+    }
+
+    #[test]
+    fn a_long_first_answer_line_is_cut_for_the_list() {
+        assert_eq!(first_answer_line("   \n\n"), None);
+        assert_eq!(first_answer_line("Short.\nMore."), Some("Short.".to_string()));
+        let long = "x".repeat(500);
+        assert_eq!(first_answer_line(&long).unwrap().chars().count(), ANSWER_LINE_MAX_CHARS);
+    }
+
+    #[test]
+    fn the_answer_line_reads_as_plain_text() {
+        let line = |a: &str| first_answer_line(a);
+        // Heading, list and quote markers go; so do emphasis and citation markers.
+        assert_eq!(line("## The renewal\nMore."), Some("The renewal".to_string()));
+        assert_eq!(line("**Friday** is the date [1]."), Some("Friday is the date.".to_string()));
+        assert_eq!(line("- *Ship* on __Friday__ [2][3]"), Some("Ship on Friday".to_string()));
+        assert_eq!(line("1. The `deck` is due [1, 2]; see [the doc](https://x.test)."), Some("The deck is due; see the doc.".to_string()));
+        assert_eq!(line("> Quoted ~~old~~ line"), Some("Quoted old line".to_string()));
+        // A line with nothing left after stripping falls through to the next.
+        assert_eq!(line("---\n[1]\n### \nThe answer."), Some("The answer.".to_string()));
+        assert_eq!(line("**[1]**"), None);
+        // Plain text is left alone: an intra-word underscore, a lone star, a bracketed word.
+        assert_eq!(line("snake_case and 2 * 3 [draft]"), Some("snake_case and 2 * 3 [draft]".to_string()));
+        assert_eq!(line("#hashtag first"), Some("#hashtag first".to_string()));
+        // Cut after stripping.
+        let long = format!("**{}**", "x".repeat(500));
+        assert_eq!(line(&long).unwrap(), "x".repeat(ANSWER_LINE_MAX_CHARS));
     }
 
     #[test]
@@ -15192,7 +15916,7 @@ mod tests {
 
     /// Regression test for a real bug the reviewer caught: `reindex_batch`'s inner loop
     /// used to mark every row "processed" and advance the persisted cursor even when
-    /// `self.embed()` failed for every single one of them (no model available at all),
+    /// `self.embed_passage()` failed for every single one of them (no model available at all),
     /// eventually writing the terminal `"transcript_segment:done"` cursor value with
     /// nothing ever actually embedded — permanently losing those rows, since a later
     /// model becoming available would never revisit a "done" cursor. The fix is the
@@ -15407,7 +16131,7 @@ mod tests {
             .unwrap();
 
         // This row already has a capture_item_vec entry from the insert above (the
-        // model is available, so insert_capture_item's self.embed() call succeeded).
+        // model is available, so insert_capture_item's self.embed_passage() call succeeded).
         // reindex_batch must still succeed against it, not error.
         let processed = store.reindex_batch(1);
         assert_eq!(

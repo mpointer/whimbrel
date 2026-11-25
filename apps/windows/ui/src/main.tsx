@@ -52,9 +52,8 @@ function Root() {
 }
 
 // The language first, so nothing paints in the wrong one. The popup and the alert are created fresh
-// each time they open, so they pick up a change made in Settings without being told. The hidden redesign
-// switch is asked in the same wait, so the first render already knows which look to draw (it is false for
-// anything but a real true, and for a shell that does not answer).
+// each time they open, so they pick up a change made in Settings without being told. The redesign switch
+// answers on at once now (`redesign.ts`); its call stays here until the clean-up removes the switch.
 Promise.all([
   languageSettings()
     .then((s) => s && setLanguage(s.uiLanguage))

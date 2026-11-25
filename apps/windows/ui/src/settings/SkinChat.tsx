@@ -56,7 +56,9 @@ function saveHidden(hidden: boolean) {
 
 /** Settings → Appearance: make or change a skin by talking to Whimbrel, below the gallery as on the Mac. One
  *  chat per skin; the shell saves each turn's skin and keeps its chat. Replies are plain text. */
-export function SkinChat(props: { onRunning?: (running: boolean) => void } = {}) {
+/** `redesigned` is the redesigned Settings tab's card: it is named by the card (so the chat draws no heading of its own, which
+ *  would be a second heading with the same words) and says in words why Send is off. The old tab passes nothing. */
+export function SkinChat(props: { onRunning?: (running: boolean) => void; onSetUp?: () => void; redesigned?: boolean } = {}) {
   const { t } = useL10n();
   useSyncExternalStore(subscribeSkin, skinRevision, skinRevision);
   const selected = currentSelection().skinId;
@@ -179,12 +181,15 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
 
   const addImage = () => skinImageAddFile(selected).then((line) => posted(selected, line), failed(selected));
   const undo = () => skinUndo(selected).then((line) => posted(selected, line), failed(selected));
-  const setUp = () => document.getElementById("ai-heading")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Why Send is off, in words (shown in the redesigned tab).
+  const sendOff = state.running ? t("A turn is running. Wait for it, or press Stop.") : composer(sources) === "loading" ? t("Looking for an AI provider…") : !draft.trim() ? t("Type a message to send.") : null;
+  // The redesigned Settings passes `onSetUp` to open the AI section; the old tab scrolls to its AI heading.
+  const setUp = props.onSetUp ?? (() => document.getElementById("ai-heading")?.scrollIntoView({ behavior: "smooth", block: "start" }));
 
   return (
     <div className="skin-chat">
       <div className="skin-chat__header">
-        <h3 className="gallery-heading muted small">{t("Make a skin")}</h3>
+        {props.redesigned ? <span /> : <h3 className="gallery-heading muted small">{t("Make a skin")}</h3>}
         {state.turns.length > 0 && (
           <button type="button" className="link-button small" aria-expanded={!hidden} aria-controls="skin-chat-turns" onClick={() => setHidden(!hidden)}>
             {hidden ? `${t("Show chat")} (${state.turns.length})` : t("Hide chat")}
@@ -234,9 +239,19 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
           }}
         >
           <input className="input grow" aria-label={t("Message to Whimbrel about this skin")} placeholder={placeholder(selected)} value={draft} onChange={(e) => setDraft(e.target.value)} />
-          <button type="submit" className="skin-chat__send mode mode--active" disabled={state.running || !draft.trim() || composer(sources) === "loading"}>
+          <button
+            type="submit"
+            className="skin-chat__send mode mode--active"
+            disabled={state.running || !draft.trim() || composer(sources) === "loading"}
+            aria-describedby={props.redesigned && sendOff ? "skin-chat-send-why" : undefined}
+          >
             {t("Send")}
           </button>
+          {props.redesigned && sendOff ? (
+            <p className="muted small skin-chat__why" id="skin-chat-send-why">
+              {sendOff}
+            </p>
+          ) : null}
         </form>
       ) : (
         <button type="button" className="skin-chat__set-up" onClick={setUp}>

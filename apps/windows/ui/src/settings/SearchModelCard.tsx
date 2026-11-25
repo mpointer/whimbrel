@@ -17,7 +17,7 @@ export function SearchModelCard() {
   const state = searchModelState(status, job);
 
   return (
-    <section className="card about" aria-labelledby="model-heading">
+    <section className="card about" aria-labelledby="model-heading" data-settings-anchor="ai.semanticSearch">
       <h2 id="model-heading" className="section-label">
         {t("Semantic search")}
       </h2>

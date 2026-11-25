@@ -424,10 +424,14 @@ describe("other routes", () => {
     expect(en).toContain("Email me a short note when there's something new (no more than twice a month). Unsubscribe anytime.");
   });
 
-  it("pricing_states_cloud_price_and_tax", async () => {
+  it("pricing_states_plus_price_and_tax", async () => {
     const html = await (await call(new Request("https://whimbrel.test/pricing/"))).text();
-    expect(html).toContain("$5");
-    expect(html).toContain("$50 a year");
+    expect(html).toContain("$15");
+    expect(html).toContain("$144 a year");
+    expect(html).toContain("$12 a month billed annually");
+    expect(html).not.toContain("$50 a year");
+    expect(html).not.toContain("$5 a month");
+    expect(html).not.toContain("Private mode");
     expect(html).toContain("Plus tax where applicable");
     expect(html).not.toContain("Nothing is for sale yet");
   });

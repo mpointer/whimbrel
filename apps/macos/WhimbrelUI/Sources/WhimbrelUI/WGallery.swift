@@ -881,7 +881,7 @@ public enum WHomeGallery {
         var out: [WHomeStop] = [
             .meeting(WHomeMeeting(id: "m-hiring", kind: .upcoming, time: "3:00 PM", title: "Hiring debrief", attendees: ["Priya Shah", "You"], eyebrow: "in 5 hr 8 min", startTitle: "Start")),
             .meeting(WHomeMeeting(id: "m-design", kind: .upcoming, time: "1:30 PM", title: "Design sync", attendees: ["Dana Whitfield", "Lee Brandt", "You"], eyebrow: "in 3 hr 38 min", startTitle: "Start")),
-            .now(time: "9:52 AM", label: paused ? "Paused until 3:10 PM" : "Memory on"),
+            .now(time: "9:52 AM", label: paused ? "Memory paused until 3:10 PM" : "Memory on"),
         ]
         out += blocks
         out.append(.meeting(roadmap))
@@ -1008,6 +1008,10 @@ public enum WHomeGallery {
         failed.load = .failed(title: "Today could not load.", help: "Whimbrel could not read your meetings. Your notes are safe. Try again.")
         add("home-error", shell(failed, height: 700), height: 700)
         add("home-capture-paused", shell(model(paused: true, sections: false), memory: .pausedUntil("3:10 PM"), height: 1000), height: 1000)
+        // A detected or calendar start with its audio on and no meeting row yet (#992): the bar says it is starting and offers Stop; after
+        // Stop it says Saving where Stop was.
+        add("home-recording-starting-stop", shell(model(paused: true, sections: false), recording: WShellRecording(state: .starting, startingStop: .stop), height: 700), height: 700)
+        add("home-recording-starting-saving", shell(model(paused: true, sections: false), recording: WShellRecording(state: .starting, startingStop: .saving), height: 700), height: 700)
         add("home-recording-live", shell(liveModel(), recording: WShellRecording(state: .recording, elapsedSeconds: 848), live: AnyView(
             WTranscriptView(accessory: "Listening", entries: [
                 WTranscriptEntry(time: "10:12", speaker: WPerson(name: "Sam Okafor"), text: "We can hold the list price and change the tiers."),
@@ -1379,6 +1383,552 @@ public enum WNoteGallery {
         add("note-editing-high-contrast", screen(model(editing: true), height: 1250), mode: .highContrastLight, height: 1250)
         add("transcript-continued-light", screen(model(mode: .transcript, highlighted: "c2", continued: true, marks: marks + outlyingMarks), height: 1250), height: 1250)
         add("transcript-many-speakers-light-2.0", screen(model(mode: .transcript, marks: [], segments: crowdedSegments), height: 1600), scale: 2, width: 1500, height: 1600)
+        return out
+    }
+}
+
+// MARK: Find
+
+/// Library's Find page and its other views in the shell, made-up content (the Northwind and Pricing fixtures).
+@MainActor
+public enum WFindGallery {
+    /// A moment in November 2026, in this Mac's time zone.
+    static func ms(_ day: Int, _ hour: Int, _ minute: Int) -> Int64 {
+        let date = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour, minute: minute)) ?? Date()
+        return Int64(date.timeIntervalSince1970 * 1000)
+    }
+
+    static let transcript = WFindCard(
+        id: "transcript-31", kind: .transcriptMoment, appGlyph: "waveform", appName: "Meeting audio", appDot: .amber, title: "Pricing review",
+        timeMs: ms(10, 14, 32), time: "Tue, Nov 10, 2:32 PM", device: "This Mac",
+        text: "I would add a usage tier. Seats alone do not fit how Starter customers work.", speaker: "Sam Okafor", lineTime: "14:32",
+        open: .meetingAt(id: 7, startCs: 87_200), openHint: "Opens the note at 14:32")
+    static let slack = WFindCard(
+        id: "capture-88", kind: .seenOnScreen, appGlyph: "number", appName: "Slack", appDot: .purple, title: "Thread in #pricing",
+        timeMs: ms(12, 16, 10), time: "Thu, Nov 12, 4:10 PM", device: "This Mac",
+        text: "Sam Okafor 4:10 PM: Before we pick numbers for a usage tier, can someone pull churn on Starter?\nPriya Shah 4:14 PM: On it. I will have it Monday.\nSam Okafor 4:21 PM: Thanks. We can look at it Tuesday.",
+        open: .capture(88), openHint: "Opens the saved capture")
+    static let excel = WFindCard(
+        id: "capture-91", kind: .seenOnScreen, appGlyph: "tablecells", appName: "Excel", appDot: .green, title: "Window: Pricing v3.xlsx",
+        timeMs: ms(13, 11, 2), time: "Fri, Nov 13, 11:02 AM", device: "This Mac",
+        text: "Plan  Seats  Rate  Price\nStarter  5  $12  $60\nTeam  25  $10  $250\nBusiness  100  $8  $800\nUsage tier  (rate is empty)",
+        open: .capture(91), openHint: "Opens the saved capture")
+    static let slide = WFindCard(
+        id: "snapshot-4", kind: .slide, appGlyph: "photo", appName: "Pricing review", title: "Slide 6 in Pricing review", timeMs: ms(10, 14, 20),
+        time: "Tue, Nov 10, 2:20 PM", device: "This Mac", text: "Proposed tiers: Starter, Team, Business, and a usage tier to be priced.",
+        open: .meeting(7), openHint: "Opens the meeting")
+    static let email = WFindCard(
+        id: "thread-12", kind: .email, appGlyph: "envelope", appName: "Mail", appDot: .blue, title: "Re: Starter pricing", timeMs: ms(11, 9, 5),
+        time: "Wed, Nov 11, 9:05 AM", device: "This Mac", text: "Sam asked whether the annual discount applies to the usage tier. No answer yet.",
+        open: .thread(12), openHint: "Opens the thread summary")
+    static let episode = WFindCard(
+        id: "episode-20", kind: .episode, appGlyph: "rectangle.stack", appName: "Excel", appDot: .green, title: "Pricing v3.xlsx", timeMs: ms(13, 11, 40),
+        time: "Fri, Nov 13, 11:40 AM", device: "This Mac", text: "Worked in the pricing sheet for 38 minutes: added the usage tier row.",
+        open: .episode(20), openHint: "Opens the episode")
+    static let run = WFindCard(
+        id: "routine_run-3", kind: .routineRun, appGlyph: "bolt", appName: "Friday recap", title: "Friday recap", timeMs: ms(13, 17, 0),
+        time: "Fri, Nov 13, 5:00 PM", device: "This Mac", text: "Wrote the week's recap: three meetings, two open loops.")
+    static let goneSource = WFindCard(id: "gone-1", kind: .seenOnScreen, appGlyph: "macwindow", title: "", isGone: true)
+    static let sources: [WFindCard] = [transcript.numbered(1), slack.numbered(2), excel.numbered(3)]
+    static let question = "What did Sam say about pricing last week?"
+    static let answerText = "Sam wants a usage-based tier added alongside seat pricing, and he thinks Starter customers would like it most. [1] Before anyone sets numbers, he asked for churn data on Starter. [2] His draft in Pricing v3 has a Usage tier row, but the rate is still blank. [3] I did not find a decision on the annual discount."
+    static let range = "From your work memory, Nov 9 to Nov 15"
+    /// The date chip an answer scoped to that range is made under, and the line the page then keeps under the field.
+    static let weekFilter = WHomeFilter(dates: .exact(
+        start: Date(timeIntervalSince1970: Double(ms(9, 0, 0)) / 1000), end: Date(timeIntervalSince1970: Double(ms(16, 0, 0)) / 1000), title: "Last week"))
+    static let weekLine = "Only what was saved from Nov 9 to Nov 15."
+    static let markdownAnswer = "Here is what I found about pricing.\n\n- **Usage tier:** Sam wants it added next to seat pricing, and thinks Starter customers would like it most. [1]\n- **Churn data:** he asked for it on Starter before anyone sets numbers. [2]\n- **Open item:** the rate in `Pricing v3` is still blank. [3]\n\nNext steps:\n\n1. Pull churn on Starter.\n2. Price the usage tier.\n\nI did not find a decision on the annual discount."
+    static let longAnswer = "Sam raised the usage tier in the Pricing review and said seats alone do not fit how Starter customers work. [1] He came back to it in Slack the same week, asking for churn on Starter before anyone picks numbers for the tier, and Priya said she would have it Monday. [2]\n\nThe pricing sheet already has a Usage tier row, so the structure is drafted. The rate is blank, which means nothing has been priced yet. [3] Until the churn data is in, any rate would be a guess, and Sam did not want to guess.\n\nTwo things I could not find: a decision on whether the annual discount applies to the usage tier, and a date by which the tier has to be priced. Both look like open questions, and the Friday recap lists them as open loops.\n\nIf you want, ask about the churn data next: that is the piece the rest depends on."
+    static let noSpacesAnswer = "\u{4FA1}\u{683C}\u{306B}\u{3064}\u{3044}\u{3066}Sam\u{306F}\u{4F7F}\u{7528}\u{91CF}\u{30D9}\u{30FC}\u{30B9}\u{306E}\u{968E}\u{5C64}\u{3092}\u{5E2D}\u{6570}\u{306E}\u{6A2A}\u{306B}\u{8FFD}\u{52A0}\u{3057}\u{305F}\u{3044}\u{3068}\u{8003}\u{3048}\u{3066}\u{3044}\u{307E}\u{3059}\u{3002}[1]\u{30B9}\u{30BF}\u{30FC}\u{30C8}\u{30D7}\u{30E9}\u{30F3}\u{306E}\u{89E3}\u{7D04}\u{30C7}\u{30FC}\u{30BF}\u{3092}\u{5148}\u{306B}\u{898B}\u{305F}\u{3044}\u{3068}\u{8A00}\u{3063}\u{3066}\u{3044}\u{307E}\u{3057}\u{305F}\u{3002}[2]\n\nThe full report is at https://northwind.example.com/pricing/usage-tier/starter/churn-report/2026/11/week-46/summary-with-a-very-long-path-that-has-no-spaces-0123456789abcdefghijklmnopqrstuvwxyz [3]"
+
+    static let starters: [WFindStarter] = [
+        WFindStarter(title: "What did I work on yesterday?", query: "What did I work on yesterday?"),
+        WFindStarter(title: "What are my open loops?", query: "What are my open loops?"),
+        WFindStarter(title: "Summarize this week", query: "Summarize this week"),
+    ]
+
+    static let conversations: [WFindConversation] = [
+        WFindConversation(id: 1, title: "Pricing and Sam", starred: true, isActive: true),
+        WFindConversation(id: 2, title: "Renewal questions", starred: false, isActive: false),
+        WFindConversation(id: 3, title: "Churn on Starter", starred: false, isActive: false),
+    ]
+
+    /// A streamed hosted answer: the core says it may fall back to another provider, so the button says only "Ask".
+    static let streamedHosted = WFindRoute(destination: .hosted, provider: "anthropic", providerName: "Anthropic", mayFallBack: true)
+    static let namedHosted = WFindRoute(destination: .hosted, provider: "anthropic", providerName: "Anthropic", mayFallBack: false)
+    static let onThisMac = WFindRoute(destination: .local, provider: "ollama", providerName: "Ollama", mayFallBack: false)
+    /// An Ollama cloud model: it leaves this Mac, so it reads neither local nor named.
+    static let ollamaCloud = WFindRoute(destination: .hosted, provider: "ollama", providerName: "Ollama", mayFallBack: false)
+
+    static func exchange(sources: [WFindCard] = sources, body: WFindExchange.Body? = nil, notes: [String] = [], modelLine: String? = "claude-sonnet-4-5", scope: String = range) -> WFindExchange {
+        WFindExchange(id: "e1", question: question, scope: scope, body: body ?? .answered(text: answerText), modelLine: modelLine, notes: notes, sources: sources)
+    }
+
+    static func model(
+        stage: WFindStage = .results, results: [WFindCard] = [], exchanges: [WFindExchange] = [], asking: WFindAsking = .idle, canAsk: Bool = true,
+        route: WFindRoute? = streamedHosted, conversationsShown: Bool = true,
+        filterLines: [String] = [], filterSummary: String? = nil, count: String? = nil, mentions: [WFindCard] = [], mentionsName: String? = nil,
+        more: Bool = false, noMeaning: Bool = false, notice: String? = nil, filtered: Bool = false
+    ) -> WFindModel {
+        var m = WFindModel()
+        m.stage = stage
+        m.query = question
+        m.starters = starters
+        m.results = results
+        m.exchanges = exchanges
+        m.asking = asking
+        m.canAsk = canAsk
+        m.askButton = WFindAskButton.make(route: route, canAsk: canAsk, strings: .english)
+        m.filterLines = filterLines
+        m.hasFilters = filtered || !filterLines.isEmpty
+        m.filterSummary = filterSummary
+        m.countText = count
+        m.mentions = mentions
+        m.mentionsName = mentionsName
+        m.mentionsTotal = mentions.count
+        m.more = more
+        m.noMeaningSearch = noMeaning
+        m.notice = notice
+        m.conversations = conversations
+        m.showsConversations = conversationsShown
+        return m
+    }
+
+    struct SampleStatus: View {
+        @Environment(\.wTheme) private var theme
+        var body: some View {
+            HStack(spacing: 12) {
+                WGlyph(name: "record.circle", size: 14).foregroundStyle(theme.accentPrimary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Activity capture").wFont(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Text("Capturing work memory. Meetings record when you start one.").wFont(.caption).foregroundStyle(theme.textSecondary)
+                }
+                Spacer(minLength: 0)
+                WButton("Start Meeting", kind: .secondary) {}
+            }
+            .padding(12).frame(maxWidth: .infinity, alignment: .leading).wCard(radius: .card)
+        }
+    }
+
+    struct SamplePanel: View {
+        @Environment(\.wTheme) private var theme
+        @Environment(\.wTextScale) private var k
+        var body: some View {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(["Schedule", "Today's summary", "Needs your attention"], id: \.self) { title in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title).wFont(.bodyStrong).foregroundStyle(theme.textPrimary)
+                        Text(title == "Schedule" ? "Pricing review at 10:00 AM" : "Nothing yet").wFont(.secondary).foregroundStyle(theme.textSecondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16).frame(width: 240 * k, alignment: .topLeading).frame(maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    struct SampleSetup: View {
+        @Environment(\.wTheme) private var theme
+        var body: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Set up a model to ask with").wFont(.bodyStrong).foregroundStyle(theme.textPrimary)
+                Text("Add an API key in Settings, or download the model that runs on this Mac.").wFont(.secondary).foregroundStyle(theme.textSecondary)
+                WButton("Set up a model", kind: .primary) {}
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading).wCard(radius: .card)
+        }
+    }
+
+    struct SamplePicker: View {
+        @Environment(\.wTheme) private var theme
+        @Environment(\.wTextScale) private var k
+        var provider = "Anthropic"
+        var model = "claude-sonnet-4-5"
+        var body: some View {
+            HStack(spacing: 6) {
+                Text(provider).wFont(.secondary)
+                WGlyph(name: "chevron.up.chevron.down", size: 9)
+                Text(model).wFont(.secondary)
+                WGlyph(name: "chevron.up.chevron.down", size: 9)
+            }
+            .foregroundStyle(theme.textPrimary).padding(.horizontal, 10).frame(minHeight: 28 * k)
+            .overlay(Capsule().strokeBorder(theme.border, lineWidth: 0.75)).fixedSize()
+        }
+    }
+
+    /// The sidebar's foot in the gallery: the theme's own secondary text, so it reads in every mode (the system's `.secondary` is nearly
+    /// invisible on the dark page).
+    struct SampleFooter: View {
+        @Environment(\.wTheme) private var theme
+        var body: some View {
+            Text("This Mac").wFont(.caption).foregroundStyle(theme.textSecondary).padding(.horizontal, 10)
+        }
+    }
+
+    static func page(_ model: WFindModel, stream: String = "", selected: Int? = nil, picker: SamplePicker = SamplePicker()) -> some View {
+        let s = WFindStream(text: stream)
+        return WLibraryPage(selection: .find, onSelect: { _ in }, header: { SampleStatus() }, panel: { SamplePanel() }) {
+            WFindView(model: model, actions: WFindActions(), stream: s, selected: selected, picker: { picker }, notices: {
+                if model.canAsk { Text("0¢ / 50¢ today").wFont(.caption).foregroundStyle(.secondary) }
+            }, setup: { SampleSetup() })
+                .environment(\.wScrollsContent, false)
+        }
+        .environment(\.wScrollsContent, false)
+    }
+
+    static func shell(
+        _ content: some View, filter: WHomeFilter = WHomeFilter(), query: String = question, count: String? = nil, height: CGFloat = 1000, showsFilters: Bool = true
+    ) -> AnyView {
+        AnyView(
+            WShell(
+                items: WHomeGallery.items, selection: "library", onSelect: { _ in },
+                header: WShellHeader(title: "Library", ask: .available(placeholder: "Search your work memory")),
+                people: ["Sam Okafor", "Priya Shah", "Dana Whitfield"], appChoices: WHomeGallery.apps, showsFilters: showsFilters,
+                onSubmit: { _, _ in }, memory: .on, onWhatIsCaptured: {}, recording: nil,
+                pauseChoices: { WPauseChoices(isPaused: false, onPause: { _ in }, onResume: {}) },
+                footer: { SampleFooter() },
+                banner: { EmptyView() },
+                content: { content },
+                initialQuery: query, initialFilter: filter, filterTrailing: count
+            )
+            .frame(height: height)
+        )
+    }
+
+    static let samFilter = WHomeFilter(
+        dates: .exact(start: Date(timeIntervalSince1970: Double(ms(9, 0, 0)) / 1000), end: Date(timeIntervalSince1970: Double(ms(16, 0, 0)) / 1000), title: "Last week"),
+        person: "Sam Okafor")
+
+    /// The app's words when an ask held to this Mac found no model here to answer it (AskRunner.localOnlyFailure).
+    static let localOnlyFailure = "Not sent: this question was to be answered on this Mac, and no model on this Mac could answer it. Set one up in Settings → AI Providers."
+    /// The app's note on a reopened conversation that was asked under a People filter (FindAdapter.peopleFilterNotKept).
+    static let peopleNotKept = "The People filter was not kept with this conversation, so follow-ups are not limited to a person."
+    /// The filters a reopened conversation kept: the app and the exact days, the date chip named by its range.
+    static let keptFilter = WHomeFilter(appId: "com.microsoft.Excel", dates: .exact(
+        start: Date(timeIntervalSince1970: Double(ms(9, 0, 0)) / 1000), end: Date(timeIntervalSince1970: Double(ms(16, 0, 0)) / 1000), title: "Nov 9 to Nov 15"))
+
+    /// Find as a saved conversation opens on it: no search, the saved answer under the range it was asked over, the kept chips' lines.
+    static func reopenedModel(notice: String? = nil) -> WFindModel {
+        let saved = exchange(notes: ["Answered by a local model."], modelLine: "gemma4:12b")
+        var m = model(
+            stage: .empty, exchanges: [saved], route: onThisMac,
+            filterLines: ["Screen captures from Excel only. Meetings, slides, email and episodes are left out.", weekLine], notice: notice)
+        m.query = ""
+        return m
+    }
+
+    // Recent, Episodes, Digest
+
+    static func recentModel() -> WLibraryListModel {
+        var m = WLibraryListModel()
+        m.rows = [
+            WLibraryRow(
+                id: "meeting-7", card: WFindCard(
+                    id: "meeting-7", kind: .meeting, appGlyph: "video", appName: "Meeting", title: "Pricing review", timeMs: ms(17, 10, 0), time: "Tue, Nov 17, 10:00 AM, 45 min", device: "This Mac",
+                    open: .meeting(7), openHint: "Opens the note"),
+                statusLine: "Completed, 3 attendees", canOpenInNewWindow: true, canForget: true),
+            WLibraryRow(id: "capture-91", card: excel),
+            WLibraryRow(id: "capture-88", card: slack),
+            WLibraryRow(
+                id: "meeting-6", card: WFindCard(
+                    id: "meeting-6", kind: .meeting, appGlyph: "video", appName: "Meeting", title: "Northwind renewal call", timeMs: ms(16, 10, 0), time: "Mon, Nov 16, 10:00 AM, 32 min", device: "Dana's MacBook",
+                    open: .meeting(6), openHint: "Opens the note"),
+                statusLine: "Completed, 4 attendees", canOpenInNewWindow: true, canForget: true),
+        ]
+        return m
+    }
+
+    static func episodesModel() -> WLibraryListModel {
+        var m = WLibraryListModel()
+        m.rows = [
+            WLibraryRow(id: "episode-20", card: episode),
+            WLibraryRow(id: "episode-19", card: WFindCard(
+                id: "episode-19", kind: .episode, appGlyph: "envelope", appName: "Mail", appDot: .blue, title: "Starter pricing thread", timeMs: ms(12, 9, 0), time: "Thu, Nov 12, 9:00 AM",
+                device: "This Mac", text: "Read and answered three messages about the Starter plan.", open: .episode(19), openHint: "Opens the episode"), isHidden: true),
+        ]
+        return m
+    }
+
+    public static func cases() -> [WHomeGalleryCase] {
+        var out: [WHomeGalleryCase] = []
+        func add(_ id: String, _ view: AnyView, mode: WGalleryMode = .light, scale: CGFloat = 1, width: CGFloat = 1440, height: CGFloat = 1000) {
+            out.append(WHomeGalleryCase(id: id, mode: mode, textScale: scale, width: width, height: height, view: view))
+        }
+        func both(_ name: String, _ view: @autoclosure () -> AnyView, width: CGFloat = 1440, height: CGFloat = 1000) {
+            add("ask-\(name)-light", view(), width: width, height: height)
+            add("ask-\(name)-dark", view(), mode: .dark, width: width, height: height)
+        }
+        let others = [run, episode, excel, slack, email, transcript, slide].sorted { ($0.timeMs ?? 0) > ($1.timeMs ?? 0) }
+        both("empty", shell(page(model(stage: .empty)), query: "", height: 820), height: 820)
+        both("results", shell(page(model(results: others, count: nil), selected: nil), count: "Results: 7", height: 2000), height: 2000)
+        both("answered", shell(page(model(results: others, exchanges: [exchange()], filterLines: [weekLine], count: nil), selected: 2), filter: weekFilter, count: "3 sources found", height: 2500), height: 2500)
+        both("route-hosted", shell(page(model(results: [transcript, slack, excel], route: streamedHosted), selected: nil), count: "Results: 3", height: 1500), height: 1500)
+        both("route-named", shell(page(model(results: [transcript, slack, excel], route: namedHosted), selected: nil), count: "Results: 3", height: 1500), height: 1500)
+        both("route-local", shell(page(model(results: [transcript, slack, excel], route: onThisMac), selected: nil, picker: SamplePicker(provider: "Ollama", model: "gemma4:12b")), count: "Results: 3", height: 1500), height: 1500)
+        both("route-ollama-cloud", shell(page(model(results: [transcript, slack, excel], route: ollamaCloud), selected: nil, picker: SamplePicker(provider: "Ollama", model: "gpt-oss:120b-cloud")), count: "Results: 3", height: 1500), height: 1500)
+        both("waiting-stop", shell(page(model(results: others, asking: .waiting(line: "Asking...", canStop: true), conversationsShown: false), stream: ""), count: "Results: 7", height: 1900), height: 1900)
+        both("answered-markdown", shell(page(model(results: [excel], exchanges: [WFindExchange(id: "e1", question: question, scope: range, body: .answered(text: markdownAnswer), modelLine: "claude-sonnet-4-5", sources: sources)], filterLines: [weekLine]), selected: 1), filter: weekFilter, count: "3 sources found", height: 1750), height: 1750)
+        both("answered-long", shell(page(model(results: [excel], exchanges: [WFindExchange(id: "e1", question: question, scope: range, body: .answered(text: longAnswer), modelLine: "claude-sonnet-4-5", sources: sources)], filterLines: [weekLine]), selected: nil), filter: weekFilter, count: "3 sources found", height: 1600), height: 1600)
+        both("answered-no-spaces", shell(page(model(results: [excel], exchanges: [WFindExchange(id: "e1", question: question, scope: range, body: .answered(text: noSpacesAnswer), modelLine: "claude-sonnet-4-5", sources: sources)], filterLines: [weekLine]), selected: nil), filter: weekFilter, count: "3 sources found", height: 1600), height: 1600)
+        both("streaming", shell(page(
+            model(results: others, asking: .streaming(question: question, line: "Asking claude-sonnet-4-5..."), conversationsShown: false),
+            stream: "Sam wants a usage-based tier added alongside seat pricing, and he thinks Starter customers would like it most. Before anyone sets"), count: "Results: 7", height: 2200), height: 2200)
+        both("no-results", shell(page(model(stage: .noResults, filterLines: ["Meetings with Sam Okafor, and screen captures that mention Sam Okafor, from Nov 9 to Nov 15."], filterSummary: "People: Sam Okafor, Dates: Last week")), filter: samFilter, height: 820), height: 820)
+        both("person-mentions", shell(page(model(results: [transcript, slide], filterLines: ["Meetings with Sam Okafor, and screen captures that mention Sam Okafor, from Nov 9 to Nov 15."], mentions: [slack, excel], mentionsName: "Sam Okafor")), filter: samFilter, count: "Results: 4", height: 1700), height: 1700)
+        both("failed", shell(page(model(results: others, exchanges: [exchange(sources: [], body: .failed(message: "Anthropic rejected the API key. Check it in Settings, AI Providers.", buttonTitle: "Open AI Providers"), modelLine: nil)])), count: "Results: 7", height: 2200), height: 2200)
+        // Asked on this Mac (the button said so) and no model here could answer: the app's own words, no settings button.
+        both("failed-local-only", shell(page(model(results: others, exchanges: [exchange(sources: [], body: .failed(message: localOnlyFailure, buttonTitle: nil), modelLine: nil, scope: "From your work memory")], route: onThisMac), picker: SamplePicker(provider: "Ollama", model: "gemma4:12b")), count: "Results: 7", height: 2200), height: 2200)
+        // A saved conversation opened from the panel: its kept Apps and Dates chips are back, and the answer is the saved one.
+        both("reopened", shell(page(reopenedModel(), picker: SamplePicker(provider: "Ollama", model: "gemma4:12b")), filter: keptFilter, query: "", height: 1500), height: 1500)
+        both("reopened-people-not-kept", shell(page(reopenedModel(notice: peopleNotKept), picker: SamplePicker(provider: "Ollama", model: "gemma4:12b")), filter: keptFilter, query: "", height: 1550), height: 1550)
+        both("search-failed", shell(page(model(stage: .failed(title: "The search did not finish", help: "Whimbrel's local database did not answer. Try again."))), height: 760), height: 760)
+        both("setup-needed", shell(page(model(results: [transcript, slack], canAsk: false, route: nil)), count: "Results: 2", height: 1200), height: 1200)
+        both("legacy", shell(page(model(stage: .results, results: [], exchanges: [
+            WFindExchange(id: "e1", question: "What did Sam say about pricing?", scope: "From your work memory", body: .legacy(text: "Sam wants a usage tier on top of seat pricing. He asked for churn data on Starter first.", chips: [
+                WFindLegacyChip(id: "c1", glyph: "waveform", text: "Pricing review, Sam Okafor", tooltip: "Pricing review, Sam Okafor", open: .meeting(7)),
+                WFindLegacyChip(id: "c2", glyph: "macwindow", text: "Thread in #pricing", tooltip: "Slack: Thread in #pricing", open: .capture(88)),
+            ]), modelLine: "claude-haiku-4-5"),
+        ])), height: 1200), height: 1200)
+        both("source-gone", shell(page(model(results: [slack], exchanges: [exchange(sources: [transcript.numbered(1), goneSource.numbered(2), excel.numbered(3)])], filterLines: [weekLine]), selected: 1), filter: weekFilter, count: "3 sources found", height: 1600), height: 1600)
+        both("recent", shell(WLibraryPage(selection: .recent, onSelect: { _ in }, header: { SampleStatus() }, panel: { SamplePanel() }) {
+            WLibraryListView(model: recentModel(), actions: WLibraryActions(), toggleTitle: "Show screen captures", toggleOn: .constant(true)).environment(\.wScrollsContent, false)
+        }.environment(\.wScrollsContent, false), height: 1250, showsFilters: false), height: 1250)
+        both("episodes", shell(WLibraryPage(selection: .episodes, onSelect: { _ in }, header: { SampleStatus() }, panel: { SamplePanel() }) {
+            WLibraryListView(model: episodesModel(), actions: WLibraryActions(), toggleTitle: "Show hidden episodes", toggleOn: .constant(true)).environment(\.wScrollsContent, false)
+        }.environment(\.wScrollsContent, false), height: 860, showsFilters: false), height: 860)
+        var digest = WLibraryDigestModel()
+        digest.state = .ready(summary: "You spent the morning on the Pricing v3 sheet and the review with Sam and Priya. The usage tier is drafted but not priced.", openLoops: ["Pull churn on Starter before setting the usage rate", "Confirm whether the annual discount applies to the usage tier"])
+        both("digest", shell(WLibraryPage(selection: .digest, onSelect: { _ in }, header: { VStack(alignment: .leading, spacing: 12) { SampleStatus(); SamplePicker() } }, panel: { SamplePanel() }) {
+            WLibraryDigestView(model: digest, actions: WLibraryActions()).environment(\.wScrollsContent, false)
+        }.environment(\.wScrollsContent, false), height: 760, showsFilters: false), height: 760)
+        both("narrow", shell(page(model(results: others, exchanges: [exchange()], conversationsShown: false, filterLines: [weekLine]), selected: 2), filter: weekFilter, count: "3 sources found", height: 2600), width: 900, height: 2600)
+        add("ask-answered-light-2.0", shell(page(model(results: [transcript, slack, excel], exchanges: [exchange()], conversationsShown: false, filterLines: [weekLine]), selected: 2), filter: weekFilter, count: "3 sources found", height: 2900), scale: 2, width: 1800, height: 2900)
+        add("ask-answered-high-contrast", shell(page(model(results: others, exchanges: [exchange()], filterLines: [weekLine]), selected: 2), filter: weekFilter, count: "3 sources found", height: 2300), mode: .highContrastLight, height: 2300)
+        return out
+    }
+}
+
+// MARK: Conversation page header
+
+/// The conversation page's header (`WConversationHeader`) with made-up data: a Find conversation reopened with its kept Apps and
+/// Dates, the same with the People filter not kept note, and a conversation asked about one topic. The header and its lines are
+/// the app's own view; the title row and the exchange under it are drawn from WhimbrelUI parts as the app lays them out.
+@MainActor
+public enum WConversationGallery {
+    /// The app's scope line for a Find conversation that kept the Excel and Nov 9 to Nov 15 chips
+    /// (ConversationPageLoad.filteredScopeLine: Apps before Dates, in the chips' words).
+    static let keptLine = "Asking about Apps: Excel, Dates: Nov 9 to Nov 15"
+    /// The app's scope line for a conversation asked about one topic (AskRunner.scopeLine).
+    static let topicLine = "Asking about Pricing"
+
+    static func page(title: String, topic: String?, scopeLine: String?, note: String?) -> some View {
+        WConversationGalleryPage(title: title, topic: topic, scopeLine: scopeLine, note: note)
+    }
+
+    public static func cases() -> [WHomeGalleryCase] {
+        var out: [WHomeGalleryCase] = []
+        func both(_ name: String, _ view: @autoclosure () -> AnyView, height: CGFloat = 760) {
+            for mode in [WGalleryMode.light, .dark] {
+                out.append(WHomeGalleryCase(id: "conversation-\(name)-\(mode == .light ? "light" : "dark")", mode: mode, textScale: 1, width: 1100, height: height, view: view()))
+            }
+        }
+        both("find-kept-filters", AnyView(page(title: "What did Sam say about pricing?", topic: nil, scopeLine: keptLine, note: nil)))
+        both("find-people-not-kept", AnyView(page(title: "What did Sam say about pricing?", topic: nil, scopeLine: keptLine, note: WFindGallery.peopleNotKept)))
+        both("topic", AnyView(page(title: "Usage tier rate", topic: "Pricing", scopeLine: topicLine, note: nil)))
+        return out
+    }
+}
+
+/// The page around the header, as ConversationsHostView and ConversationRedesignView draw it: the way back, the header, the
+/// exchange, the composer.
+private struct WConversationGalleryPage: View {
+    @Environment(\.wTheme) private var theme
+    @Environment(\.wTextScale) private var k
+    let title: String
+    let topic: String?
+    let scopeLine: String?
+    let note: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            WButton("Conversations", glyph: "chevron.left", kind: .quiet) {}
+                .padding(.horizontal, theme.space(16))
+                .padding(.top, theme.space(8))
+            WConversationHeader(scopeLine: scopeLine, note: note) {
+                HStack(spacing: theme.space(10)) {
+                    Text(verbatim: title).wFont(.pageTitle).foregroundStyle(theme.textPrimary).lineLimit(1)
+                    Image(systemName: "star").foregroundStyle(theme.textSecondary)
+                    if let topic {
+                        WFilterChip(topic, glyph: "number") {}
+                    } else {
+                        WButton("Add to topic", glyph: "plus", kind: .quiet) {}
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "ellipsis.circle").foregroundStyle(theme.textSecondary)
+                }
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: theme.space(10)) {
+                VStack(alignment: .leading, spacing: theme.space(2)) {
+                    Text(verbatim: "You asked").wFont(.caption).foregroundStyle(theme.textSecondary)
+                    Text(verbatim: WFindGallery.question).wFont(.bodyStrong).foregroundStyle(theme.textPrimary)
+                }
+                Text(verbatim: "Sam wants a usage-based tier added alongside seat pricing. [1] Before anyone sets numbers, he asked for churn data on Starter. [2]")
+                    .wFont(.body).foregroundStyle(theme.textPrimary).fixedSize(horizontal: false, vertical: true)
+                WSourceCard(number: 1, size: .card, appGlyph: "waveform", kind: .transcriptMoment, title: "Pricing review", time: "Nov 10, 2:32 PM",
+                            quote: "I would add a usage tier. Seats alone do not fit how Starter customers work.", quoteLineLimit: 3, onSelect: {}, onOpen: {})
+                WSourceCard(number: 2, size: .card, appGlyph: "number", appName: "Slack", kind: .seenOnScreen, title: "Thread in #pricing", time: "Nov 12, 4:10 PM",
+                            quote: "Before we pick numbers for a usage tier, can someone pull churn on Starter?", quoteLineLimit: 3, onSelect: {}, onOpen: {})
+                Text(verbatim: "gemma4:12b").wFont(.caption).foregroundStyle(theme.textSecondary)
+            }
+            .frame(maxWidth: 760 * k, alignment: .leading)
+            .padding(.horizontal, theme.space(28))
+            .padding(.vertical, theme.space(16))
+            .frame(maxWidth: .infinity, alignment: .center)
+            Spacer(minLength: 0)
+            Divider()
+            HStack(spacing: theme.space(8)) {
+                Text(verbatim: "Search your work memory").wFont(.body).foregroundStyle(theme.textSecondary)
+                Spacer(minLength: 0)
+                WButton("Send", glyph: "arrow.up", kind: .primary) {}.disabled(true)
+            }
+            .padding(.horizontal, theme.space(12))
+            .frame(minHeight: 40 * k)
+            .background(theme.backgroundCard)
+            .overlay(Rectangle().strokeBorder(theme.border, lineWidth: max(1, theme.borderWidth)))
+            .frame(maxWidth: 760 * k)
+            .padding(.horizontal, theme.space(28))
+            .padding(.vertical, theme.space(12))
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+// MARK: Menu bar, alert windows and hotkey panel
+
+/// The menu bar menu, the small alert windows and the hotkey panel, with made-up content (a pricing review).
+@MainActor
+public enum WMenuGallery {
+    static func menu(
+        recording: WMenuRecording? = nil, memory: WMemoryState = .on, needs: [WMenuNeed] = [], next: WMenuNext? = WMenuGallery.nextMeeting,
+        caption: String? = nil, workingOn: String? = nil, maxHeight: CGFloat? = nil
+    ) -> AnyView {
+        AnyView(
+            WMenuView(
+                model: WMenuModel(recording: recording, memory: memory, needs: needs, next: next, startCaption: caption, workingOn: workingOn),
+                actions: WMenuActions(), maxHeight: maxHeight,
+                accessory: { id in if id == "sync" { WSpokenButton(title: "Sync now") {} } },
+                extras: { EmptyView() })
+        )
+    }
+
+    static let nextMeeting = WMenuNext(title: "Design sync", time: "1:30 PM", topic: "Pricing", hasBrief: true)
+
+    static let permissionNeeds: [WMenuNeed] = [
+        WMenuNeed(id: "screen", kind: .permission, title: "System audio can't be recorded.", detail: "Allow Screen & System Audio Recording in System Settings."),
+        WMenuNeed(id: "mic", kind: .permission, title: "Your microphone can't be recorded.", detail: "Allow Microphone in System Settings."),
+    ]
+    static let syncNeed = WMenuNeed(id: "sync", kind: .sync, title: "Sync is not working.", detail: "Last worked Nov 20, 4:10 PM.")
+    static let accessibilityNeed = WMenuNeed(
+        id: "accessibility", kind: .permission, title: "Whimbrel can't read text on your screen.", detail: "Allow Accessibility in System Settings.")
+    static let both = WMenuStreams(microphone: true, systemAudio: true)
+
+    static func alert(
+        title: String, subject: String? = "Pricing review", lines: [String] = [], countdown: WAlertCountdown? = nil, main: String = "Start Recording",
+        alternate: String? = "Start Recording & Open Whimbrel", others: [String] = ["Open brief", "Join", "Dismiss"], width: CGFloat = 440
+    ) -> AnyView {
+        AnyView(
+            WAlertPanel(
+                model: WAlertPanelModel(
+                    title: title, subject: subject, lines: lines, countdown: countdown,
+                    main: WAlertAction(id: "main", title: main) {}, alternate: alternate.map { WAlertAction(id: "alt", title: $0) {} },
+                    others: others.map { WAlertAction(id: $0, title: $0) {} }),
+                width: width)
+        )
+    }
+
+    static func hotkey(_ phase: WHotkeyPhase, question: String = "", destination: Bool = true, reading: Bool = true) -> AnyView {
+        AnyView(
+            WHotkeyPanel(
+                model: WHotkeyModel(
+                    phase: phase, readingLine: reading ? "Reading: Safari, Pricing sheet v3" : nil,
+                    destinationLine: destination ? "Your question and this text go to the model you chose in Settings." : nil,
+                    readingProgress: "Reading this window", copyTitle: "Copy", copiedTitle: "Copied"),
+                question: .constant(question), actions: WHotkeyActions())
+        )
+    }
+
+    static let answer = "The sheet lists three tiers. Starter is 12 dollars a seat, Team is 20 and Business is 34. The usage tier in row 14 has no price yet."
+
+    /// One entry per picture. `reduced` is the short list the high contrast and 200 percent sets use.
+    static func entries() -> [(id: String, view: AnyView, width: CGFloat, reduced: Bool)] {
+        let recording = WMenuRecording(state: .recording, elapsedSeconds: 848, title: "Pricing review", streams: both)
+        let failedResume = "The microphone stopped (No input device). The recording keeps the audio captured before that."
+        return [
+            ("menu-idle", menu(), 368, true),
+            ("menu-memory-paused", menu(memory: .pausedUntil("3:10 PM")), 368, false),
+            ("menu-memory-off", menu(memory: .off, next: nil), 368, false),
+            ("menu-memory-not-capturing", menu(memory: .onNotCapturing, needs: [accessibilityNeed]), 368, true),
+            ("menu-recording", menu(recording: recording), 368, false),
+            ("menu-recording-mic-only", menu(recording: WMenuRecording(state: .recording, elapsedSeconds: 848, title: "Pricing review", streams: WMenuStreams(microphone: true, systemAudio: false))), 368, false),
+            ("menu-recording-no-audio", menu(recording: WMenuRecording(state: .problem(""), elapsedSeconds: 848, title: "Pricing review", streams: WMenuStreams(microphone: false, systemAudio: false))), 368, false),
+            // Just started: capture has not yet begun, so the row says it is starting and not that nothing is recorded.
+            ("menu-recording-starting", menu(recording: WMenuRecording(state: .starting, elapsedSeconds: 2, title: "Meeting", canTogglePause: false, streams: WMenuStreams(microphone: false, systemAudio: false))), 368, false),
+            // A detected or calendar start: audio is on before the meeting is saved, so Stop waits, and the row says so.
+            ("menu-recording-starting-stop-waits", menu(recording: WMenuRecording(state: .starting, title: "Design sync", canTogglePause: false, streams: both, canStop: false)), 368, true),
+            // The same start with Stop working (the app stops the audio at once and saves the meeting when its row lands), and after Stop.
+            ("menu-recording-starting-stop", menu(recording: WMenuRecording(state: .starting, title: "Design sync", canTogglePause: false, streams: both, canStop: true)), 368, true),
+            ("menu-recording-starting-saving", menu(recording: WMenuRecording(state: .starting, title: "Design sync", canTogglePause: false, streams: both, canStop: false, isSaving: true)), 368, true),
+            ("menu-recording-paused", menu(recording: WMenuRecording(state: .paused, elapsedSeconds: 848, title: "Pricing review", streams: both)), 368, false),
+            ("menu-recording-paused-memory-paused", menu(recording: WMenuRecording(state: .paused, elapsedSeconds: 848, title: "Pricing review", streams: both), memory: .pausedUntil("3:10 PM")), 368, true),
+            ("menu-recording-problem", menu(recording: WMenuRecording(state: .problem(failedResume), elapsedSeconds: 848, title: "Pricing review", streams: WMenuStreams(microphone: false, systemAudio: true))), 368, true),
+            ("menu-needs-attention", menu(needs: permissionNeeds + [syncNeed]), 368, true),
+            ("menu-no-next-meeting", menu(next: nil), 368, false),
+            ("menu-processing", menu(next: nil, workingOn: "Transcribing Pricing review"), 368, false),
+            ("menu-no-store", menu(memory: .off, needs: [WMenuNeed(id: "nostore", kind: .noStore, title: "The memory database could not be opened. Recording is off. Restart Whimbrel to try again.", actions: [WMenuAction(title: "Open Settings") {}])], next: nil, caption: "Recording is off because the memory database could not be opened."), 368, false),
+            ("launch-menu-starting", AnyView(WLaunchMenuView(model: WLaunchMenuModel(message: "Starting Whimbrel\u{2026}", waitingForUser: false, showTitle: "Show Whimbrel", quitTitle: "Quit Whimbrel"), onShow: {}, onQuit: {})), 368, true),
+            ("launch-menu-waiting", AnyView(WLaunchMenuView(model: WLaunchMenuModel(message: "Whimbrel needs your attention", waitingForUser: true, showTitle: "Show Whimbrel", quitTitle: "Quit Whimbrel"), onShow: {}, onQuit: {})), 368, false),
+            // What the app's adapter draws: the title, the meeting, and the buttons it has. A detected call has no brief and no Join.
+            ("alert-meeting-detected", alert(title: "Meeting Detected", others: ["Dismiss"]), 488, false),
+            ("alert-countdown", alert(title: "Meeting Detected", countdown: WAlertCountdown(text: "Recording starts in 8 s"), others: ["Don\u{2019}t record"]), 488, true),
+            ("alert-calendar", alert(title: "Meeting Starting Soon"), 488, false),
+            ("alert-keep-together", alert(title: "Recording as a New Meeting", lines: ["Ended \u{201C}Roadmap check-in\u{201D} and saved it separately."], main: "Keep together", alternate: nil, others: ["Dismiss"]), 488, false),
+            ("checkin-recording", alert(title: "Still recording?", subject: nil, lines: ["This recording has been running for a while."], countdown: WAlertCountdown(text: "Stopping in 4:32"), main: "Keep recording", alternate: nil, others: ["Stop now"], width: 380), 428, false),
+            ("checkin-meeting", alert(title: "Still in a meeting?", subject: nil, lines: ["No one has spoken for 15 minutes."], countdown: WAlertCountdown(text: "Stopping in 1:48"), main: "Keep recording", alternate: nil, others: ["Stop"], width: 380), 428, true),
+            ("checkin-paused", alert(title: "This recording is still paused.", subject: nil, lines: ["No audio is recorded while it is paused."], main: "Resume", alternate: nil, others: ["Stop"], width: 380), 428, false),
+            ("hotkey-reading", hotkey(.reading, destination: false, reading: false), 568, false),
+            ("hotkey-ready", hotkey(.ready, question: "What is the price of Team?"), 568, true),
+            ("hotkey-blocked", hotkey(.blocked(message: "Whimbrel needs Accessibility permission to read this window.", action: WHotkeyAction(id: "settings", title: "Open System Settings")), destination: false, reading: false), 568, true),
+            ("hotkey-excluded", hotkey(.blocked(message: "This app is excluded from capture.", action: nil), destination: false, reading: false), 568, false),
+            ("hotkey-answering", hotkey(.answering(partial: "The sheet lists three tiers. Starter is 12 dollars a seat"), question: "What does the sheet price?"), 568, false),
+            ("hotkey-answered", hotkey(.answered(answer), question: "What does the sheet price?"), 568, true),
+            ("hotkey-failed", hotkey(.failed("The model did not answer. Try again in a moment."), question: "What does the sheet price?"), 568, false),
+        ]
+    }
+
+    /// A menu with a recording, three needs, a next meeting and a stage, at 200 percent text on a screen about 800 points tall.
+    static let cappedHeight: CGFloat = 760
+    static func capped() -> AnyView {
+        menu(
+            recording: WMenuRecording(state: .recording, elapsedSeconds: 848, title: "Pricing review", streams: both),
+            needs: permissionNeeds + [syncNeed], workingOn: "Transcribing Pricing review", maxHeight: cappedHeight)
+    }
+
+    /// Light and dark for every picture; high contrast and 200 percent text for the short list.
+    public static func cases() -> [WHomeGalleryCase] {
+        var out: [WHomeGalleryCase] = [
+            WHomeGalleryCase(id: "menu-capped-light-2.0", mode: .light, textScale: 2, width: (368 * 1.6).rounded(), height: 0, view: capped()),
+            WHomeGalleryCase(id: "menu-capped-dark-2.0", mode: .dark, textScale: 2, width: (368 * 1.6).rounded(), height: 0, view: capped()),
+        ]
+        for entry in entries() {
+            out.append(WHomeGalleryCase(id: "\(entry.id)-light", mode: .light, textScale: 1, width: entry.width, height: 0, view: entry.view))
+            out.append(WHomeGalleryCase(id: "\(entry.id)-dark", mode: .dark, textScale: 1, width: entry.width, height: 0, view: entry.view))
+            if entry.reduced {
+                out.append(WHomeGalleryCase(id: "\(entry.id)-high-contrast", mode: .highContrastLight, textScale: 1, width: entry.width, height: 0, view: entry.view))
+                out.append(WHomeGalleryCase(id: "\(entry.id)-light-2.0", mode: .light, textScale: 2, width: (entry.width * 1.6).rounded(), height: 0, view: entry.view))
+            }
+        }
         return out
     }
 }

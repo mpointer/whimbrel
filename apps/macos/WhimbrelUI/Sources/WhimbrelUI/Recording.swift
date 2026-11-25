@@ -101,6 +101,10 @@ public struct WRecordingIndicator: View {
     let onStop: (() -> Void)?
     /// The live level, 0 to 1, from the capture code. Nil draws the still waveform, as before.
     let level: Float?
+    /// What the bar offers where Stop is while the recording is still starting. `.unavailable` (the default) is a Stop that is
+    /// drawn and off, as before; `.stop` is a Stop that works (audio is on, the meeting is not saved yet); `.saving` replaces
+    /// Stop with a disabled "Saving..." once a Stop has been asked for.
+    let startingStop: WStopOffer
 
     public init(
         state: WRecordingState,
@@ -109,8 +113,10 @@ public struct WRecordingIndicator: View {
         level: Float? = nil,
         onPause: (() -> Void)? = nil,
         onResume: (() -> Void)? = nil,
-        onStop: (() -> Void)? = nil
+        onStop: (() -> Void)? = nil,
+        startingStop: WStopOffer = .unavailable
     ) {
+        self.startingStop = startingStop
         self.level = level
         self.state = state
         self.elapsedSeconds = elapsedSeconds
@@ -201,12 +207,14 @@ public struct WRecordingIndicator: View {
             if state == .paused || state == .resuming, let resume = onResume ?? onPause {
                 WButton(strings.resume, glyph: "play.fill", kind: .secondary, action: resume).disabled(state == .resuming)
             }
-            if let onStop, state == .recording || state == .paused || state == .starting || state == .resuming || state.isProblem {
+            if state == .starting, startingStop == .saving {
+                WButton(strings.menu.saving, kind: .secondary, action: {}).disabled(true).environment(\.wDisabledButtonLook, true)
+            } else if let onStop, state == .recording || state == .paused || state == .starting || state == .resuming || state.isProblem {
                 if filled {
                     Button(action: onStop) { barButtonLabel(strings.stop, glyph: "stop.fill") }
                         .buttonStyle(WOnRecordingButtonStyle(solid: true))
                 } else {
-                    WButton(strings.stop, glyph: "stop.fill", kind: .secondary, action: onStop).disabled(state == .starting)
+                    WButton(strings.stop, glyph: "stop.fill", kind: .secondary, action: onStop).disabled(state == .starting && startingStop != .stop)
                 }
             }
         }
@@ -298,6 +306,9 @@ struct WWaveform: View {
 
 public enum WMemoryState: Equatable, Sendable {
     case on
+    /// Memory is switched on but screen text is not being saved: the permission is off, or capture is not running. Never
+    /// shown as plain "Memory on".
+    case onNotCapturing
     /// The time the pause ends, for example "10:52".
     case pausedUntil(String)
     case off
@@ -305,6 +316,7 @@ public enum WMemoryState: Equatable, Sendable {
     public func title(using strings: WStrings) -> String {
         switch self {
         case .on: return strings.memoryOn
+        case .onNotCapturing: return strings.memoryNotCapturing
         case .pausedUntil(let time): return strings.pausedUntil(time)
         case .off: return strings.memoryOff
         }
@@ -316,6 +328,7 @@ public enum WMemoryState: Equatable, Sendable {
     var glyph: String {
         switch self {
         case .on: return "record.circle"
+        case .onNotCapturing: return "exclamationmark.triangle"
         case .pausedUntil: return "pause.circle"
         case .off: return "circle.slash"
         }
@@ -330,9 +343,12 @@ public struct WCaptureState<Choices: View>: View {
     let state: WMemoryState
     let onWhatIsCaptured: () -> Void
     let choices: Choices
+    /// The name a screen reader gives the control, when it should differ from the words shown.
+    let spokenName: String?
 
-    public init(state: WMemoryState, onWhatIsCaptured: @escaping () -> Void, @ViewBuilder pauseChoices: () -> Choices) {
+    public init(state: WMemoryState, spokenName: String? = nil, onWhatIsCaptured: @escaping () -> Void, @ViewBuilder pauseChoices: () -> Choices) {
         self.state = state
+        self.spokenName = spokenName
         self.onWhatIsCaptured = onWhatIsCaptured
         self.choices = pauseChoices()
     }
@@ -353,14 +369,14 @@ public struct WCaptureState<Choices: View>: View {
             .padding(.horizontal, theme.space(12))
             .frame(minHeight: WTokens.Size.target * k)
             .background(Capsule().fill(state == .on ? theme.selection.opacity(0.6) : theme.backgroundCard))
-            .overlay(RoundedRectangle(cornerRadius: WTokens.Radius.pill, style: .continuous).wBorder(state == .on ? theme.accentPrimary : theme.border, style: theme.borderStroke.widened(1)))
+            .overlay(RoundedRectangle(cornerRadius: WTokens.Radius.pill, style: .continuous).wBorder(state == .on ? theme.accentPrimary : theme.firmEdge, style: theme.borderStroke.widened(1)))
             .padding(2)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel(state.title(using: strings))
+        .accessibilityLabel(spokenName ?? state.title(using: strings))
         .accessibilityHint(strings.opensPauseChoices)
     }
 }

@@ -58,6 +58,7 @@ pub mod state;
 pub mod store_actor;
 pub mod syncing;
 pub mod topic_vault;
+pub mod text_scale;
 pub mod topics;
 pub mod tray;
 pub mod user_model_gate;

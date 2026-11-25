@@ -1,7 +1,7 @@
 import Foundation
 
-/// "Remind me to tell people I'm recording". Off by default; local to this Mac. With the redesign flag on an absent
-/// setting means on; a stored choice always wins, so anyone who turned it off keeps that.
+/// "Remind me to tell people I'm recording". Local to this Mac. A setting never stored means on; a stored choice always
+/// wins, so anyone who turned it off keeps that.
 final class RecordingNoticeSettings: ObservableObject {
     private static let enabledKey = "com.mpointer.kestrel.recordingNoticeEnabled"
     private static let textKey = "com.mpointer.kestrel.recordingNoticeText"
@@ -21,10 +21,10 @@ final class RecordingNoticeSettings: ObservableObject {
         customText.isEmpty ? String(localized: "I'm recording this meeting with Whimbrel, on my own computer, for my notes.") : customText
     }
 
-    /// The value when nothing is stored: on with the redesign flag, off without.
+    /// The value when nothing is stored: on with the redesign flag (always, in the app), off without. A stored value wins.
     static func defaultEnabled(stored: Bool?, redesign: Bool) -> Bool { stored ?? redesign }
 
-    init(defaults: UserDefaults = .standard, redesign: Bool = false) {
+    init(defaults: UserDefaults = .standard, redesign: Bool = RedesignFlag.isOn()) {
         self.defaults = defaults
         enabled = Self.defaultEnabled(stored: defaults.object(forKey: Self.enabledKey) == nil ? nil : defaults.bool(forKey: Self.enabledKey), redesign: redesign)
         customText = defaults.string(forKey: Self.textKey) ?? ""

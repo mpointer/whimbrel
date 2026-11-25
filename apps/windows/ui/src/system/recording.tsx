@@ -69,21 +69,25 @@ export interface WRecordingIndicatorProps {
   elapsedSeconds?: number;
   /** Problem only: a short reason. */
   reason?: string;
+  /** The visible state word, when the caller needs more than the shared one ("Recording paused" in the tray popup). */
+  word?: string;
   /** Bar only: where Pause and Stop go. */
   actions?: ReactNode;
   /** Bar only: the level meter (`WLevelMeter`), drawn between the time and the buttons. */
   meter?: ReactNode;
 }
 
-/** State changes are announced: the word and time sit in a polite live region, named for the whole state. */
-export function WRecordingIndicator({ state, size = "bar", elapsedSeconds, reason, actions, meter }: WRecordingIndicatorProps) {
+/** State changes are announced: the state word (and a problem's reason) sit in a polite live region. The elapsed time is kept out
+ * of it, in a timer beside it, because a live region whose name changes every second has a screen reader announce it every second
+ * (Narrator said "Whimbrel" over and over through a recording). A screen reader still reads the time when it moves to it. */
+export function WRecordingIndicator({ state, size = "bar", elapsedSeconds, reason, word, actions, meter }: WRecordingIndicatorProps) {
   const showTime = (state === "recording" || state === "paused" || state === "problem") && elapsedSeconds !== undefined;
   return (
     <div className={`w-rec w-rec-${size} w-rec-${state}`} data-state={state}>
       <Glyph state={state} />
-      <span className="w-rec-live" role="status" aria-label={recordingName(state, elapsedSeconds, reason)}>
+      <span className="w-rec-live" role="status" aria-label={word ? recordingName(state, undefined, reason).replace(recordingWord(state), word) : recordingName(state, undefined, reason)}>
         <span className="w-rec-word" aria-hidden="true">
-          {recordingWord(state)}
+          {word ?? recordingWord(state)}
         </span>
         {showTime ? (
           <span className="w-rec-time" aria-hidden="true">
@@ -98,6 +102,11 @@ export function WRecordingIndicator({ state, size = "bar", elapsedSeconds, reaso
           </span>
         ) : null}
       </span>
+      {showTime ? (
+        <span className="w-visually-hidden" role="timer">
+          {spokenDuration(elapsedSeconds ?? 0)}
+        </span>
+      ) : null}
       {size === "bar" && meter ? <span className="w-rec-meter">{meter}</span> : null}
       {size === "bar" && actions ? <span className="w-rec-slots">{actions}</span> : null}
     </div>

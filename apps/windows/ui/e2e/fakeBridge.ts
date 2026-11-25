@@ -178,15 +178,22 @@ function fixtures(skins: SkinDto[], now: number, lang: string) {
 
 /** Make `page` answer the app's Tauri calls, and choose the skin, palette, appearance and language
  *  (a resolved tag such as `de-DE`, as `language_settings` gives it) it starts in. */
-export async function installBridge(page: Page, opts: { skins: SkinDto[]; skinId: string; paletteId: string; mode: "light" | "dark"; lang: string }): Promise<void> {
-  const data = fixtures(opts.skins, Date.now(), opts.lang);
+export async function installBridge(
+  page: Page,
+  opts: { skins: SkinDto[]; skinId: string | null; paletteId: string | null; mode: "light" | "dark"; lang: string; moveDone?: boolean; now?: number },
+): Promise<void> {
+  const data = fixtures(opts.skins, opts.now ?? Date.now(), opts.lang);
   const image = picture();
   await page.addInitScript(
-    ({ data, image, skinId, paletteId, mode }) => {
+    ({ data, image, skinId, paletteId, mode, moveDone }) => {
       try {
-        localStorage.setItem("skinId", skinId);
-        localStorage.setItem("paletteId", paletteId);
+        // The skin is stored as picked, so a screen is drawn in the skin the test names. A null id stores nothing: a fresh device.
+        if (skinId !== null) localStorage.setItem("skinId", skinId);
+        if (paletteId !== null) localStorage.setItem("paletteId", paletteId);
         localStorage.setItem("appearance", mode);
+        // The once-per-device move to Thread (src/skin.ts) has been looked at, as on a device that has run before and where
+        // the cream default was picked on purpose; without it a stored cream default would be moved to Thread on load.
+        if (moveDone) localStorage.setItem("skinThreadMoveDone", "1");
       } catch {
         /* the page still draws with its defaults */
       }
@@ -198,6 +205,6 @@ export async function installBridge(page: Page, opts: { skins: SkinDto[]; skinId
         convertFileSrc: (s: string) => s,
       };
     },
-    { data, image, skinId: opts.skinId, paletteId: opts.paletteId, mode: opts.mode },
+    { data, image, skinId: opts.skinId, paletteId: opts.paletteId, mode: opts.mode, moveDone: opts.moveDone ?? true },
   );
 }

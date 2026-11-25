@@ -79,7 +79,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         app.activity = this
         if (app.coreSupported) {
-            // The reminders' permission prompt waits for this; Cloud turning on while away is asked now.
+            // The reminders' permission prompt waits for this; a phone approved while away is asked now.
             app.reminders.isForeground = true
             // Sync runs while the app is open and approved; a revoke or sign-out stops it. While the phone is behind,
             // the catch-up service keeps it running after the app leaves the screen (#572).

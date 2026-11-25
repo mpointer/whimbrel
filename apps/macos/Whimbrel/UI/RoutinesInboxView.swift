@@ -1,4 +1,5 @@
 import SwiftUI
+import WhimbrelUI
 
 /// FR-RTN-8: browsable routine output history. Follows `MCPClientsSettingsPane`'s
 /// structural pattern (header + caption, `ForEach`-based list of rows).
@@ -12,6 +13,8 @@ import SwiftUI
 /// truth" signal, so the view still updates live within a session.
 struct RoutinesInboxView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.threadLook) private var look
+    @Environment(\.wTheme) private var theme
     @State private var expandedRunId: Int64?
     @State private var runs: [CoreRoutineRunWithName] = []
     /// Meeting Prep routines' ids: only their runs (or, from another device, runs named Meeting Prep) get "Open brief".
@@ -20,17 +23,17 @@ struct RoutinesInboxView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             Text("Routines")
-                .font(.whimbrelDisplay())
+                .restyledFont(.display)
                 .foregroundStyle(Color.whimbrelTextPrimary)
             Text("Output from your scheduled routines, most recent first.")
-                .font(.whimbrelBody(.caption))
+                .restyledFont(.caption)
                 .foregroundStyle(Color.whimbrelTextSecondary)
 
             Divider().overlay(Color.whimbrelBorder)
 
             if runs.isEmpty {
                 Text("No routine runs yet.")
-                    .font(.whimbrelBody(.caption))
+                    .restyledFont(.caption)
                     .foregroundStyle(Color.whimbrelTextSecondary)
             } else {
                 ForEach(runs) { run in
@@ -40,11 +43,11 @@ struct RoutinesInboxView: View {
                         } label: {
                             HStack(spacing: Spacing.xs) {
                                 Text(formattedDate(run.ranAtUnixMs) + (run.originDeviceId.map { " · from \(appState.deviceLabel(for: $0))" } ?? ""))
-                                    .font(.whimbrelBody(.caption))
+                                    .restyledFont(.caption)
                                     .foregroundStyle(Color.whimbrelTextSecondary)
                                 Image(systemName: Self.statusSymbol(run.status))
-                                    .font(.whimbrelBody(.caption))
-                                    .foregroundStyle(Self.statusColor(run.status))
+                                    .restyledFont(.caption)
+                                    .foregroundStyle(statusInk(run.status))
                                     .accessibilityLabel(Self.statusLabel(run.status))
                                 Spacer()
                             }
@@ -52,13 +55,13 @@ struct RoutinesInboxView: View {
                         .buttonStyle(.plain)
                         HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
                             Text(run.displaySummary)
-                                .font(.whimbrelBody(.body))
+                                .restyledFont(.body)
                                 .foregroundStyle(Color.whimbrelTextPrimary)
                                 .lineLimit(expandedRunId == run.id ? nil : 2)
                             if run.status == "success", prepRoutineIds.contains(run.routineId) || run.routineName == "Meeting Prep", let key = TodayLogic.prepKey(runOutputJson: run.outputJson) {
                                 Spacer()
                                 Button("Open brief") { appState.showPrepBrief(key: key) }
-                                    .buttonStyle(.whimbrelQuiet)
+                                    .restyledButton(.quiet)
                             }
                         }
                     }
@@ -96,6 +99,14 @@ struct RoutinesInboxView: View {
         case "failed": "exclamationmark.triangle.fill"
         default: "circle"
         }
+    }
+
+    /// The status glyph's color: the theme's success and error colors with the Thread look, the old accent pair otherwise. The glyph
+    /// and its spoken label say the state either way.
+    private func statusInk(_ status: String) -> Color {
+        let tone: WRunTone = status == "success" ? .success : (status == "failed" ? .failure : .other)
+        guard WRestyle.runToneUsesStatusColor(look: look, tone: tone) else { return Self.statusColor(status) }
+        return theme.color(tone == .success ? .success : .error)
     }
 
     private static func statusColor(_ status: String) -> Color {

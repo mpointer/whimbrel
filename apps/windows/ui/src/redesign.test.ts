@@ -1,41 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { primeRedesign, redesignEnabled, redesignKnown } from "./redesign";
+import { primeRedesign, recheckRedesign, redesignEnabled, redesignKnown, useRedesign } from "./redesign";
 
-describe("the hidden redesign switch", () => {
-  it("is off unless the shell answers a real true", async () => {
-    expect(await redesignEnabled(async () => false)).toBe(false);
-    expect(await redesignEnabled(async () => true)).toBe(true);
-    for (const answer of [null, undefined, 1, "true", "yes", {}, []]) expect(await redesignEnabled(async () => answer), String(answer)).toBe(false);
+describe("the redesign switch", () => {
+  it("is on whatever the shell would answer, because nothing asks it", async () => {
+    let asked = 0;
+    const load = async () => {
+      asked += 1;
+      return false;
+    };
+    expect(await redesignEnabled(load)).toBe(true);
+    expect(await primeRedesign(load)).toBe(true);
+    expect(await recheckRedesign(load)).toBe(true);
+    expect(asked).toBe(0);
   });
 
-  it("is off when the shell cannot answer", async () => {
-    expect(
-      await redesignEnabled(async () => {
-        throw new Error("unknown command");
-      }),
-    ).toBe(false);
+  it("is on when the shell cannot answer", async () => {
+    const broken = async () => {
+      throw new Error("unknown command");
+    };
+    expect(await redesignEnabled(broken)).toBe(true);
+    expect(await primeRedesign(broken)).toBe(true);
+    expect(await recheckRedesign(broken)).toBe(true);
   });
-});
 
-describe("the answer kept before the first render", () => {
-  it("is unknown until the shell has been asked, then true only for a real true", async () => {
-    expect(redesignKnown()).toBeNull();
-    expect(await primeRedesign(async () => true)).toBe(true);
+  it("is known before anything primes it, and the hook answers on at once", () => {
     expect(redesignKnown()).toBe(true);
-    expect(await primeRedesign(async () => "yes")).toBe(false);
-    expect(redesignKnown()).toBe(false);
+    expect(useRedesign()).toBe(true);
   });
 
-  it("is false when the shell cannot answer, so the old look is what draws", async () => {
-    expect(
-      await primeRedesign(async () => {
-        throw new Error("unknown command");
-      }),
-    ).toBe(false);
-    expect(redesignKnown()).toBe(false);
-  });
-
-  it("main.tsx waits for it, with the language, before it renders", async () => {
+  it("main.tsx still waits for it, with the language, before it renders", async () => {
     const main = (await import("./main.tsx?raw")).default;
     expect(main).toMatch(/Promise\.all\(\[[\s\S]*primeRedesign\(\)[\s\S]*\]\)\.finally\(\(\) =>\s*createRoot/);
   });

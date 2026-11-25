@@ -11,8 +11,8 @@ struct LaunchMigrationRedesignView: View {
 
     static func model(fraction: Double) -> WNoticeScreenModel {
         var m = WNoticeScreenModel()
-        m.title = EncryptionCopy.migratingTitle
-        m.paragraphs = [EncryptionCopy.migratingBody]
+        m.title = LibraryCopyRedesign.map(EncryptionCopy.migratingTitle)
+        m.paragraphs = [LibraryCopyRedesign.map(EncryptionCopy.migratingBody)]
         m.hints = [EncryptionCopy.migratingInterruptHint]
         m.fraction = min(max(fraction, 0), 1)
         return m

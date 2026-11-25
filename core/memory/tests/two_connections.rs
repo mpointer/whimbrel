@@ -243,9 +243,32 @@ fn capture(i: i64, text: &str) -> NewCaptureItem {
     }
 }
 
+/// Opens `path`, waiting out "database is locked": opening runs its own statements, and on a
+/// loaded CI runner another connection's write can hold the lock past the 5 s busy timeout
+/// (PR 887's first windows run failed here). The behaviour under test starts after the open.
 fn open_with_device(path: &Path) -> Store {
-    let s = Store::open(path, Path::new("")).unwrap();
-    s.set_own_device_id(DEVICE);
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        match Store::open(path, Path::new("")) {
+            Ok(s) => {
+                s.set_own_device_id(DEVICE);
+                return s;
+            }
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::DatabaseBusy && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => panic!("open {}: {e}", path.display()),
+        }
+    }
+}
+
+/// A connection for the tests that write from several threads at once: a long busy timeout, so
+/// a slow runner waits rather than failing a write the test needs.
+fn open_contended(path: &Path) -> Store {
+    let s = open_with_device(path);
+    s.set_busy_timeout(Duration::from_secs(30)).unwrap();
     s
 }
 
@@ -318,7 +341,7 @@ fn the_push_cursor_never_skips_a_row_another_connection_commits_late() {
     let writer = |offset: i64| {
         let (path, done, ready) = (path.clone(), done.clone(), ready.clone());
         std::thread::spawn(move || {
-            let s = open_with_device(&path);
+            let s = open_contended(&path);
             s.set_busy_timeout(Duration::from_secs(30)).unwrap();
             ready.wait();
             for i in 0..ROWS {
@@ -335,7 +358,7 @@ fn the_push_cursor_never_skips_a_row_another_connection_commits_late() {
     let pusher = {
         let (path, done, ready) = (path.clone(), done.clone(), ready.clone());
         std::thread::spawn(move || {
-            let s = open_with_device(&path);
+            let s = open_contended(&path);
             s.set_busy_timeout(Duration::from_secs(30)).unwrap();
             ready.wait();
             let mut pushed: HashSet<i64> = HashSet::new();

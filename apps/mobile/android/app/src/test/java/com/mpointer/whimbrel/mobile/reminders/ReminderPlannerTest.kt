@@ -37,9 +37,8 @@ class ReminderPlannerTest {
         events: List<PhoneCalendarEvent> = emptyList(),
         snapshots: List<PhoneTopicSnapshot> = emptyList(),
         settings: ReminderSettings = ReminderSettings(),
-        isCloud: Boolean = true,
         now: Long = at(8, 30),
-    ) = ReminderPlanner.plan(events, snapshots, settings, isCloud, now, zone, PlainText)
+    ) = ReminderPlanner.plan(events, snapshots, settings, now, zone, PlainText)
 
     @Test fun meetingReminderFiresLeadMinutesBefore() {
         val planned = plan(events = listOf(event("e1", "Northwind weekly", at(10))))
@@ -125,9 +124,11 @@ class ReminderPlannerTest {
         assertEquals("1 step due today", planned[0].title)
     }
 
-    @Test fun nothingOffCloud() {
+    @Test fun everyPlanGetsReminders() {
+        // Reminders run on the phone, so the planner takes no plan: a Free account gets both kinds.
         val snap = snapshot(owe = listOf(step("Send deck", "2026-11-11")))
-        assertEquals(emptyList<PlannedReminder>(), plan(events = listOf(event("e1", "Soon", at(10))), snapshots = listOf(snap), isCloud = false, now = at(7)))
+        val planned = plan(events = listOf(event("e1", "Soon", at(10))), snapshots = listOf(snap), now = at(7))
+        assertEquals(setOf("digest", "meeting:e1"), planned.map { it.id }.toSet())
     }
 
     @Test fun disabledKindsAreSkipped() {

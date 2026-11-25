@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { budgetAlertDismiss, budgetAlertRaise, budgetAlertStatus } from "../api";
 import type { BudgetNoticeView } from "../generated/types";
 import { t, useL10n } from "../l10n";
+import { useRedesign } from "../redesign";
+import { WButton, WINDOW_DESIGN, WWindowFrame, mainActionOnReturn } from "../system";
 import { formatDollars, providers } from "../settings/aiModel";
 
 /** "November" for "2026-11", in the UI language. */
@@ -33,6 +35,7 @@ export function budgetNoticeText(n: BudgetNoticeView, locale: string): string {
  */
 export function BudgetAlertView() {
   const { locale } = useL10n();
+  const redesign = useRedesign();
   const [notices, setNotices] = useState<BudgetNoticeView[]>([]);
 
   useEffect(() => {
@@ -42,7 +45,25 @@ export function BudgetAlertView() {
     return () => clearInterval(timer);
   }, []);
 
-  if (notices.length === 0) return <div className="alert" />;
+  if (notices.length === 0) return redesign ? <div className="w-sys w-win-root" /> : <div className="alert" />;
+  if (redesign)
+    return (
+      <WWindowFrame
+        design={WINDOW_DESIGN.budget}
+        title={t("Monthly budget")}
+        lines={notices.map((n) => budgetNoticeText(n, locale))}
+        onPrimary={mainActionOnReturn("budget", () => void budgetAlertRaise())}
+        onDismiss={() => void budgetAlertDismiss()}
+        actions={
+          <>
+            <WButton variant="primary" onClick={() => void budgetAlertRaise()}>
+              {t("Raise budget")}
+            </WButton>
+            <WButton onClick={() => void budgetAlertDismiss()}>{t("Dismiss")}</WButton>
+          </>
+        }
+      />
+    );
   return (
     <div className="alert">
       {/* The product name, the same in every language. */}

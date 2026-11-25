@@ -6,13 +6,16 @@ import { shortDate } from "../library/rows";
 // text follows the current language.
 
 export interface ScopeInfo {
-  id: "memory" | "meetings" | "transcripts";
+  id: "memory" | "meetings" | "transcripts" | "write";
   label: string;
   description: string;
 }
 
+/** Lets a client add to memory and read nothing. The card does not offer it yet (bridge phase 3). */
+export const WRITE_SCOPE = "write";
+
 /** The scope ids the server understands, in the card's order. */
-const SCOPE_IDS: ScopeInfo["id"][] = ["memory", "meetings", "transcripts"];
+const SCOPE_IDS: ScopeInfo["id"][] = ["memory", "meetings", "transcripts", WRITE_SCOPE];
 
 /** The permissions a client can be given, said in terms of what it can actually read. */
 export function scopes(): ScopeInfo[] {
@@ -69,10 +72,11 @@ export function toggleScope(current: string[], id: string): string[] {
 
 export function clientLine(client: McpClientView, locale: string): string {
   if (client.revokedUnixMs != null) return t("Revoked {date}", { date: shortDate(client.revokedUnixMs, new Date(), locale) });
-  return t("Can read: {scopes} · made {date}", {
-    scopes: client.scopes.join(", "),
-    date: shortDate(client.createdUnixMs, new Date(), locale),
-  });
+  const date = shortDate(client.createdUnixMs, new Date(), locale);
+  const reads = client.scopes.filter((s) => s !== WRITE_SCOPE);
+  if (!client.scopes.includes(WRITE_SCOPE)) return t("Can read: {scopes} · made {date}", { scopes: reads.join(", "), date });
+  if (reads.length === 0) return t("Write only · made {date}", { date });
+  return t("Can read: {scopes} · Write · made {date}", { scopes: reads.join(", "), date });
 }
 
 /** What an assistant needs to connect. Deliberately no recipe for any one program until one is proven here. */

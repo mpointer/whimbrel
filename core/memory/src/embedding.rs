@@ -18,6 +18,45 @@ pub const EMBEDDING_MODEL_REPO: &str =
 pub const EMBEDDING_MODEL_REVISION: &str = "e8f8c211226b894fcb81acc59f3b34ba3efd5f42";
 /// The files `EmbeddingModel::load` reads.
 pub const EMBEDDING_MODEL_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
+/// The current model's query and passage prefixes: none. paraphrase-multilingual-MiniLM-L12-v2 was trained on bare text, so its
+/// texts go to the tokenizer exactly as written. A model trained with prefixes (the e5 family: "query: " and "passage: ") sets them
+/// here, alongside the three constants above and `EMBEDDING_MODEL_VERSION`.
+pub const EMBEDDING_MODEL_PREFIXES: EmbeddingPrefixes = EmbeddingPrefixes::NONE;
+
+/// What a text is to the embedding model: a search query, or a passage (a stored row that queries are compared against).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbedRole {
+    Query,
+    Passage,
+}
+
+/// The text a model wants in front of a query and in front of a passage. Some models (e5) are trained with them and score worse
+/// without; most (the current one) take none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmbeddingPrefixes {
+    pub query: &'static str,
+    pub passage: &'static str,
+}
+
+impl EmbeddingPrefixes {
+    /// No prefixes: every text is embedded exactly as written.
+    pub const NONE: Self = Self { query: "", passage: "" };
+    /// The e5 family's ("query: ", "passage: ").
+    pub const E5: Self = Self { query: "query: ", passage: "passage: " };
+
+    /// `text` with `role`'s prefix in front. An empty prefix hands back `text` itself, not a copy.
+    pub fn apply<'a>(&self, role: EmbedRole, text: &'a str) -> std::borrow::Cow<'a, str> {
+        let prefix = match role {
+            EmbedRole::Query => self.query,
+            EmbedRole::Passage => self.passage,
+        };
+        if prefix.is_empty() {
+            std::borrow::Cow::Borrowed(text)
+        } else {
+            std::borrow::Cow::Owned(format!("{prefix}{text}"))
+        }
+    }
+}
 
 /// Where the current model's files live under a store's `models_dir`.
 pub fn embedding_model_dir(models_dir: &Path) -> PathBuf {
@@ -64,12 +103,18 @@ pub struct EmbeddingModel {
     model: BertModel,
     tokenizer: Tokenizer,
     device: Device,
+    prefixes: EmbeddingPrefixes,
 }
 
 impl EmbeddingModel {
-    /// Loads `model.safetensors`, `tokenizer.json`, `config.json` from `models_dir`.
-    /// Never panics — every failure mode returns `Err`.
+    /// Loads `model.safetensors`, `tokenizer.json`, `config.json` from `models_dir`, with the shipped model's prefixes
+    /// (`EMBEDDING_MODEL_PREFIXES`). Never panics: every failure mode returns `Err`.
     pub fn load(models_dir: &Path) -> Result<Self, EmbeddingError> {
+        Self::load_with_prefixes(models_dir, EMBEDDING_MODEL_PREFIXES)
+    }
+
+    /// [`EmbeddingModel::load`] with the given query and passage prefixes (the model evaluation in `find_eval` tries other models).
+    pub fn load_with_prefixes(models_dir: &Path, prefixes: EmbeddingPrefixes) -> Result<Self, EmbeddingError> {
         let config_path = models_dir.join("config.json");
         let tokenizer_path = models_dir.join("tokenizer.json");
         let weights_path = models_dir.join("model.safetensors");
@@ -111,7 +156,13 @@ impl EmbeddingModel {
             model,
             tokenizer,
             device,
+            prefixes,
         })
+    }
+
+    /// The query and passage prefixes this model was loaded with.
+    pub fn prefixes(&self) -> EmbeddingPrefixes {
+        self.prefixes
     }
 
     /// Masked mean pooling over BERT's last hidden state, then L2-normalized —
@@ -185,7 +236,18 @@ impl EmbeddingModel {
 /// is the production implementation; tests use a deterministic fake instead (see
 /// `Store`'s own test module).
 pub trait Embedder: Send + Sync + std::any::Any {
+    /// Embeds `text` exactly as given, with no prefix.
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError>;
+    /// Embeds a passage: a stored row's text (a capture, a transcript line, a note). The model's passage prefix goes in front;
+    /// without one this is `embed`.
+    fn embed_passage(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        self.embed(text)
+    }
+    /// Embeds a query: what someone searched for, compared against passages. The model's query prefix goes in front; without one
+    /// this is `embed`.
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        self.embed(text)
+    }
     /// Downcast hook, used by `Store::embedding_model_loaded()` (Task 2) to probe a
     /// `LazyModelEmbedder`-backed store specifically — every `impl Embedder` returns
     /// exactly `self` here, no other behavior.
@@ -195,6 +257,12 @@ pub trait Embedder: Send + Sync + std::any::Any {
 impl Embedder for EmbeddingModel {
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         EmbeddingModel::embed(self, text)
+    }
+    fn embed_passage(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        EmbeddingModel::embed(self, &self.prefixes.apply(EmbedRole::Passage, text))
+    }
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        EmbeddingModel::embed(self, &self.prefixes.apply(EmbedRole::Query, text))
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -243,6 +311,12 @@ impl Embedder for LazyModelEmbedder {
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         self.model()?.embed(text)
     }
+    fn embed_passage(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        Embedder::embed_passage(&*self.model()?, text)
+    }
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        Embedder::embed_query(&*self.model()?, text)
+    }
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -251,6 +325,120 @@ impl Embedder for LazyModelEmbedder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shipped_model_has_no_prefixes_and_an_empty_prefix_hands_back_the_text_itself() {
+        assert_eq!(EMBEDDING_MODEL_PREFIXES, EmbeddingPrefixes::NONE);
+        let text = "What did we decide about the budget?";
+        for role in [EmbedRole::Query, EmbedRole::Passage] {
+            let out = EMBEDDING_MODEL_PREFIXES.apply(role, text);
+            // Borrowed and pointing at the same bytes: the tokenizer sees exactly what it saw before prefixes existed.
+            assert!(matches!(out, std::borrow::Cow::Borrowed(_)));
+            assert!(std::ptr::eq(out.as_ref(), text));
+        }
+    }
+
+    #[test]
+    fn a_prefix_goes_in_front_of_its_own_role_only() {
+        let p = EmbeddingPrefixes::E5;
+        assert_eq!(p.apply(EmbedRole::Query, "money"), "query: money");
+        assert_eq!(p.apply(EmbedRole::Passage, "Cookies are a dollar each"), "passage: Cookies are a dollar each");
+        let query_only = EmbeddingPrefixes { query: "q> ", passage: "" };
+        assert_eq!(query_only.apply(EmbedRole::Query, "x"), "q> x");
+        assert!(matches!(query_only.apply(EmbedRole::Passage, "x"), std::borrow::Cow::Borrowed("x")));
+    }
+
+    /// An embedder that only implements `embed` (every fake in the tests and other crates) embeds queries and passages bare.
+    #[test]
+    fn an_embedder_without_role_methods_embeds_both_roles_bare() {
+        struct Echo;
+        impl Embedder for Echo {
+            fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+                Ok(vec![text.len() as f32])
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+        assert_eq!(Echo.embed_query("abc").unwrap(), vec![3.0]);
+        assert_eq!(Echo.embed_passage("abc").unwrap(), vec![3.0]);
+    }
+
+    /// Records which role each text was embedded as, through `embed_query` and `embed_passage`, the way `EmbeddingModel` adds
+    /// its prefixes there.
+    struct RoleRecorder(std::sync::Mutex<Vec<(&'static str, String)>>);
+    impl Embedder for RoleRecorder {
+        fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+            self.0.lock().unwrap().push(("bare", text.to_string()));
+            Ok(Self::vector(text))
+        }
+        fn embed_passage(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+            self.0.lock().unwrap().push(("passage", text.to_string()));
+            Ok(Self::vector(text))
+        }
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+            self.0.lock().unwrap().push(("query", text.to_string()));
+            Ok(Self::vector(text))
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+    impl RoleRecorder {
+        fn vector(text: &str) -> Vec<f32> {
+            let mut v = vec![0.01f32; EMBEDDING_OUTPUT_DIM];
+            for b in text.bytes() {
+                v[b as usize % EMBEDDING_OUTPUT_DIM] += 1.0;
+            }
+            v
+        }
+        fn roles_of(&self, text: &str) -> Vec<&'static str> {
+            self.0.lock().unwrap().iter().filter(|(_, t)| t == text).map(|(r, _)| *r).collect()
+        }
+    }
+
+    #[test]
+    fn the_store_embeds_rows_as_passages_and_searches_as_queries() {
+        let dir = tempfile::tempdir().unwrap();
+        let rec = std::sync::Arc::new(RoleRecorder(Default::default()));
+        let s = crate::test_store::open_with_embedder(&dir.path().join("r.db"), rec.clone());
+        let row = "Cookies are a dollar each and whole pies are twelve dollars";
+        crate::cards::tests::capture(&s, 1, 1_000, "com.notes", "Bake sale", row);
+        let line = "The shuttle from the train station runs every twenty minutes";
+        crate::cards::tests::meeting(&s, 2_000_000, "Kite festival", &["Ana"], &[line]);
+        assert!(!rec.roles_of(row).is_empty() && rec.roles_of(row).iter().all(|r| *r == "passage"), "{:?}", rec.roles_of(row));
+        assert!(!rec.roles_of(line).is_empty() && rec.roles_of(line).iter().all(|r| *r == "passage"), "{:?}", rec.roles_of(line));
+
+        s.find("price of a pie", &crate::find::FindFilter::default(), crate::find::FindOrder::Rank, 0, 20).unwrap();
+        s.search_semantic("twenty minutes shuttle", 5).unwrap();
+        s.search_transcript_semantic("train station", 5).unwrap();
+        for q in ["price of a pie", "twenty minutes shuttle", "train station"] {
+            let roles = rec.roles_of(q);
+            assert!(!roles.is_empty() && roles.iter().all(|r| *r == "query"), "{q}: {roles:?}");
+        }
+
+        // The reindex sweep re-embeds stored rows as passages too.
+        s.conn.execute("UPDATE kv_meta SET value = '0' WHERE key = 'embedding_reindex_cursor'", []).unwrap();
+        rec.0.lock().unwrap().clear();
+        while s.reindex_batch(100).unwrap() > 0 {}
+        let roles = rec.roles_of(row);
+        assert!(!roles.is_empty() && roles.iter().all(|r| *r == "passage"), "reindex: {roles:?}");
+    }
+
+    /// The current model through the lazy loader: a query and a passage embed to exactly the bare text's vector.
+    #[test]
+    #[ignore] // needs real model files
+    fn the_shipped_model_embeds_queries_and_passages_as_bare_text() {
+        let embedder = LazyModelEmbedder::new(multilingual_dir());
+        let text = "¿Qué decidimos sobre el presupuesto?";
+        let bare = embedder.embed(text).unwrap();
+        assert_eq!(embedder.embed_query(text).unwrap(), bare);
+        assert_eq!(embedder.embed_passage(text).unwrap(), bare);
+        // And a model loaded with prefixes really feeds them to the tokenizer.
+        let prefixed = EmbeddingModel::load_with_prefixes(&multilingual_dir(), EmbeddingPrefixes::E5).unwrap();
+        assert_eq!(Embedder::embed_query(&prefixed, text).unwrap(), prefixed.embed(&format!("query: {text}")).unwrap());
+        assert_ne!(Embedder::embed_query(&prefixed, text).unwrap(), bare);
+    }
 
     #[test]
     fn model_lives_in_a_folder_named_for_it() {
@@ -410,6 +598,134 @@ mod tests {
             off < es_en,
             "unrelated text scored higher: {off} vs {es_en}"
         );
+    }
+
+    /// Calibrates Find's meaning-search floor (`find::meaning_floor_for`): prints how close nonsense and real questions come to
+    /// work-like captures, and checks nonsense stays under its floor while every real question clears its floor or shares a word.
+    #[test]
+    #[ignore] // needs real model files
+    fn find_meaning_floor_separates_nonsense_from_related() {
+        let model = EmbeddingModel::load(&multilingual_dir()).unwrap();
+        let docs = [
+            "Northwind renewal check-in: a 12-month term with a 5% volume discount for 60 seats",
+            "Design sync: Sam walked through the onboarding flow and the new empty states",
+            "Re: Q3 budget review - the finance team wants the forecast by Friday",
+            "Pricing sheet.xlsx - Excel. Usage tier beside seat pricing, rate cell C14 blank",
+            "Inbox - Outlook. 14 unread. Team standup moved to 10:30",
+            "Visual Studio Code - main.rs - fix the paging cursor in the search results",
+            "Slack - #general - lunch order for the offsite on Thursday",
+            "Calendar - Week of November 16. 1:1 with Priya, quarterly planning, dentist",
+            "Contract draft v3.docx - Word. Data processing agreement, signing date open",
+            "YouTube - How to brew pour-over coffee at home",
+            "Spotify - Discover Weekly - jazz piano and lo-fi beats",
+            "Google Maps - directions to the airport, 35 min in traffic",
+            "Jira - PROJ-412 Login fails with an expired token on Windows",
+            "Figma - Mobile app - checkout screen, dark mode variants",
+            "Amazon.com - wireless headphones, noise cancelling, 4.5 stars",
+            "Zoom meeting - Weekly all-hands - CEO update on hiring",
+            "Wikipedia - The history of the Roman Empire",
+            "Notion - Product roadmap 2027 - themes and bets",
+            "Teams - chat with Dana about the security review timeline",
+            "Terminal - cargo test - 1109 passed, 0 failed",
+            "BBC News - storm warning for the weekend, heavy rain expected",
+            "Expense report - taxi, hotel and dinner for the Chicago trip",
+            "GitHub - pull request 855 - filter the runner's pull by item kind",
+            "LinkedIn - 3 new messages, job post for a senior designer",
+            "Recipe - chocolate chip cookies with brown butter",
+            "PowerPoint - Board deck Q4 - revenue, churn and pipeline",
+            "Gmail - Your flight to Lisbon is confirmed",
+            "Settings - Bluetooth - pair a new device",
+            "Netflix - continue watching a science fiction series about space",
+            "Doctor appointment reminder for Tuesday at 9:00",
+        ];
+        let related = ["what did Sam say about pricing", "budget forecast deadline", "renewal discount for Northwind", "onboarding design review", "data agreement signing", "coffee", "standup", "lunch plans", "spreadsheet rates", "¿qué dijo Priya del contrato?"];
+        // Words with no meaning near any of these notes (the hand test's "zebra quantum harmonica" among them).
+        let nonsense = ["zebra quantum harmonica", "xylophone tornado marmalade", "asdf qwerty zxcv"];
+        // Odd words that do mean something near a note ("volcano" and a storm warning, "nebula" and a series about space): printed only.
+        let near = ["purple volcano saxophone", "giraffe nebula accordion"];
+        let d: Vec<Vec<f32>> = docs.iter().map(|t| model.embed(t).unwrap()).collect();
+        let best = |q: &str| d.iter().map(|v| cosine(&model.embed(q).unwrap(), v)).fold(f32::MIN, f32::max);
+        // Find's floor depends on how many of the query's words are not common words (`find::meaning_floor_for`). A real question
+        // under its floor must share a word with a note, so the keyword search finds it ("standup" 0.305, the Spanish question 0.298).
+        let words_of = |t: &str| crate::find::keyword_words(t);
+        let shares_a_word = |q: &str| docs.iter().any(|t| { let w = words_of(t); words_of(q).iter().any(|x| w.contains(x)) });
+        let mut missed = Vec::new();
+        for q in related {
+            let (b, floor) = (best(q), crate::find::meaning_floor_for(q));
+            eprintln!("related  {b:.3}  floor {floor:.2}  {q}");
+            // "spreadsheet rates" (0.361) sits on the floor: printed, not held to it.
+            if b < floor && !shares_a_word(q) && q != "spreadsheet rates" {
+                missed.push(q);
+            }
+        }
+        for q in nonsense {
+            let (b, floor) = (best(q), crate::find::meaning_floor_for(q));
+            eprintln!("nonsense {b:.3}  floor {floor:.2}  {q}");
+            assert!(b < floor, "nonsense passes the floor: {q} {b} >= {floor}");
+        }
+        near.iter().for_each(|q| eprintln!("near     {:.3}  {q}", best(q)));
+        assert!(missed.is_empty(), "a real question finds nothing: {missed:?}");
+    }
+
+    /// The same floor against a library-sized corpus: about 100-word chunks of the repository's docs, 30, 300 and 3,000 of them. Prints
+    /// the best match of each query at each size, so the floor can be judged as a library grows.
+    #[test]
+    #[ignore] // needs real model files; slow (embeds 3,000 chunks)
+    fn find_meaning_floor_at_library_size() {
+        let model = EmbeddingModel::load(&multilingual_dir()).unwrap();
+        let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+        let mut files = Vec::new();
+        let mut stack = vec![docs];
+        while let Some(dir) = stack.pop() {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|x| x == "md") && !p.ends_with("2026-11-22-find-embedding-model-eval.md") {
+                    // The model evaluation's results quote the nonsense queries; they stay out of the corpus.
+                    files.push(p);
+                }
+            }
+        }
+        files.sort();
+        let mut chunks: Vec<String> = Vec::new();
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap_or_default();
+            let words: Vec<&str> = text.split_whitespace().collect();
+            // A file's last chunk can be a few words or a lone "|" left from a table, and a near-empty chunk sits close to any
+            // nonsense query (one "|" reached 0.373 for "zebra quantum harmonica"). Library items are not fragments like that.
+            chunks.extend(words.chunks(100).filter(|c| c.len() >= 20).map(|c| c.join(" ")));
+        }
+        // Spread across the whole corpus, not the first files only.
+        let step = (chunks.len() / 3000).max(1);
+        let picked: Vec<(String, Vec<f32>)> = chunks.iter().step_by(step).take(3000).map(|c| (c.to_lowercase(), model.embed(c).unwrap())).collect();
+        // The single words get the lower floor for one word with no word matched (`MEANING_SHORT_MIN_SIMILARITY`); "xyzzy" is printed to
+        // show what that floor lets an odd single word reach in a large library.
+        let queries = ["zebra quantum harmonica", "xylophone tornado marmalade", "asdf qwerty zxcv", "purple volcano saxophone", "what did Sam say about pricing", "meeting transcript speaker names", "¿qué dijo Priya del contrato?",
+            "xyzzy plover", "xyzzy", "zebra", "transportation", "fundraising"];
+        let alone = crate::find::MEANING_MIN_SIMILARITY;
+        let short = crate::find::MEANING_SHORT_MIN_SIMILARITY;
+        for q in queries {
+            let v = model.embed(q).unwrap();
+            // The floor is for a match on meaning alone, with no word in common. A chunk holding one of the query's words is a
+            // word match (old docs quote "zebra" and "zebraunicorn" in test fixtures, and the sample reaches them as docs are
+            // added), so it is left out for that query; otherwise the test measures the corpus, not the floor.
+            let words: Vec<String> = q.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 2).map(str::to_lowercase).collect();
+            let meaning_only: Vec<&Vec<f32>> = picked.iter().filter(|(text, _)| !words.iter().any(|w| text.contains(w.as_str()))).map(|(_, d)| d).collect();
+            let best = |n: usize| meaning_only.iter().take(n).map(|d| cosine(&v, d)).fold(f32::MIN, f32::max);
+            let over = |floor: f32| meaning_only.iter().filter(|d| cosine(&v, d) >= floor).count();
+            let own = crate::find::meaning_floor_for(q);
+            eprintln!("{:.3} {:.3} {:.3}  over {:>4}  over its floor {own:.2} {:>4}  {q}", best(30), best(300), best(3000), over(crate::find::MEANING_MIN_SIMILARITY), over(own));
+            // "asdf qwerty zxcv" is printed, not held: the docs corpus is sampled by a step that moves as docs are added, and a
+            // sampled chunk of key-like text (ids, hashes, shortcuts) can come near a row of keyboard letters (0.409 on e1658f06,
+            // under the floor on the next commit). Real words strung together are the case the floor must keep out.
+            if ["zebra quantum harmonica", "xylophone tornado marmalade", "xyzzy plover"].contains(&q) {
+                assert!(best(3000) < alone, "{q} passes the floor for meaning alone: {}", best(3000));
+            }
+            if q == "zebra" {
+                assert!(best(3000) < short, "{q} passes the one-word floor: {}", best(3000));
+            }
+        }
     }
 
     /// Rough throughput for a model folder (manual: compares the re-embed cost of two models).

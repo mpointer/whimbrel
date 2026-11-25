@@ -9,14 +9,21 @@ use std::path::{Path, PathBuf};
 
 pub const ENV_VAR: &str = "WHIMBREL_HOSTED_REQUEST_LOG";
 
+/// The log path the switch names: unset or empty means off.
+fn path_from(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    value.filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
 fn target() -> Option<PathBuf> {
+    // Tests never read the real switch: a machine that has it set (a CI runner left in debug mode)
+    // must neither fail the suite nor collect the suite's requests in its log.
     #[cfg(test)]
-    if let Some(path) = tests::OVERRIDE.with(|p| p.borrow().clone()) {
-        return Some(path);
+    return tests::OVERRIDE.with(|p| p.borrow().clone());
+    #[cfg(not(test))]
+    {
+        static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+        PATH.get_or_init(|| path_from(std::env::var_os(ENV_VAR))).clone()
     }
-    static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
-    PATH.get_or_init(|| std::env::var_os(ENV_VAR).filter(|v| !v.is_empty()).map(PathBuf::from))
-        .clone()
 }
 
 /// Appends one request to the log when the switch is on. Never fails the request itself.
@@ -92,9 +99,12 @@ pub(crate) mod tests {
     #[test]
     fn record_without_the_switch_writes_nothing() {
         OVERRIDE.with(|p| *p.borrow_mut() = None);
-        // The real env var is never set in the test run, so this must be a no-op.
-        assert!(std::env::var_os(ENV_VAR).is_none());
+        // Tests never read the real switch, whatever the machine has set.
         assert!(target().is_none());
+        // Off when unset or empty; on when it names a path.
+        assert_eq!(path_from(None), None);
+        assert_eq!(path_from(Some("".into())), None);
+        assert_eq!(path_from(Some("C:\\logs\\r.jsonl".into())), Some(PathBuf::from("C:\\logs\\r.jsonl")));
     }
 
     #[cfg(unix)]

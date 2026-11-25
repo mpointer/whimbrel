@@ -25,7 +25,8 @@ import { useL10n } from "../l10n";
 import { DeviceChip } from "../library/LibraryView";
 import { spanLabel } from "../library/rows";
 import { ActionItems } from "./ActionItems";
-import { elapsedLabel } from "./recordingModel";
+import { recordingLine } from "./recordingModel";
+import { usePausedMeetingId } from "./usePausedMeetingId";
 import { meetingTitleLabel } from "./sentinels";
 import { RecordingNoticeCard } from "./RecordingNoticeCard";
 import { useNoStore } from "../launch/noStore";
@@ -106,6 +107,8 @@ export function Workspace({ meetingId, onChanged, onOpenSettings }: { meetingId:
   const [transcriptOpen, setTranscriptOpen] = useState(0);
   const liveBox = useRef<HTMLDivElement>(null);
   const transcriptBox = useRef<HTMLDivElement>(null);
+  // A meeting in progress whose recording is paused is headed Paused, not Recording.
+  const paused = usePausedMeetingId(view?.phase === "during" && !view.readOnly) === meetingId;
 
   const load = useCallback(
     (reset: boolean) =>
@@ -232,7 +235,7 @@ export function Workspace({ meetingId, onChanged, onOpenSettings }: { meetingId:
   return (
     <section className="card" aria-label={t("{title} workspace", { title })}>
       <header className="workspace-header">
-        <h2 className="section-label">{phaseTitle(view)}</h2>
+        <h2 className="section-label">{phaseTitle(view, paused)}</h2>
         {topic && <TopicChip topic={topic} />}
         <h3 className="row-title">{title}</h3>
         <p className="row-meta">
@@ -260,10 +263,14 @@ export function Workspace({ meetingId, onChanged, onOpenSettings }: { meetingId:
 
       {view.phase === "during" && (
         <>
-          <p role="status" className="recording-line">
+          {/* Not a live region: the line ticks every second (RecordingCard). The hidden region announces only the state. */}
+          <p className="recording-line">
             <span className="recording-dot" aria-hidden="true" />
-            {t("Recording · {elapsed}", { elapsed: elapsedLabel(view.row.tsUnixMs, now) })}
+            {recordingLine(paused, view.row.tsUnixMs, now)}
           </p>
+          <span className="w-visually-hidden" role="status">
+            {paused ? t("Recording paused") : t("Recording")}
+          </span>
           {!view.readOnly && <RecordingNoticeCard meetingId={meetingId} />}
           <LiveAlertsSection meetingId={meetingId} recording={true} endedUnixMs={null} />
           {/* The slides so far, live, under the notices and above the transcript (the Mac's in-meeting view). */}

@@ -16,6 +16,13 @@ final class LiveMeetingRedesignTests: XCTestCase {
         XCTAssertTrue(RecordingNoticeSettings(defaults: defaults(), redesign: true).enabled)
     }
 
+    func testTheAppsOwnValueIsOnWithNothingStoredAndAStoredOffStays() {
+        let d = defaults()
+        XCTAssertTrue(RecordingNoticeSettings(defaults: d, redesign: RedesignFlag.isOn()).enabled)
+        RecordingNoticeSettings(defaults: d, redesign: RedesignFlag.isOn()).enabled = false
+        XCTAssertFalse(RecordingNoticeSettings(defaults: d, redesign: RedesignFlag.isOn()).enabled)
+    }
+
     func testWithTheFlagOffAnAbsentSettingStaysOff() {
         XCTAssertFalse(RecordingNoticeSettings(defaults: defaults(), redesign: false).enabled)
     }

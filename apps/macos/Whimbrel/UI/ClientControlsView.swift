@@ -18,9 +18,9 @@ struct ClientControlsView: View {
         VStack(alignment: .leading, spacing: 0) {
             if model.isClient && model.saved != nil {
                 VStack(alignment: .leading, spacing: Spacing.md) {
-                    Text("Client").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                    Text("Client").restyledFont(.calloutStrong).foregroundStyle(Color.whimbrelTextPrimary)
                     if let error = model.errorText {
-                        Text(error).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelError)
+                        Text(error).restyledFont(.caption).foregroundStyle(Color.whimbrelError)
                     }
                     actions
                     keep
@@ -30,7 +30,7 @@ struct ClientControlsView: View {
                 .overlay(RoundedRectangle(cornerRadius: Radius.control).stroke(Color.whimbrelBorder))
             } else if model.isClient, let error = model.errorText {
                 // The settings could not be read: say so instead of showing nothing.
-                Text(error).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelError)
+                Text(error).restyledFont(.caption).foregroundStyle(Color.whimbrelError)
             }
         }
         .task { await model.load() }
@@ -39,10 +39,10 @@ struct ClientControlsView: View {
     private var actions: some View {
         HStack(spacing: Spacing.sm) {
             Button("Delete this client…", role: .destructive) { openReview(.delete) }
-                .buttonStyle(.whimbrelSecondary)
+                .restyledButton(.secondary)
                 .help(Text("Review what Whimbrel holds about this client, then delete it."))
             Button("Export…") { openReview(.export) }
-                .buttonStyle(.whimbrelSecondary)
+                .restyledButton(.secondary)
                 .help(Text("Copy what Whimbrel holds about this client into a folder you choose."))
         }
     }
@@ -62,7 +62,7 @@ struct ClientControlsView: View {
                 Text("The period syncs to your other devices, and those that have updated apply it. Each device asks before it deletes its own copies; deleting here does not delete them elsewhere. Each item's age counts from its own date (meeting end, email date, event date, capture time). An item shared with another client that has no keep period is kept.")
                 Text(verbatim: ClientCopy.gmailThreads)
             }
-            .font(.whimbrelBody(.caption))
+            .restyledFont(.caption)
             .foregroundStyle(Color.whimbrelTextSecondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -77,7 +77,7 @@ struct ClientControlsView: View {
                     .toggleStyle(.switch)
                 if model.isSaving {
                     ProgressView().controlSize(.small)
-                    Text("Saving…").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+                    Text("Saving…").restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary)
                 }
             }
             Group {
@@ -86,12 +86,12 @@ struct ClientControlsView: View {
                 Text("An item shared with another client is left out if either client is excluded. Colleagues who mainly email this client may be left out too. A calendar series once filed under this client stays left out after you unfile it.")
                 Text(verbatim: ClientCopy.matchingLimit)
             }
-            .font(.whimbrelBody(.caption))
+            .restyledFont(.caption)
             .foregroundStyle(Color.whimbrelTextSecondary)
             .fixedSize(horizontal: false, vertical: true)
             if let held = ClientCopy.heldDevices(model.heldDevices) {
                 Text(verbatim: held)
-                    .font(.whimbrelBody(.caption))
+                    .restyledFont(.caption)
                     .foregroundStyle(Color.whimbrelWarning)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -104,20 +104,20 @@ struct ClientControlsView: View {
     private func exclusionNotice(_ notice: ClientSettingsModel.ExclusionNotice) -> some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             Text(verbatim: notice.alreadyLeft)
-                .font(.whimbrelBody(.callout))
+                .restyledFont(.callout)
                 .foregroundStyle(Color.whimbrelTextPrimary)
             if !notice.hostedSummaries.isEmpty {
                 Text("A hosted model summarised \(notice.hostedSummaries.count) of this client's meetings before. Those summaries stay as they are; from now on they are left out of what Whimbrel sends.")
-                    .font(.whimbrelBody(.caption))
+                    .restyledFont(.caption)
                     .foregroundStyle(Color.whimbrelTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if notice.resummaryStarted {
                     Text("Summarising them again on this Mac. Without a local model they are not made again.")
-                        .font(.whimbrelBody(.caption))
+                        .restyledFont(.caption)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 } else {
                     Button("Summarise them again with a local model") { model.resummarize() }
-                        .buttonStyle(.whimbrelQuiet)
+                        .restyledButton(.quiet)
                 }
             }
         }
@@ -138,12 +138,12 @@ struct ClientReviewBanner: View {
             Image(systemName: "clock.badge.exclamationmark").foregroundStyle(Color.whimbrelWarning)
                 .accessibilityHidden(true)
             Text("Items past their keep period are ready to review (items: \(flag.items), clients: \(flag.clients)). Nothing is deleted until you confirm.")
-                .font(.whimbrelBody(.callout))
+                .restyledFont(.callout)
                 .foregroundStyle(Color.whimbrelTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
-            Button("Review…", action: review).buttonStyle(.whimbrelPrimary)
-            Button("Later", action: later).buttonStyle(.whimbrelQuiet)
+            Button("Review…", action: review).restyledButton(.primary)
+            Button("Later", action: later).restyledButton(.quiet)
         }
         .padding(Spacing.md)
         .background(Color.whimbrelBackgroundCard)
@@ -170,20 +170,20 @@ struct ClientPendingDevicesLine: View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             if let line = model.line {
                 Text(verbatim: line)
-                    .font(.whimbrelBody(.caption))
+                    .restyledFont(.caption)
                     .foregroundStyle(Color.whimbrelTextPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 ForEach(model.ids, id: \.self) { id in
                     HStack(spacing: Spacing.sm) {
-                        Text(verbatim: name(id)).font(.whimbrelBody(.caption)).help(id)
+                        Text(verbatim: name(id)).restyledFont(.caption).help(id)
                         Button(ClientCopy.removeDevice) { model.ask(id) }
-                            .buttonStyle(.whimbrelQuiet)
+                            .restyledButton(.quiet)
                             .disabled(model.isRemoving)
                     }
                 }
             }
             if let error = model.errorText {
-                Text(verbatim: error).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelWarning)
+                Text(verbatim: error).restyledFont(.caption).foregroundStyle(Color.whimbrelWarning)
             }
         }
         .task { await model.load() }

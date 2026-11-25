@@ -1,0 +1,26 @@
+/* Connectors (redesigned Settings). Tokens only; sizes in rem. Uses the rs-devconn- classes of devices.css for button groups. */
+.rs-devconn-token {
+  display: block;
+  margin: 0;
+  padding: var(--w-space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+  font-family: var(--w-font-mono);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: all;
+}
+.rs-devconn-dialog-text {
+  margin: 0 0 var(--w-space-sm);
+  overflow-wrap: anywhere;
+}
+.rs-devconn-dialog-note {
+  margin: var(--w-space-sm) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+}
+.rs-devconn-adv {
+  margin: 0;
+}

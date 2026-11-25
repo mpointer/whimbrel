@@ -25,6 +25,13 @@ final class AskHelpersBridgeTests: XCTestCase {
         }
     }
 
+    /// An answer citing an item a local MCP client added decodes (one unknown kind would fail the whole answer).
+    func testAnAnswerCitingAnAddedItemDecodes() throws {
+        let json = #"{"text":"Ana sent it [1].","citations":[{"kind":"mcp_item","id":7},{"kind":"capture","id":2}]}"#
+        let answer = try JSONDecoder().decode(CoreChatAnswer.self, from: Data(json.utf8))
+        XCTAssertEqual(answer.citations, [CoreContextItemRef(kind: .mcpItem, id: 7), CoreContextItemRef(kind: .capture, id: 2)])
+    }
+
     func testDecodesSnapshotCitation() throws {
         let ref = try JSONDecoder().decode(CoreContextItemRef.self, from: Data(#"{"kind":"snapshot","id":7}"#.utf8))
         XCTAssertEqual(ref, CoreContextItemRef(kind: .snapshot, id: 7))

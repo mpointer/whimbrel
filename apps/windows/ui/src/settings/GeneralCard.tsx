@@ -150,7 +150,7 @@ export function GeneralCard() {
       .catch((e: unknown) => setError(message(e)));
 
   return (
-    <section className="card about" aria-labelledby="general-heading">
+    <section className="card about" aria-labelledby="general-heading" data-settings-anchor="general.general">
       <h2 id="general-heading" className="section-label">
         {t("General")}
       </h2>

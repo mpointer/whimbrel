@@ -1,0 +1,11 @@
+# Files scripts/public-review.py may report without stopping a publish.
+#
+# One repository-relative path per line, then "  # " and the reason the hit is safe. A path
+# here silences every hit in that file, so prefer fixing a placeholder to look fake
+# (EXAMPLE, abcdefgh, 123456) over adding an entry.
+
+core/memory/src/redact.rs  # redaction unit tests: a truncated jwt.io sample token, not a credential
+apps/mobile/android/app/src/test/java/com/mpointer/whimbrel/mobile/sync/RedactForLogTest.kt  # log redaction test: a made-up token whose signature part is base64 for "signature"
+scripts/public-review.py  # the scanner itself: its pattern list and help text name the markers it looks for
+apps/mobile/android/app/src/main/cpp/CMakeLists.txt  # the CMake visibility keyword (upper-case "private")
+website/src/admin.ts  # an upper-case "private" constant names the no-store, noindex response headers of the admin page

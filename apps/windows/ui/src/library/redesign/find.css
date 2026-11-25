@@ -1,0 +1,439 @@
+/* The Find page in the Thread look. Layout only: colors, fonts and shape come from the selected skin through the system components and the
+   skin variables, with the --w-* tokens as the fallback. Nothing here touches app.css, decoration.css or archetypes.css.
+
+   The page is one column with the conversations beside it when they are shown. The width that decides is the page's own (a container
+   query in rem), so a narrow window and a large text size fold the side panel under the page the same way. */
+/* The conversations sit beside the page when both fit (the page at least 30rem, the list 20rem), and under it, full width, when they do
+   not, so a title is never squeezed to a word. (A container query on this element cannot change its own direction.) */
+.th-find-wrap {
+  container-type: inline-size;
+  container-name: th-find;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--w-space-lg);
+  width: 100%;
+  max-width: 78rem;
+  margin: 0 auto;
+}
+.th-find-wrap[hidden] {
+  display: none;
+}
+.th-find-main {
+  flex: 1000 1 30rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-md);
+}
+.th-find-side {
+  flex: 1 1 20rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ---- The Ask row ---- */
+.th-find-ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+}
+.th-find-ask-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm) var(--w-space-md);
+}
+.th-find-route {
+  flex: 1 1 14rem;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-find-small {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-find-note {
+  margin: 0 0 var(--w-space-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+/* The Conversations control reads as a button, and as one that is pressed while the panel is open. */
+.th-find-ask-row .w-button[aria-expanded="true"] {
+  background: var(--color-selection);
+}
+/* The model set up card is the old page's markup. On this page its primary button takes the on-accent text color, so it reads on the
+   accent in light mode too. The old page is not touched: nothing here applies outside the Find page. */
+.th-find .card.notice .mode--active {
+  color: var(--color-text-on-accent, #fff);
+}
+.th-find-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-link);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* ---- The answer ---- */
+.th-find-answers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-md);
+  outline: none;
+}
+.th-find-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+}
+.th-find-answer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  padding: calc(var(--w-space-md) * var(--sx-density)) var(--w-space-lg);
+  border: var(--sx-line);
+  border-top: 3px solid var(--w-color-ai-ink);
+  border-radius: var(--sx-radius-card);
+  background: var(--color-background-card);
+}
+.th-find-answer-failed {
+  border-top-color: var(--color-danger, var(--w-color-ai-ink));
+}
+.th-find-answer-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+.th-find-answer-head h3 {
+  margin: 0;
+  font-size: var(--w-text-body-size);
+}
+.th-find-drew {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-find-question {
+  margin: 0;
+  font-weight: 600;
+}
+.th-find-text-answer {
+  font-family: var(--w-font-reading);
+  font-size: calc(var(--w-text-body-size) * 1.1);
+  line-height: 1.55;
+}
+.th-find-text-answer p {
+  margin: 0 0 var(--w-space-sm);
+}
+/* The streaming text sits in the same container as the finished answer, so it has the same face, size and line height. */
+.th-find-stream {
+  white-space: pre-wrap;
+}
+.th-find-text-answer ul,
+.th-find-text-answer ol {
+  margin: 0 0 var(--w-space-sm);
+  padding-inline-start: 1.5rem;
+  list-style: revert;
+}
+.th-find-text-answer li {
+  margin: 0 0 var(--w-space-xs);
+}
+.th-find-text-answer > :last-child {
+  margin-bottom: 0;
+}
+.th-find-status {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+.th-find-error {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+.th-find-warn {
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-sm);
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-find-legacy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+.th-find-follow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-sm);
+}
+.th-find-follow input {
+  flex: 1 1 14rem;
+  min-width: 0;
+  min-height: var(--w-target);
+  padding: 0 var(--w-space-md);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+/* ---- Order, states ---- */
+.th-find-order {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm) var(--w-space-md);
+}
+.th-find-order:empty {
+  display: none;
+}
+.th-find-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  padding: var(--w-space-lg);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-card);
+  background: var(--color-background-card);
+}
+.th-find-empty p {
+  margin: 0;
+}
+.th-find-starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.th-find-more-row {
+  display: flex;
+  justify-content: center;
+}
+
+/* ---- Results ---- */
+.th-find-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-lg);
+}
+.th-find-results > section > .w-label {
+  margin: 0 0 var(--w-space-sm);
+}
+/* Cards sit in one readable column, as on the Mac: a lone card is not stretched across the window, and two on one day are the same width. */
+.th-find-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-md);
+  width: 100%;
+  max-width: 44rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.th-find-earlier {
+  margin-top: var(--w-space-xs);
+}
+.th-find-item {
+  display: flex;
+  min-width: 0;
+}
+.th-find-item > .w-source {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.th-find-card {
+  outline-offset: 2px;
+}
+.th-find-card-gone {
+  border-style: dashed;
+}
+.th-find-kind {
+  margin-left: auto;
+}
+.th-find-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.th-find-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-find-gone {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+.th-find-text {
+  margin: 0;
+  padding: var(--w-space-sm);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-selection);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The clamp is on the inner element, not on the padded box: a clamp on the box lets the next line show in its padding. */
+.th-find-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+/* Evidence for an answer is what the person came to read: more of it shows before a Show more. */
+.th-find-card-numbered .th-find-clamp {
+  -webkit-line-clamp: 8;
+}
+.th-find-text-open .th-find-clamp {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+.th-find-speaker {
+  font-weight: 700;
+}
+.th-find-more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-link);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+.th-find-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+.th-find-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+
+/* ---- The views and the conversations ---- */
+.th-find-detail {
+  outline: none;
+}
+.th-find-views {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm) var(--w-space-md);
+  margin-bottom: var(--w-space-md);
+}
+.th-find-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm) var(--w-space-md);
+}
+.th-find-convs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  padding: var(--w-space-md);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-card);
+  background: var(--color-background-card);
+}
+.th-convs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.th-conv {
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-xs);
+  min-width: 0;
+}
+.th-conv-active .th-conv-title {
+  background: var(--color-selection);
+  font-weight: 700;
+}
+.th-conv-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--w-target);
+  padding: var(--w-space-xs) var(--w-space-sm);
+  border: 0;
+  border-radius: var(--sx-radius-control);
+  background: transparent;
+  color: var(--color-text-primary);
+  text-align: start;
+  /* Two lines before it is cut; the whole title is in the tooltip. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  font: inherit;
+}
+.th-conv-actions .w-icon-button[aria-pressed="true"] .w-icon path {
+  fill: currentColor;
+}
+.th-conv-actions {
+  display: flex;
+  flex: none;
+}
+.th-conv-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-xs);
+  min-width: 0;
+}
+.th-conv-edit input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  min-height: var(--w-target);
+  padding: 0 var(--w-space-sm);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .th-find-wrap * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
+@media (forced-colors: active) {
+  .th-find-answer,
+  .th-find-empty,
+  .th-find-convs,
+  .th-find-follow input,
+  .th-conv-edit input {
+    border: 1px solid CanvasText;
+  }
+  .th-find-text {
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+  .th-conv-active .th-conv-title {
+    border: 2px solid Highlight;
+  }
+}

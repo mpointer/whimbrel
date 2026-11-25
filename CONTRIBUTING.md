@@ -30,6 +30,15 @@ CI runs the hosted jobs on every pull request. The self-hosted macOS and Windows
 jobs run only for branches in this repository, never for pull requests from forks,
 so a green fork PR still gets one more run on those platforms after merge.
 
+## What stays open
+
+Anything that runs on your device belongs in the open app; paid plans only cover things
+that need the company's server or time (`docs/16-open-core-commercial-model.md`,
+"Keeping the boundary"). In practice: do not branch on a plan (Cloud, Plus, a tier) in
+app code to hide a feature. Ask the server and show its answer. CI runs
+`scripts/check-paywalls.py`, which fails on a plan check outside the files listed in
+`scripts/paywall-allow.txt`.
+
 ## Pull requests
 
 - One topic per branch and pull request. Say in the description what broke, why,

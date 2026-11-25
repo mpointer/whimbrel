@@ -85,6 +85,14 @@ export function deviceActions(device: DeviceView): DeviceAction[] {
   return [hand, "revoke"];
 }
 
+/** The phone card's two looks: the beta pitch, or one line once a phone is paired. */
+export type PhoneCardState = "beta" | "connected";
+
+/** "connected" only for an approved iOS or Android device; a pending or revoked phone keeps the beta card. */
+export function phoneCardState(devices: Pick<DeviceView, "status" | "platform">[]): PhoneCardState {
+  return devices.some((d) => d.status === "approved" && (d.platform === "ios" || d.platform === "android")) ? "connected" : "beta";
+}
+
 /** Ids of pending devices whose comparison code is shared with another pending device. */
 export function collidingPendingIds(devices: DeviceView[]): Set<string> {
   const byCode = new Map<string, string[]>();

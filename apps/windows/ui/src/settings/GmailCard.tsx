@@ -65,7 +65,7 @@ export function GmailCard() {
   if (!state) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   return (
-    <section className="card about" aria-labelledby="gmail-heading">
+    <section className="card about" aria-labelledby="gmail-heading" data-settings-anchor="connectors.gmail">
       <h2 id="gmail-heading" className="section-label">
         {"Gmail"}
       </h2>

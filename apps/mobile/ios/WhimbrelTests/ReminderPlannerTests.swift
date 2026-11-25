@@ -29,8 +29,8 @@ final class ReminderPlannerTests: XCTestCase {
     }
 
     private func plan(events: [PhoneCalendarEvent] = [], snapshots: [PhoneTopicSnapshot] = [], settings: ReminderSettings = ReminderSettings(),
-                      isCloud: Bool = true, now: Date? = nil) -> [PlannedReminder] {
-        ReminderPlanner.plan(events: events, snapshots: snapshots, settings: settings, isCloud: isCloud, now: now ?? at(8, 30), calendar: calendar)
+                      now: Date? = nil) -> [PlannedReminder] {
+        ReminderPlanner.plan(events: events, snapshots: snapshots, settings: settings, now: now ?? at(8, 30), calendar: calendar)
     }
 
     func testMeetingReminderFiresLeadMinutesBefore() {
@@ -120,9 +120,11 @@ final class ReminderPlannerTests: XCTestCase {
         XCTAssertEqual(planned[0].title, "1 step due today")
     }
 
-    func testNothingOffCloud() {
+    func testEveryPlanGetsReminders() {
+        // Reminders run on the phone, so the planner takes no plan: a Free account gets both kinds.
         let snap = snapshot(owe: [step("Send deck", due: "2026-11-11")])
-        XCTAssertEqual(plan(events: [event("e1", "Soon", at(10))], snapshots: [snap], isCloud: false, now: at(7)), [])
+        let planned = plan(events: [event("e1", "Soon", at(10))], snapshots: [snap], now: at(7))
+        XCTAssertEqual(planned.map(\.id).sorted(), ["digest", "meeting:e1"].sorted())
     }
 
     func testDisabledKindsAreSkipped() {

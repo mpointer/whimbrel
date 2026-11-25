@@ -62,7 +62,7 @@ export function TypeSafeCard() {
   const prompt = sortPrompt(view, estimate, estimateFailed);
 
   return (
-    <section className="card about" aria-labelledby="typesafe-heading">
+    <section className="card about" aria-labelledby="typesafe-heading" data-settings-anchor="ai.typesafe">
       <h2 id="typesafe-heading" className="section-label">
         {t("TypeSafe")}
       </h2>

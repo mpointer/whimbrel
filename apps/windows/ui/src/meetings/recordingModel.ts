@@ -1,4 +1,5 @@
 import type { MeetingRecordingView } from "../generated/types";
+import { t } from "../l10n";
 
 /** A running recording's length: "0:07", "12:04", "1:02:09". */
 export function elapsedLabel(startedMs: number, nowMs: number): string {
@@ -21,4 +22,26 @@ export function recordAction(view: MeetingRecordingView | null): RecordAction {
  *  start, while Whimbrel runs without the memory database (no-store mode). Stop always works. */
 export function recordButtonDisabled(action: RecordAction, busy: boolean, noStore: boolean): boolean {
   return busy || action === "wait" || (noStore && action !== "stop");
+}
+
+/** Whether the old "Record a meeting" card is drawn. With the redesign on, the shell's recording bar and the live screen own the
+ *  recording state (and say Paused while paused), so the card gives way while a meeting starts, records, pauses or is processed,
+ *  and before the first status is read; it only offers Record now when nothing records. Otherwise a screen reader heard two
+ *  recording timers, one of them saying Recording during a pause. With the redesign off it is drawn as before. */
+export function recordingCardShown(view: MeetingRecordingView | null, redesign: boolean): boolean {
+  if (!redesign) return true;
+  return view != null && view.state === "idle" && !view.processing;
+}
+
+/** The meeting whose recording is paused right now, or null. A paused meeting is still stored as "recording" (spec:
+ *  docs/ui-redesign/screens/live-meeting.md), so a row only knows it is paused by matching this id. Read with the redesign
+ *  on or off: a pause outlives the flag being turned off. */
+export function pausedMeetingId(view: MeetingRecordingView | null): number | null {
+  return view?.state === "recording" && view.paused ? (view.meetingId ?? null) : null;
+}
+
+/** The old record card's and workspace's line: "Recording paused" while paused (the tray popup's words), else
+ *  "Recording · 12:04". */
+export function recordingLine(paused: boolean, startedMs: number, nowMs: number): string {
+  return paused ? t("Recording paused") : t("Recording · {elapsed}", { elapsed: elapsedLabel(startedMs, nowMs) });
 }

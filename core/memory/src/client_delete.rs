@@ -574,6 +574,7 @@ impl Store {
                     [id()?],
                 )?;
                 tx.execute("DELETE FROM conversation_exchange WHERE conversation_id = ?1", [id()?])?;
+                tx.execute("DELETE FROM topic_conversation WHERE conversation_id = ?1", [id()?])?;
                 tx.execute("DELETE FROM conversation WHERE id = ?1", [id()?])?;
             }
             ClientItemKind::Step => {
@@ -581,6 +582,9 @@ impl Store {
             }
             ClientItemKind::Extraction => {
                 tx.execute("DELETE FROM topic_extraction WHERE source_key = ?1", [local_id])?;
+            }
+            ClientItemKind::McpItem => {
+                tx.execute("DELETE FROM items WHERE id = ?1 AND kind = 'mcp_item'", [id()?])?;
             }
         }
         Ok(Some(outcome))

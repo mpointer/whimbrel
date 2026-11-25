@@ -121,7 +121,7 @@ private struct MeetingItemShell<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             if isClickable {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .restyledGlyph(classicSize: 12, weight: .semibold, role: .secondary)
                     .foregroundStyle(Color.whimbrelTextSecondary)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -177,18 +177,18 @@ struct MeetingCard: View {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 VStack(alignment: .leading, spacing: Spacing.xs) {
                     Text(model.title)
-                        .font(.whimbrelBody(.body).weight(.medium))
+                        .restyledFont(.bodyMedium)
                         .foregroundStyle(Color.whimbrelTextPrimary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(subtitle)
-                        .font(.whimbrelBody(.caption))
+                        .restyledFont(.caption)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                         .lineLimit(1)
                     if let line = model.statusLine {
                         Text(line)
-                            .font(.whimbrelBody(.caption))
+                            .restyledFont(.caption)
                             .foregroundStyle(Color.whimbrelTextSecondary)
                             .lineLimit(2)
                     }
@@ -222,11 +222,11 @@ struct MeetingListRow: View {
             HStack(alignment: .top, spacing: Spacing.md) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.startText)
-                        .font(.whimbrelBody(.caption).weight(.medium))
+                        .restyledFont(.captionMedium)
                         .foregroundStyle(Color.whimbrelTextPrimary)
                     if let minutes = model.durationMinutes {
                         Text(MeetingCardText.duration(minutes))
-                            .font(.whimbrelBody(.caption))
+                            .restyledFont(.caption)
                             .foregroundStyle(Color.whimbrelTextSecondary)
                     }
                 }
@@ -239,19 +239,19 @@ struct MeetingListRow: View {
                 VStack(alignment: .leading, spacing: Spacing.sm) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.title)
-                            .font(.whimbrelBody(.body))
+                            .restyledFont(.body)
                             .foregroundStyle(Color.whimbrelTextPrimary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
                         if let people = model.peopleCount {
                             Text(MeetingCardText.people(people))
-                                .font(.whimbrelBody(.caption))
+                                .restyledFont(.caption)
                                 .foregroundStyle(Color.whimbrelTextSecondary)
                         }
                         if let line = model.statusLine {
                             Text(line)
-                                .font(.whimbrelBody(.caption))
+                                .restyledFont(.caption)
                                 .foregroundStyle(Color.whimbrelTextSecondary)
                                 .lineLimit(2)
                         }

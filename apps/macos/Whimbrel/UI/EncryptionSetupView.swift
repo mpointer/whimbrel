@@ -338,7 +338,7 @@ enum EncryptionPrint {
     /// "Save as PDF" and preview are `.savedAsFile`; a cancel is `.cancelled`.
     @MainActor
     static func printWords(_ words: [String]) -> EncryptionSetupModel.PrintResult {
-        let page = EncryptionPrintPage(words: words, qr: EncryptionQR.image(for: words.joined(separator: " ")))
+        let page = EncryptionPrintPage(words: words, qr: EncryptionQR.image(for: words.joined(separator: " ")), copy: EncryptionPrintCopy.forSkin())
         let host = NSHostingView(rootView: page.environment(\.colorScheme, .light))
         host.frame = CGRect(x: 0, y: 0, width: 540, height: 720)
         let info = NSPrintInfo.shared.copy() as? NSPrintInfo ?? NSPrintInfo()
@@ -362,6 +362,12 @@ struct EncryptionPrintCopy: Equatable {
     var notice = EncryptionCopy.wordsAreTheKey
     var footer = EncryptionCopy.printFooter
     var qrLabel = EncryptionCopy.qrLabel
+
+    /// The page with the redesigned wording when the switch is on ("your library"), this page unchanged when it is off.
+    static func forSkin(redesign: Bool = RedesignFlag.isOn()) -> EncryptionPrintCopy {
+        guard redesign else { return EncryptionPrintCopy() }
+        return EncryptionPrintCopy(notice: LibraryCopyRedesign.map(EncryptionCopy.wordsAreTheKey), footer: LibraryCopyRedesign.map(EncryptionCopy.printFooter))
+    }
 
     /// The same strings from one language's table in the app bundle (nil without that table).
     static func localized(_ language: String, bundle: Bundle = .main) -> EncryptionPrintCopy? {

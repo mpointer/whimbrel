@@ -380,6 +380,10 @@ export const answers = (now: number): Record<string, unknown> => {
     ],
     chat_spend: { capCents: 500, userCents: 37 },
     get_routing_settings: aiSettings().routing,
+    // Find (screen 5): where an ask would be answered. A hosted stream can fall back, so it names no provider.
+    chat_route_preview: ROUTE_HOSTED,
+    // The one-time "Use Whimbrel AI?" question: nothing to ask in the harness (it was unanswered, and the prompt logged a TypeError).
+    plus_ai_prompt: { state: "done" },
 
     // --- Topics ---------------------------------------------------------------------------------------------------------
     topics_page_list: [
@@ -416,7 +420,8 @@ export const answers = (now: number): Record<string, unknown> => {
       { label: "Same as Ask", value: "" },
       { label: "Claude Haiku (cheapest)", value: "anthropic:claude-haiku" },
     ],
-    redesign_enabled: false,
+    // Nothing asks for it any more (the switch is on for everyone); the answer is kept true so no screen can depend on a false one.
+    redesign_enabled: true,
     routines_cloud: { cloud_ui_enabled: false, devices: [], has_synced_key: false, local_only: false, routines: [], runner_last_run_ms: null, sync_ready: true },
     approvals_list: [
       {
@@ -463,7 +468,7 @@ export const answers = (now: number): Record<string, unknown> => {
     ],
     retention_settings: { acknowledged: true, lastRun: { capturesDeleted: 214, conversationsDeleted: 0, finishedUnixMs: now - 9 * HOUR, meetingsDeleted: 0, orphanBytes: 0, orphansDeleted: 0 }, settings: { captureDays: 90, conversationDays: null, meetingDays: null } },
     retention_preview: { captures: 0, conversations: 0, meetings: 0, orphanBytes: 0, orphans: 0 },
-    capture_status: { enabled: true, excluded: 41, lastApp: "Microsoft Excel", lastError: null, lastStoredAtMs: now - 4 * MIN, ocrRuns: 120, paused: null, running: true, stored: 1482, unchanged: 9120 },
+    capture_status: { enabled: true, excluded: 41, lastApp: "Microsoft Excel", lastError: null, lastStoredAtMs: now - 4 * MIN, ocrProblem: null, ocrProblemAtUnixMs: null, ocrRuns: 120, paused: null, running: true, stored: 1482, unchanged: 9120 },
     capture_settings: {
       excluded: ["1Password", "KeePassXC"],
       ocr: { available: ["en-US", "es-US", "fr-FR"], covered: true, profile: ["en-US"] },
@@ -497,7 +502,7 @@ export const answers = (now: number): Record<string, unknown> => {
     skins_revision: 1,
 
     // --- the small windows --------------------------------------------------------------------------------------------------
-    tray_status: { captureEnabled: true, line: "Capturing · 1,482 today", recordingPaused: false, recordingStartedUnixMs: null },
+    tray_status: { captureEnabled: true, line: "Capturing · 1,482 today", recordingPaused: false, recordingStartedUnixMs: null, syncError: false, syncText: "Synced 10:20 AM", googleSignInExpired: false },
     alert_status: {
       autoStart: false,
       countdownSeconds: 30,
@@ -513,6 +518,8 @@ export const answers = (now: number): Record<string, unknown> => {
 
 /** Plain data the dynamic answers read (the page has it as `globalThis.__fx`). */
 export const helpers = (now: number) => ({
+  find: findData(now),
+  conv: convData(now),
   northwind: NORTHWIND,
   acme: ACME,
   prep: { brief: prepBrief(now), eventId: "e1", startUnixMs: now + 9 * MIN, title: "Northwind security review" },
@@ -586,6 +593,47 @@ export const dynamic: Record<string, (args: any) => unknown> = {
   // The redesigned Home's filtered search answers captures only.
   library_search_filtered: () => (globalThis as any).__fx.searchRows.filter((r: any) => r.kind === "capture"),
   chat_conversation: (a) => (globalThis as any).__fx.conversations[a.id] ?? null,
+  // Find (screen 5): results under the page's filters, and the saved conversations with their cited sources.
+  library_find: (a) => {
+    const fx = (globalThis as any).__fx.find;
+    const f = a.filter ?? {};
+    const q = String(a.query ?? "").trim().toLowerCase();
+    let rows: any[] = fx.results.slice();
+    if (q.includes("zzz")) rows = [];
+    if (f.startUnixMs != null) rows = rows.filter((r) => r.tsUnixMs >= f.startUnixMs && r.tsUnixMs < f.endUnixMs);
+    if (f.app) rows = rows.filter((r) => r.kind === "capture" && r.app === f.app);
+    let mentions: any[] = [];
+    if (f.person) {
+      rows = rows.filter((r) => r.kind === "transcript" || r.kind === "snapshot" || r.kind === "thread");
+      mentions = fx.mentions;
+    }
+    // No words: what was saved in the span, listed by time (today's blocks, or an older week a reopened conversation kept), still under the app.
+    if (q === "" && f.startUnixMs != null) {
+      rows = fx.today.concat(fx.results).filter((r: any) => r.tsUnixMs >= f.startUnixMs && r.tsUnixMs < f.endUnixMs);
+      if (f.app) rows = rows.filter((r: any) => r.kind === "capture" && r.app === f.app);
+    }
+    if (a.order === "rank") rows = rows.slice().sort((x, y) => x.rank - y.rank);
+    const counts: Record<string, number> = {};
+    for (const r of rows) counts[r.kind] = (counts[r.kind] ?? 0) + 1;
+    if (mentions.length) counts.mentions = mentions.length;
+    return {
+      results: rows.slice(a.offset, a.offset + a.limit),
+      mentions: a.offset === 0 ? mentions : [],
+      total: rows.length,
+      mentionsTotal: mentions.length,
+      counts,
+      semanticUsed: fx.semantic,
+      semanticAvailable: fx.semantic,
+      more: false,
+      capped: false,
+    };
+  },
+  chat_conversation_sourced: (a) => (globalThis as any).__fx.find.conversations[a.id] ?? null,
+  // Conversations (screen 6): a conversation's page, the topic page's list and a conversation's stored scope.
+  conversation_page: (a) => (globalThis as any).__fx.conv.pages[a.id] ?? null,
+  conversation_scope: (a) => (globalThis as any).__fx.conv.pages[a.id]?.scope ?? { kind: "everything" },
+  topic_conversations_list: (a) => (globalThis as any).__fx.conv.byTopic[a.topicId] ?? [],
+  chat_conversation_find_filter: (a) => (globalThis as any).__fx.find.kept[a.id] ?? null,
   meeting_transcript: () => (globalThis as any).__fx.transcript,
 };
 
@@ -669,7 +717,7 @@ export const livePatch = (now: number, kind: LiveKind = "recording"): Record<str
 /** What a picture of the finished note needs. `withSources`: the margin's numbered sources (the default). `noSources`: an old
  *  meeting, plain lines. `processing`: the summary being written. `readOnly`: another device's meeting. `noSummary`: a
  *  transcript only. `failed`: the summary did not finish. */
-export type NoteKind = "withSources" | "noSources" | "processing" | "readOnly" | "noSummary" | "failed";
+export type NoteKind = "withSources" | "noSources" | "processing" | "readOnly" | "noSummary" | "failed" | "noTranscript";
 
 type NoteLine = { id: number; startCs: number; endCs: number; speaker: string; label: string; speakerId: number | null; personKey: string | null; guess?: boolean; text: string };
 const ME = { speaker: "Me", label: "Alex Rivera", speakerId: null, personKey: null };
@@ -709,7 +757,7 @@ export const notePatch = (now: number, kind: NoteKind = "withSources"): Record<s
     { completed: false, id: 22, source: "generated", text: "Answer the open items on the questionnaire." },
     { completed: false, id: 23, source: "generated", text: "Check that 55 seats still fits the current price." },
   ];
-  const written = kind !== "processing" && kind !== "noSummary" && kind !== "failed";
+  const written = kind !== "processing" && kind !== "noSummary" && kind !== "failed" && kind !== "noTranscript";
   const workspace = {
     actionItems: written ? items : [],
     attendees: ["Sam Okafor", "Dana Whitfield", "Jo (Northwind)", "Alex Rivera"],
@@ -718,7 +766,7 @@ export const notePatch = (now: number, kind: NoteKind = "withSources"): Record<s
     decisions: written ? decisions : [],
     decisionsAreEdited: false,
     elapsedSeconds: null,
-    hasTranscript: true,
+    hasTranscript: kind !== "noTranscript",
     openQuestions: written ? questions : [],
     openQuestionsAreEdited: false,
     personalNotes: "jo ok with 2 yr term if price holds\nsecurity questionnaire?? who owns it\nseats 40 to 55 in Q2",
@@ -759,9 +807,334 @@ export const notePatch = (now: number, kind: NoteKind = "withSources"): Record<s
     meeting_transcript_lines: {
       canName: true,
       invitees: [{ email: "sam@contoso.example.test", name: "Sam Okafor" }, { email: "dana@northwind.example.test", name: "Dana Whitfield" }],
-      total: NOTE_LINES.length,
-      lines: NOTE_LINES.map((l) => ({ ...l, endCs: kind === "noSources" ? null : l.endCs, guess: l.guess === true })),
+      total: kind === "noTranscript" ? 0 : NOTE_LINES.length,
+      lines: (kind === "noTranscript" ? [] : NOTE_LINES).map((l) => ({ ...l, endCs: kind === "noSources" ? null : l.endCs, guess: l.guess === true })),
     },
     today_schedule: { events: [], earlierToday: [], recording: false },
   };
 };
+
+
+// ---- Find and the sourced Ask (screen 5) -----------------------------------------------------------------------------------
+
+/** A fixed day and time (the pictures are taken on Wed 18 Nov 2026), so the made-up week never moves. */
+const at = (day: number, hour: number, minute: number) => Date.UTC(2026, 10, day, hour, minute);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const found = (kind: string, id: number, over: Record<string, unknown>): any => ({ kind, found: true, id, title: "", ...over });
+
+const FIND_LINE = found("transcript", 4101, {
+  meetingId: 8,
+  meetingStartUnixMs: at(10, 15, 0),
+  meetingTitle: "Pricing review",
+  speaker: "Sam Okafor",
+  startCs: 87_200,
+  text: "I would add a usage tier. Seats alone do not fit how Starter customers work.",
+  title: "Pricing review",
+  tsUnixMs: at(10, 15, 14),
+});
+const FIND_SLACK = found("capture", 5002, {
+  app: "slack.exe",
+  device: THIS_PC,
+  text: "# pricing\nSam Okafor 4:10 PM\nBefore we pick numbers for a usage tier, can someone pull churn on Starter?\nPriya Shah 4:14 PM\nOn it. I will have it Monday.\nSam Okafor 4:21 PM\nThanks. We can look at it Tuesday.",
+  title: "Thread in #pricing",
+  tsUnixMs: at(12, 16, 10),
+});
+const FIND_EXCEL = found("capture", 5003, {
+  app: "excel.exe",
+  device: THIS_PC,
+  text: "Pricing v3.xlsx\nPlan  Seats  Rate  Price\nStarter  5  $12  $60\nTeam  25  $10  $250\nBusiness  100  $8  $800\nUsage tier\nRate cell for Usage tier is empty.",
+  title: "Window: Pricing v3.xlsx",
+  tsUnixMs: at(13, 11, 2),
+});
+const FIND_THREAD = found("thread", 8801, {
+  sender: "Priya Shah",
+  text: "Re: Starter churn numbers. Sam, the Starter churn for Q3 is attached. I read it as 4.1% a month, but I would check it against billing before we quote it.",
+  title: "Re: Starter churn numbers",
+  tsUnixMs: at(12, 9, 30),
+});
+const FIND_WORD = found("capture", 5004, {
+  app: "winword.exe",
+  device: THIS_PC,
+  text: "Starter plan notes\nSeat pricing works for teams that grow in steps. Starter customers add and drop people month to month, so a usage tier could fit them better.",
+  title: "Starter plan notes.docx - Word",
+  tsUnixMs: at(11, 14, 5),
+});
+const FIND_SLIDE = found("snapshot", 6201, {
+  meetingId: 8,
+  meetingStartUnixMs: at(10, 15, 0),
+  meetingTitle: "Pricing review",
+  text: "Pricing options: seats only, seats plus usage, usage only. Churn on Starter by plan.",
+  title: "Pricing review",
+  tsUnixMs: at(10, 15, 0),
+});
+const FIND_EPISODE = found("episode", 201, {
+  app: "chrome.exe",
+  device: THIS_PC,
+  text: "Read three public pricing pages and compared how each charges for usage.",
+  title: "Pricing research in Chrome",
+  tsUnixMs: at(10, 9, 40),
+});
+const FIND_RUN = found("routine_run", 7, { text: "Weekly digest: pricing came up in two meetings and one thread.", title: "Weekly digest", tsUnixMs: at(9, 18, 0) });
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const withRank = (rows: any[]): any[] => rows.map((r, i) => ({ ...r, rank: i }));
+
+function findData(now: number) {
+  // Newest first, as the page draws them; `rank` is the order "best matches first" uses.
+  const results = withRank([FIND_EXCEL, FIND_SLACK, FIND_THREAD, FIND_LINE, FIND_WORD, FIND_SLIDE, FIND_EPISODE, FIND_RUN]).sort((a, b) => (b.tsUnixMs as number) - (a.tsUnixMs as number));
+  const ranked = [FIND_LINE, FIND_SLACK, FIND_EXCEL, FIND_THREAD, FIND_WORD, FIND_SLIDE, FIND_EPISODE, FIND_RUN];
+  for (const r of results) (r as { rank: number }).rank = ranked.findIndex((x) => x.id === r.id);
+  const mentions = [
+    found("capture", 5101, { app: "outlook.exe", device: THIS_PC, text: "Draft to Priya: Sam Okafor asked for the Starter churn numbers before we set the usage tier.", title: "Draft - Outlook", tsUnixMs: at(11, 17, 20) }),
+    found("capture", 5102, { app: "chrome.exe", device: MAC, text: "Notes for Monday: ask Sam Okafor whether Starter customers would pay for a usage tier.", title: "Monday notes - Chrome", tsUnixMs: at(9, 16, 45) }),
+  ];
+  const sources = [
+    { n: 1, card: FIND_LINE },
+    { n: 2, card: FIND_SLACK },
+    { n: 3, card: FIND_EXCEL },
+    { n: 4, card: FIND_THREAD },
+    { n: 5, card: FIND_WORD },
+  ];
+  const answer =
+    "Sam wants a usage-based tier added alongside seat pricing, and he thinks Starter customers would like it most. [1] Before anyone sets numbers, he asked for churn data on Starter. [2] His draft in Pricing v3 has a Usage tier row, but the rate is still blank. [3] I did not find a decision on the annual discount.";
+  const gone = found("capture", 5999, { found: false });
+  const legacy = {
+    answer:
+      "Northwind asked for three things in the renewal check-in:\n\n- A **12-month term** with a **5% volume discount** for 60 seats.\n- The pilot to stay at **25 seats** until their security review closes.\n- A revised quote from you by **Friday**.",
+    citations: [
+      { item: { id: 1, kind: "transcript" }, label: "Northwind renewal check-in", open: { id: 1, kind: "meeting" }, tsUnixMs: null },
+      { item: { id: 102, kind: "capture" }, label: "Re: Northwind renewal quote - Outlook", open: { id: 102, kind: "capture" }, tsUnixMs: at(18, 8, 20) },
+    ],
+    createdAtUnixMs: at(18, 8, 22),
+    legacy: true,
+    model: "claude-sonnet",
+    query: "What did Northwind ask for?",
+    sources: [],
+  };
+  // What the day's memory blocks hold, listed by time when a block's Open filters by its span (no words).
+  const today = withRank([
+    found("capture", 5203, { app: "outlook.exe", device: THIS_PC, text: "Re: Northwind renewal quote. Hi Alex, could you confirm whether the discount applies to the pilot seats?", title: "Re: Northwind renewal quote - Outlook", tsUnixMs: now - 60 * MIN }),
+    found("capture", 5202, { app: "slack.exe", device: THIS_PC, text: "# pricing\nPriya Shah: starter churn is back, I will post it in the doc", title: "#pricing - Slack", tsUnixMs: now - 70 * MIN }),
+    found("capture", 5201, { app: "excel.exe", device: THIS_PC, text: "Pricing v3.xlsx\nStarter  5  $12  $60\nTeam  25  $10  $250\nUsage tier", title: "Pricing v3.xlsx - Excel", tsUnixMs: now - 88 * MIN }),
+  ]);
+  return {
+    results,
+    today,
+    mentions,
+    sources,
+    answer,
+    semantic: true,
+    // The filters a Find conversation kept (Dates and Apps, never a person): conversation 1 was asked over Excel, Nov 9 to Nov 15.
+    kept: {
+      1: { start_unix_ms: at(9, 0, 0), end_unix_ms: at(16, 0, 0), app_bundle_id: "excel.exe", people_left_out: false },
+    } as Record<number, unknown>,
+    conversations: {
+      1: {
+        exchanges: [
+          {
+            answer,
+            answeredLocally: true,
+            citations: [],
+            createdAtUnixMs: at(17, 9, 40),
+            leftOut: 0,
+            legacy: false,
+            model: "gemma4:12b",
+            provider: "ollama",
+            query: "What did Sam say about pricing last week?",
+            sources: [{ n: 1, card: FIND_LINE }, { n: 2, card: FIND_SLACK }, { n: 3, card: FIND_EXCEL }],
+          },
+        ],
+        id: 1,
+        starred: true,
+        title: "What did Sam say about pricing last week?",
+      },
+      2: { exchanges: [legacy], id: 2, starred: false, title: "What did Northwind ask for?" },
+      3: {
+        exchanges: [
+          {
+            answer: "Priya owns the data agreement. [1] The signing date was still open. [2]",
+            answeredLocally: false,
+            citations: [],
+            createdAtUnixMs: at(16, 13, 0),
+            leftOut: 1,
+            legacy: false,
+            model: "claude-sonnet",
+            provider: "anthropic",
+            query: "Who owns the Acme data agreement?",
+            sources: [{ n: 1, card: FIND_THREAD }, { n: 2, card: gone }],
+          },
+        ],
+        id: 3,
+        starred: false,
+        title: "Who owns the Acme data agreement?",
+      },
+    } as Record<number, unknown>,
+  };
+}
+
+const ROUTE_HOSTED = { destination: "hosted", local: false, mayFallBack: true, model: "claude-sonnet", provider: "anthropic", reason: "preferred_provider", requireLocal: false };
+const ROUTE_LOCAL = { destination: "local", local: true, mayFallBack: false, model: "gemma4:12b", provider: "ollama", reason: "preferred_is_local", requireLocal: true };
+
+export type FindKind = "default" | "local" | "setup" | "noSearchModel";
+
+/** What a picture of Find needs: the conversations the panel lists, where an ask would be answered, and (for `setup`) an AI setup with no key. */
+export const findPatch = (now: number, kind: FindKind = "default"): Record<string, unknown> => {
+  const out: Record<string, unknown> = {
+    chat_conversations: [
+      { id: 1, starred: true, title: "What did Sam say about pricing last week?", updatedAtUnixMs: at(17, 9, 40) },
+      { id: 2, starred: false, title: "What did Northwind ask for?", updatedAtUnixMs: at(18, 8, 22) },
+      { id: 3, starred: false, title: "Who owns the Acme data agreement?", updatedAtUnixMs: at(16, 13, 0) },
+    ],
+    // The people the People chip offers: the attendees of today's and the coming events.
+    today_schedule: {
+      events: [{ eventId: "e1", title: "Pricing sync", startUnixMs: now + 9 * MIN, endUnixMs: now + 39 * MIN, attendees: ["Sam Okafor", "Priya Shah", "Dana Whitfield"], recordedMeetingId: null }],
+      earlierToday: [],
+      recording: false,
+    },
+    meeting_list: [],
+    library_capture_apps: [
+      { app_bundle_id: "excel.exe", captures: 214 },
+      { app_bundle_id: "slack.exe", captures: 160 },
+      { app_bundle_id: "outlook.exe", captures: 98 },
+    ],
+  };
+  if (kind === "local") out.chat_route_preview = ROUTE_LOCAL;
+  if (kind === "noSearchModel") out.library_find = { results: findData(now).results, mentions: [], total: 8, mentionsTotal: 0, counts: {}, semanticUsed: false, semanticAvailable: false, more: false, capped: false };
+  if (kind === "setup") {
+    const base = answers(now).ai_settings as Record<string, unknown>;
+    out.ai_settings = { ...base, keys: [] };
+    out.chat_route_preview = { destination: "refused", local: false, mayFallBack: false, model: null, provider: null, reason: "no_provider", requireLocal: false };
+    out.local_model_status = { canOffer: true, installed: false };
+  }
+  return out;
+};
+
+/** The events one scripted ask sends, each after `at` milliseconds (the page's fake `chat_ask_sourced` plays them). `answer`: a streamed local
+ *  answer that finishes. `stream`: the same, held part-way. `failed`: the ask refuses because the answer may not leave this PC. */
+export type AskScript = "answer" | "stream" | "failed" | "rich";
+
+/** An answer with a list, inline code, a fenced block, adjacent marks and a number that is not a source: only the marks on text become marks. */
+const RICH_ANSWER =
+  "Sam's draft has three parts. [1]\n\n- A **Usage** tier beside seat pricing. [2]\n- A churn check on Starter first. [1][3]\n- A blank rate cell, `C14`, still to fill. Read `rates[1]` as a placeholder, not a source.\n\n```\nUsage tier: rate = (tbd)\nplaceholder[1] = null\n```\n\nI did not find a decision on the annual discount (see [9]).";
+
+export const askScript = (kind: AskScript): { at: number; event: Record<string, unknown> }[] => {
+  const f = findData(0);
+  const text = kind === "rich" ? RICH_ANSWER : f.answer;
+  const words = text.split(" ");
+  const started = { kind: "started", runId: "run-1", provider: "ollama", model: "gemma4:12b", context: [] };
+  const sourced = { kind: "sourced", sources: f.sources, provider: "ollama", answeredLocally: true };
+  if (kind === "failed") return [{ at: 60, event: { kind: "failed", error: { kind: "provider_failure", reason: { kind: "local_model_missing" } }, partial: false } }];
+  const cut = kind === "stream" ? 22 : words.length;
+  // As on a real PC, a model thinks before its first word, longer than the page might wait after the shell's call returns (which it does at
+  // once). An answer that finishes must arrive well after that, so a page that ends the question when the call returns is caught here.
+  const first = kind === "stream" ? 120 : 1800;
+  const steps: { at: number; event: Record<string, unknown> }[] = [
+    { at: 40, event: started },
+    { at: 70, event: sourced },
+    ...words.slice(0, cut).map((w, i) => ({ at: first + i * 12, event: { kind: "delta", text: (i === 0 ? "" : " ") + w } })),
+  ];
+  if (kind === "stream") return steps;
+  const end = first + cut * 12 + 40;
+  return [
+    ...steps,
+    { at: end, event: { kind: "cited", cited: [1, 2, 3], answeredLocally: true, provider: "ollama", leftOut: 0 } },
+    { at: end + 10, event: { kind: "completed", answer: text, citations: [{ kind: "transcript", id: 4101 }, { kind: "capture", id: 5002 }, { kind: "capture", id: 5003 }], conversationId: 9, narrowed: false, leftOut: null } },
+    { at: end + 60, event: { kind: "titled", conversationId: 9, title: "What did Sam say about pricing last week?" } },
+  ];
+};
+
+
+// ---- Conversations (screen 6) ------------------------------------------------------------------------------------------------
+
+const CONV_TOPIC_ANSWER =
+  "Three things are open with Northwind. [1] The revised quote is yours to send by Friday. [2] Dana still owes the signed data agreement. [1] The security review has no date yet. [3]";
+
+function convData(now: number) {
+  const f = findData(now);
+  const everything = f.conversations[1] as { exchanges: Record<string, unknown>[]; title: string };
+  const exchange = (query: string, answer: string, sources: unknown[], over: Record<string, unknown> = {}) => ({
+    answer,
+    answeredLocally: true,
+    citations: [],
+    createdAtUnixMs: at(17, 9, 40),
+    leftOut: 0,
+    legacy: false,
+    model: "gemma4:12b",
+    provider: "ollama",
+    query,
+    sources,
+    cited: (sources as { n: number }[]).map((x) => x.n),
+    ...over,
+  });
+  const base = { localOnly: [] as boolean[], citedTopics: [] as unknown[], topics: [NORTHWIND, ACME, topicRef(3, "Q1 planning")], topic: null as unknown, topicSetByUser: false };
+  const pages: Record<number, unknown> = {
+    // About everything, its sources mixed: no topic, so "Add to topic" stands in the chip's place.
+    1: {
+      ...base,
+      conversation: { id: 1, starred: true, title: everything.title, exchanges: [{ ...everything.exchanges[0], cited: [1, 2, 3] }] },
+      localOnly: [false],
+      scope: { kind: "everything" },
+      citedTopics: [NORTHWIND],
+    },
+    // About one topic: joined from the start, with a follow-up asked inside it.
+    4: {
+      ...base,
+      conversation: {
+        id: 4,
+        starred: true,
+        title: "What is still open with Northwind?",
+        exchanges: [
+          exchange("What is still open with Northwind?", CONV_TOPIC_ANSWER, [{ n: 1, card: FIND_THREAD }, { n: 2, card: FIND_SLACK }, { n: 3, card: FIND_LINE }]),
+          exchange("Who owns the security review?", "Priya Shah owns the answers, and Sam will confirm the seat count with their IT lead. [1]", [{ n: 1, card: FIND_LINE }], { createdAtUnixMs: at(17, 9, 52) }),
+        ],
+      },
+      localOnly: [false, false],
+      scope: { kind: "topic", id: 1 },
+      scopeTopicName: "Northwind",
+      topic: NORTHWIND,
+      citedTopics: [NORTHWIND, ACME],
+    },
+    // About one meeting: kept from its note, keeps the meeting's scope.
+    5: {
+      ...base,
+      conversation: {
+        id: 5,
+        starred: false,
+        title: "What was decided in the pricing review?",
+        exchanges: [exchange("What was decided in the pricing review?", "Sam argued for a usage tier beside seat pricing. [1] No rate was set; Priya will bring Starter churn on Monday. [1]", [{ n: 1, card: FIND_LINE }], { answeredLocally: false, model: "claude-sonnet", provider: "anthropic" })],
+      },
+      localOnly: [false],
+      scope: { kind: "meeting", id: 8 },
+      scopeMeetingTitle: "Pricing review",
+      scopeMeetingStartUnixMs: at(10, 15, 0),
+    },
+  };
+  const row = (id: number, title: string, starred: boolean, updated: number, topic: unknown, line: string | null) => ({ id, title, starred, updatedAtUnixMs: updated, topic, latestAnswerLine: line });
+  return {
+    pages,
+    byTopic: {
+      1: [
+        { id: 4, starred: true, title: "What is still open with Northwind?", updatedAtUnixMs: at(18, 8, 40) },
+        { id: 6, starred: false, title: "Did Northwind agree to 60 seats?", updatedAtUnixMs: at(14, 10, 5) },
+      ],
+    } as Record<number, unknown>,
+    rows: [
+      row(4, "What is still open with Northwind?", true, at(18, 8, 40), NORTHWIND, "Priya Shah owns the answers, and Sam will confirm the seat count with their IT lead."),
+      row(1, everything.title, true, at(17, 9, 40), null, "Sam wants a usage-based tier added alongside seat pricing, and he thinks Starter customers would like it most."),
+      row(5, "What was decided in the pricing review?", false, at(16, 15, 30), null, "Sam argued for a usage tier beside seat pricing."),
+      row(6, "Did Northwind agree to 60 seats?", false, at(14, 10, 5), NORTHWIND, "They want sixty seats once their security review closes."),
+      row(7, "When is the Acme data agreement due?", false, at(11, 13, 20), ACME, null),
+    ],
+  };
+}
+
+export type ConvKind = "default" | "empty";
+
+/** What the Conversations section's pictures need: the list, a conversation's stored scope and where a keep or a topic Ask goes. */
+export const convPatch = (now: number, kind: ConvKind = "default"): Record<string, unknown> => ({
+  conversations_list: kind === "empty" ? [] : convData(now).rows,
+  conversation_save_exchange: { conversationId: 4, topic: NORTHWIND, citedTopics: [NORTHWIND] },
+  conversation_set_topic: { topic: ACME, setByUser: true },
+  chat_route_preview: ROUTE_LOCAL,
+});

@@ -139,6 +139,8 @@ fn whimbrel_json_mirrors_the_default() {
     )
     .unwrap();
     assert!(repairs.is_empty());
+    // The cream skin is shown as Classic; its id stays so stored choices and user skins made from it still resolve.
+    assert_eq!((skin.id.as_str(), skin.name.as_str()), ("whimbrel", "Classic"));
     assert!(skin.voice_localized.contains_key("es"), "the shipped translations load");
     // Translations live in the manifest only; the built-in default is English.
     let skin = skins::Skin { voice_localized: base.voice_localized.clone(), ..skin };

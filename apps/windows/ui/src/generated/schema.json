@@ -647,6 +647,21 @@
             "null"
           ]
         },
+        "ocrProblem": {
+          "description": "How screen-text reading (OCR) last went wrong: \"unavailable\" (it could not start this session) or \"failed\" (a window's picture could not be read). Cleared when an OCR read works again.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ocrProblemAtUnixMs": {
+          "description": "When `ocr_problem` was recorded (unix ms).",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "ocrRuns": {
           "format": "uint64",
           "minimum": 0,
@@ -936,6 +951,93 @@
             "excludedClient"
           ],
           "type": "object"
+        },
+        {
+          "description": "The sourced ask (redesign only): the numbered items the answering model was given, as cards read from their live\nrows. Sent after `Started` on a stream and just before `Cited` on the blocking path. A later one replaces an\nearlier one (a stream that fell back to the blocking path numbers its items again).",
+          "properties": {
+            "answeredLocally": {
+              "type": "boolean"
+            },
+            "dateRange": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/UsedRangeView"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The date range retrieval used (the filter's own, or a day question's window); null for no date bound."
+            },
+            "kind": {
+              "const": "sourced",
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/definitions/NumberedSourceView"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "sources",
+            "provider",
+            "answeredLocally"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The sourced ask: which numbers the answer cited, where it was made, and how many items were left out. Sent just\nbefore `Completed`; the exchange is saved with these.",
+          "properties": {
+            "answeredLocally": {
+              "type": "boolean"
+            },
+            "cited": {
+              "items": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "cited",
+              "type": "string"
+            },
+            "leftOut": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cited",
+            "answeredLocally",
+            "provider",
+            "leftOut"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A question asked inside one topic found nothing in it to answer from; nothing was sent to a model.",
+          "properties": {
+            "kind": {
+              "const": "scope_empty",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -1040,6 +1142,27 @@
           "type": "object"
         }
       ]
+    },
+    "CitedPointerInput": {
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "n": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n",
+        "kind",
+        "id"
+      ],
+      "type": "object"
     },
     "CommandError": {
       "oneOf": [
@@ -1420,8 +1543,135 @@
             "id"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "mcp_item",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
         }
       ]
+    },
+    "ConversationListRow": {
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "latestAnswerLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "starred": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TopicRefView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updatedAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "starred",
+        "updatedAtUnixMs"
+      ],
+      "type": "object"
+    },
+    "ConversationPageView": {
+      "properties": {
+        "citedTopics": {
+          "items": {
+            "$ref": "#/definitions/TopicRefView"
+          },
+          "type": "array"
+        },
+        "conversation": {
+          "$ref": "#/definitions/SourcedConversationView"
+        },
+        "localOnly": {
+          "items": {
+            "type": "boolean"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "$ref": "#/definitions/ConversationScopeView"
+        },
+        "scopeMeetingStartUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scopeMeetingTitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopeTopicName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TopicRefView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "topicSetByUser": {
+          "type": "boolean"
+        },
+        "topics": {
+          "items": {
+            "$ref": "#/definitions/TopicRefView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "conversation",
+        "localOnly",
+        "scope",
+        "topicSetByUser",
+        "citedTopics",
+        "topics"
+      ],
+      "type": "object"
     },
     "ConversationRow": {
       "properties": {
@@ -1445,6 +1695,78 @@
         "title",
         "starred",
         "updatedAtUnixMs"
+      ],
+      "type": "object"
+    },
+    "ConversationScopeView": {
+      "description": "What a conversation asks about: everything, one topic, or one meeting.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "everything",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "topic",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "meeting",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ConversationTopicView": {
+      "properties": {
+        "setByUser": {
+          "type": "boolean"
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TopicRefView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "setByUser"
       ],
       "type": "object"
     },
@@ -2291,6 +2613,69 @@
         }
       ]
     },
+    "FindFilterInput": {
+      "additionalProperties": false,
+      "description": "The filters the page holds: dates (`[start, end)` in unix ms), one app, one person. Leave a filter out (null) to\nleave it off. A filter that could widen a search is refused, not read as no filter: an unknown key, an app or\nperson that is present but blank, a person key with no person, or a range whose start is not before its end.",
+      "properties": {
+        "app": {
+          "default": null,
+          "description": "The app's id, as captures store it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endUnixMs": {
+          "default": null,
+          "description": "Exclusive.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "person": {
+          "default": null,
+          "description": "The person's name, as the People filter offers it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "personKey": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startUnixMs": {
+          "default": null,
+          "description": "Inclusive.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "FindOrderInput": {
+      "description": "How a page of results is ordered.",
+      "oneOf": [
+        {
+          "const": "time",
+          "description": "Newest first.",
+          "type": "string"
+        },
+        {
+          "const": "rank",
+          "description": "Best match first.",
+          "type": "string"
+        }
+      ]
+    },
     "Footprint": {
       "description": "What Whimbrel keeps on this PC, by part, in bytes.",
       "properties": {
@@ -2371,6 +2756,190 @@
       "required": [
         "count",
         "bytes"
+      ],
+      "type": "object"
+    },
+    "FoundCard": {
+      "description": "One result or source, read from its live row. Keys that do not apply are null.",
+      "properties": {
+        "app": {
+          "description": "Captures and episodes: the app, as stored.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DeviceTag"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "found": {
+          "description": "False when the row is gone from this PC: no title, no text.",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "kind": {
+          "description": "`capture`, `transcript`, `snapshot` (a slide), `thread`, `episode`, `routine_run` or `meeting`.",
+          "type": "string"
+        },
+        "meetingId": {
+          "description": "Transcript lines, slides and meetings.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "meetingStartUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "meetingTitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sender": {
+          "description": "An email thread's last sender.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "speaker": {
+          "description": "A transcript line's speaker, as the meeting names it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "speakerIsGuess": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "startCs": {
+          "description": "A transcript line's offset into its meeting, in centiseconds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "The stored text, cut to length. Never a model's wording.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "tsUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "via": {
+          "description": "Why a transcript line matched a person: `speaker` or `attendee`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "found",
+        "title"
+      ],
+      "type": "object"
+    },
+    "FoundPage": {
+      "description": "One page of results.",
+      "properties": {
+        "capped": {
+          "description": "A list hit its pool: more may exist beyond the candidates.",
+          "type": "boolean"
+        },
+        "counts": {
+          "additionalProperties": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "Candidates per kind, and `mentions`.",
+          "type": "object"
+        },
+        "meaningCatchingUp": {
+          "description": "Meaning search ran while new rows still wait for their embedding: the same words can find more soon. The page searches\nagain then and replaces these results.",
+          "type": "boolean"
+        },
+        "mentions": {
+          "description": "With a person: captures that mention them, listed apart.",
+          "items": {
+            "$ref": "#/definitions/FoundCard"
+          },
+          "type": "array"
+        },
+        "mentionsTotal": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "more": {
+          "description": "More results follow this page.",
+          "type": "boolean"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/definitions/FoundCard"
+          },
+          "type": "array"
+        },
+        "semanticAvailable": {
+          "type": "boolean"
+        },
+        "semanticUsed": {
+          "description": "The search model is installed and was used.",
+          "type": "boolean"
+        },
+        "total": {
+          "description": "How many candidates there are across pages.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "results",
+        "mentions",
+        "total",
+        "mentionsTotal",
+        "counts",
+        "semanticUsed",
+        "semanticAvailable",
+        "more",
+        "capped",
+        "meaningCatchingUp"
       ],
       "type": "object"
     },
@@ -4474,6 +5043,29 @@
         }
       ]
     },
+    "NumberedSourceView": {
+      "description": "One item the model was given, by its number in the prompt.",
+      "properties": {
+        "card": {
+          "$ref": "#/definitions/FoundCard"
+        },
+        "n": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unreadable": {
+          "default": false,
+          "description": "The row could not be read just now (a database error). Not the same as gone: `card.found` is false either\nway, but an unreadable source may well exist, so the page must not say it is no longer on this PC.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "n",
+        "card"
+      ],
+      "type": "object"
+    },
     "OcrLanguages": {
       "properties": {
         "available": {
@@ -5649,6 +6241,46 @@
       ],
       "type": "object"
     },
+    "RoutePreviewView": {
+      "description": "Where a question would be answered. `destination` is `local`, `hosted`, `refused` or `unknown`; the button says\n\"on this PC\" only for `local`. `require_local` says to pass it to the ask.",
+      "properties": {
+        "destination": {
+          "type": "string"
+        },
+        "local": {
+          "type": "boolean"
+        },
+        "mayFallBack": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "requireLocal": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "destination",
+        "local",
+        "reason",
+        "requireLocal",
+        "mayFallBack"
+      ],
+      "type": "object"
+    },
     "RoutineKind": {
       "description": "The built-in routines, as the UI names them.",
       "enum": [
@@ -5951,6 +6583,104 @@
           "type": "object"
         }
       ]
+    },
+    "SavedExchangeInput": {
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "answeredLocally": {
+          "type": "boolean"
+        },
+        "cited": {
+          "items": {
+            "$ref": "#/definitions/CitedPointerInput"
+          },
+          "type": "array"
+        },
+        "leftOut": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "requireLocal": {
+          "type": "boolean"
+        },
+        "routedLocally": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "query",
+        "answer",
+        "cited",
+        "model",
+        "provider",
+        "answeredLocally",
+        "leftOut",
+        "requireLocal",
+        "routedLocally"
+      ],
+      "type": "object"
+    },
+    "SavedExchangeResult": {
+      "properties": {
+        "citedTopics": {
+          "items": {
+            "$ref": "#/definitions/TopicRefView"
+          },
+          "type": "array"
+        },
+        "conversationId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TopicRefView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "conversationId",
+        "citedTopics"
+      ],
+      "type": "object"
+    },
+    "SavedSourceView": {
+      "description": "One source a saved answer cited.",
+      "properties": {
+        "card": {
+          "$ref": "#/definitions/FoundCard"
+        },
+        "n": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "unreadable": {
+          "default": false,
+          "description": "The card could not be read just now (a database error): not a deleted row, so never \"no longer on this PC\".",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "n",
+        "card"
+      ],
+      "type": "object"
     },
     "ScheduleEvent": {
       "properties": {
@@ -6478,6 +7208,109 @@
       },
       "required": [
         "text"
+      ],
+      "type": "object"
+    },
+    "SourcedConversationView": {
+      "description": "A saved conversation with its cited sources read from the live rows now.",
+      "properties": {
+        "exchanges": {
+          "items": {
+            "$ref": "#/definitions/SourcedExchangeView"
+          },
+          "type": "array"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "starred": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "starred",
+        "exchanges"
+      ],
+      "type": "object"
+    },
+    "SourcedExchangeView": {
+      "description": "One saved exchange. `legacy` ones were saved before numbered sources: they carry `citations` (what the old Ask\nsaved) and no `sources`.",
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "answeredLocally": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/definitions/ContextEntry"
+          },
+          "type": "array"
+        },
+        "cited": {
+          "description": "The numbers the saved answer cited (the `n` of each source): the page draws a mark for `[n]` only for these.",
+          "items": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "createdAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "leftOut": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "legacy": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "description": "The provider that answered, an id such as `anthropic`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/definitions/SavedSourceView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "query",
+        "answer",
+        "createdAtUnixMs",
+        "legacy",
+        "citations",
+        "cited",
+        "sources"
       ],
       "type": "object"
     },
@@ -8035,6 +8868,10 @@
         "captureEnabled": {
           "type": "boolean"
         },
+        "googleSignInExpired": {
+          "description": "A Calendar or Gmail sign-in expired and needs signing in again (redesign only; false with the switch off).",
+          "type": "boolean"
+        },
         "line": {
           "description": "\"Capturing · Synced 2:05 PM\", also the tray tooltip.",
           "type": "string"
@@ -8066,12 +8903,23 @@
             "integer",
             "null"
           ]
+        },
+        "syncError": {
+          "description": "Sync is in error: the same fact as the tooltip's \"Sync error\" (`SyncLine::Error`).",
+          "type": "boolean"
+        },
+        "syncText": {
+          "description": "The sync half of `line` in the words people see (\"Synced 2:05 PM\", \"Sync setting up\"), or empty while sync is off or in error.",
+          "type": "string"
         }
       },
       "required": [
         "line",
         "captureEnabled",
-        "recordingPaused"
+        "recordingPaused",
+        "syncError",
+        "syncText",
+        "googleSignInExpired"
       ],
       "type": "object"
     },
@@ -8345,6 +9193,28 @@
           "type": "string"
         }
       ]
+    },
+    "UsedRangeView": {
+      "description": "The date range retrieval used: the filter's own, or a day question's window. A side is null when left open.",
+      "properties": {
+        "endUnixMs": {
+          "description": "Exclusive.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "startUnixMs": {
+          "description": "Inclusive.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
     },
     "VaultView": {
       "properties": {

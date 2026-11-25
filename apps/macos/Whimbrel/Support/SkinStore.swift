@@ -6,7 +6,7 @@ import SwiftUI
 /// store adds which skin is chosen. Main thread only (`selected` and `withOverride` trap off-main in Debug). `revision` is observed next to
 /// `ThemeStore.revision` by `ThemedRoot`. See docs/superpowers/specs/2026-10-20-skins-design.md.
 final class SkinStore: ObservableObject {
-    static let shared = SkinStore()
+    static let shared = SkinStore(movesToThread: true)
     static let skinKey = "com.mpointer.kestrel.skinId"
     static let paletteKey = "com.mpointer.kestrel.skinPaletteId"
 
@@ -19,8 +19,10 @@ final class SkinStore: ObservableObject {
     private var override: Skin?
     @Published private(set) var revision = 0
 
-    /// `userSkins` nil means `UserSkinStore.shared`, resolved only when user skins are loaded.
-    init(defaults: UserDefaults = .standard, themes: ThemeStore = .shared, userSkins: UserSkinStore? = nil) {
+    /// `userSkins` nil means `UserSkinStore.shared`, resolved only when user skins are loaded. `movesToThread` is the once-per-device
+    /// move from the cream default to Thread (`ThreadMove`); only the app's own store (`shared`) asks for it, so a store made for a
+    /// test starts where its stored values say.
+    init(defaults: UserDefaults = .standard, themes: ThemeStore = .shared, userSkins: UserSkinStore? = nil, movesToThread: Bool = false) {
         self.defaults = defaults
         self.themes = themes
         self.userSkins = userSkins
@@ -36,6 +38,16 @@ final class SkinStore: ObservableObject {
             (storedSkinId, storedPaletteId) = Self.migrated(oldThemeId: old)
             defaults.set(storedSkinId, forKey: Self.skinKey)
             defaults.set(storedPaletteId, forKey: Self.paletteKey)
+        }
+        // Before anything reads the selection. A person who never picked a skin, or picked Classic with its first palette, is
+        // moved to Thread once on this device; the marker keeps a later pick of Classic from being moved again.
+        if movesToThread, !defaults.bool(forKey: ThreadMove.doneKey) {
+            if let move = ThreadMove.decide(skinId: storedSkinId, paletteId: storedPaletteId, done: false) {
+                (storedSkinId, storedPaletteId) = (move.skin, move.palette)
+                defaults.set(storedSkinId, forKey: Self.skinKey)
+                defaults.set(storedPaletteId, forKey: Self.paletteKey)
+            }
+            defaults.set(true, forKey: ThreadMove.doneKey)
         }
     }
 
@@ -166,19 +178,19 @@ final class SkinStore: ObservableObject {
     }
 }
 
-/// The hidden redesign switch: the Thread skin and, as each is migrated, the new screens. Off unless set by hand:
-/// `defaults write com.mpointer.kestrel com.mpointer.whimbrel.redesign.enabled -bool true`. There is no UI for it,
-/// it is never synced, and nothing in the app changes while it is off. Windows has the same switch as
-/// `redesign.enabled` in settings.json. The Thread skin ships as `skins/thread.json`; this is the one place that
-/// decides who sees it (the gallery list, `SkinGallery.orderedCards`), never the loader or the store, and turning the
-/// switch on does not change anyone's selected skin.
+/// The redesign switch. It is on for everyone: the stored value is no longer read, and there is no way back to the old layout.
+/// The type and its call sites stay until the clean-up (switch-removal.md, part B), which deletes the old branches and then this.
+/// The Thread skin ships as `skins/thread.json` and is listed in the gallery (`SkinGallery.orderedCards`); `ThreadMove` is the
+/// one-time move of the cream default to it. Windows has the same switch, also on.
 enum RedesignFlag {
+    /// The old defaults key. Not read any more; an old value left in the file does nothing.
     static let key = "com.mpointer.whimbrel.redesign.enabled"
 
-    /// Bundled skins that exist only behind the switch (core/skins `REDESIGN_SKIN_IDS`).
+    /// Bundled skins that were hidden while the switch could be off (core/skins `REDESIGN_SKIN_IDS`).
     static let skinIds: Set<String> = ["thread"]
 
-    static func isOn(_ defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: key) }
+    /// Always true. The parameter stays so call sites need no change before the clean-up.
+    static func isOn(_ defaults: UserDefaults = .standard) -> Bool { true }
 
     /// `skins` as a list shows them: without the redesign skins unless `redesign` is on.
     static func visible(_ skins: [Skin], redesign: Bool) -> [Skin] {
@@ -186,12 +198,27 @@ enum RedesignFlag {
     }
 }
 
+/// The once-per-device move from the cream default to Thread (switch-removal.md, A2). Pure; `SkinStore.init` applies it.
+enum ThreadMove {
+    /// Set once the check has run on this device, whether or not it moved anyone. Not synced.
+    static let doneKey = "com.mpointer.whimbrel.skin.threadMoveDone"
+    static let skinId = "thread"
+    static let paletteId = "thread"
+
+    /// Where a person with this stored choice goes, or nil to leave them. Classic (skin `whimbrel`) with its first palette
+    /// (`default`) moves; Slate and Sepia, every other skin, a user's own skin and High Contrast stay. Nothing moves twice.
+    static func decide(skinId stored: String, paletteId: String, done: Bool) -> (skin: String, palette: String)? {
+        guard !done, stored == SkinDefaults.whimbrel.id, paletteId == ThemeDefaults.theme.id else { return nil }
+        return (skinId, Self.paletteId)
+    }
+}
+
 private struct RedesignEnabledKey: EnvironmentKey {
-    static let defaultValue = false
+    static let defaultValue = true
 }
 
 extension EnvironmentValues {
-    /// The hidden redesign switch (`RedesignFlag`); false unless `AppState.redesignEnabled` puts it in the environment.
+    /// The redesign switch (`RedesignFlag`); on, also in a root that never sets it.
     var redesignEnabled: Bool {
         get { self[RedesignEnabledKey.self] }
         set { self[RedesignEnabledKey.self] = newValue }

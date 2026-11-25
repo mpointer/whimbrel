@@ -126,11 +126,25 @@ struct WFlowLayout: Layout {
     var spacing: CGFloat = 8
     var lineSpacing: CGFloat = 8
 
+    /// A child is measured at its ideal size, as before. Only a child wider than the container is proposed the container's width, so a long
+    /// chip truncates inside it instead of running past the trailing edge.
+    static func proposal(idealWidth: CGFloat, container: CGFloat?) -> ProposedViewSize {
+        guard let container, container.isFinite, container > 0, idealWidth > container else { return .unspecified }
+        return ProposedViewSize(width: container, height: nil)
+    }
+
+    private func measured(_ subview: LayoutSubview, container: CGFloat?) -> CGSize {
+        let ideal = subview.sizeThatFits(.unspecified)
+        let proposal = Self.proposal(idealWidth: ideal.width, container: container)
+        guard proposal.width != nil else { return ideal }
+        return subview.sizeThatFits(proposal)
+    }
+
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let maxWidth = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, width: CGFloat = 0
         for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
+            let size = measured(subview, container: proposal.width)
             if x > 0, x + size.width > maxWidth {
                 y += rowHeight + lineSpacing
                 x = 0
@@ -146,13 +160,15 @@ struct WFlowLayout: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
         for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
+            let size = measured(subview, container: bounds.width)
             if x > bounds.minX, x + size.width > bounds.maxX {
                 y += rowHeight + lineSpacing
                 x = bounds.minX
                 rowHeight = 0
             }
-            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+            // Ideal size, as measured: a proposal of the measured size can fall a hair short of it and truncate the last word. Only a child
+            // wider than the container is given the container's width.
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: Self.proposal(idealWidth: subview.sizeThatFits(.unspecified).width, container: bounds.width))
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }

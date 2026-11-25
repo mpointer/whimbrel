@@ -218,6 +218,9 @@ public struct WTheme: Sendable, Equatable {
     public var backgroundPage: Color { skin("backgroundPage") }
     public var backgroundCard: Color { skin("backgroundCard") }
     public var border: Color { skin("border") }
+    /// The edge of a control that must be told from the card behind it (3 to 1 or more): the secondary ink, softened. In high
+    /// contrast it is the border itself. The menu and the small windows use it; the shared `border` is unchanged.
+    var firmEdge: Color { isHighContrast ? border : textSecondary.opacity(0.7) }
     public var textPrimary: Color { skin("textPrimary") }
     public var textSecondary: Color { skin("textSecondary") }
     public var accentPrimary: Color { skin("accentPrimary") }

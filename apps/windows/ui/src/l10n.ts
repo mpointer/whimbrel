@@ -99,6 +99,11 @@ export function useLanguage(): string {
   return useSyncExternalStore(subscribeLanguage, () => current);
 }
 
+/** The tag Intl formatters take for the current language (as `useL10n().locale`), for code outside React. */
+export function currentLocale(): string {
+  return current === "en-XA" ? "en" : current;
+}
+
 /** `key` in the current language. */
 export function t(key: string, args?: Args): string {
   return lookup(BUNDLED, current, key, args);

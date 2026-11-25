@@ -3,7 +3,7 @@ import SwiftUI
 import OSLog
 import WhimbrelUI
 
-/// The six-tab meeting-first shell replacing TimelineView's mode-strip-first entry
+/// The meeting-first shell's sections: six, and a seventh (Conversations) with the redesign flag on replacing TimelineView's mode-strip-first entry
 /// point. TimelineView's own 5 search modes are NOT removed — they relocate into
 /// `.library` as filters (see TodayView/MeetingsListView/library filter wiring).
 enum WhimbrelTab: String, CaseIterable, Identifiable {
@@ -11,6 +11,8 @@ enum WhimbrelTab: String, CaseIterable, Identifiable {
     case meetings = "Meetings"
     case library = "Library"
     case topics = "Topics"
+    /// Redesign flag only: never listed, keyed or shown with it off (`visibleTabs`, `shown`).
+    case conversations = "Conversations"
     case automations = "Automations"
     case settings = "Settings"
 
@@ -22,6 +24,7 @@ enum WhimbrelTab: String, CaseIterable, Identifiable {
         case .meetings: String(localized: "Meetings")
         case .library: String(localized: "Library")
         case .topics: String(localized: "Topics")
+        case .conversations: String(localized: "Conversations")
         case .automations: String(localized: "Automations")
         case .settings: String(localized: "Settings")
         }
@@ -36,6 +39,44 @@ enum WhimbrelTab: String, CaseIterable, Identifiable {
         case .automations: "4"
         case .settings: "5"
         case .topics: "6"
+        case .conversations: "7"
+        }
+    }
+
+    /// The sections the sidebar and the Go menu list. Flag off: exactly the six there have always been, in
+    /// their order. Flag on: Conversations comes after Topics.
+    static func visibleTabs(redesign: Bool) -> [WhimbrelTab] {
+        let old: [WhimbrelTab] = [.today, .meetings, .library, .topics, .automations, .settings]
+        guard redesign else { return old }
+        var tabs = old
+        tabs.insert(.conversations, at: (tabs.firstIndex(of: .topics) ?? tabs.count - 1) + 1)
+        return tabs
+    }
+
+    /// The section to draw for `tab`: Today when `tab` is one the flag hides (Conversations was selected, then the
+    /// flag was turned off).
+    static func shown(_ tab: WhimbrelTab, redesign: Bool) -> WhimbrelTab {
+        visibleTabs(redesign: redesign).contains(tab) ? tab : .today
+    }
+
+    /// Where a question from the shell's Ask bar goes with the redesign flag on (no search filter set).
+    enum AskTarget: Equatable {
+        /// Answered under the bar on Today.
+        case today
+        /// A new conversation with this scope, its row made once the first answer is in.
+        case conversation(CoreConversationScope)
+        /// The Library's Ask, as before.
+        case library
+    }
+
+    /// Spec part 4, scope by where you ask: Today answers under the bar; the Conversations section asks about
+    /// everything; a topic page (`topicId`, the topic shown) asks about that topic. Elsewhere the Library's Ask.
+    func askTarget(topicId: Int64?) -> AskTarget {
+        switch self {
+        case .today: return .today
+        case .conversations: return .conversation(.everything)
+        case .topics: return topicId.map { .conversation(.topic($0)) } ?? .library
+        case .meetings, .library, .automations, .settings: return .library
         }
     }
 
@@ -46,6 +87,7 @@ enum WhimbrelTab: String, CaseIterable, Identifiable {
         case .meetings: return Image(skinRole: .meetings)
         case .library: return Image(systemName: "books.vertical")
         case .topics: return Image(systemName: "tag")
+        case .conversations: return Image(systemName: "bubble.left.and.bubble.right")
         case .automations: return Image(skinRole: .routines)
         case .settings: return Image(skinRole: .settings)
         }
@@ -60,6 +102,8 @@ struct WhimbrelShellView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var showFirstRun = false
     @StateObject private var homeBridge = HomeRedesignBridge()
+    /// The header field and chips Library's Find page shares with the shell (redesign flag only).
+    @StateObject private var findBridge = FindBridge()
     @State private var homeApps: [CoreCaptureApp] = []
     @State private var showActiveRecordingWarning = false
     // "Later" just hides this banner instance for the version currently staged.
@@ -91,7 +135,7 @@ struct WhimbrelShellView: View {
                 NavigationSplitView {
                     // The footer sits below the list. (Its text must stay height-bounded: see `StaleSyncLine`.)
                     VStack(spacing: 0) {
-                        List(WhimbrelTab.allCases, selection: $appState.selectedTab) { tab in
+                        List(WhimbrelTab.visibleTabs(redesign: false), selection: $appState.selectedTab) { tab in
                             Label {
                                 Text(tab.title)
                                     .foregroundStyle(Color.whimbrelTextPrimary)
@@ -115,6 +159,8 @@ struct WhimbrelShellView: View {
                 } detail: {
                     detailView
                 }
+                // Conversations exists only with the redesign flag on: a selection left from then lands on Today.
+                .onAppear { if appState.selectedTab != WhimbrelTab.shown(appState.selectedTab, redesign: false) { appState.selectedTab = .today } }
             }
         }
         .background(Color.whimbrelBackgroundPage)
@@ -165,11 +211,12 @@ struct WhimbrelShellView: View {
     /// The selected section's screen, shared by the old and the redesign shell.
     @ViewBuilder
     private var detailView: some View {
-                switch appState.selectedTab {
+                switch WhimbrelTab.shown(appState.selectedTab, redesign: appState.redesignEnabled) {
                 case .today: TodayView()
                 case .meetings: banded { MeetingsListView() }
-                case .library: banded { TimelineView() }
+                case .library: banded { RedesignSwitch(enabled: appState.redesignEnabled) { LibraryRedesignScreen() } old: { TimelineView() } }
                 case .topics: banded { TopicsView() }
+                case .conversations: banded { ConversationsHostView() }
                 case .automations: banded { AutomationsView() }
                 case .settings: StatusOverviewView(openSettings: openSettings)
                 }
@@ -185,6 +232,7 @@ struct WhimbrelShellView: View {
         case .meetings: return icons[.meetings]
         case .library: return "books.vertical"
         case .topics: return "tag"
+        case .conversations: return "bubble.left.and.bubble.right"
         case .automations: return icons[.routines]
         case .settings: return icons[.settings]
         }
@@ -192,30 +240,33 @@ struct WhimbrelShellView: View {
 
     private var redesignShell: some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: appState.activeMeetingId == nil ? 30 : 1)) { context in
-            let onHome = appState.selectedTab == .today
+            let onHome = WhimbrelTab.shown(appState.selectedTab, redesign: true) == .today
             WShell(
-                items: WhimbrelTab.allCases.map {
+                items: WhimbrelTab.visibleTabs(redesign: true).map {
                     WShellItem(id: $0.rawValue, glyph: glyph($0), title: $0.title, shortcut: "\u{2318}" + String($0.goKey))
                 },
                 selection: appState.selectedTab.rawValue,
-                onSelect: { appState.selectedTab = WhimbrelTab(rawValue: $0) ?? .today },
+                onSelect: {
+                    let tab = WhimbrelTab(rawValue: $0) ?? .today
+                    // Choosing Conversations again from one of its pages goes back to the list.
+                    if tab == .conversations, appState.selectedTab == .conversations { appState.showConversationList() }
+                    appState.selectedTab = tab
+                },
                 header: WShellHeader(
                     title: appState.selectedTab.title, subtitle: onHome ? HomeRedesignAdapter.dateLine(context.date) : nil,
                     ask: HomeRedesignAdapter.ask(appState)),
                 elements: WHomeElements.resolve(options: SkinStore.shared.selected.archetypeOptions, archetype: SkinStore.shared.selected.archetype.rawValue),
                 people: homeBridge.people, appChoices: homeApps.map { WHomeAppChoice(id: $0.appBundleId, name: HomeRedesignAdapter.appName($0.appBundleId)) },
-                showsFilters: onHome,
-                onSubmit: { query, filter in
-                    if filter.isEmpty {
-                        appState.requestNewConversation(prompt: query)
-                    } else {
-                        let apps = homeApps.map { WHomeAppChoice(id: $0.appBundleId, name: HomeRedesignAdapter.appName($0.appBundleId)) }
-                        appState.requestLibrarySearch(query: query, filter: HomeRedesignAdapter.libraryFilter(filter, apps: apps, strings: WhimbrelUIStrings.make().home))
-                    }
+                showsFilters: onHome || (appState.selectedTab == .library && findBridge.showsFilters),
+                onSubmit: { query, _ in
+                    // Enter searches this device, from any section, and never sends a question to a model.
+                    findBridge.shellQueryChanged(query)
+                    appState.selectedTab = .library
+                    findBridge.searchRequest += 1
                 },
                 onSetUpAsk: { openSettings() },
                 thread: onHome ? homeBridge.thread : [], onThread: { homeBridge.scrollTo($0) },
-                memory: HomeRedesignAdapter.memoryState(enabled: appState.activityCaptureEnabled, resumeAt: appState.captureResumeAt, now: context.date),
+                memory: HomeRedesignAdapter.memoryState(enabled: appState.activityCaptureEnabled, resumeAt: appState.captureResumeAt, now: context.date, capturing: appState.screenText.isRunning, since: appState.memoryOnSince),
                 onWhatIsCaptured: {
                     appState.pendingSettingsSection = .capture
                     openSettings()
@@ -224,7 +275,9 @@ struct WhimbrelShellView: View {
                 level: appState.audio.inputLevel,
                 onPause: appState.canPauseRecording ? { appState.pauseRecording() } : nil,
                 onResume: appState.recordingPaused ? { appState.resumeRecording() } : nil,
-                onStop: appState.activeMeetingId == nil ? nil : { appState.endActiveMeetingIfNeeded() },
+                // Also offered for a start still waiting on its meeting row with its audio on (`canStopStartingRecording`): the same
+                // action the old menu's End Meeting runs, which stops the audio at once and saves the meeting when its row lands.
+                onStop: appState.activeMeetingId == nil && !appState.canStopStartingRecording ? nil : { appState.endActiveMeetingIfNeeded() },
                 pauseChoices: {
                     let state = CapturePauseModel.state(captureOn: appState.activityCaptureEnabled, resumeAt: appState.captureResumeAt)
                     if state != .off {
@@ -241,7 +294,47 @@ struct WhimbrelShellView: View {
                     detailView
                         .environment(\.homeBridge, homeBridge)
                         .environment(\.homeScroll, homeBridge.scroll)
-                }
+                        .environment(\.findBridge, findBridge)
+                },
+                initialQuery: findBridge.query, initialFilter: findBridge.filter,
+                onQueryChange: { findBridge.shellQueryChanged($0) }, onFilterChange: { findBridge.shellFilterChanged($0) }, push: findBridge.push,
+                onAsk: { query, _ in
+                    // Command Return asks. From another section the answer goes where that section sends it (below).
+                    findBridge.shellQueryChanged(query)
+                    if appState.selectedTab == .library {
+                        // The page decides: it brings Find forward, sends a follow-up when that field has the keyboard, and sends the
+                        // header's text otherwise.
+                        findBridge.askRequest += 1
+                    } else if !query.isEmpty {
+                        if !HomeRedesignAdapter.ask(appState).isAvailable {
+                            // No provider is set up: the set-up the field's own button leads to.
+                            openSettings()
+                        } else {
+                            // Where the answer goes, per section (screen 6): under the bar on Today, a new conversation from
+                            // Conversations or a topic, and Find on a new conversation from anywhere else.
+                            switch WhimbrelTab.shown(appState.selectedTab, redesign: true).askTarget(topicId: appState.selectedTopicId) {
+                            case .today where !findBridge.filter.isEmpty:
+                                // Asked on Today with People, Apps or Dates chips on: Today's answer does not read them, so the
+                                // question goes to Find, which asks under those filters (as Windows does). Never asked without them.
+                                // A busy Find keeps it in its field and says why (`newConversation(asking:)`).
+                                appState.requestNewConversation(prompt: query)
+                            case .today:
+                                // Asked on Today: the answer shows under the bar (`TodayAnswerArea`), never in Library.
+                                appState.askOnToday(query)
+                            case .conversation(let scope):
+                                appState.startConversation(scope: scope, question: query)
+                            case .library:
+                                if !findBridge.askBusy { appState.requestNewConversation(prompt: query) }
+                            }
+                        }
+                    }
+                },
+                focusRequest: findBridge.focusRequest, filterTrailing: appState.selectedTab == .library ? findBridge.countText : nil,
+                // Command Return belongs to the header field while it has the keyboard, and to the Find page while that shows; anywhere else (an
+                // editor, a sheet on Meetings) it is left alone. Off the Library tab an Ask button beside the field says that asking is possible.
+                askKeyActive: appState.selectedTab == .library && findBridge.showsFilters,
+                showsAskButton: appState.selectedTab != .library,
+                askBusy: findBridge.askBusy
             )
             .redesignThemed()
             .onAppear { loadHomeApps() }
@@ -269,6 +362,12 @@ struct WhimbrelShellView: View {
             return WShellRecording(
                 state: state, elapsedSeconds: LiveMeetingAdapter.recordedSeconds(now: now, startedAt: appState.activeMeetingStartedAt, pause: appState.recordingPause))
         }
+        // A detected or calendar start whose meeting row is not saved yet: the bar says it is starting and offers Stop (or says Saving
+        // once Stop was asked for). A start that is neither (nothing recording yet) draws no bar, as before.
+        let stopOffer = MenuBarAdapter.stopOffer(
+            hasActiveMeeting: false, isStarting: appState.isStartingMeetingNow, audioLive: false,
+            canStopStarting: appState.canStopStartingRecording, stopPendingForRow: appState.isStopPendingForRow)
+        if appState.isStartingMeetingNow, stopOffer != .unavailable { return WShellRecording(state: .starting, startingStop: stopOffer) }
         if appState.processingMeetingId != nil { return WShellRecording(state: .processing) }
         return nil
     }
@@ -349,6 +448,7 @@ private struct StatusOverviewView: View {
                     .font(.whimbrelDisplay())
                     .foregroundStyle(Color.whimbrelTextPrimary)
                 row("Sync", .devices, syncLines)
+                if !planLines.isEmpty { row("Plan", .plan, planLines) }
                 row("AI", .ai, aiLines)
                 row("Storage", .capture, storageLines)
                 row("Updates", .general, updateLines)
@@ -414,6 +514,19 @@ private struct StatusOverviewView: View {
         return lines
     }
 
+    /// Empty (row hidden) unless sync is ready or at its device limit, or while the plan is unknown. A balance shows only while sync
+    /// is ready, so a stale one never appears.
+    private var planLines: [String] {
+        let state = appState.syncState
+        var balance: AIBalance?
+        switch state.status {
+        case .ready: balance = state.aiBalance
+        case .deviceLimit: break
+        default: return []
+        }
+        return PlanStatusLines.lines(plan: state.plan, balance: balance)
+    }
+
     private var aiLines: [String] {
         let routing = appState.routing
         var lines = [String(localized: "Summaries use \(routing.preferredProvider.displayName), \(routing.preferredModel).")]
@@ -473,6 +586,7 @@ private struct StatusOverviewView: View {
 
     private func load() {
         appState.mediaRetention.refreshPlan()
+        Task { await appState.syncState.refreshAIBalance() }
         guard let store = appState.coreStore else { return }
         CoreMemoryStore.accessQueue.async {
             let totals = store.usageTotals()

@@ -45,8 +45,11 @@ enum RedesignBridge {
 
     static func theme(colorScheme: ColorScheme, contrast: ColorSchemeContrast) -> WTheme {
         let dark = colorScheme == .dark
+        // With Increase Contrast on, every screen draws Thread's high contrast colors whatever skin is picked (the stored choice is
+        // not changed), so text and backgrounds agree with Thread's own high contrast parts. Shape and type stay the skin's.
+        let colors = WContrastPalette.palette(skin: palette(ThemeStore.shared.selected, dark: dark), colorScheme: colorScheme, contrast: contrast)
         return WTheme(
-            palette: palette(ThemeStore.shared.selected, dark: dark), colorScheme: colorScheme, contrast: contrast,
+            palette: colors, colorScheme: colorScheme, contrast: contrast,
             shape: shape(SkinStore.shared.selected), type: type(SkinStore.shared.selected))
     }
 }

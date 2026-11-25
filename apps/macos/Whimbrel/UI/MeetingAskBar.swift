@@ -10,6 +10,16 @@ struct MeetingAskExchange: Identifiable {
     var prompt: String?
     var answer: String = ""
     var citedSegmentIds: [Int64] = []
+    /// Every citation core returned, in the answer's `[n]` order (kept for Continue as a conversation).
+    var citations: [CoreContextItemRef] = []
+    /// The model that answered; nil when the governed chain answered (it does not say which).
+    var model: String?
+    /// The provider id the answer streamed from; nil when the governed chain answered (it does not say which).
+    var provider: String?
+    /// The answer and its citations are in (set once core returned them, after the text finished streaming).
+    var finished = false
+    /// Continue as a conversation was pressed for this answer: never a second conversation from it.
+    var continued = false
     var narrowed = false
     var errorText: String?
     /// The error's fix is in Settings → AI Providers (a spent monthly budget).
@@ -143,7 +153,9 @@ final class MeetingAskSession: ObservableObject {
                 case .some(.success(let answer)):
                     self.exchanges[index].narrowed = answer.narrowed
                     self.exchanges[index].answer = answer.text
+                    self.exchanges[index].citations = answer.citations
                     self.exchanges[index].citedSegmentIds = TranscriptCitations.segmentIds(from: answer.citations)
+                    self.exchanges[index].finished = true
                 }
             }
         }
@@ -182,6 +194,35 @@ final class MeetingAskSession: ObservableObject {
         exchanges = []
     }
 
+    /// The answer as a conversation's first exchange, exactly as shown (the question as asked, the answer, its
+    /// citations and model); nil unless it is finished with its citations, has an answer, did not fail and was not
+    /// continued already, and nil while it cites a provisional live line (a negative id, replaced by the final
+    /// transcript), since a saved pointer to one would never resolve. Pure.
+    nonisolated static func continuable(_ exchange: MeetingAskExchange) -> AskExchange? {
+        guard exchange.finished, !exchange.continued, exchange.errorText == nil, !exchange.answer.isEmpty,
+              !exchange.citations.contains(where: { $0.kind == .transcript && $0.id < 0 }) else { return nil }
+        return AskExchange(query: exchange.question, answer: exchange.answer, citations: exchange.citations,
+                           model: exchange.model, answeredLocally: false, provider: exchange.provider,
+                           madeOnThisComputer: AskRunner.madeOnThisComputer(provider: exchange.provider, model: exchange.model, keptLocal: false))
+    }
+
+    /// Spec part 4: answer `index` becomes a conversation asking about `meetingId` (no second model call) and
+    /// opens, as Today's Continue does. Once per answer; pressed again only when nothing was stored.
+    func continueAsConversation(_ index: Int, meetingId: Int64, appState: AppState) {
+        guard exchanges.indices.contains(index),
+              let exchange = Self.continuable(exchanges[index]) else { return }
+        let key = exchanges[index].id
+        exchanges[index].continued = true
+        AskConversationStore.store(exchange, scope: .meeting(meetingId), appState: appState) { [weak self] id in
+            guard let id else {
+                // Nothing was stored: Continue can be pressed again (if the answer is still here).
+                if let self, let at = self.exchanges.firstIndex(where: { $0.id == key }) { self.exchanges[at].continued = false }
+                return
+            }
+            appState.openConversation(id: id)
+        }
+    }
+
     /// Called as `phase` is set (willSet), so the new phase is the argument, not `streaming.phase`.
     func handle(_ phase: StreamingAskViewModel.Phase) {
         guard let pending else { return }
@@ -196,6 +237,8 @@ final class MeetingAskSession: ObservableObject {
             // Hosted providers only: the local helper's stream names "local", not its model.
             let hosted = HostedModelDefaults.hostedProviders.contains(pending.provider.rawValue)
             let answered = hosted ? (streaming.answeredModel ?? pending.model) : pending.model
+            exchanges[pending.index].model = answered
+            exchanges[pending.index].provider = pending.provider.rawValue
             self.pending = nil
             CoreMemoryStore.accessQueue.async {
                 if hosted {
@@ -206,7 +249,9 @@ final class MeetingAskSession: ObservableObject {
                     inputTokens: Int64(usage.inputTokens ?? -1), outputTokens: Int64(usage.outputTokens ?? -1)) ?? []
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.exchanges.indices.contains(index) else { return }
+                    self.exchanges[index].citations = refs
                     self.exchanges[index].citedSegmentIds = TranscriptCitations.segmentIds(from: refs)
+                    self.exchanges[index].finished = true
                 }
             }
         case .cancelled:
@@ -335,6 +380,13 @@ struct MeetingAskBar: View {
                                     Button("Copy") { Self.copy(exchange.answer) }
                                         .help("Copy the answer as Markdown")
                                     Button("Copy as plain text") { Self.copy(AskMarkdown.plainText(exchange.answer)) }
+                                    // Redesign flag only, and not during a live meeting (it would leave the live screen).
+                                    if appState.redesignEnabled, !liveContext {
+                                        Button(String(localized: "Continue as a conversation", comment: "Button under the answer on Today: keeps the question and answer as a conversation and opens it.")) {
+                                            session.continueAsConversation(index, meetingId: meeting.id, appState: appState)
+                                        }
+                                        .disabled(MeetingAskSession.continuable(exchange) == nil)
+                                    }
                                 }
                                 .buttonStyle(.whimbrelSecondary).controlSize(.small)
                             }

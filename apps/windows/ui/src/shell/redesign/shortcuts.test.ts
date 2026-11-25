@@ -9,6 +9,21 @@ describe("shortcutOf", () => {
   it("maps Ctrl+1 to Ctrl+6 to the sections in sidebar order", () => {
     expect(order.map((_, i) => shortcutOf(key(String(i + 1)), order))).toEqual(order.map((id) => ({ kind: "section", id })));
   });
+  it("with Conversations in the order, every other section keeps its key and Conversations is Ctrl+7", () => {
+    const seven: TabId[] = ["today", "meetings", "library", "topics", "conversations", "automations", "settings"];
+    expect(shortcutOf(key("4"), seven)).toEqual({ kind: "section", id: "topics" });
+    expect(shortcutOf(key("5"), seven)).toEqual({ kind: "section", id: "automations" });
+    expect(shortcutOf(key("6"), seven)).toEqual({ kind: "section", id: "settings" });
+    expect(shortcutOf(key("7"), seven)).toEqual({ kind: "section", id: "conversations" });
+    expect(shortcutOf(key("8"), seven)).toBeNull();
+    // Each section's key is the same with the section list of the switch off and on.
+    for (const id of order) expect(shortcutOf(key(shortcutHint(id).slice(5)), seven)).toEqual({ kind: "section", id });
+  });
+  it("shows the same keys in the sidebar's hints", () => {
+    expect(["today", "meetings", "library", "topics", "conversations", "automations", "settings"].map((id) => shortcutHint(id as TabId))).toEqual([
+      "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+7", "Ctrl+5", "Ctrl+6",
+    ]);
+  });
   it("maps Ctrl+K to search, either case", () => {
     expect(shortcutOf(key("k"), order)).toEqual({ kind: "search" });
     expect(shortcutOf(key("K"), order)).toEqual({ kind: "search" });
@@ -22,7 +37,7 @@ describe("shortcutOf", () => {
     expect(shortcutOf(key("0"), order)).toBeNull();
     expect(shortcutOf(key("a"), order)).toBeNull();
   });
-  it("writes the hint the sidebar shows", () => expect(shortcutHint(0)).toBe("Ctrl+1"));
+  it("writes the hint the sidebar shows", () => expect(shortcutHint("today")).toBe("Ctrl+1"));
 });
 
 describe("liveShortcutOf", () => {

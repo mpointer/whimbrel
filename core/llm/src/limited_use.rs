@@ -101,6 +101,8 @@ impl ContextItem {
             | ContextItem::Transcript(_)
             | ContextItem::Episode(_)
             | ContextItem::Snapshot(_) => false,
+            // Added through MCP by a local client, not read through Google (bridge spec 5.1).
+            ContextItem::McpItem(_) => false,
         }
     }
 }

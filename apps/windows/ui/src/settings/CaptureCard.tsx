@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
-import { captureSettings, captureStatus, librarySettings, setCaptureEnabled, setExcludedApps, setShowScreenCaptures } from "../api";
+import { aiSettings, captureSettings, captureStatus, librarySettings, setCaptureEnabled, setExcludedApps, setShowScreenCaptures } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { CaptureSettings, CaptureStatus } from "../generated/types";
 import { t } from "../l10n";
+import { localOnlyLine } from "./aiModel";
 import { captureSummary } from "./captureSummary";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
 }
 
-export function CaptureCard() {
+export function CaptureCard({ onOpenAi }: { onOpenAi: () => void }) {
   const [status, setStatus] = useState<CaptureStatus | null>(null);
   const [showCaptures, setShowCaptures] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -38,10 +39,11 @@ export function CaptureCard() {
       .catch((e: unknown) => setError(message(e)));
 
   return (
-    <section className="card about" aria-labelledby="capture-heading">
+    <section className="card about" aria-labelledby="capture-heading" data-settings-anchor="capture.capture">
       <h2 id="capture-heading" className="section-label">
         {t("Activity capture")}
       </h2>
+      <LocalOnlyRow onOpenAi={onOpenAi} />
       {status ? (
         <>
           <label className="toggle">
@@ -162,6 +164,23 @@ function Exclusions(props: { onError: (e: string | null) => void }) {
           {ocr.available.length > 0 && ` ${t("Installed: {languages}.", { languages: ocr.available.join(", ") })}`}
         </p>
       )}
+    </div>
+  );
+}
+
+/** Local-only mode's state, read-only (the switch is in Settings → AI, under one stored key). */
+function LocalOnlyRow({ onOpenAi }: { onOpenAi: () => void }) {
+  const [localOnly, setLocalOnly] = useState<boolean | null>(null);
+  useEffect(() => {
+    void aiSettings().then((s) => setLocalOnly(s.routing.localOnly), () => {});
+  }, []);
+  if (localOnly === null) return null;
+  return (
+    <div className="field-row" data-settings-anchor="capture.localOnly">
+      <span className="grow">{localOnlyLine(localOnly)}</span>
+      <button type="button" className="mode" onClick={onOpenAi}>
+        {t("Open AI settings")}
+      </button>
     </div>
   );
 }

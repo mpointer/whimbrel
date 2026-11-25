@@ -2,6 +2,44 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [Unreleased]
+
+## [0.9.82] - 2026-11-25
+
+### Mac and Windows
+- Whimbrel has a new look, called Thread, and everyone gets it after updating. Home is one time line of your day, and the menu bar and tray, alerts, hotkey window, Settings and the first-run screens are rebuilt in it. Topics, Automations, the Meetings list and the capture, episode and thread windows keep their layout and take Thread's colors, type and shapes.
+- Thread is in the skin list. The cream look is still there as a skin named Classic (it was named Whimbrel). The first time you open this version, if you were on that cream look, you are moved to Thread once; pick Classic in Settings to go back and it stays. If you had chosen another skin, or the Slate or Sepia colors, nothing changes.
+- The control for screen capture is now called Memory, with a timed pause (15 minutes, an hour or until tomorrow), in the menu bar or tray, the popup and Settings.
+- The recording notice is on unless you turned it off. A setting you already changed stays as you set it.
+- While a meeting records you can pause the recording and add marks to it. There is a small in-meeting window for them.
+- New summaries ask the model for sources, so a line can point back to where in the meeting it came from. New recordings also store when each line ends.
+- High Contrast follows your system. On the Mac, with Increase Contrast on, every screen draws in high contrast colors, whichever skin you picked. Turn the system setting off and your skin comes back; your choice is not changed. On Windows a contrast theme draws Whimbrel in that theme's colors, as it did before.
+- Find opens a question on its best matches first, ignores common words, and keeps the rows already shown when you load more. An imported note is listed once, not also as its one-item episode.
+- Ask keeps conversations: "Continue as a conversation" turns an answer into a conversation you can come back to.
+- Settings is reorganized, with a Plan & billing section, a Plan row on the Status page, Local-only mode first in AI settings, and a search box that scrolls to the setting it finds.
+- Tags and chips are readable on every skin.
+- Most new strings are machine-translated (German, Spanish, French, Canadian French, Portuguese) and still need review.
+
+### Mac
+- Stop works while a detected or calendar meeting is still being saved.
+- A question asked on Today with filter chips on goes to Find.
+
+### Windows
+- Right-clicking the tray icon while its popup is open closes the popup, so the menu opens.
+- Narrator no longer repeats the recording time every second.
+- A Stop that cancels a start before any audio is recorded leaves no meeting behind.
+- A paused meeting reads Paused, not Recording, and a meeting still recording no longer shows a Recorded tag.
+- Live meetings no longer lose words after Resume, sit on Resuming, leave their window open after Stop, or show the recording state twice.
+- Known issue: Narrator does not read a corner alert (for example "Meeting detected" or "Question for you") when it appears, and the keyboard can't reach one until you click it. Once you click into it, Narrator reads it and Tab moves through its buttons.
+
+### Phones
+- Phone reminders are free on every plan. They run on your phone from what it last synced, so any signed-in phone gets a notification before each meeting and a morning list of the steps you owe that are due. Before, they needed Cloud. Settings → Reminders turns each kind on or off as before.
+
+### Website
+- Plus is sold at $15 a month, with updated terms and privacy pages in English, Spanish and French.
+- The pricing page and the terms state a 14-day refund policy.
+- The pricing and compare pages show Littlebird's monthly prices.
+
 ## [0.9.81] - 2026-11-20
 
 ### All devices

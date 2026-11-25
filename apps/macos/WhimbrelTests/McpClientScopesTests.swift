@@ -31,4 +31,25 @@ final class McpClientScopesTests: XCTestCase {
         XCTAssertEqual(McpClientScopes.line(["meetings", "google_data"]), "Meetings, Gmail and Google Calendar")
         XCTAssertEqual(McpClientScopes.line(["future_scope"]), "future_scope")
     }
+
+    func testAWriteOnlyTokenCanBeMade() {
+        XCTAssertTrue(McpClientScopes.canCreate(name: "Sync", scopes: ["write"]))
+        XCTAssertFalse(McpClientScopes.canCreate(name: "Sync", scopes: ["google_data"]))
+        XCTAssertFalse(McpClientScopes.canCreate(name: "   ", scopes: ["write"]))
+    }
+
+    func testOrderedKeepsWriteLast() {
+        XCTAssertEqual(McpClientScopes.ordered(["write", "memory", "admin"]), ["memory", "write"])
+        XCTAssertEqual(McpClientScopes.known, McpClientScopes.all + [McpClientScopes.write])
+    }
+
+    func testTheFormNeverListsWrite() {
+        XCTAssertFalse(McpClientScopes.all.contains("write"))
+        XCTAssertEqual(McpClientScopes.write, "write")
+    }
+
+    func testLineNamesWrite() {
+        XCTAssertEqual(McpClientScopes.line(["memory", "write"]), "Memory, Write")
+    }
 }
+

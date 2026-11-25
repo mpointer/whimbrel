@@ -45,7 +45,7 @@ export function ForeignFilesCard() {
 
   if (!showCard(view) && done.length === 0 && problems.length === 0) return null;
   return (
-    <section className="card" aria-labelledby="foreign-files-heading">
+    <section className="card" aria-labelledby="foreign-files-heading" data-settings-anchor="capture.foreignFiles">
       <h2 id="foreign-files-heading" className="section-label">
         {t("Files kept aside")}
       </h2>

@@ -432,12 +432,16 @@ pub(crate) fn ensure_exclusion_schema(conn: &rusqlite::Connection) -> rusqlite::
         ));
         // A deleted row stays in the cached material (harmless). Rows other rows point at by id
         // (an input of a run, a thread's emails) still move the generation when they go.
+        // `items`' trigger is named gen6 since it stopped firing for added items (review M15):
+        // `CREATE TRIGGER IF NOT EXISTS` never replaces an existing trigger, so the gen3 one is dropped.
         if let Some(when) = delete_bumps {
+            let generation = if table == "items" { "gen6" } else { "gen3" };
             sql.push_str(&format!(
-                "CREATE TRIGGER IF NOT EXISTS exclusion_gen3_{table}_delete AFTER DELETE ON {table} WHEN {when} BEGIN {bump} END;\n"
+                "CREATE TRIGGER IF NOT EXISTS exclusion_{generation}_{table}_delete AFTER DELETE ON {table} WHEN {when} BEGIN {bump} END;\n"
             ));
         }
     }
+    sql.push_str("DROP TRIGGER IF EXISTS exclusion_gen3_items_delete;\n");
     // The triggers of earlier rounds give way: round 2's (captures were left out, R8), the
     // generation triggers the content tables had, and the first draft of the notes.
     for table in RULES_TABLES.iter().map(|(t, ..)| t).chain(CONTENT_TABLES.iter().map(|(t, ..)| t)) {
@@ -453,6 +457,20 @@ pub(crate) fn ensure_exclusion_schema(conn: &rusqlite::Connection) -> rusqlite::
     }
     conn.execute_batch(&sql)
 }
+
+/// Every `items` kind and how exclusion reaches it (held to `crate::ITEM_KINDS` by
+/// `core/api/src/mcp_item_coverage.rs`).
+pub const EXCLUSION_ITEM_KINDS: [(&str, crate::mcp_items::Coverage); 6] = {
+    use crate::mcp_items::Coverage::{Covered, NotApplicable};
+    [
+        ("capture", Covered("names over title, text and url (capture_items_naming)")),
+        ("transcript", NotApplicable("its meeting is the unit")),
+        ("email", Covered("names (name_hits_limited) and contacts over actors")),
+        ("calendar_event", Covered("names (name_hits_limited) and contacts over actors")),
+        ("snapshot", Covered("names lift its meeting, whose slides are then excluded")),
+        ("mcp_item", Covered("names (name_hits_limited) and contacts over actors")),
+    ]
+};
 
 /// Tables that say who is excluded, or that the topic paths match by name: `(table, whether an
 /// insert moves the generation, the columns an update must touch to move it, and a condition on
@@ -489,7 +507,8 @@ const CONTENT_TABLES: [(&str, &str, &str, &str, Option<&str>, &str); 16] = [
         "items",
         "NEW.id",
         "",
-        Some("OLD.kind != 'capture'"),
+        // Review M15: nothing points at an added item by id either.
+        Some("OLD.kind NOT IN ('capture', 'mcp_item')"),
         "kind, source, thread_id, ts_unix_ms, actors, title, body_text, refs, url, external_id, device_id, source_table, source_id",
     ),
     ("capture_item", "capture_item", "NEW.id", "", None, "window_title, text"),
@@ -647,7 +666,7 @@ fn addresses(raw: &str) -> Vec<String> {
 }
 
 /// Every string value under an `"email"` key in a JSON document (attendee details).
-fn json_emails(raw: &str) -> Vec<String> {
+pub(crate) fn json_emails(raw: &str) -> Vec<String> {
     fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
         match v {
             serde_json::Value::Object(m) => {
@@ -757,7 +776,7 @@ impl Store {
     /// the user's own addresses are known only from connected accounts (`connector_account`, see
     /// `index::self_emails`), so with none connected the user's own address, met only in one
     /// client's material, is counted as that client's contact.
-    fn client_only_emails(&self, topics: &HashSet<i64>) -> rusqlite::Result<HashSet<String>> {
+    pub(crate) fn client_only_emails(&self, topics: &HashSet<i64>) -> rusqlite::Result<HashSet<String>> {
         let mut inside: HashSet<(i64, String)> = HashSet::new();
         let mut outside: HashSet<i64> = HashSet::new();
         // Only other clients' (seed) topics count as outside: automatic topics are clustered
@@ -970,7 +989,7 @@ impl Store {
                         m.items.insert(h.ref_id);
                         m.threads.extend(self.thread_of_email(h.ref_id)?);
                     }
-                    "calendar_event" => {
+                    "calendar_event" | "mcp_item" => {
                         m.items.insert(h.ref_id);
                     }
                     // `capture_item.id`: its `items` twin, the id every other path uses.
@@ -982,6 +1001,9 @@ impl Store {
             }
             // Captures with no legacy twin, and URLs (not in the full-text index).
             m.items.extend(self.capture_items_naming(&m.terms, names)?);
+            // Added items named only outside the full-text index: the adding client's name, the
+            // source label, the link, a person's name.
+            m.items.extend(self.mcp_items_naming_outside_text(names, None)?);
         }
         self.contact_hits(&mut m, None, &mut Newly::default())?;
         self.lift_events_and_meetings(&mut m)?;
@@ -993,6 +1015,31 @@ impl Store {
         m.material_version = m.version();
         self.settle_runs(&mut m, names, None)?;
         Ok(m)
+    }
+
+    /// Added items (`mcp_item`) whose adding client's name, source label, link or people name a client.
+    /// `ids_sql`, when given, limits it to the ids that subquery selects (the rows noted dirty).
+    pub(crate) fn mcp_items_naming_outside_text(&self, names: &dyn Fn(&str) -> bool, ids_sql: Option<&str>) -> rusqlite::Result<Vec<i64>> {
+        Ok(self.mcp_items_naming_outside_text_at(names, ids_sql)?.into_iter().map(|(id, _)| id).collect())
+    }
+
+    /// [`Self::mcp_items_naming_outside_text`] with each item's time.
+    pub(crate) fn mcp_items_naming_outside_text_at(&self, names: &dyn Fn(&str) -> bool, ids_sql: Option<&str>) -> rusqlite::Result<Vec<(i64, i64)>> {
+        let filter = ids_sql.map(|q| format!(" AND id IN ({q})")).unwrap_or_default();
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT id, ts_unix_ms, coalesce(json_extract(refs, '$.client'), '') || '\n' || coalesce(source, '') || '\n' || \
+             coalesce(url, '') || '\n' || coalesce(actors, '') FROM items WHERE kind = 'mcp_item'{filter}"
+        ))?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, ts, text) = row?;
+            // The source is `mcp:<token>:<label>`: the label's dashes read as word breaks.
+            if names(&text) || names(&text.replace('-', " ")) {
+                out.push((id, ts));
+            }
+        }
+        Ok(out)
     }
 
     /// A client contact's address: meetings by their stored attendees and attendee details,
@@ -1016,7 +1063,7 @@ impl Store {
             }
         }
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT id, kind, coalesce(actors, '') FROM items WHERE kind IN ('email', 'calendar_event'){}",
+            "SELECT id, kind, coalesce(actors, '') FROM items WHERE kind IN ('email', 'calendar_event', 'mcp_item'){}",
             filter("items", "id", true)
         ))?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
@@ -1190,7 +1237,7 @@ impl Store {
         if !m.terms.is_empty() {
             let mut stmt = self.conn.prepare(&format!(
                 "SELECT id, kind, thread_id, coalesce(title, ''), body_text, url FROM items \
-                 WHERE kind IN ('email', 'calendar_event', 'snapshot', 'capture') AND id IN ({})",
+                 WHERE kind IN ('email', 'calendar_event', 'snapshot', 'capture', 'mcp_item') AND id IN ({})",
                 dirty("items")
             ))?;
             let rows = stmt.query_map([], |r| {
@@ -1206,6 +1253,7 @@ impl Store {
                         }
                     }
                     "calendar_event" if names(&format!("{title}\n{body}")) => newly.item(m, id),
+                    "mcp_item" if names(&format!("{title}\n{body}")) || names(&url.clone().unwrap_or_default()) => newly.item(m, id),
                     "snapshot" if names(&format!("{title}\n{body}")) => {
                         if let Some(meeting) = thread {
                             newly.meeting(m, meeting);
@@ -1219,6 +1267,10 @@ impl Store {
                     }
                     _ => {}
                 }
+            }
+            // Added items named outside their text (the adding client's name, label, link, people).
+            for id in self.mcp_items_naming_outside_text(names, Some(&dirty("items")))? {
+                newly.item(m, id);
             }
             // Legacy capture rows: the `items` twin is the id every path uses.
             let mut stmt = self.conn.prepare(&format!(
@@ -2646,6 +2698,56 @@ mod tests {
         .unwrap()
     }
 
+    /// Review M15: nothing points at an added item by id, so deleting one leaves it in the cached
+    /// material (harmless) and moves no generation: the next read is not a full recompute.
+    #[test]
+    fn deleting_an_added_item_moves_no_generation() {
+        let (_d, s) = store();
+        let a = s.create_seed_topic("Acme", &[], None).unwrap();
+        exclude(&s, &a.key);
+        crate::mcp_items::tests::seed_tokens(&s);
+        let w = crate::mcp_items::McpWriter { token_id: 1, client_name: "Claude".into() };
+        let it = |id: &str| crate::mcp_items::NewMcpItem {
+            label: "outlook-work".into(),
+            external_id: id.into(),
+            kind: "note".into(),
+            ts: "2026-11-21T14:03:00Z".into(),
+            title: Some("Acme renewal".into()),
+            text: "notes".into(),
+            url: None,
+            people: vec![],
+        };
+        let now = 1_795_269_780_000;
+        let clock = crate::mcp_items::WriteClock { now_unix_ms: now, day_start_unix_ms: now - now % 86_400_000 };
+        s.upsert_mcp_items(&w, &[it("a"), it("b")], &Default::default(), clock).unwrap();
+        let m = s.excluded_material_with(&acme).unwrap();
+        let added = s.mcp_item_id(1, "outlook-work", "a").unwrap().unwrap();
+        assert!(m.items.contains(&added));
+        let g0 = generation(&s);
+        let before = full_recomputes();
+        let r = s.delete_mcp_items(1, "outlook-work", &["a".to_string()], now).unwrap();
+        assert_eq!(r[0].1, crate::mcp_items::McpDeleteStatus::Deleted);
+        assert_eq!(generation(&s), g0, "the tool's delete");
+        s.delete_mcp_source(1, "outlook-work", false).unwrap();
+        assert_eq!(generation(&s), g0, "a source delete");
+        s.excluded_material_with(&acme).unwrap();
+        assert_eq!(full_recomputes(), before, "the next read adds no full recompute");
+    }
+
+    /// Control for the test above: an email is pointed at by id (a thread), so its delete still
+    /// moves the generation.
+    #[test]
+    fn deleting_an_email_still_moves_the_generation() {
+        let (_d, s) = store();
+        let a = s.create_seed_topic("Acme", &[], None).unwrap();
+        exclude(&s, &a.key);
+        let e = mail(&s, "e1", "t1", "pat@example.org", "Acme renewal");
+        s.excluded_material_with(&acme).unwrap();
+        let g0 = generation(&s);
+        s.conn.execute("DELETE FROM items WHERE id = ?1", [e]).unwrap();
+        assert_ne!(generation(&s), g0);
+    }
+
     /// Fix round 3, R8, and the dirty queue: a capture write (a late text update too) no longer
     /// moves the generation; it is noted for the next read, and noted again when it is updated.
     #[test]
@@ -2998,6 +3100,84 @@ mod tests {
         assert!(m.items.contains(&from_contact), "from a client contact");
         let thread: i64 = s.conn.query_row("SELECT id FROM threads WHERE external_thread_id = 't3'", [], |r| r.get(0)).unwrap();
         assert!(m.threads.contains(&thread));
+    }
+
+    /// An item a local MCP client added (`mcp_item`); returns its `items` id.
+    fn added(s: &Store, id: &str, title: &str, text: &str, email: Option<&str>) -> i64 {
+        let item = crate::mcp_items::NewMcpItem {
+            label: "outlook-work".into(),
+            external_id: id.into(),
+            kind: "email".into(),
+            ts: "2026-11-21T14:03:00Z".into(),
+            title: Some(title.into()),
+            text: text.into(),
+            url: None,
+            people: email
+                .map(|e| vec![crate::mcp_items::McpPerson { name: Some("Wile".into()), email: Some(e.into()), role: Some("from".into()) }])
+                .unwrap_or_default(),
+        };
+        crate::mcp_items::tests::seed_tokens(s);
+        let w = crate::mcp_items::McpWriter { token_id: 1, client_name: "Claude Code".into() };
+        let clock = crate::mcp_items::WriteClock { now_unix_ms: 1_795_269_780_000, day_start_unix_ms: 1_795_219_200_000 };
+        s.upsert_mcp_items(&w, &[item], &Default::default(), clock).unwrap();
+        s.conn
+            .query_row("SELECT id FROM items WHERE kind = 'mcp_item' AND external_id = ?1", [id], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn an_added_item_naming_an_excluded_client_is_excluded_in_full() {
+        let (_d, s) = store();
+        let a = s.create_seed_topic("Acme", &[], None).unwrap();
+        let in_title = added(&s, "a", "Acme renewal", "numbers", None);
+        let in_text = added(&s, "b", "Renewal", "Notes for Acme's board", None);
+        exclude(&s, &a.key);
+        let m = s.excluded_material_with(&acme).unwrap();
+        assert!(m.items.contains(&in_title) && m.items.contains(&in_text));
+        assert!(m.excludes("mcp_item", in_title));
+    }
+
+    #[test]
+    fn an_added_item_written_after_the_cache_is_noted_and_excluded() {
+        let (_d, s) = store();
+        let a = s.create_seed_topic("Acme", &[], None).unwrap();
+        exclude(&s, &a.key);
+        s.excluded_material_with(&acme).unwrap();
+        let fulls = full_recomputes();
+        let id = added(&s, "a", "Renewal", "Acme wants a discount", None);
+        let noted: i64 = s.conn.query_row("SELECT COUNT(*) FROM exclusion_dirty WHERE tbl = 'items' AND row_id = ?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(noted, 1);
+        let m = s.excluded_material_with(&acme).unwrap();
+        assert_eq!(full_recomputes(), fulls, "applied from the dirty queue");
+        assert!(m.items.contains(&id));
+    }
+
+    #[test]
+    fn an_added_item_carrying_a_client_contacts_address_is_excluded() {
+        let (_d, s) = store();
+        let a = s.create_seed_topic("Acme", &[], None).unwrap();
+        let sid = file(&s, a.topic_id, "meeting", 5);
+        s.conn.execute("INSERT INTO entity (kind, key, display, updated_at_unix_ms) VALUES ('person', 'email:wile@coyote.example', 'Wile', 1)", []).unwrap();
+        let entity = s.conn.last_insert_rowid();
+        s.conn.execute("INSERT INTO entity_mention (entity_id, source_id) VALUES (?1, ?2)", params![entity, sid]).unwrap();
+        let before = added(&s, "a", "Quick question", "About the invoice", Some("wile@coyote.example"));
+        exclude(&s, &a.key);
+        let m = s.excluded_material_with(&acme).unwrap();
+        assert!(m.items.contains(&before), "full recompute");
+        let after = added(&s, "b", "Another question", "Lunch?", Some("Wile@Coyote.example"));
+        let m = s.excluded_material_with(&acme).unwrap();
+        assert!(m.items.contains(&after), "incremental read");
+    }
+
+    #[test]
+    fn an_added_item_naming_no_client_is_kept() {
+        let (_d, s) = store();
+        let a = s.create_seed_topic("Acme", &[], None).unwrap();
+        let id = added(&s, "a", "Lunch", "Tacos on Friday", Some("pat@x.com"));
+        exclude(&s, &a.key);
+        assert!(!s.excluded_material_with(&acme).unwrap().items.contains(&id));
+        let later = added(&s, "b", "Dinner", "Pizza", None);
+        assert!(!s.excluded_material_with(&acme).unwrap().items.contains(&later));
     }
 
     /// Nothing excluded: nothing is noted, and the answer is empty.

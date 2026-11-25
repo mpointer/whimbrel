@@ -5,7 +5,7 @@
 //   apps/macos/WhimbrelUI/Sources/WhimbrelUI/Tokens.generated.swift
 //   design/tokens/generated/thread.json, thread-high-contrast.json   palettes in the themes/*.json schema
 //   skins/palettes/thread.json   the Thread palette (light and dark) as a bundled skin palette
-//   skins/thread.json            the Thread skin manifest (hidden unless the redesign flag is on; see docs/ui-redesign/skins.md)
+//   skins/thread.json            the Thread skin manifest (see docs/ui-redesign/skins.md)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,12 +38,15 @@ const TEXT_PAIRS = [
   ["fixed.aiInk", "backgroundCard"], ["fixed.aiInk", "backgroundPage"], ["fixed.aiInk", "fixed.aiTint"], ["textPrimary", "fixed.aiTint"],
   ["fixed.paused", "backgroundCard"], ["fixed.paused", "backgroundPage"],
 ];
+// Thread-only colors (not one of the 15 skinnable tokens) are read the same way: `threadOnly.x`.
 const NON_TEXT_PAIRS = [
+  ["threadOnly.controlBorder", "backgroundCard"], ["threadOnly.controlBorder", "backgroundPage"],
   ["fixed.focus", "backgroundCard"], ["fixed.focus", "backgroundPage"],
   ["fixed.appBlue", "backgroundCard"], ["fixed.appGreen", "backgroundCard"], ["fixed.appPurple", "backgroundCard"], ["fixed.appAmber", "backgroundCard"],
 ];
 const fixed = strip(T.fixed);
-const color = (name, mode) => (name.startsWith("fixed.") ? fixed[name.slice(6)].$value[MODES.indexOf(mode)] : T.palette[mode][name]);
+const threadOnly = strip(T.threadOnly);
+const color = (name, mode) => (name.startsWith("threadOnly.") ? threadOnly[name.slice(11)].$value[MODES.indexOf(mode)] : name.startsWith("fixed.") ? fixed[name.slice(6)].$value[MODES.indexOf(mode)] : T.palette[mode][name]);
 const failures = [];
 for (const mode of MODES) {
   const textMin = mode.startsWith("highContrast") ? 7 : 4.5;
@@ -61,7 +64,13 @@ if (failures.length) {
 // ---- CSS ------------------------------------------------------------------------------------------------------
 const cssVars = (pairs, indent = "  ") => pairs.map(([name, value]) => `${indent}${name}: ${value};`).join("\n");
 const fixedVars = (mode) => Object.entries(fixed).map(([name, token]) => [`--w-color-${kebab(name)}`, token.$value[MODES.indexOf(mode)].toLowerCase()]);
-const paletteVars = (mode) => Object.entries(T.palette[mode]).map(([name, value]) => [`--color-${kebab(name)}`, value.toLowerCase()]);
+// The Thread-only colors ride along in every Thread palette block and nowhere else (a skin that is not Thread never
+// has them, and the CSS falls back to its own --color-border).
+const threadOnlyVars = (mode) => Object.entries(threadOnly).map(([name, token]) => [`--w-${kebab(name)}`, token.$value[MODES.indexOf(mode)].toLowerCase()]);
+const paletteVars = (mode) => [
+  ...Object.entries(T.palette[mode]).map(([name, value]) => [`--color-${kebab(name)}`, value.toLowerCase()]),
+  ...threadOnlyVars(mode),
+];
 const rem = (px) => `${px / 16}rem`;
 const shadow = ([y, blur, alpha]) => (alpha === 0 ? "none" : `0 ${y}px ${blur}px color-mix(in srgb, var(--w-color-scrim) ${Math.round(alpha * 100)}%, transparent)`);
 const bezier = (v) => `cubic-bezier(${v.join(", ")})`;
@@ -182,6 +191,14 @@ ${cssVars(paletteVars("highContrastLight"))}
 ${cssVars(paletteVars("highContrastDark"))}
   color-scheme: dark;
 }
+
+/* The app applies Thread as a skin: its 15 colors are inline variables on the root and the root says which palette
+   (data-palette) and which variant (data-theme) is showing. The Thread-only colors follow that, so they are there for
+   exactly that palette and for no other: any other palette falls back to its own border. */
+${[["light", "light"], ["dark", "dark"]].map(([theme, mode]) => `:root[data-palette="thread"][data-theme="${theme}"] {\n${cssVars(threadOnlyVars(mode))}\n}`).join("\n")}
+@media (prefers-contrast: more) {
+${[["light", "highContrastLight"], ["dark", "highContrastDark"]].map(([theme, mode]) => `  :root[data-palette="thread"][data-theme="${theme}"] {\n${cssVars(threadOnlyVars(mode), "    ")}\n  }`).join("\n")}
+}
 `;
 
 // ---- Swift ----------------------------------------------------------------------------------------------------
@@ -253,6 +270,11 @@ ${Object.entries(fixed).map(([k, t]) => `    public static let ${k} = WFixedColo
 /// The Thread palette on the 15 skinnable tokens, keyed by the names themes/*.json uses.
 public enum WThreadPalette {
 ${MODES.map((m) => `    public static let ${m}: [String: UInt32] = ${swiftPalette(m)}`).join("\n")}
+}
+
+/// Thread colors that are not one of the 15 skinnable tokens (\`threadOnly\` in tokens.json).
+public enum WThreadOnly {
+${Object.entries(threadOnly).map(([k, t]) => `    public static let ${k} = WFixedColor(light: ${hex(t.$value[0])}, dark: ${hex(t.$value[1])}, highContrastLight: ${hex(t.$value[2])}, highContrastDark: ${hex(t.$value[3])})`).join("\n")}
 }
 `;
 

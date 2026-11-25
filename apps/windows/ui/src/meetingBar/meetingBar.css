@@ -10,6 +10,36 @@
   padding: var(--w-space-md) var(--w-space-lg);
   min-height: 100vh;
 }
+/* Compact: the window has less CSS space than its design size (the work area capped it). The recording state, the time, Pause or
+   Resume and Stop stay in view; the meter, the "always on top" note and the privacy footer go, and the window scrolls for the rest. */
+.mb-root {
+  overflow-y: auto;
+}
+.mb--compact {
+  padding: var(--w-space-sm) var(--w-space-md);
+  gap: var(--w-space-xs);
+}
+.mb--compact .mb-top,
+.mb--compact .mb-meter,
+.mb--compact .mb-foot {
+  display: none;
+}
+.mb--compact .mb-time {
+  font-size: var(--w-text-subtitle-size);
+  line-height: var(--w-text-subtitle-line, 1.2);
+}
+.mb--compact .mb-buttons {
+  gap: var(--w-space-xs);
+}
+.mb--compact .mb-buttons button {
+  min-width: 0;
+  padding-inline: var(--w-space-xs);
+  gap: 0;
+}
+/* The words carry the meaning (Pause, Resume, Stop); the icons give way so "Resume" is never cut in a 70 px button. */
+.mb--compact .mb-buttons button svg {
+  display: none;
+}
 .mb-head {
   display: flex;
   justify-content: space-between;

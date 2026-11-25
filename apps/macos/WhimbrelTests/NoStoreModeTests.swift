@@ -12,10 +12,15 @@ final class NoStoreModeTests: XCTestCase {
         var told: [String] = []
         let gate = RecordingStartGate(storeOpen: false) { told.append($0) }
         for source in RecordingStartGate.Source.allCases {
-            XCTAssertFalse(gate.allow(source), "\(source)")
+            XCTAssertFalse(gate.allow(source, redesign: false), "\(source)")
         }
         // Every refused start says why (prompt accept, Away Mode, Today, menu bar).
         XCTAssertEqual(told, Array(repeating: EncryptionCopy.recordingBlockedNoStore, count: RecordingStartGate.Source.allCases.count))
+        // Redesigned: the "your library" sentence, looked up the way the code looks it up (never an English literal).
+        told = []
+        for source in RecordingStartGate.Source.allCases { XCTAssertFalse(gate.allow(source, redesign: true), "\(source)") }
+        XCTAssertEqual(told, Array(repeating: LibraryCopyRedesign.map(EncryptionCopy.recordingBlockedNoStore), count: RecordingStartGate.Source.allCases.count))
+        XCTAssertNotEqual(LibraryCopyRedesign.map(EncryptionCopy.recordingBlockedNoStore), EncryptionCopy.recordingBlockedNoStore)
         XCTAssertFalse(gate.allowsBackgroundCapture)
         XCTAssertFalse(gate.allowsMeetingDetection)
         XCTAssertFalse(gate.allowsSync)
@@ -72,11 +77,14 @@ final class NoStoreModeTests: XCTestCase {
             notified.append(message)
         }
         XCTAssertNil(refusal.message)
-        XCTAssertFalse(gate.allow(.calendarOrPrompt))
+        XCTAssertFalse(gate.allow(.calendarOrPrompt, redesign: false))
         XCTAssertEqual(refusal.message, EncryptionCopy.recordingBlockedNoStore)
         XCTAssertEqual(notified.count, 1)
         refusal.dismiss()
         XCTAssertNil(refusal.message)
+        XCTAssertFalse(gate.allow(.calendarOrPrompt, redesign: true))
+        XCTAssertEqual(refusal.message, LibraryCopyRedesign.map(EncryptionCopy.recordingBlockedNoStore))
+        refusal.dismiss()
     }
 
     private func source(_ rel: String) throws -> String {
@@ -87,8 +95,10 @@ final class NoStoreModeTests: XCTestCase {
 
     /// Every Start control on screen carries `recordingControl()` (disabled, with a caption or
     /// a tooltip, without a store): the menu bar, the timeline header and every Today skin.
+    /// The redesigned menu (`MenuBarRedesign.swift`) gates two controls: the memory control, whose menu turns capture
+    /// back on or resumes it, and the Start Meeting row. Its Quit, Settings and Open Whimbrel rows stay on.
     func testEveryStartControlIsARecordingControl() throws {
-        let sites = ["UI/MenuBarContentView.swift": 3, "UI/TimelineView+Header.swift": 2, "UI/Today/TodaySlots.swift": 1,
+        let sites = ["UI/MenuBarContentView.swift": 3, "UI/Redesign/MenuBarRedesign.swift": 2, "UI/TimelineView+Header.swift": 2, "UI/Today/TodaySlots.swift": 1,
                      "UI/Today/Archetypes/TerminalTodayLayout.swift": 1, "UI/Today/Archetypes/FieldTodayLayout.swift": 3,
                      "UI/Today/Archetypes/GlassTodayLayout.swift": 1, "UI/Today/Archetypes/ReferenceTodayLayout.swift": 2,
                      "UI/Today/Archetypes/AlmanacTodayLayout.swift": 1, "UI/Today/TodayChrome.swift": 2,
@@ -165,12 +175,15 @@ final class NoStoreModeTests: XCTestCase {
 
     func testAStartWhoseInsertFailedRefusesWithTheNotSavedMessage() {
         XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: 42), .proceed(meetingId: 42))
-        XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: nil), .refuse(message: EncryptionCopy.recordingNotSaved))
+        XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: false), .refuse(message: EncryptionCopy.recordingNotSaved))
+        XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: true), .refuse(message: LibraryCopyRedesign.map(EncryptionCopy.recordingNotSaved)))
         // It goes through the same refusal UI as a start with no store.
         let refusal = RecordingRefusal()
         let gate = RecordingStartGate(storeOpen: true) { refusal.show($0) }
-        if case let .refuse(message) = RecordingStartInsert.outcome(insertedMeetingId: nil) { gate.notify(message) }
+        if case let .refuse(message) = RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: false) { gate.notify(message) }
         XCTAssertEqual(refusal.message, EncryptionCopy.recordingNotSaved)
+        if case let .refuse(message) = RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: true) { gate.notify(message) }
+        XCTAssertEqual(refusal.message, LibraryCopyRedesign.forSkin(EncryptionCopy.recordingNotSaved, redesign: true))
     }
 
     func testQuittingWaitsForAStartWhoseInsertIsStillQueued() {

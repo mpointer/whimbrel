@@ -19,11 +19,11 @@ struct CaptureDetailView: View {
                 CaptureDetailContentView(item: loadedItem)
             } else if loadFailed {
                 Text("This item is no longer available.")
-                    .font(.whimbrelBody(.callout))
+                    .restyledFont(.callout)
                     .foregroundStyle(Color.whimbrelTextSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ProgressView()
+                RestyledProgress()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -36,7 +36,7 @@ struct CaptureDetailView: View {
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .accessibilityLabel("Close")
-                    .font(.system(size: 20))
+                    .restyledGlyph(classicSize: 20)
                     .foregroundStyle(Color.whimbrelTextSecondary)
             }
             .buttonStyle(.plain)
@@ -44,6 +44,7 @@ struct CaptureDetailView: View {
             .help("Close")
         }
         .onAppear { loadItemIfNeeded() }
+        .restyledScreen(redesign: appState.redesignEnabled)
     }
 
     private func loadItemIfNeeded() {
@@ -73,32 +74,32 @@ private struct CaptureDetailContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
                 Text(item.windowTitle)
-                    .font(.whimbrelDisplay())
+                    .restyledFont(.display)
                     .foregroundStyle(Color.whimbrelTextPrimary)
                 HStack {
                     Text(item.appBundleId)
-                        .font(.whimbrelBody(.caption))
+                        .restyledFont(.caption)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                     if let source = item.source {
                         Text("· \(source == "ocr" ? "OCR fallback" : "Accessibility API")")
-                            .font(.whimbrelBody(.caption))
+                            .restyledFont(.caption)
                             .foregroundStyle(Color.whimbrelTextSecondary)
                     }
                     DeviceChip(deviceId: item.deviceId)
                     Spacer()
                     Text(Self.formatted(item.tsUnixMs))
-                        .font(.whimbrelBody(.caption))
+                        .restyledFont(.caption)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }
                 if let url = item.url {
                     Text(url)
-                        .font(.whimbrelBody(.caption))
+                        .restyledFont(.caption)
                         .foregroundStyle(Color.whimbrelLink)
                         .textSelection(.enabled)
                 }
                 Divider().overlay(Color.whimbrelBorder)
                 Text(item.text)
-                    .font(.whimbrelBody(.body))
+                    .restyledFont(.body)
                     .foregroundStyle(Color.whimbrelTextPrimary)
                     .textSelection(.enabled)
             }

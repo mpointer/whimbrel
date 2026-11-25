@@ -118,6 +118,10 @@ impl Store {
         live_topic(&tx, keep)?;
         live_topic(&tx, absorb)?;
         merge_rows(&tx, keep, absorb)?;
+        tx.execute(
+            "UPDATE topic_conversation SET topic_id = ?1 WHERE topic_id = ?2",
+            [keep, absorb],
+        )?;
         let seed = super::seeds::on_merge(&tx, keep, absorb)?;
         for t in [keep, absorb] {
             super::seeds::enqueue_seed(self, &tx, t)?;
@@ -220,6 +224,7 @@ mod tests {
     use super::*;
     use crate::topics::cluster::run_topic_cluster_job;
     use crate::topics::fixture::{build, Fixture, ACME, BOARD, HOME};
+    use crate::ConversationTopic;
 
     fn run(s: &Store) {
         while run_topic_cluster_job(s, 200).unwrap() {}
@@ -384,6 +389,80 @@ mod tests {
         assert!(s.merge_topics(a, a).is_err());
         assert!(s.merge_topics(a, h).is_err());
         assert!(s.merge_topics(h, a).is_err());
+    }
+
+    fn two_seed_topics(s: &Store) -> (i64, i64, String) {
+        let a = s.create_seed_topic("Alpha", &[], None).unwrap();
+        let b = s.create_seed_topic("Beta", &[], None).unwrap();
+        (a.topic_id, b.topic_id, a.key)
+    }
+
+    #[test]
+    fn a_conversation_topic_follows_a_merge_and_clears_when_the_topic_is_gone() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, b, a_key) = two_seed_topics(&s);
+        let c = s.insert_conversation("q", 1).unwrap();
+        s.set_conversation_topic(c, Some(b), false).unwrap();
+        assert_eq!(s.conversation_topic(c).unwrap().topic.unwrap().topic_id, b);
+        s.merge_topics(a, b).unwrap();
+        let ct = s.conversation_topic(c).unwrap();
+        assert_eq!(ct.topic.unwrap().topic_id, a);
+        assert!(!ct.set_by_user);
+        let listed: Vec<i64> = s
+            .topic_conversations(a)
+            .unwrap()
+            .iter()
+            .map(|x| x.id)
+            .collect();
+        assert_eq!(listed, vec![c]);
+        s.delete_seed_topic(&a_key).unwrap();
+        assert_eq!(s.conversation_topic(c).unwrap().topic, None);
+        assert!(s.topic_conversations(a).unwrap().is_empty());
+    }
+
+    #[test]
+    fn topic_conversations_are_newest_updated_first() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, b, _) = two_seed_topics(&s);
+        let old = s.insert_conversation("old", 1_000).unwrap();
+        let new = s.insert_conversation("new", 2_000).unwrap();
+        let other = s.insert_conversation("other", 3_000).unwrap();
+        s.set_conversation_topic(old, Some(a), false).unwrap();
+        s.set_conversation_topic(new, Some(a), true).unwrap();
+        s.set_conversation_topic(other, Some(b), false).unwrap();
+        let ids: Vec<i64> = s
+            .topic_conversations(a)
+            .unwrap()
+            .iter()
+            .map(|x| x.id)
+            .collect();
+        assert_eq!(ids, vec![new, old]);
+    }
+
+    #[test]
+    fn removing_a_topic_by_hand_is_remembered() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, _, _) = two_seed_topics(&s);
+        let c = s.insert_conversation("q", 1).unwrap();
+        s.set_conversation_topic(c, Some(a), false).unwrap();
+        s.set_conversation_topic(c, None, true).unwrap();
+        assert_eq!(
+            s.conversation_topic(c).unwrap(),
+            ConversationTopic {
+                topic: None,
+                set_by_user: true
+            }
+        );
+    }
+
+    #[test]
+    fn deleting_a_conversation_removes_its_topic_link() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, _, _) = two_seed_topics(&s);
+        let c = s.insert_conversation("q", 1).unwrap();
+        s.set_conversation_topic(c, Some(a), false).unwrap();
+        assert!(s.delete_conversation(c).unwrap());
+        assert!(s.topic_conversations(a).unwrap().is_empty());
     }
 
     #[test]

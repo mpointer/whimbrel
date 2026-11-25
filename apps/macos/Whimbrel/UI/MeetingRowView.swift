@@ -30,21 +30,21 @@ struct MeetingRowView: View {
         HStack(alignment: .firstTextBaseline, spacing: Spacing.md) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.whimbrelBody(.body))
+                    .restyledFont(.body)
                     .foregroundStyle(Color.whimbrelTextPrimary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 if !subtitle.isEmpty {
-                    Text(subtitle).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary).lineLimit(1)
+                    Text(subtitle).restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary).lineLimit(1)
                 }
             }
             Spacer(minLength: Spacing.md)
             Text(time)
-                .font(.whimbrelBody(.caption))
+                .restyledFont(.caption)
                 .foregroundStyle(Color.whimbrelTextSecondary)
             if let actionLabel {
                 Text(actionLabel)
-                    .font(.whimbrelBody(.caption).weight(.medium))
+                    .restyledFont(.captionMedium)
                     .foregroundStyle(Color.whimbrelAccentPrimary)
             }
         }

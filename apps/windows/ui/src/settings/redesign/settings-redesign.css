@@ -1,0 +1,38 @@
+/* The redesigned Settings frame. Tokens only; sizes in rem. */
+.rs-frame {
+  width: 100%;
+  max-width: 78rem;
+  margin: 0 auto;
+}
+.rs-search {
+  width: 100%;
+  margin-bottom: var(--w-space-md);
+}
+.rs-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-lg);
+  min-width: 0;
+}
+.rs-title {
+  margin: 0;
+  font-size: 1.375rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.rs-title:focus-visible {
+  outline: 2px solid var(--color-accent-primary);
+  outline-offset: 2px;
+}
+@media (forced-colors: active) {
+  .rs-title:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+/* A disclosure that stands between cards (Advanced) is drawn as a card of its own. */
+.rs-content > .w-disc {
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-card);
+  background: var(--color-background-card);
+  overflow: clip;
+}

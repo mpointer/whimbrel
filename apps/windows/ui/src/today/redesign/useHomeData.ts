@@ -2,9 +2,8 @@
 // redesign (the component is mounted only then), so a flag-off Today makes none of these calls.
 
 import { useCallback, useEffect, useState } from "react";
-import { aiSettings, approvalsCount, calendarAccounts, libraryMeeting, meetingList, todaySchedule, todayUpcoming, libraryCaptureApps, libraryDayBlocks, whimbrelAiStatus, type CaptureApp, type DayBlock } from "../../api";
+import { approvalsCount, calendarAccounts, libraryMeeting, meetingList, todaySchedule, todayUpcoming, libraryCaptureApps, libraryDayBlocks, type CaptureApp, type DayBlock } from "../../api";
 import type { MeetingRow, ScheduleView } from "../../generated/types";
-import { askAvailable, askModelLabel } from "../todayModel";
 import { meetingIntervals, peopleFrom, startOfDay } from "./homeModel";
 
 const MINUTE = 60_000;
@@ -48,23 +47,6 @@ export function useCalendarConnected(): boolean | null {
     };
   }, []);
   return connected;
-}
-
-/** Whether Ask can answer now and which model it would use, as the old composer works it out; null until known. */
-export function useAskState(): { available: boolean; model: string } | null {
-  const [state, setState] = useState<{ available: boolean; model: string } | null>(null);
-  const load = useCallback(() => {
-    Promise.all([aiSettings(), whimbrelAiStatus().catch(() => null)])
-      .then(([s, w]) => setState({ available: askAvailable(s.routing, s.keys, !!w?.signedIn), model: askModelLabel(s.routing) }))
-      .catch(() => setState(null));
-  }, []);
-  useEffect(() => {
-    load();
-    // A key added in Settings is picked up when the window is next focused.
-    window.addEventListener("focus", load);
-    return () => window.removeEventListener("focus", load);
-  }, [load]);
-  return state;
 }
 
 /** Routine actions waiting for approval. */

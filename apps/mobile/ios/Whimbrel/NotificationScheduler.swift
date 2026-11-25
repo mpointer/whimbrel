@@ -131,7 +131,6 @@ enum ReminderBackgroundRefresh {
             let completion = OnceFlag()
             let work = Task { @MainActor in
                 await sync.syncNow()
-                if !Task.isCancelled { await coordinator.refreshPlanIfDue(force: false) }
                 if !Task.isCancelled { await coordinator.reschedule() }
                 // Reminders first; then, while older history is still coming (#572), more rounds.
                 var extraRounds = 0

@@ -6,14 +6,21 @@ import Foundation
 /// and summaries of Google Calendar meetings, so on its own it opens nothing.
 enum McpClientScopes {
     static let googleData = "google_data"
+    /// Lets a client add to memory, and read nothing. The form does not offer it yet (bridge
+    /// phase 3 adds the checkbox and its confirmation), but a client holding it is listed.
+    static let write = "write"
 
-    /// Every permission, in the order the form lists them.
+    /// Every permission the form lists, in its order.
     static let all = ["memory", "meetings", "transcripts", googleData]
+
+    /// Every permission core knows, in its order: the form's, then `write`.
+    static let known = all + [write]
 
     /// What a person reads for a scope id; an id this build doesn't know shows as itself.
     static func label(_ scope: String) -> String {
         switch scope {
         case googleData: return String(localized: "Gmail and Google Calendar")
+        case write: return String(localized: "Write")
         case "memory", "meetings", "transcripts": return scope.capitalized
         default: return scope
         }
@@ -24,14 +31,15 @@ enum McpClientScopes {
         scopes.map(label).joined(separator: ", ")
     }
 
-    /// A token needs a name and at least one thing to read; `google_data` alone reads nothing.
+    /// A token needs a name and at least one thing to read or `write`; `google_data` alone
+    /// opens nothing.
     static func canCreate(name: String, scopes: Set<String>) -> Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && scopes.contains { $0 != googleData && all.contains($0) }
+            && scopes.contains { $0 != googleData && known.contains($0) }
     }
 
-    /// The chosen scopes in form order, each once, without any id core doesn't know.
+    /// The chosen scopes in core's order, each once, without any id core doesn't know.
     static func ordered(_ scopes: Set<String>) -> [String] {
-        all.filter { scopes.contains($0) }
+        known.filter { scopes.contains($0) }
     }
 }

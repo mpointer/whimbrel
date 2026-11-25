@@ -51,7 +51,7 @@ export function McpCard() {
   if (!server) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   return (
-    <section className="card about" aria-labelledby="mcp-heading">
+    <section className="card about" aria-labelledby="mcp-heading" data-settings-anchor="connectors.mcp">
       <h2 id="mcp-heading" className="section-label">
         {t("AI assistants (MCP)")}
       </h2>

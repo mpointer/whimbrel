@@ -182,3 +182,20 @@ export function hasWhimbrelLines(model: NoteModel, summaryText: string, summaryI
 export function offerSources(model: NoteModel, canRegenerate: boolean, hasSummaryLines: boolean): boolean {
   return canRegenerate && hasSummaryLines && model.entries.length === 0;
 }
+
+/** Whether the margin column has anything to hold: a source card, or the margin's lines ("Whimbrel wrote the marked lines..." and,
+ *  where it applies, "Regenerate the summary to add sources."), which are drawn whenever Whimbrel wrote a line. A note with neither
+ *  (a meeting with no transcript and no summary) folds the column away and the note takes its width. */
+export function marginShown(model: NoteModel, aiWrote: boolean): boolean {
+  return model.entries.length > 0 || aiWrote;
+}
+
+
+/** Whether the margin column shows while the person edits. Typing can change what `marginShown` says (an edited line is the person's,
+ *  not Whimbrel's), and a column that folds or unfolds under the cursor moves the text being typed. So the answer is taken when Edit
+ *  begins (`held` is null until then) and kept until Edit ends. Returns the answer to draw and the value to hold for the next draw. */
+export function holdMargin(held: boolean | null, editing: boolean, live: boolean): { shown: boolean; held: boolean | null } {
+  if (!editing) return { shown: live, held: null };
+  const kept = held ?? live;
+  return { shown: kept, held: kept };
+}

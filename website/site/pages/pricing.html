@@ -1,16 +1,17 @@
 <!--
 {
   "title": "Pricing: Free and Open Source",
-  "description": "Whimbrel is free and open source: every feature, your own models, unlimited sync on your own relay. Cloud, $5 a month, covers servers we run for you.",
+  "description": "Whimbrel is free and open source: every feature, your own models, unlimited sync on your own relay. Plus, $15 a month, adds hosted sync and AI included.",
   "schema": ["software"],
   "priority": 0.8,
   "crumbs": [{ "name": "Pricing", "path": "/pricing/" }],
   "faq": [
     { "q": "Is Whimbrel really free?", "a": "Yes. Every feature in the app is free and open source under the Apache 2.0 license: meeting capture, transcription, screen memory, search, chat, routines, connectors, the MCP server, and end-to-end encrypted sync. Nothing in the app is held back for a paid plan." },
-    { "q": "Do I need an AI API key?", "a": "You choose. Run models on your computer with Ollama for free, or bring your own Anthropic, OpenAI, Google Gemini, or OpenRouter key and pay that provider directly. Small tasks go to the cheapest model you have by default, so most people spend under a dollar a month on hosted models. Bring your own API key and Whimbrel adds nothing to what your provider charges. Whimbrel AI is optional prepaid credit at cost plus 30%." },
-    { "q": "What does sync cost?", "a": "Nothing. Sync is end-to-end encrypted. On a relay you run yourself, it's unlimited. On the relay we host, a free account syncs one computer and one phone. Cloud adds unlimited devices on our relay for $5 a month." },
-    { "q": "What does Cloud cost?", "a": "$5 a month or $50 a year, plus tax where applicable. Subscribe from the app: Settings → Sync & Devices. Cloud gives you unlimited devices on our hosted relay, keeps your account however long you're away, and includes email support. Everything in the app stays free." },
-    { "q": "What happens if I cancel?", "a": "Cancel any time from Manage subscription in the app. Cloud runs to the end of the period you paid for, then your account is on Free: nothing is deleted, and every device already syncing keeps syncing; only adding a device past one computer and one phone needs Cloud again. Payments aren't refunded automatically; write to us if you want a refund. Deleting your Whimbrel account also cancels the subscription." },
+    { "q": "Do I need an AI API key?", "a": "You choose. Run models on your computer with Ollama for free, or bring your own Anthropic, OpenAI, Google Gemini, or OpenRouter key and pay that provider directly. Small tasks go to the cheapest model you have by default, so most people spend under a dollar a month on hosted models. Bring your own API key and Whimbrel adds nothing to what your provider charges. Plus includes AI each month, with no API key: choose Whimbrel AI in Settings. If you want more than the allowance, you can top up manually with prepaid credit: you pay what you use plus 30%, and it stops at $0. With Whimbrel AI (the Plus allowance or prepaid credit), request text passes through our server to Anthropic, and the server keeps a count of tokens used, not what was asked. Requests with your own API key go to that provider directly." },
+    { "q": "What does sync cost?", "a": "Nothing. Sync is end-to-end encrypted. On a relay you run yourself, it's unlimited. On the relay we host, a free account syncs one computer and one phone. Plus adds unlimited devices on our relay for $15 a month." },
+    { "q": "What does Plus cost?", "a": "$15 a month, or $144 a year ($12 a month billed annually), plus tax where applicable. Subscribe from the app: Settings → Sync & Devices. Plus gives you hosted sync on unlimited devices, keeps your account however long you're away, includes email support, and includes AI each month when you choose Whimbrel AI in Settings. When the month's allowance is used up, Whimbrel moves to the next model you have set up, such as a model on your computer, until the allowance renews. Your allowance and what is left are shown in Settings. Unused allowance doesn't carry over. Daily backups and restore, opening your vault from anywhere and push to your phone are coming to Plus at no extra cost. Already on Cloud? Your plan continues as it is, and those also come to existing Cloud plans. Everything else in the app stays free." },
+    { "q": "What happens if I cancel?", "a": "Cancel any time from Manage subscription in the app. Your plan runs to the end of the period you paid for, then your account is on Free: nothing is deleted, and every device already syncing keeps syncing; only adding a device past one computer and one phone needs a paid plan again. A refund ends the plan and any unused monthly allowance at once. Deleting your Whimbrel account also cancels the subscription." },
+    { "q": "Can I get a refund?", "a": "Yes. If Plus is not for you, write to <a href=\"mailto:{{site.contactEmail}}\">{{site.contactEmail}}</a> within 14 days of your first payment or of a yearly renewal and we will refund it in full. Unused prepaid credit can be refunded within 14 days of buying it. A monthly renewal is not refunded for a part month: cancel and your plan runs to the end of the period you paid for. If we charge you twice or by mistake, we refund it whenever you tell us. Refunds go back to the card you paid with." },
     { "q": "Can my company get support or run its own servers?", "a": "Yes. The sync relay and update feed are open source and documented for self-hosting. If you want a person responsible for your deployment, <a href=\"mailto:{{site.salesEmail}}?subject=Whimbrel%20support\">talk to us</a> about a support contract." }
   ]
 }
@@ -20,14 +21,14 @@
   <div class="narrow center">
     <p class="eyebrow">Pricing</p>
     <h1>Free and open source. Pay only for servers we run for you.</h1>
-    <p class="lede">Whimbrel does its work on your computer with the AI models you choose, so the whole app is free. Cloud covers what genuinely needs a server we run: unlimited devices on our hosted sync relay, for $5 a month. Team features are planned.</p>
+    <p class="lede">Whimbrel does its work on your computer with the AI models you choose, so the whole app is free. Plus covers what genuinely needs a server we run: hosted sync on unlimited devices, with AI included, for $15 a month. Team plans are planned.</p>
   </div>
 </section>
 
 <div class="container">
   <div class="early-access-banner" role="note">
     <strong>Every feature in the app is free.</strong>
-    <span>Cloud is optional: it adds unlimited devices on our hosted relay. Team is planned.</span>
+    <span>Plus is optional: hosted sync on unlimited devices, with AI included. Team plans are planned.</span>
   </div>
 </div>
 
@@ -53,69 +54,31 @@
       </article>
 
       <article class="card plan">
-        <h2>Cloud</h2>
-        <p class="plan-for">For one person who wants us to run the server.</p>
-        <p class="price"><span class="amount">$5</span> <span class="per">a month, or $50 a year</span></p>
+        <h2>Plus</h2>
+        <p class="plan-for">For one person who wants us to run the server and the AI.</p>
+        <p class="price"><span class="amount">$15</span> <span class="per">a month, or $144 a year ($12 a month billed annually)</span></p>
         <p class="price-note">Plus tax where applicable</p>
         <a class="btn btn-primary btn-block" href="/download/#register">Subscribe from the app: Settings → Sync &amp; Devices</a>
         <ul class="plan-features">
           <li><strong>Everything in Free, plus:</strong></li>
-          <li>Unlimited devices on our hosted relay</li>
+          <li>Hosted sync on unlimited devices</li>
           <li>Your account isn't deleted for inactivity</li>
           <li>Email support</li>
-          <li><strong>Coming to Cloud, at no extra cost:</strong></li>
+          <li>AI included each month, with no API key: choose Whimbrel AI in Settings. When the month's allowance is used up, Whimbrel moves to the next model you have set up, such as a model on your computer, until the allowance renews.</li>
+          <li>Your allowance and what is left are shown in Settings. Unused allowance doesn't carry over.</li>
+          <li>With Whimbrel AI (the Plus allowance or prepaid credit), request text passes through our server to Anthropic, and the server keeps a count of tokens used, not what was asked. Requests with your own API key go to that provider directly.</li>
+          <li>Want more hosted AI? Top up manually with prepaid credit: you pay what you use plus 30%, and it stops at $0.</li>
+          <li><strong>Coming to Plus, at no extra cost:</strong></li>
           <li>Daily backups and restore</li>
           <li>Open your vault from anywhere</li>
           <li>Push to your phone</li>
         </ul>
-      </article>
-
-      <article class="card plan">
-        <h2>Whimbrel AI</h2>
-        <p class="plan-for">For when you don't want to manage an API key.</p>
-        <p class="price"><span class="amount">$10</span> <span class="per">or $25 of prepaid credit</span></p>
-        <p class="price-note">Plus tax where applicable</p>
-        <a class="btn btn-primary btn-block" href="/download/#register">Buy credit in the app: Settings → AI Providers</a>
-        <ul class="plan-features">
-          <li>Use Claude models without your own API key</li>
-          <li>You pay what you use plus 30%</li>
-          <li>It stops at $0, so there is no surprise bill</li>
-          <li>Credit doesn't expire</li>
-          <li>Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked.</li>
-        </ul>
-      </article>
-
-      <article class="card plan">
-        <p class="plan-badge">Planned</p>
-        <h2>Team</h2>
-        <p class="plan-for">For small teams that share meeting memory.</p>
-        <p class="price"><span class="amount amount-sm">Not yet priced</span></p>
-        <p class="price-note">Per seat, after Cloud</p>
-        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20for%20teams">Tell us about your team</a>
-        <ul class="plan-features">
-          <li><strong>Everything in Cloud, plus:</strong></li>
-          <li>Shared meeting memory, with consent from whoever captured each item</li>
-          <li>Routines that hand work to a teammate</li>
-          <li>One organization AI key for every seat</li>
-          <li>Admin basics and one bill</li>
-        </ul>
-      </article>
-
-      <article class="card plan">
-        <h2>Support</h2>
-        <p class="plan-for">For companies that run Whimbrel themselves.</p>
-        <p class="price"><span class="amount amount-sm">Contract</span></p>
-        <p class="price-note">Self-hosted relay, a person responsible</p>
-        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20support">Talk to us</a>
-        <ul class="plan-features">
-          <li>Help deploying the open-source relay and update feed in your own Cloudflare account</li>
-          <li>Onboarding for your team</li>
-          <li>Your company's own AI keys, or local-only models</li>
-          <li>Work data stays on employee devices and your own infrastructure</li>
-        </ul>
+        <p class="fine muted">Already on Cloud? Your plan continues as it is, and these also come to existing Cloud plans.</p>
       </article>
     </div>
-    <p class="fine muted table-note center">Bring your own API key and Whimbrel adds nothing to what your provider charges. Whimbrel AI is optional prepaid credit at cost plus 30%. <a href="/open-source/">How the open-source model works</a>.</p>
+    <p class="center">Team plans are planned. <a href="mailto:{{site.salesEmail}}?subject=Whimbrel%20for%20teams">Tell us about your team</a>.</p>
+    <p class="center">Self-hosting: run your own relay, free, unlimited. For a person responsible for your deployment, <a href="mailto:{{site.salesEmail}}?subject=Whimbrel%20support">talk to us</a> about support.</p>
+    <p class="fine muted table-note center">Bring your own API key and Whimbrel adds nothing to what your provider charges. Plus includes AI with a monthly allowance; manual top-ups with prepaid credit are at cost plus 30%. <a href="/open-source/">How the open-source model works</a>.</p>
   </div>
 </section>
 
@@ -123,20 +86,20 @@
   <div class="narrow">
     <div class="section-head center">
       <h2>How Whimbrel compares on price</h2>
-      <p class="lede">The plans people pay for in this category start at $14 to $17 a month, with the AI model bundled in. Whimbrel's app is free; you pay your model provider directly, pay Whimbrel AI for what you use plus 30%, or pay nothing with local models.</p>
+      <p class="lede">The plans people pay for in this category start at $14 to $20 a month, with the AI model bundled in. Whimbrel's app is free; you pay your model provider directly, get AI included with Plus, or pay nothing with local models.</p>
     </div>
     <div class="table-wrap">
       <table class="compare">
         <caption class="sr-only">Free and entry paid plans for Whimbrel, Granola, and Littlebird</caption>
         <thead><tr><th scope="col">Product</th><th scope="col">Free plan</th><th scope="col">Entry paid plan</th><th scope="col">Open source</th></tr></thead>
         <tbody>
-          <tr><th scope="row">Whimbrel</th><td class="yes">Every feature, unlimited history</td><td>None needed; Cloud is $5 a month</td><td class="yes">Yes, Apache 2.0</td></tr>
+          <tr><th scope="row">Whimbrel</th><td class="yes">Every feature, unlimited history</td><td>None needed; optional Plus is $15 a month ($144 a year)</td><td class="yes">Yes, Apache 2.0</td></tr>
           <tr><th scope="row">Granola</th><td>30-day meeting history</td><td>Business, $14 per user/month</td><td class="no">No</td></tr>
-          <tr><th scope="row">Littlebird</th><td>Daily usage credits</td><td>Plus, $17/month billed annually</td><td class="no">No</td></tr>
+          <tr><th scope="row">Littlebird</th><td>Daily usage credits</td><td>Plus, $17/month billed annually or $20 monthly</td><td class="no">No</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="fine muted table-note">Competitor prices from their public pricing pages, October 16, 2026. See the <a href="/compare/">full comparison</a>.</p>
+    <p class="fine muted table-note">Competitor prices from their public pricing pages, November 24, 2026. See the <a href="/compare/">full comparison</a>.</p>
   </div>
 </section>
 

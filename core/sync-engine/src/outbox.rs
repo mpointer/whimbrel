@@ -15,8 +15,8 @@ use sync::GroupKey;
 
 use crate::content::{
     all_peers_have_marker, all_peers_items_capable, content_row_aad, insert_with_tag_fallback,
-    outbox_entity_identity, outbox_kind_tag, tag_for, CompactionBudget, ENTITY_TAG_COLUMN_SEEN,
-    KIND_TAG_COLUMN_SEEN,
+    outbox_entity_identity, outbox_kind_tag, outbox_slice_tag, tag_for, CompactionBudget,
+    ENTITY_TAG_COLUMN_SEEN, KIND_TAG_COLUMN_SEEN, SLICE_TAG_COLUMN_SEEN,
     MAX_SKIN_CHUNK_BYTES_PER_PASS, ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_PAGE_CAPABILITY, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
 };
 use crate::SyncEngineError;
@@ -137,6 +137,7 @@ pub(crate) async fn dispatch_outbox_until(
         None
     };
     let mut kind_on = KIND_TAG_COLUMN_SEEN.get();
+    let mut slice_on = SLICE_TAG_COLUMN_SEEN.get();
     let mut compaction = CompactionBudget::default();
     // ponytail: per-pass batching can leak one stale row per entity when SYNC_TIMEOUT hits mid-pass; upgrade path: delete before acknowledging
     let mut tags: Vec<String> = Vec::new();
@@ -247,11 +248,16 @@ pub(crate) async fn dispatch_outbox_until(
                 .zip(outbox_entity_identity(&op))
                 .map(|(epoch, id)| tag_for(group_key, &op.device_id, epoch, &id));
             let kind = if kind_on { outbox_kind_tag(group_key, &op) } else { None };
-            match write_sync_row(conn, group_key, &op, tag.as_deref(), kind.as_deref(), now_unix_ms).await {
-                Ok((receipt, tagged, kind_tagged)) => {
+            let slice = if slice_on { outbox_slice_tag(group_key, &op) } else { None };
+            match write_sync_row(conn, group_key, &op, tag.as_deref(), kind.as_deref(), slice.as_deref(), now_unix_ms).await {
+                Ok((receipt, tagged, kind_tagged, slice_tagged)) => {
                     // The relay has no `kind_tag`: the rest of the pass goes without it.
                     if kind.is_some() && !kind_tagged {
                         kind_on = false;
+                    }
+                    // The relay has no `slice_tag`: the rest of the pass goes without it.
+                    if slice.is_some() && !slice_tagged {
+                        slice_on = false;
                     }
                     #[cfg(test)]
                     if let Some(key) = FORGET_SEED_DURING_WRITE.with(|c| c.borrow_mut().take()) {
@@ -378,16 +384,17 @@ fn deferral_reason(
     }
 }
 
-/// Writes one op's row. The bools are true when it went in with the entity tag / kind tag; a
-/// relay that predates either column gets the INSERT without it.
+/// Writes one op's row. The bools are true when it went in with the entity tag / kind tag / slice tag; a
+/// relay that predates any of the columns gets the INSERT without it.
 async fn write_sync_row(
     conn: &Connection,
     group_key: &GroupKey,
     op: &ClaimedOutboxOperation,
     tag: Option<&str>,
     kind_tag: Option<&str>,
+    slice_tag: Option<&str>,
     now_unix_ms: i64,
-) -> Result<(String, bool, bool), SyncEngineError> {
+) -> Result<(String, bool, bool, bool), SyncEngineError> {
     let aad = content_row_aad(&op.device_id, op.local_seq, &op.row_type);
     let ciphertext = STANDARD.encode(sync::encrypt_payload(group_key, op.payload_json.as_bytes(), &aad));
     let row = [(
@@ -396,15 +403,25 @@ async fn write_sync_row(
         ciphertext,
         tag.map(str::to_string),
         kind_tag.map(str::to_string),
+        slice_tag.map(str::to_string),
     )];
-    let (mut with_entity, mut with_kind) = (tag.is_some(), kind_tag.is_some());
-    insert_with_tag_fallback(conn, &op.device_id, now_unix_ms, &row, &mut with_entity, &mut with_kind)
-        .await
+    let (mut with_entity, mut with_kind, mut with_slice) = (tag.is_some(), kind_tag.is_some(), slice_tag.is_some());
+    insert_with_tag_fallback(
+        conn,
+        &op.device_id,
+        now_unix_ms,
+        &row,
+        &mut with_entity,
+        &mut with_kind,
+        &mut with_slice,
+    )
+    .await
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
     Ok((
         format!("sync_row:{}:{}:{}", op.device_id, op.local_seq, op.row_type),
         with_entity,
         with_kind,
+        with_slice,
     ))
 }
 
@@ -1929,6 +1946,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn outbox_transcript_items_carry_the_slice_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let group_key = GroupKey::generate();
+        let (store_a, meeting_id) = own_store("device-a");
+        store_a
+            .insert_transcript_segments(&[NewTranscriptSegment {
+                meeting_id,
+                start_cs: 0,
+                speaker_label: "Me".into(),
+                text: "pelican".into(),
+            }])
+            .unwrap();
+        store_a.complete_meeting(meeting_id, 2000, None).unwrap();
+
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+
+        let mut rows = conn
+            .query("SELECT slice_tag FROM sync_row WHERE row_type = 'items'", ())
+            .await
+            .unwrap();
+        let tag = rows.next().await.unwrap().unwrap().get::<Option<String>>(0).unwrap();
+        assert!(tag.is_some_and(|t| t.len() == 24), "the transcript item is slice tagged");
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND slice_tag IS NOT NULL", ())
+            .await
+            .unwrap();
+        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn outbox_against_a_relay_without_slice_tag_still_delivers() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ()).await.unwrap();
+        let group_key = GroupKey::generate();
+        let (store_a, meeting_id) = own_store("device-a");
+        store_a
+            .insert_transcript_segments(&[NewTranscriptSegment {
+                meeting_id,
+                start_cs: 0,
+                speaker_label: "Me".into(),
+                text: "pelican".into(),
+            }])
+            .unwrap();
+        store_a.complete_meeting(meeting_id, 2000, None).unwrap();
+
+        let summary = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+
+        assert!(summary.delivered >= 1);
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 1);
+        let tag = sync::kind_tag(&group_key, "transcript");
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag = ?1", params![tag])
+            .await
+            .unwrap();
+        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 1, "kind_tag still written");
+    }
+
+    #[tokio::test]
     async fn a_failing_compaction_delete_never_fails_the_dispatch() {
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::content::tests::compacting_relay(&dir).await;
@@ -3289,7 +3368,7 @@ mod tests {
             .unwrap()
             .remove(0);
         // The worker writes the row; the delete commits before it acknowledges.
-        write_sync_row(&conn, &group_key, &op, None, None, t).await.unwrap();
+        write_sync_row(&conn, &group_key, &op, None, None, None, t).await.unwrap();
         a.forget_seed_topic(&seed.key).unwrap();
         assert!(a.acknowledge_outbox_operation(&op.operation_id, worker, "sync_row:x", t).unwrap());
         assert!(a.take_delivery_if_forgotten(&op, t).unwrap());

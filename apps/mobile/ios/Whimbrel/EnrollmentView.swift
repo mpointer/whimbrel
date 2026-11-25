@@ -44,9 +44,9 @@ struct EnrollmentView: View {
         .background(Color.theme(.backgroundPage))
         .task { await model.resume() }
         .task(id: sync.readRevision) {
-            // Each sync: the plan check (throttled) and a fresh set of pending reminders.
-            await coordinator.refreshPlanIfDue(force: false)
+            // Each sync: a fresh set of pending reminders, and the permission ask if it is still owed.
             await coordinator.reschedule()
+            await coordinator.askPermissionIfNeeded()
         }
         .onAppear(perform: updateSync)
         .onChange(of: model.status) { updateSync() }

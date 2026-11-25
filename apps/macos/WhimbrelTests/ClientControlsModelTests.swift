@@ -423,6 +423,16 @@ final class ClientControlsModelTests: XCTestCase {
         XCTAssertEqual(c.app, "com.apple.Terminal")
     }
 
+    /// A review listing an item a local MCP client added decodes, and says what it is.
+    func testAReviewListingAnAddedItemDecodes() throws {
+        let json = #"{"linked":[],"possible":[{"kind":"mcp_item","id":"12","also_client":null,"date_unix_ms":1,"removed":false,"label":"Renewal notes","excerpt":"Acme wants the discount"}],"possible_truncated":false,"counts":[],"left_for_you":[]}"#
+        let inv = try JSONDecoder().decode(ClientInventory.self, from: Data(json.utf8))
+        XCTAssertEqual(inv.possible.map(\.kind), [.mcpItem])
+        XCTAssertEqual(ClientCopy.singular(.mcpItem), "Added item")
+        XCTAssertEqual(ClientCopy.kind(.mcpItem), "Added items")
+        XCTAssertTrue(ClientCopy.item(inv.possible[0]).hasPrefix("Added item"))
+    }
+
     // MARK: Error states
 
     func testBusyKeepsTheReviewAndTryAgainRuns() async {
@@ -983,5 +993,11 @@ final class TopicsPaneTests: XCTestCase {
     func testALoadThatReturnedNoPageStopsTheSpinner() {
         XCTAssertEqual(TopicsView.pane(selected: 8, shown: nil, answered: .some(8)), .choose)
         XCTAssertEqual(TopicsView.pane(selected: nil, shown: nil, answered: .some(nil)), .choose)
+    }
+
+    func test_asking_on_a_topic_page_asks_about_that_topic() {
+        XCTAssertEqual(WhimbrelTab.topics.askTarget(topicId: 7), .conversation(.topic(7)))
+        // No topic shown yet: the old Ask, as before.
+        XCTAssertEqual(WhimbrelTab.topics.askTarget(topicId: nil), .library)
     }
 }

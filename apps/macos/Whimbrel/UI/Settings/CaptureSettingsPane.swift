@@ -14,6 +14,7 @@ struct CaptureSettingsPane: View {
 
             Toggle("Show screen captures in Library", isOn: $appState.showScreenCaptures)
                 .tint(Color.whimbrelAccentPrimary)
+                .settingsAnchor("capture.screenCaptures")
             Text("Off by default — the Recent tab shows meetings only. Screen-text captures are still recorded and searchable (Keyword/Semantic/Ask); this only controls whether they appear in the Recent list.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
@@ -26,6 +27,7 @@ struct CaptureSettingsPane: View {
             Divider().overlay(Color.whimbrelBorder)
 
             Text("Exclude apps from screen-text capture. Excluded apps' content is never read: the check happens before any Accessibility or OCR extraction, not as a filter afterward.")
+                .settingsAnchor("capture.excludeApps")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -57,6 +59,7 @@ struct CaptureSettingsPane: View {
             Divider().overlay(Color.whimbrelBorder)
 
             Text("Sites never captured")
+                .settingsAnchor("capture.excludeSites")
                 .font(.whimbrelBody(.headline))
                 .foregroundStyle(Color.whimbrelTextPrimary)
             Text("Pages on these sites, and their subdomains, are skipped before any text is read. Works in browsers that expose the page address.")
@@ -116,6 +119,7 @@ private struct HotkeyPanelRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             Text("Hotkey panel")
+                .settingsAnchor("capture.hotkey")
                 .font(.whimbrelBody(.headline))
                 .foregroundStyle(Color.whimbrelTextPrimary)
             Text("Press this shortcut anywhere to ask about the window you are in.")

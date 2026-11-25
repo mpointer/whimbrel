@@ -1,6 +1,6 @@
 // The Thread design system, Windows. Contract: docs/ui-redesign/design-system.md.
 export { WIcon, W_ICON_NAMES, type WIconName } from "./WIcon";
-export { WRoot, WButton, WIconButton, WSpeakerChip, WSearchBar, WFilterChip, WSettingsRow } from "./controls";
+export { WRoot, WButton, WIconButton, WSpeakerChip, WSearchBar, WFilterChip } from "./controls";
 export { WRecordingIndicator, WLevelMeter, WCaptureState, WConsentBanner, recordingName, recordingWord, captureLabel, type WRecordingState } from "./recording";
 export {
   WSidebar,
@@ -15,6 +15,7 @@ export {
   WLoadingState,
   WErrorState,
 } from "./layout";
+export { menuKeyDown, nextMenuIndex } from "./menuKeys";
 export { WTranscriptView, WTranscriptLine, WNoteBlock, WSourceMark, WSourceCard, WActionItemRow } from "./notes";
 export { formatClock, spokenDuration, initials } from "./format";
 export {
@@ -35,3 +36,98 @@ export {
   type WMoreMenuItem,
 } from "./flow";
 export { WSectionLabel, WAskBar, WNextMeeting, type WLabelsVariant, type WAskVariant, type WNextVariant, type WAskBarProps, type WNextMeetingProps } from "./home";
+export {
+  WWindowFrame,
+  WScrollArea,
+  WINDOW_KEYS,
+  isCompactSpace,
+  COMPACT_SLACK_PX,
+  WINDOW_DESIGN,
+  useCompactWindow,
+  type WindowDesign,
+  mainActionOnReturn,
+  type SmallWindowKind,
+  WAppMark,
+  WMenuSection,
+  WRecordingRow,
+  WMemoryControl,
+  memoryControls,
+  windowKeyAction,
+  useWindowKeys,
+  arrowFocusIndex,
+  arrowKeyAction,
+  useArrowKeys,
+  type WWindowFrameProps,
+  type WRecordingRowProps,
+  type WMemoryControlProps,
+} from "./window";
+export {
+  WStatusChip,
+  WNoticeBox,
+  WSettingsNote,
+  WSettingsNav,
+  WSettingsLayout,
+  WSettingsSearchResults,
+  WSettingsCard,
+  WSettingsRow,
+  WSettingsToggleRow,
+  WSettingsSelectRow,
+  WSettingsChoiceRow,
+  WSettingsControlRow,
+  WSettingsStatusRow,
+  WSettingsNumberRow,
+  WSettingsTextRow,
+  WSettingsSecretRow,
+  WSettingsList,
+  WSettingsListRow,
+  WSettingsLinkRow,
+  WSettingsValueList,
+  copyToClipboard,
+  WSettingsProgressRow,
+  WSettingsDisclosure,
+  WSettingsShortcutRow,
+  type WStatusTone,
+  type WStatusChipProps,
+  type WNoticeBoxProps,
+  type WSettingsNavItem,
+  type WSettingsNavProps,
+  type WSettingsSearchResult,
+  type WSettingsSearchResultsProps,
+  type WSettingsCardProps,
+  type WSettingsRowCommon,
+  type WSettingsRowProps,
+  type WSettingsToggleRowProps,
+  type WSettingsSelectOption,
+  type WSettingsSelectRowProps,
+  type WSettingsChoiceRowProps,
+  type WSettingsStatusRowProps,
+  type WSettingsNumberRowProps,
+  type WSettingsTextRowProps,
+  type WSettingsSecretRowProps,
+  type WSettingsListProps,
+  type WSettingsListAdd,
+  type WSettingsListRowProps,
+  type WSettingsLinkRowProps,
+  type WSettingsValueItem,
+  type WSettingsValueListProps,
+  type WSettingsProgressRowProps,
+  type WSettingsDisclosureProps,
+  type WSettingsShortcutRowProps,
+} from "./settings";
+export { WConfirmDialog, WInlineConfirm, type WConfirmDialogProps, type WInlineConfirmProps } from "./confirm";
+export { WSkinCard, WSkinGrid, type WSkinCardProps, type WSkinPalette } from "./skin";
+export {
+  navFocusIndex,
+  parseNumberDraft,
+  commitNumberDraft,
+  secretView,
+  secretToSave,
+  checkAddDraft,
+  trapTabTarget,
+  dialogEnterAction,
+  typedConfirmMatches,
+  breakAtSeparators,
+  DIALOG_FOCUSABLE,
+  type NumberLimits,
+  type NumberProblem,
+} from "./settingsLogic";

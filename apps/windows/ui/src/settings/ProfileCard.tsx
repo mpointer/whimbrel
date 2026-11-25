@@ -117,7 +117,7 @@ export function ProfileCard() {
   const addBlocker = addFactBlocker(view, newFact);
 
   return (
-    <section className="card about" aria-labelledby="profile-heading">
+    <section className="card about" aria-labelledby="profile-heading" data-settings-anchor="profile.profile">
       <h2 id="profile-heading" className="section-label">
         {t("Profile")}
       </h2>

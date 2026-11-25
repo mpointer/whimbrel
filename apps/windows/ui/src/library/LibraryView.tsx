@@ -12,6 +12,7 @@ import type { DeviceTag, LibraryRow } from "../generated/types";
 import { t, useL10n } from "../l10n";
 import { Detail, type Selection } from "./Detail";
 import { fullDateTimeLabel, groupByDay, headline, rowKey, rowTs, rowWhen } from "./rows";
+import { usePausedMeetingId } from "../meetings/usePausedMeetingId";
 
 type Mode = "recent" | "episodes" | "keyword" | "semantic" | "ask" | "digest";
 
@@ -59,6 +60,8 @@ export function LibraryView({
   // The filter of a search that came from Home's chips; it applies to every search here until cleared.
   const [filter, setFilter] = useState<SearchRequest | null>(searchRequest ?? null);
   const [rows, setRows] = useState<LibraryRow[]>([]);
+  // A paused meeting is still stored as recording: its row reads paused.
+  const pausedId = usePausedMeetingId(rows.some((r) => r.kind === "meeting" && r.status === "recording"));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState(searchRequest?.query ?? "");
@@ -246,7 +249,7 @@ export function LibraryView({
             <h3 className="day">{group.day}</h3>
             <ul className="rows">
               {group.rows.map((row) => {
-                const h = headline(row);
+                const h = headline(row, pausedId);
                 const ts = rowTs(row);
                 return (
                   <li key={rowKey(row)}>

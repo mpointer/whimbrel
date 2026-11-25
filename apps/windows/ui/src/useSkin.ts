@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { archetypeOf, imageryOf, type ArchetypeId, type Imagery } from "./today/layoutModel";
-import { installedSkins, currentSelection, resolveSelection, skinRevision, subscribeSkin, type SkinDto, type SkinManifest, type SkinPalette } from "./skin";
+import { installedSkins, currentContrastMore, currentSelection, resolveSelection, skinRevision, subscribeSkin, type SkinDto, type SkinManifest, type SkinPalette } from "./skin";
 
 export interface ShownSkin {
   dto: SkinDto;
@@ -14,6 +14,6 @@ export interface ShownSkin {
 
 export function useSkin(): ShownSkin {
   useSyncExternalStore(subscribeSkin, skinRevision);
-  const { dto, palette } = resolveSelection(installedSkins(), currentSelection());
+  const { dto, palette } = resolveSelection(installedSkins(), currentSelection(), currentContrastMore());
   return { dto, skin: dto.skin, palette, archetype: archetypeOf(dto.skin.today.archetype), imagery: imageryOf(dto.skin, dto.imageScrims) };
 }

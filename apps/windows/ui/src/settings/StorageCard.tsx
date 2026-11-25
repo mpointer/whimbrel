@@ -83,7 +83,7 @@ export function StorageCard() {
   const [total, parts] = footprintLines(view);
 
   return (
-    <section className="card about" aria-labelledby="storage-heading">
+    <section className="card about" aria-labelledby="storage-heading" data-settings-anchor="capture.storage">
       <h2 id="storage-heading" className="section-label">
         {t("Storage")}
       </h2>

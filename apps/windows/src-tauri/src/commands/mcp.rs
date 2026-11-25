@@ -18,8 +18,10 @@ use crate::state::AppState;
 use crate::l10n::tr;
 
 /// The scopes a client can hold, in the order the card lists them. Core checks each tool
-/// against these names; anything else would be a token that opens nothing.
-pub const SCOPES: [&str; 3] = ["memory", "meetings", "transcripts"];
+/// against these names; anything else would be a token that opens nothing. `write` lets a
+/// client add to memory and read nothing; the card does not offer it yet (bridge phase 3 adds
+/// the checkbox and its confirmation), but a client holding it is listed and can be made.
+pub const SCOPES: [&str; 4] = ["memory", "meetings", "transcripts", "write"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -83,8 +85,9 @@ pub fn apply_enabled(
     Ok(server_view(enabled, status))
 }
 
-/// Makes a client token. A blank name, no scopes, or a scope that does not exist is refused.
-pub fn create_client(store: &memory::Store, name: &str, scopes: &[String]) -> Result<McpNewClient, CommandError> {
+/// Makes a client token. A blank name, no scopes, or a scope that does not exist is refused, and
+/// so is `write` unless the user confirmed it (`write_confirmed`).
+pub fn create_client(store: &memory::Store, name: &str, scopes: &[String], write_confirmed: bool) -> Result<McpNewClient, CommandError> {
     let name = name.trim();
     if name.is_empty() {
         return Err(CommandError::invalid_input(tr("Give the client a name.", &[])));
@@ -100,7 +103,12 @@ pub fn create_client(store: &memory::Store, name: &str, scopes: &[String]) -> Re
     if granted.is_empty() {
         return Err(CommandError::invalid_input(tr("Choose what this client may read.", &[])));
     }
-    let made = api::mcp::generate_client_token(store, name, granted).map_err(|e| CommandError::store(e.to_string()))?;
+    let made = api::mcp::generate_client_token(store, name, granted, write_confirmed).map_err(|e| match e {
+        api::mcp::McpTokenError::WriteNotConfirmed => {
+            CommandError::invalid_input(tr("Confirm that this client may add to your memory.", &[]))
+        }
+        e => CommandError::store(e.to_string()),
+    })?;
     Ok(McpNewClient { id: made.id, token: made.token })
 }
 
@@ -183,18 +191,27 @@ pub async fn mcp_clients(state: State<'_, AppState>) -> Result<Vec<McpClientView
 
 #[tauri::command]
 pub async fn mcp_create_client(state: State<'_, AppState>, name: String, scopes: Vec<String>) -> Result<McpNewClient, CommandError> {
-    state.store()?.call(move |s| create_client(s, &name, &scopes)).await?
+    // The webview cannot say the user confirmed Write (security review M8): a page script could
+    // claim it. Bridge phase 3 shows the confirmation as a native dialog from this Rust side and
+    // passes its answer here; until then no Windows client can be made with write.
+    state.store()?.call(move |s| create_client(s, &name, &scopes, false)).await?
 }
 
 #[tauri::command]
-pub async fn mcp_revoke_client(state: State<'_, AppState>, id: i64) -> Result<Vec<McpClientView>, CommandError> {
-    state
-        .store()?
-        .call(move |s| {
-            s.revoke_mcp_client_token(id).map_err(|e| CommandError::store(e.to_string()))?;
-            client_views(s)
-        })
-        .await?
+pub async fn mcp_revoke_client(
+    state: State<'_, AppState>,
+    id: i64,
+    delete_items: Option<bool>,
+) -> Result<Vec<McpClientView>, CommandError> {
+    let delete_items = delete_items.unwrap_or(false);
+    state.store()?.call(move |s| revoke_client(s, id, delete_items)).await?
+}
+
+/// Revokes a client and, with `delete_items`, deletes everything it added, in one transaction (core's
+/// `api::mcp::revoke_client_token`). Returns the client list.
+pub fn revoke_client(store: &memory::Store, id: i64, delete_items: bool) -> Result<Vec<McpClientView>, CommandError> {
+    api::mcp::revoke_client_token(store, id, delete_items).map_err(|e| CommandError::store(e.to_string()))?;
+    client_views(store)
 }
 
 #[cfg(test)]
@@ -216,7 +233,7 @@ mod tests {
     #[test]
     fn a_new_client_gets_its_token_once_and_the_list_never_shows_it() {
         let store = Store::open_in_memory().unwrap();
-        let made = create_client(&store, "  Claude Desktop ", &strings(&["memory"])).unwrap();
+        let made = create_client(&store, "  Claude Desktop ", &strings(&["memory"]), false).unwrap();
         assert!(made.token.starts_with(&format!("kmcp_{}.", made.id)), "{}", made.token);
 
         let listed = client_views(&store).unwrap();
@@ -230,7 +247,7 @@ mod tests {
     #[test]
     fn scopes_are_kept_in_the_cards_order_once_each() {
         let store = Store::open_in_memory().unwrap();
-        create_client(&store, "a", &strings(&["transcripts", "memory", "memory"])).unwrap();
+        create_client(&store, "a", &strings(&["transcripts", "memory", "memory"]), false).unwrap();
         assert_eq!(client_views(&store).unwrap()[0].scopes, ["memory", "transcripts"]);
     }
 
@@ -238,19 +255,31 @@ mod tests {
     fn a_client_needs_a_name_and_a_real_scope() {
         let store = Store::open_in_memory().unwrap();
         let message = |r: Result<McpNewClient, CommandError>| r.unwrap_err().to_string();
-        assert!(message(create_client(&store, "   ", &strings(&["memory"]))).contains("name"));
-        assert!(message(create_client(&store, "x", &[])).contains("what this client may read"));
-        assert!(message(create_client(&store, "x", &strings(&["admin"]))).contains("admin"));
-        assert!(message(create_client(&store, "x", &strings(&["memory", "everything"]))).contains("everything"));
-        assert!(message(create_client(&store, &"n".repeat(61), &strings(&["memory"]))).contains("60"));
+        assert!(message(create_client(&store, "   ", &strings(&["memory"]), false)).contains("name"));
+        assert!(message(create_client(&store, "x", &[], false)).contains("what this client may read"));
+        assert!(message(create_client(&store, "x", &strings(&["admin"]), false)).contains("admin"));
+        assert!(message(create_client(&store, "x", &strings(&["memory", "everything"]), false)).contains("everything"));
+        assert!(message(create_client(&store, &"n".repeat(61), &strings(&["memory"]), false)).contains("60"));
         assert!(client_views(&store).unwrap().is_empty(), "nothing was made");
+    }
+
+    #[test]
+    fn a_write_client_needs_the_confirmation() {
+        let store = Store::open_in_memory().unwrap();
+        let refused = create_client(&store, "Sync", &strings(&["write"]), false).unwrap_err().to_string();
+        assert!(refused.contains("Confirm that this client may add to your memory."), "{refused}");
+        assert!(client_views(&store).unwrap().is_empty(), "nothing was made");
+        create_client(&store, "Sync", &strings(&["write"]), true).unwrap();
+        assert_eq!(client_views(&store).unwrap()[0].scopes, ["write"]);
+        create_client(&store, "Both", &strings(&["write", "memory"]), true).unwrap();
+        assert_eq!(client_views(&store).unwrap()[0].scopes, ["memory", "write"]);
     }
 
     #[test]
     fn revoking_marks_the_client_and_leaves_the_others() {
         let store = Store::open_in_memory().unwrap();
-        let a = create_client(&store, "a", &strings(&["memory"])).unwrap();
-        let b = create_client(&store, "b", &strings(&["meetings"])).unwrap();
+        let a = create_client(&store, "a", &strings(&["memory"]), false).unwrap();
+        let b = create_client(&store, "b", &strings(&["meetings"]), false).unwrap();
         store.revoke_mcp_client_token(a.id).unwrap();
         let listed = client_views(&store).unwrap();
         let by_id = |id: i64| listed.iter().find(|c| c.id == id).unwrap();
@@ -259,10 +288,34 @@ mod tests {
     }
 
     #[test]
+    fn revoking_with_delete_removes_what_the_client_added() {
+        let store = Store::open_in_memory().unwrap();
+        let a = create_client(&store, "Sync", &strings(&["write"]), true).unwrap();
+        let item = memory::mcp_items::NewMcpItem {
+            label: "outlook-work".into(),
+            external_id: "x".into(),
+            kind: "note".into(),
+            ts: "2026-11-21T14:03:00Z".into(),
+            title: None,
+            text: "notes".into(),
+            url: None,
+            people: vec![],
+        };
+        let w = memory::mcp_items::McpWriter { token_id: a.id, client_name: "Sync".into() };
+        let now = 1_800_000_000_000;
+        store.upsert_mcp_items(&w, &[item], &Default::default(), memory::mcp_items::local_write_clock(now)).unwrap();
+        let listed = revoke_client(&store, a.id, true).unwrap();
+        assert!(listed[0].revoked_unix_ms.is_some());
+        assert!(store.mcp_item_id(a.id, "outlook-work", "x").unwrap().is_none(), "its items went with it");
+        let b = create_client(&store, "Reader", &strings(&["memory"]), false).unwrap();
+        revoke_client(&store, b.id, false).unwrap();
+    }
+
+    #[test]
     fn the_newest_client_is_listed_first() {
         let store = Store::open_in_memory().unwrap();
-        create_client(&store, "first", &strings(&["memory"])).unwrap();
-        create_client(&store, "second", &strings(&["memory"])).unwrap();
+        create_client(&store, "first", &strings(&["memory"]), false).unwrap();
+        create_client(&store, "second", &strings(&["memory"]), false).unwrap();
         assert_eq!(client_views(&store).unwrap()[0].name, "second");
     }
 

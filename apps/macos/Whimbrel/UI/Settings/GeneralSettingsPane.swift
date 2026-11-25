@@ -38,6 +38,7 @@ struct GeneralSettingsPane: View {
                 Text("Automatic").tag("")
                 ForEach(AppLanguage.shipped, id: \.self) { Text(verbatim: languageName($0)).tag($0) }
             }
+            .settingsAnchor("general.language")
             .onChange(of: languageOverride) { _, tag in
                 AppLanguage.setOverride(tag.isEmpty ? nil : tag)
                 languageChanged = true
@@ -50,6 +51,7 @@ struct GeneralSettingsPane: View {
                 Text("Same as app language").tag("")
                 ForEach(AppLanguage.writeInOptions, id: \.self) { Text(verbatim: languageName($0)).tag($0) }
             }
+            .settingsAnchor("general.writeIn")
             Text("Routines run on your primary device and write in that device's language.")
                 .font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextSecondary)
             if let weak = localModelNote {
@@ -78,7 +80,7 @@ struct GeneralSettingsPane: View {
     private var updateRow: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             HStack {
-                Button("Check for Updates") { Task { await appState.updateChecker.checkNow() } }
+                Button("Check for Updates") { Task { await appState.updateChecker.checkNow() } }.settingsAnchor("general.update")
                     .disabled(updateBusy)
                 if let line = statusLine {
                     Text(line).font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextSecondary)

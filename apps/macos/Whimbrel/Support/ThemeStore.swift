@@ -4,6 +4,9 @@ import AppKit
 import UIKit
 #endif
 import SwiftUI
+#if canImport(WhimbrelUI)
+import WhimbrelUI
+#endif
 
 /// The installed themes and the selected one. Colors read it at render time (from any thread,
 /// hence the lock); `select`/`install` are called on the main thread and bump `revision`, which
@@ -94,8 +97,17 @@ extension Color {
     /// light or dark variant that matches the appearance it is drawn in.
     static func theme(_ token: ThemeToken) -> Color {
         Color(NSColor(name: nil, dynamicProvider: { appearance in
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return NSColor(srgbHex: ThemeStore.shared.hex(token, isDark: isDark))
+            let match = appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
+            let isDark = match == .darkAqua || match == .accessibilityHighContrastDarkAqua
+            var hex = ThemeStore.shared.hex(token, isDark: isDark)
+            #if canImport(WhimbrelUI)
+            // Increase Contrast shows up as the appearance's high contrast names; the old screens' colors then follow Thread's high
+            // contrast palette, whatever skin is picked, the same as the redesign screens (`WContrastPalette`). The iOS app compiles
+            // this file without the Mac package, and has no skins, so it keeps the line above.
+            let increased = match == .accessibilityHighContrastAqua || match == .accessibilityHighContrastDarkAqua
+            hex = WContrastPalette.hex(token: token.rawValue, skin: hex, isDark: isDark, increased: increased)
+            #endif
+            return NSColor(srgbHex: hex)
         }))
     }
 }

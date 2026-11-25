@@ -81,7 +81,8 @@ fn hide(app: &AppHandle) {
 }
 
 fn open(app: &AppHandle) -> tauri::Result<()> {
-    let (w, h) = SIZE;
+    let redesign = app.state::<crate::state::AppState>().settings.lock().unwrap().redesign_enabled();
+    let (w, h) = crate::text_scale::size_for_look(SIZE, redesign);
     let popup = WebviewWindowBuilder::new(app, DISK_ALERT, WebviewUrl::App("index.html".into()))
         .title(tr("Your disk is almost full", &[]))
         .inner_size(w, h)
@@ -92,6 +93,11 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
         .focused(false)
         .visible(false)
         .build()?;
+    if redesign {
+        crate::text_scale::place_corner_alert(app, &popup, (w, h), MARGIN)?;
+        crate::text_scale::show_corner_alert(&popup)?;
+        return Ok(());
+    }
     if let Some(monitor) = popup.primary_monitor()? {
         let scale = monitor.scale_factor();
         let area = monitor.work_area();
@@ -101,7 +107,7 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
             (MARGIN * scale).round() as i32,
         );
         // Below whichever alerts are up.
-        for (label, height) in [(crate::alert::ALERT, 190.0), (crate::question_alert::QUESTION_ALERT, 210.0), (crate::budget_alert::BUDGET_ALERT, 170.0)] {
+        for (label, height) in [(crate::alert::ALERT, crate::alert::alert_height(app)), (crate::question_alert::QUESTION_ALERT, 210.0), (crate::budget_alert::BUDGET_ALERT, 170.0)] {
             if app.get_webview_window(label).is_some() {
                 y += ((height + MARGIN) * scale).round() as i32;
             }

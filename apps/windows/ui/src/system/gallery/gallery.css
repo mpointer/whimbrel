@@ -85,6 +85,10 @@
   gap: var(--w-space-sm);
   align-items: center;
 }
+/* A window shorter than its content: the lines scroll, with the cue, and the actions stay. */
+.g-window.g-window-short .w-win-root {
+  height: 170px;
+}
 .g-stack {
   display: flex;
   flex-direction: column;
@@ -201,4 +205,48 @@
 }
 .g-dialog-host .w-dialog-scrim {
   position: absolute;
+}
+
+/* Small windows are drawn at a window's width; their frame fills a fixed height in the app, so here it sizes to its content. */
+.g-window {
+  width: 22.5rem;
+  max-width: 100%;
+}
+.g-window .w-win-root {
+  height: auto;
+}
+.g-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-lg);
+}
+
+/* Settings parts */
+.g-frame {
+  padding: var(--w-space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--w-radius-surface);
+  background: var(--color-background-page);
+}
+.g-frame-wide {
+  width: min(100%, 56rem);
+}
+.g-frame-narrow {
+  width: min(100%, 30rem);
+}
+.g-skin-prev {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, var(--color-accent-primary) 0 40%, var(--color-background-page) 40% 100%);
+}
+.g-dialog-tall {
+  min-height: 32rem;
+}
+.g-pad {
+  padding: var(--w-space-lg);
+}
+
+.g-main[hidden] {
+  display: none;
 }

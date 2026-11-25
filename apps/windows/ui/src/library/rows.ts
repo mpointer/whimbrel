@@ -138,18 +138,22 @@ export interface Headline {
   meta: string;
 }
 
-export function headline(row: LibraryRow): Headline {
+/** `pausedId` is the meeting whose recording is paused (`pausedMeetingId`): its stored "recording" reads "paused". */
+export function headline(row: LibraryRow, pausedId: number | null = null): Headline {
   switch (row.kind) {
     case "capture":
       return { title: row.title || row.app, meta: row.source === "ocr" ? t("{app} · OCR", { app: row.app }) : row.app };
-    case "meeting":
-      // The status is core's value ("completed", "recording"), shown as stored.
+    case "meeting": {
+      // The status is core's value ("completed", "recording"), shown as stored, except that a paused meeting is still
+      // stored as "recording" and reads "paused".
+      const status = row.status === "recording" && pausedId != null && row.id === pausedId ? "paused" : row.status;
       return {
         title: row.title ? meetingTitleLabel(row.title) : t("Untitled meeting"),
         meta: row.hasSummary
-          ? t("Meeting · {status} · summary", { status: row.status })
-          : t("Meeting · {status}", { status: row.status }),
+          ? t("Meeting · {status} · summary", { status })
+          : t("Meeting · {status}", { status }),
       };
+    }
     case "episode":
       return {
         title: row.title || row.app,

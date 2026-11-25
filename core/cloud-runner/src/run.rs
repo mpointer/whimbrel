@@ -18,6 +18,9 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::TimeZone;
 use sync_engine::{PullOptions, RunnerPullReport, SettingsField};
 
+mod backfill;
+pub use backfill::{backfill_once, BackfillReport};
+
 use api::routine_runs::{RunGate, RunnerRole};
 pub use api::routing::Transport;
 
@@ -162,6 +165,8 @@ pub enum RunnerError {
     Dispatch,
     /// The heartbeat could not be written.
     Heartbeat,
+    /// The history backfill failed (a relay error or timeout); what it tagged before stays tagged.
+    Backfill,
 }
 
 impl std::fmt::Display for RunnerError {
@@ -192,6 +197,7 @@ impl std::fmt::Display for RunnerError {
             }
             RunnerError::Dispatch => f.write_str("could not send the results"),
             RunnerError::Heartbeat => f.write_str("could not write the heartbeat"),
+            RunnerError::Backfill => f.write_str("the history backfill failed"),
         }
     }
 }
@@ -340,14 +346,8 @@ fn content_round(
     let pulled = relay.pull(&store, &options)?;
     report.rows_pulled = pulled.rows_applied;
     // Counts only, so an operator can see what a run cost and why a pull ended early.
-    eprintln!(
-        "whimbrel-cloud-runner: pull rounds={} fetched={} applied={} complete={} elapsed_ms={}",
-        pulled.rounds,
-        pulled.rows_fetched,
-        pulled.rows_applied,
-        pulled.complete,
-        pull_started.elapsed().as_millis()
-    );
+    eprintln!("{}", pull_totals_line(&pulled, pull_started.elapsed().as_millis()));
+    eprintln!("{}", pull_by_type_line(&pulled));
     let filed = file_pulled_rows(&store);
     // A brief built while the settings are unknown would read as "no activity" (every item left out),
     // not as a refusal, so nothing runs: the person's computer runs it after its grace period.
@@ -362,6 +362,46 @@ fn content_round(
     let outcome = run_routines(&store, device_id, now_ms, policy, &templates, &routing, &events, opts, report);
     let sent = relay.dispatch(&store);
     outcome.and(sent)
+}
+
+/// The pull's first stderr line (`scripts/runner-gate-report.py` parses it): totals only.
+fn pull_totals_line(pulled: &RunnerPullReport, elapsed_ms: u128) -> String {
+    format!(
+        "whimbrel-cloud-runner: pull rounds={} fetched={} applied={} complete={} elapsed_ms={}",
+        pulled.rounds, pulled.rows_fetched, pulled.rows_applied, pulled.complete, elapsed_ms
+    )
+}
+
+/// The pull's second stderr line: rows fetched and applied per row type (dropped is fetched minus applied),
+/// why fetched rows were not applied, how many slice tags the `items` query carried, and where the time went.
+/// Digits, fixed type names and separators only.
+fn pull_by_type_line(pulled: &RunnerPullReport) -> String {
+    let types: Vec<String> = sync_engine::PULL_TYPE_NAMES
+        .iter()
+        .zip(pulled.by_type)
+        .filter(|(_, c)| c.fetched > 0 || c.applied > 0)
+        .map(|(name, c)| format!("{name} fetched={} applied={}", c.fetched, c.applied))
+        .collect();
+    format!(
+        "whimbrel-cloud-runner: pull by type {} ; own_results={} already_applied={} undecodable={} skipped_allowlist={} skipped_window={} (items: mcp={} kind={} google_calendar={} window={}) refetch={} deferred={} slice_tags={} ; fetch_ms={} apply_ms={} max_round_ms={} pull_index={}",
+        if types.is_empty() { "none".to_string() } else { types.join(" | ") },
+        pulled.own_results_applied,
+        pulled.already_applied,
+        pulled.undecodable,
+        pulled.skipped_allowlist,
+        pulled.skipped_window,
+        pulled.skip_mcp,
+        pulled.skip_kind,
+        pulled.skip_google_cal,
+        pulled.skip_item_window,
+        pulled.refetch,
+        pulled.deferred,
+        pulled.slice_tags,
+        pulled.fetch_ms,
+        pulled.apply_ms,
+        pulled.max_round_ms,
+        if pulled.pull_index { "on" } else { "off" }
+    )
 }
 
 /// Which of the four reasons stops the run before any hosted call, or `Ok` when the client settings
@@ -859,16 +899,16 @@ mod tests {
         relay.peer_round(&peer);
         if all_untagged {
             relay.rt.block_on(async {
-                relay.conn.execute("UPDATE sync_row SET kind_tag = NULL", ()).await.unwrap();
+                relay.conn.execute("UPDATE sync_row SET kind_tag = NULL, slice_tag = NULL", ()).await.unwrap();
             });
         } else {
             relay.rt.block_on(async {
-                // Two captures stay untagged, as rows no backfill has reached yet.
+                // Two captures stay untagged (neither tag), as rows no backfill has reached yet.
                 let tag = sync::kind_tag(&relay.key, "capture");
                 relay
                     .conn
                     .execute(
-                        "UPDATE sync_row SET kind_tag = NULL WHERE rowid IN \
+                        "UPDATE sync_row SET kind_tag = NULL, slice_tag = NULL WHERE rowid IN \
                          (SELECT rowid FROM sync_row WHERE row_type = 'items' AND kind_tag = ?1 LIMIT 2)",
                         libsql::params![tag],
                     )
@@ -884,6 +924,75 @@ mod tests {
         let store = scratch_store(RUNNER).unwrap();
         let report = relay.pull(&store, &pull_options(&[memory::RoutineTemplate::DailyBrief])).unwrap();
         (report, store)
+    }
+
+    #[test]
+    fn the_pull_lines_are_counts_and_fixed_names_and_the_totals_line_is_unchanged() {
+        let mut by_type = [sync_engine::PullTypeCounts::default(); sync_engine::PULL_TYPE_NAMES.len()];
+        by_type[0] = sync_engine::PullTypeCounts { fetched: 400, applied: 12 };
+        by_type[1] = sync_engine::PullTypeCounts { fetched: 5, applied: 5 };
+        by_type[6] = sync_engine::PullTypeCounts { fetched: 2, applied: 2 };
+        let report = RunnerPullReport {
+            rounds: 86,
+            rows_fetched: 407,
+            rows_applied: 19,
+            complete: false,
+            by_type,
+            own_results_applied: 0,
+            already_applied: 3,
+            undecodable: 1,
+            skipped_allowlist: 300,
+            skipped_window: 80,
+            skip_mcp: 1,
+            skip_kind: 2,
+            skip_google_cal: 297,
+            skip_item_window: 70,
+            refetch: 7,
+            deferred: 4,
+            fetch_ms: 1234,
+            apply_ms: 567,
+            max_round_ms: 8910,
+            slice_tags: 41,
+            pull_index: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            pull_totals_line(&report, 425035),
+            "whimbrel-cloud-runner: pull rounds=86 fetched=407 applied=19 complete=false elapsed_ms=425035"
+        );
+        let line = pull_by_type_line(&report);
+        assert!(line.starts_with("whimbrel-cloud-runner: pull by type items fetched=400 applied=12 | meeting fetched=5 applied=5 | tombstone fetched=2 applied=2 ;"), "{line}");
+        assert!(line.ends_with("fetch_ms=1234 apply_ms=567 max_round_ms=8910 pull_index=on"), "{line}");
+        assert!(line.contains(" refetch=7 deferred=4 slice_tags=41 ; fetch_ms="), "{line}");
+        // Only fixed words, digits and separators: no relay-supplied text.
+        let mut rest = line.strip_prefix("whimbrel-cloud-runner: pull by type ").unwrap().to_string();
+        let mut words: Vec<&str> = sync_engine::PULL_TYPE_NAMES.to_vec();
+        words.extend(["fetched", "applied", "none", "own_results", "already_applied", "undecodable", "skipped_allowlist", "skipped_window", "items", "mcp", "kind", "google_calendar", "window", "refetch", "deferred", "slice_tags", "fetch_ms", "apply_ms", "max_round_ms", "pull_index", "on", "off"]);
+        words.sort_by_key(|w| std::cmp::Reverse(w.len()));
+        for word in words {
+            rest = rest.replace(word, "");
+        }
+        assert!(rest.chars().all(|c| c.is_ascii_digit() || " =|;():".contains(c)), "{rest}");
+        // Nothing fetched at all still prints a well-formed line.
+        assert!(pull_by_type_line(&RunnerPullReport::default()).contains("pull by type none ;"));
+        assert!(pull_by_type_line(&RunnerPullReport::default()).ends_with(" pull_index=off"));
+    }
+
+    #[test]
+    fn the_by_type_line_says_pull_index_on_only_when_the_relay_has_the_indexes() {
+        let now = now_ms();
+        let relay = mixed_tag_relay(now, false);
+        let (without, _) = pull_only(&relay);
+        assert!(!without.pull_index);
+        assert!(pull_by_type_line(&without).ends_with(" pull_index=off"));
+        relay.rt.block_on(async {
+            relay.conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_row_slice ON sync_row(device_id, slice_tag, local_seq) WHERE row_type = 'items'", ()).await.unwrap();
+            relay.conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'items'", ()).await.unwrap();
+        });
+        let (with, _) = pull_only(&relay);
+        assert!(with.pull_index, "the indexed fetch ran");
+        assert!(pull_by_type_line(&with).ends_with(" pull_index=on"));
+        assert_eq!(with.rows_fetched, without.rows_fetched);
     }
 
     #[test]
@@ -903,6 +1012,8 @@ mod tests {
             unfiltered.rows_fetched
         );
         assert_eq!(unfiltered.rows_fetched - filtered.rows_fetched, 4, "the four tagged captures are skipped at the relay");
+        assert!(filtered.slice_tags > 0, "the runner's query carries slice tags");
+        assert!(filtered.slice_tags < 900);
         let meetings = |s: &memory::Store| s.recent_meetings(10).unwrap().len();
         assert_eq!(meetings(&filtered_store), meetings(&unfiltered_store));
         // The whole run completes on the tagged relay and writes the brief from the same meeting.

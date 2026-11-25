@@ -812,6 +812,7 @@ enum ClientCopy {
         case .step: String(localized: "Steps")
         case .vaultNote: String(localized: "Vault notes")
         case .exportFolder: String(localized: "Export folders")
+        case .mcpItem: String(localized: "Added items")
         }
     }
 
@@ -841,6 +842,7 @@ enum ClientCopy {
         case .step: String(localized: "Step")
         case .vaultNote: String(localized: "Vault note")
         case .exportFolder: String(localized: "Export folder")
+        case .mcpItem: String(localized: "Added item")
         }
     }
 

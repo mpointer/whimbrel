@@ -160,6 +160,17 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<crate::hotkey_panel::HotkeyStatus>();
     generator.subschema_for::<crate::hotkey_panel::HotkeyPanelRead>();
     generator.subschema_for::<super::window_ask::WindowAskReply>();
+    generator.subschema_for::<super::find::FindFilterInput>();
+    generator.subschema_for::<super::find::FindOrderInput>();
+    generator.subschema_for::<super::find::FoundPage>();
+    generator.subschema_for::<super::find::SourcedConversationView>();
+    generator.subschema_for::<super::find::RoutePreviewView>();
+    generator.subschema_for::<super::conversations::ConversationScopeView>();
+    generator.subschema_for::<super::conversations::ConversationListRow>();
+    generator.subschema_for::<super::conversations::SavedExchangeInput>();
+    generator.subschema_for::<super::conversations::SavedExchangeResult>();
+    generator.subschema_for::<super::conversations::ConversationTopicView>();
+    generator.subschema_for::<super::conversations::ConversationPageView>();
     let mut definitions: Map<String, Value> = generator.definitions().clone().into_iter().collect();
     for schema in definitions.values_mut() {
         ref_siblings_to_all_of(schema);

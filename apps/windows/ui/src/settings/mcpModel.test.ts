@@ -9,6 +9,7 @@ import {
   scopes,
   serverLine,
   toggleScope,
+  WRITE_SCOPE,
 } from "./mcpModel";
 
 const SCOPES = scopes();
@@ -85,6 +86,18 @@ describe("making a client", () => {
     expect(canCreate("Claude Desktop", [])).toBe(false);
   });
 
+  it("allows a write-only client, which the sync skill uses", () => {
+    expect(canCreate("Sync", ["write"])).toBe(true);
+    expect(canCreate("Sync", [])).toBe(false);
+    expect(toggleScope([], "write")).toEqual(["write"]);
+    expect(toggleScope(["write"], "memory")).toEqual(["memory", "write"]);
+    expect(WRITE_SCOPE).toBe("write");
+  });
+
+  it("does not offer write on the card yet", () => {
+    expect(scopes().map((s) => s.id)).toEqual(["memory", "meetings", "transcripts"]);
+  });
+
   it("adds and removes a permission, keeping the card's order", () => {
     expect(toggleScope([], "transcripts")).toEqual(["transcripts"]);
     expect(toggleScope(["transcripts"], "memory")).toEqual(["memory", "transcripts"]);
@@ -96,6 +109,15 @@ describe("the client list", () => {
   it("lists what it may read and when it was made", () => {
     const line = clientLine({ id: 1, name: "a", scopes: ["memory", "meetings"], createdUnixMs: new Date(2026, 9, 16, 9, 0).getTime(), revokedUnixMs: null }, "en");
     expect(line).toMatch(/^Can read: memory, meetings · made /);
+  });
+
+  it("names write apart from what it may read", () => {
+    const made = new Date(2026, 9, 16, 9, 0).getTime();
+    const writeOnly = clientLine({ id: 1, name: "a", scopes: ["write"], createdUnixMs: made, revokedUnixMs: null }, "en");
+    expect(writeOnly).toMatch(/^Write only · made /);
+    expect(writeOnly).not.toContain("Can read");
+    const both = clientLine({ id: 1, name: "a", scopes: ["memory", "write"], createdUnixMs: made, revokedUnixMs: null }, "en");
+    expect(both).toMatch(/^Can read: memory · Write · made /);
   });
 
   it("says when access was revoked", () => {

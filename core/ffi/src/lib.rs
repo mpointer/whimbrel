@@ -17,6 +17,7 @@ use api::routing::RoutingConfig;
 pub(crate) use api::util::now_unix_ms;
 use memory::Store;
 
+mod ask_sourced_ffi;
 mod client_controls_ffi;
 mod cloud_routines_ffi;
 mod connectors_ffi;
@@ -1158,6 +1159,41 @@ pub extern "C" fn whimbrel_llm_prepare_ask(
     let call = api::routing::LimitedUseSettings::from_routing_json_str(cstr_to_string(routing_config_json).as_deref());
     let store = unsafe { &(*handle).0 };
     let result = api::ask::prepare_ask_for(store, &query, context_limit, &history, &routing, &call);
+    match envelope_json(&result) {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
+    }
+}
+
+/// The topic-scoped counterpart of `whimbrel_llm_prepare_ask`: retrieval keeps only items in
+/// the topic `topic_id`. Same arguments (after the handle and `topic_id`), envelope and
+/// `prepare_id` contract as `whimbrel_llm_prepare_ask`; the success data adds `scope_empty`,
+/// true when nothing in the topic matched (then nothing was stashed or sent, and `prepare_id`
+/// and `prompt` are empty). NULL on a null handle or malformed arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_llm_prepare_ask_in_topic(
+    handle: *mut StoreHandle,
+    topic_id: i64,
+    query: *const c_char,
+    context_limit: usize,
+    history_json: *const c_char,
+    routing_config_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(query) = cstr_to_string(query) else {
+        return ptr::null_mut();
+    };
+    let Some(history) = parse_history_json(history_json) else {
+        return ptr::null_mut();
+    };
+    let routing = parse_routing_config(routing_config_json);
+    // Limited Use: this call's own streamed Ollama model and host decide, as for
+    // `whimbrel_llm_prepare_ask`.
+    let call = api::routing::LimitedUseSettings::from_routing_json_str(cstr_to_string(routing_config_json).as_deref());
+    let store = unsafe { &(*handle).0 };
+    let result = api::ask::prepare_ask_in_topic_for(store, topic_id, &query, context_limit, &history, &routing, &call);
     match envelope_json(&result) {
         Some(json) => json_to_c_string(json),
         None => ptr::null_mut(),
@@ -3656,6 +3692,32 @@ pub extern "C" fn whimbrel_conversations_create(
     json_to_c_string(format!("{{\"id\":{id}}}"))
 }
 
+/// `whimbrel_conversations_create` for a Find conversation: the row is made with the filters it was asked under
+/// (`filter_json` in `whimbrel_conversation_set_find_filter`'s shape; a person is never kept) in the same write.
+/// Same JSON as `whimbrel_conversations_create`. NULL on a null/invalid handle, a null or malformed argument, or a DB
+/// error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversations_create_with_find_filter(
+    handle: *mut StoreHandle,
+    first_query: *const c_char,
+    filter_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(first_query), Some(filter_json)) = (cstr_to_string(first_query), cstr_to_string(filter_json)) else {
+        return ptr::null_mut();
+    };
+    let Ok(filter) = serde_json::from_str::<memory::SavedFindFilter>(&filter_json) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    let Ok(id) = store.insert_conversation_with_find_filter(&first_query, now_unix_ms(), &filter) else {
+        return ptr::null_mut();
+    };
+    json_to_c_string(format!("{{\"id\":{id}}}"))
+}
+
 /// Appends one exchange to an existing conversation and bumps its `updated_at_unix_ms`.
 /// `citations_json` is stored as-is (already-serialized JSON from the Swift side).
 /// `model` is the model that answered; NULL stores none.
@@ -3806,6 +3868,294 @@ pub extern "C" fn whimbrel_conversations_delete(
     }
     let store = unsafe { &(*handle).0 };
     store.delete_conversation(conversation_id).unwrap_or(false)
+}
+
+/// Sets what a conversation's Ask answers from. `scope_json` is `{"kind":"everything"}`,
+/// `{"kind":"topic","id":N}` or `{"kind":"meeting","id":N}`. Returns `true` on success,
+/// `false` on a null/invalid handle, null or malformed `scope_json`, or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_set_scope(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+    scope_json: *const c_char,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(scope_json) = cstr_to_string(scope_json) else {
+        return false;
+    };
+    let Ok(scope) = serde_json::from_str::<memory::ConversationScope>(&scope_json) else {
+        return false;
+    };
+    let store = unsafe { &(*handle).0 };
+    store.set_conversation_scope(conversation_id, &scope).is_ok()
+}
+
+/// A conversation's scope as JSON (`{"kind":"everything"}` for a new or unknown
+/// conversation). NULL on a null/invalid handle or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_scope(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(scope) = store.conversation_scope(conversation_id) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&scope) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Keeps the Find filters an everything conversation was asked under (`memory::SavedFindFilter`:
+/// `start_unix_ms`, `end_unix_ms`, `app_bundle_id`, `people_left_out`; any person sent along is
+/// ignored). An empty filter clears them. False on a null/invalid handle, null or malformed JSON, a
+/// missing conversation, one scoped to a topic or meeting, or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_set_find_filter(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+    filter_json: *const c_char,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(filter_json) = cstr_to_string(filter_json) else {
+        return false;
+    };
+    let Ok(filter) = serde_json::from_str::<memory::SavedFindFilter>(&filter_json) else {
+        return false;
+    };
+    let store = unsafe { &(*handle).0 };
+    store.set_conversation_find_filter(conversation_id, &filter).unwrap_or(false)
+}
+
+/// The Find filters an everything conversation was asked under, as JSON in
+/// `whimbrel_conversation_set_find_filter`'s shape. NULL when there are none (or the conversation is
+/// scoped to a topic or meeting), on a null/invalid handle or on a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_find_filter(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(Some(filter)) = store.conversation_find_filter(conversation_id) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&filter) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// The scope a conversation's next question is asked with, as JSON in
+/// `whimbrel_conversation_scope`'s shape: a topic followed through merges to the topic it
+/// became, and a topic or meeting that no longer exists read as `{"kind":"everything"}`. The
+/// stored scope is unchanged. NULL on a null/invalid handle or a DB error (never a wider scope).
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_resolved_scope(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(scope) = store.resolved_conversation_scope(conversation_id) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&scope) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Links a conversation to a topic, or clears the link when `topic_id` is negative.
+/// `by_user` records whether the user chose it (a user's choice, including removal, is never
+/// overridden by `whimbrel_conversation_auto_topic`). Returns `true` on success, `false` on a
+/// null/invalid handle or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_set_topic(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+    topic_id: i64,
+    by_user: bool,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let store = unsafe { &(*handle).0 };
+    let topic = (topic_id >= 0).then_some(topic_id);
+    store.set_conversation_topic(conversation_id, topic, by_user).is_ok()
+}
+
+/// A conversation's topic link as JSON `{"topic": {"topic_id","key","name"} | null,
+/// "set_by_user": bool}`. NULL on a null/invalid handle or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_topic(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(link) = store.conversation_topic(conversation_id) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&link) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Attaches a conversation to the topic most of its cited items belong to, unless the user
+/// already chose. Returns the `TopicRef` JSON `{"topic_id","key","name"}` now linked, or the
+/// JSON text `null` when none. NULL on a null/invalid handle, an unknown conversation, or a
+/// DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_auto_topic(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(topic) = api::conversations::auto_attach_topic(store, conversation_id) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&topic) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Whether a saved Ask exchange touches an excluded client's material, so its generated title must stay on this computer
+/// (`api::conversations::exchange_touches_excluded_client`). `scope_json` is `{"kind":"everything"}`, `{"kind":"topic","id":N}`
+/// or `{"kind":"meeting","id":N}`; `cited_json` is `[{"n","kind","id"}]` (an exchange's saved sources; `n` is ignored). Fails
+/// closed: returns `true` on a null/invalid handle, a null or malformed argument, or anything core cannot read. `false` only
+/// when no client is excluded or nothing in the exchange touches one.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_exchange_touches_excluded_client(
+    handle: *mut StoreHandle,
+    scope_json: *const c_char,
+    query: *const c_char,
+    answer: *const c_char,
+    cited_json: *const c_char,
+) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Cited {
+        kind: String,
+        id: i64,
+    }
+    if handle.is_null() {
+        return true;
+    }
+    let (Some(scope_json), Some(query), Some(answer), Some(cited_json)) =
+        (cstr_to_string(scope_json), cstr_to_string(query), cstr_to_string(answer), cstr_to_string(cited_json))
+    else {
+        return true;
+    };
+    let (Ok(scope), Ok(cited)) =
+        (serde_json::from_str::<memory::ConversationScope>(&scope_json), serde_json::from_str::<Vec<Cited>>(&cited_json))
+    else {
+        return true;
+    };
+    let cited: Vec<(String, i64)> = cited.into_iter().map(|c| (c.kind, c.id)).collect();
+    let store = unsafe { &(*handle).0 };
+    api::conversations::exchange_touches_excluded_client(store, &scope, &query, &answer, &cited)
+}
+
+/// The ids of a conversation's exchanges answered on this computer from an excluded client's
+/// material, as a JSON array of integers, oldest first. NULL on a null/invalid handle or a DB
+/// error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_local_only_exchanges(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(ids) = store.local_only_exchange_ids(conversation_id) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&ids) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// The live topics a conversation's stored citations belong to, each once in first-cited order,
+/// as a JSON array of `{"topic_id","key","name"}`. NULL on a null/invalid handle, an unknown
+/// conversation, or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_cited_topics(
+    handle: *mut StoreHandle,
+    conversation_id: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(topics) = api::conversations::cited_topics(store, conversation_id) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&topics) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Conversations linked to a topic, as a JSON array of `{"id","title","starred",
+/// "updated_at_unix_ms"}`. Empty for a topic that is not live. NULL on a null/invalid handle
+/// or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_topic_conversations(
+    handle: *mut StoreHandle,
+    topic_id: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(list) = store.topic_conversations(topic_id) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&list) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Every conversation as a Conversations list row, starred first and then most recently
+/// updated: a JSON array of `{"id","title","starred","updated_at_unix_ms","topic",
+/// "latest_answer_line"}`. `topic` is a TopicRef or null (none, or gone); `latest_answer_line`
+/// is the first line of the latest answer, or null before any answer. NULL on a null/invalid
+/// handle or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_conversation_rows(handle: *mut StoreHandle) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(rows) = store.conversation_rows() else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&rows) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
 }
 
 /// Peer-sourced `meeting` rows that duplicate an already-applied logical meeting —
@@ -4860,13 +5210,17 @@ pub extern "C" fn whimbrel_retention_delete_meeting_files(
 /// is a JSON array of strings (e.g. `["memory","meetings"]`). Returns JSON
 /// `{"id":N,"token":"kmcp_N.<secret>"}` on success — this is the ONLY time the plaintext
 /// secret is ever returned; the store only ever keeps its hash and salt. Returns null on a
-/// null/invalid handle, a null `name`/`scopes_json`, malformed `scopes_json`, or a DB error
-/// (this file's existing convention doesn't distinguish these cases in the return value).
+/// null/invalid handle, a null `name`/`scopes_json`, malformed `scopes_json`, a refusal by
+/// `api::mcp::check_scopes` (a blank name, an unknown scope, nothing granted, or `write` without
+/// `write_confirmed`), or a DB error (this file's existing convention doesn't distinguish these
+/// cases in the return value). `write_confirmed` must be true when the scopes include `"write"`:
+/// the user confirmed the Write dialog.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_mcp_generate_client_token(
     handle: *mut StoreHandle,
     name: *const c_char,
     scopes_json: *const c_char,
+    write_confirmed: bool,
 ) -> *mut c_char {
     if handle.is_null() {
         return ptr::null_mut();
@@ -4881,7 +5235,7 @@ pub extern "C" fn whimbrel_mcp_generate_client_token(
         return ptr::null_mut();
     };
     let store = unsafe { &(*handle).0 };
-    let Ok(generated) = api::mcp::generate_client_token(store, &name, scopes) else {
+    let Ok(generated) = api::mcp::generate_client_token(store, &name, scopes, write_confirmed) else {
         return ptr::null_mut();
     };
     match serde_json::to_string(&generated) {
@@ -4917,6 +5271,81 @@ pub extern "C" fn whimbrel_mcp_revoke_client_token(handle: *mut StoreHandle, id:
     }
     let store = unsafe { &(*handle).0 };
     store.revoke_mcp_client_token(id).is_ok()
+}
+
+/// Bridge phase 2: a client's sources as a JSON array of `{label, count, last_write_unix_ms, cursor,
+/// blocked}` (no item text), or null on a null handle or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_mcp_client_sources(handle: *mut StoreHandle, token_id: i64) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    match api::mcp::client_sources(store, token_id).ok().and_then(|s| serde_json::to_string(&s).ok()) {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
+    }
+}
+
+/// Deletes everything a client added to one source, clears its cursor and, with `block`, refuses new
+/// items from it (without, lifts a block set earlier). Returns how many items were deleted, or -1 on
+/// a null handle, a null label or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_mcp_delete_client_source(
+    handle: *mut StoreHandle,
+    token_id: i64,
+    label: *const c_char,
+    block: bool,
+) -> i64 {
+    if handle.is_null() {
+        return -1;
+    }
+    let Some(label) = cstr_to_string(label) else { return -1 };
+    let store = unsafe { &(*handle).0 };
+    api::mcp::delete_client_source(store, token_id, &label, block).unwrap_or(-1)
+}
+
+/// Stops (or starts again) accepting new items from one of a client's sources. False on a null
+/// handle, a null label or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_mcp_set_client_source_blocked(
+    handle: *mut StoreHandle,
+    token_id: i64,
+    label: *const c_char,
+    blocked: bool,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(label) = cstr_to_string(label) else { return false };
+    let store = unsafe { &(*handle).0 };
+    api::mcp::set_client_source_blocked(store, token_id, &label, blocked).is_ok()
+}
+
+/// Revokes a client and, with `delete_items`, deletes everything it added, in one transaction (all or
+/// nothing, so a failed call can be made again). Returns how many items were deleted (0 when not
+/// asked), or -1 on a null handle or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_mcp_revoke_client_token_with_items(handle: *mut StoreHandle, id: i64, delete_items: bool) -> i64 {
+    if handle.is_null() {
+        return -1;
+    }
+    let store = unsafe { &(*handle).0 };
+    api::mcp::revoke_client_token(store, id, delete_items).unwrap_or(-1)
+}
+
+/// What is left of each limit for a client at `now_unix_ms`, as JSON `{hourly_left_fifths,
+/// daily_left, stored, paused_until_unix_ms}`, or null on a null handle or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_mcp_client_limit_state(handle: *mut StoreHandle, token_id: i64, now_unix_ms: i64) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    match api::mcp::client_limit_state(store, token_id, now_unix_ms).ok().and_then(|s| serde_json::to_string(&s).ok()) {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
+    }
 }
 
 #[cfg(test)]
@@ -5964,6 +6393,365 @@ mod tests {
             get_json.is_null(),
             "deleted conversation must not be gettable"
         );
+    }
+
+    fn take_json(out: *mut c_char) -> String {
+        assert!(!out.is_null());
+        let s = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        whimbrel_core_free_string(out);
+        s
+    }
+
+    #[test]
+    fn a_find_conversations_filters_round_trip_through_c_without_a_person() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("test.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let q = to_cstring("q");
+        let c: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversations_create(handle, q.as_ptr()))).unwrap();
+        let cid = c["id"].as_i64().unwrap();
+        assert!(whimbrel_conversation_find_filter(handle, cid).is_null(), "none yet");
+        // A person in the input is never kept, only the flag that one was left out.
+        let f = to_cstring(r#"{"start_unix_ms":1,"end_unix_ms":2,"app_bundle_id":"a","person":{"name":"Sam"},"people_left_out":true}"#);
+        assert!(whimbrel_conversation_set_find_filter(handle, cid, f.as_ptr()));
+        assert_eq!(
+            take_json(whimbrel_conversation_find_filter(handle, cid)),
+            r#"{"start_unix_ms":1,"end_unix_ms":2,"app_bundle_id":"a","people_left_out":true}"#
+        );
+        let bad = to_cstring("{not json");
+        assert!(!whimbrel_conversation_set_find_filter(handle, cid, bad.as_ptr()));
+        assert!(!whimbrel_conversation_set_find_filter(handle, cid, ptr::null()));
+        // A topic conversation takes none.
+        let topic_scope = to_cstring(r#"{"kind":"topic","id":4}"#);
+        assert!(whimbrel_conversation_set_scope(handle, cid, topic_scope.as_ptr()));
+        assert!(whimbrel_conversation_find_filter(handle, cid).is_null());
+        assert!(!whimbrel_conversation_set_find_filter(handle, cid, f.as_ptr()));
+        assert!(!whimbrel_conversation_set_find_filter(ptr::null_mut(), cid, f.as_ptr()));
+        assert!(whimbrel_conversation_find_filter(ptr::null_mut(), cid).is_null());
+
+        // Made with its filters in one call.
+        let made: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversations_create_with_find_filter(handle, q.as_ptr(), f.as_ptr()))).unwrap();
+        assert_eq!(
+            take_json(whimbrel_conversation_find_filter(handle, made["id"].as_i64().unwrap())),
+            r#"{"start_unix_ms":1,"end_unix_ms":2,"app_bundle_id":"a","people_left_out":true}"#
+        );
+        assert!(whimbrel_conversations_create_with_find_filter(handle, q.as_ptr(), bad.as_ptr()).is_null());
+        assert!(whimbrel_conversations_create_with_find_filter(handle, q.as_ptr(), ptr::null()).is_null());
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn exchange_touches_excluded_client_fails_closed_through_c() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let db_path_c = to_cstring(db_path.to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let store = unsafe { &(*handle).0 };
+        let (every, q, a, none) = (
+            to_cstring(r#"{"kind":"everything"}"#),
+            to_cstring("what did Acme decide?"),
+            to_cstring("Nothing."),
+            to_cstring("[]"),
+        );
+        let touches = |scope: *const c_char, cited: *const c_char| {
+            whimbrel_conversation_exchange_touches_excluded_client(handle, scope, q.as_ptr(), a.as_ptr(), cited)
+        };
+        // No client excluded: nothing touches one.
+        assert!(!touches(every.as_ptr(), none.as_ptr()));
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        store
+            .set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        assert!(touches(every.as_ptr(), none.as_ptr()), "the question names the client");
+        let clean_q = to_cstring("what was decided?");
+        let clean = |cited: *const c_char| {
+            whimbrel_conversation_exchange_touches_excluded_client(handle, every.as_ptr(), clean_q.as_ptr(), a.as_ptr(), cited)
+        };
+        assert!(!clean(none.as_ptr()));
+        // A cited row that is gone, a malformed or null argument and a null handle all fail closed.
+        let gone = to_cstring(r#"[{"n":1,"kind":"capture","id":99999}]"#);
+        let bad = to_cstring("{not json");
+        assert!(clean(gone.as_ptr()));
+        assert!(clean(bad.as_ptr()));
+        assert!(clean(ptr::null()));
+        assert!(touches(bad.as_ptr(), none.as_ptr()));
+        assert!(whimbrel_conversation_exchange_touches_excluded_client(ptr::null_mut(), every.as_ptr(), clean_q.as_ptr(), a.as_ptr(), none.as_ptr()));
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn conversation_scope_topic_link_and_topic_list_round_trip_through_c() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let db_path_c = to_cstring(db_path.to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let store = unsafe { &(*handle).0 };
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+
+        let q = to_cstring("q");
+        let c: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversations_create(handle, q.as_ptr()))).unwrap();
+        let cid = c["id"].as_i64().unwrap();
+
+        // Scope: defaults to everything, then round-trips; bad JSON is refused.
+        assert_eq!(take_json(whimbrel_conversation_scope(handle, cid)), r#"{"kind":"everything"}"#);
+        let topic_scope = to_cstring(&format!(r#"{{"kind":"topic","id":{}}}"#, acme.topic_id));
+        assert!(whimbrel_conversation_set_scope(handle, cid, topic_scope.as_ptr()));
+        assert_eq!(
+            take_json(whimbrel_conversation_scope(handle, cid)),
+            format!(r#"{{"kind":"topic","id":{}}}"#, acme.topic_id)
+        );
+        let bad = to_cstring("{not json");
+        assert!(!whimbrel_conversation_set_scope(handle, cid, bad.as_ptr()));
+        assert!(!whimbrel_conversation_set_scope(handle, cid, ptr::null()));
+
+        // Topic link: none, then set by the user, listed under the topic, then cleared.
+        let none: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversation_topic(handle, cid))).unwrap();
+        assert!(none["topic"].is_null());
+        assert_eq!(none["set_by_user"], false);
+        assert!(whimbrel_conversation_set_topic(handle, cid, acme.topic_id, true));
+        let linked: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversation_topic(handle, cid))).unwrap();
+        assert_eq!(linked["topic"]["topic_id"].as_i64().unwrap(), acme.topic_id);
+        assert_eq!(linked["topic"]["name"], "Acme");
+        assert_eq!(linked["set_by_user"], true);
+        let listed: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_topic_conversations(handle, acme.topic_id))).unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+        assert_eq!(listed[0]["id"].as_i64().unwrap(), cid);
+        assert!(whimbrel_conversation_set_topic(handle, cid, -1, true));
+        let cleared: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversation_topic(handle, cid))).unwrap();
+        assert!(cleared["topic"].is_null());
+        assert_eq!(cleared["set_by_user"], true);
+        let empty: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_topic_conversations(handle, acme.topic_id))).unwrap();
+        assert!(empty.as_array().unwrap().is_empty());
+
+        // Auto topic: a user's removal stands, so the answer is JSON null; an unknown
+        // conversation is NULL.
+        assert_eq!(take_json(whimbrel_conversation_auto_topic(handle, cid)), "null");
+        assert!(whimbrel_conversation_auto_topic(handle, 9999).is_null());
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn conversation_rows_through_c() {
+        assert!(whimbrel_conversation_rows(ptr::null_mut()).is_null());
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let db_path_c = to_cstring(db_path.to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let store = unsafe { &(*handle).0 };
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        let empty: serde_json::Value = serde_json::from_str(&take_json(whimbrel_conversation_rows(handle))).unwrap();
+        assert!(empty.as_array().unwrap().is_empty());
+
+        let q = to_cstring("q");
+        let c: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversations_create(handle, q.as_ptr()))).unwrap();
+        let cid = c["id"].as_i64().unwrap();
+        let answer = to_cstring("First line.\nSecond line.");
+        let citations = to_cstring("[]");
+        assert!(whimbrel_conversations_append_exchange(handle, cid, q.as_ptr(), answer.as_ptr(), citations.as_ptr(), ptr::null()));
+        assert!(whimbrel_conversation_set_topic(handle, cid, acme.topic_id, false));
+        let other: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversations_create(handle, q.as_ptr()))).unwrap();
+        let other_id = other["id"].as_i64().unwrap();
+
+        let rows: serde_json::Value = serde_json::from_str(&take_json(whimbrel_conversation_rows(handle))).unwrap();
+        let rows = rows.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        let row = rows.iter().find(|r| r["id"].as_i64() == Some(cid)).unwrap();
+        assert_eq!(row["title"], "q");
+        assert_eq!(row["starred"], false);
+        assert!(row["updated_at_unix_ms"].as_i64().is_some());
+        assert_eq!(row["topic"]["topic_id"].as_i64().unwrap(), acme.topic_id);
+        assert_eq!(row["topic"]["name"], "Acme");
+        assert_eq!(row["latest_answer_line"], "First line.");
+        let bare = rows.iter().find(|r| r["id"].as_i64() == Some(other_id)).unwrap();
+        assert!(bare["topic"].is_null());
+        assert!(bare["latest_answer_line"].is_null());
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn conversation_local_only_exchanges_and_cited_topics_through_c() {
+        use rusqlite::{params, Connection};
+        assert!(whimbrel_conversation_local_only_exchanges(ptr::null_mut(), 1).is_null());
+        assert!(whimbrel_conversation_cited_topics(ptr::null_mut(), 1).is_null());
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let db_path_c = to_cstring(db_path.to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let store = unsafe { &(*handle).0 };
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        let cid = store.insert_conversation("c", 1).unwrap();
+        let side = Connection::open(&db_path).unwrap();
+        side.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        side.execute(
+            "INSERT INTO episodes (device_id, app_bundle_id, start_ts_unix_ms, end_ts_unix_ms, start_item_id, end_item_id, item_count, status, created_at_unix_ms, updated_at_unix_ms) \
+             VALUES ('d', 'a', 1, 2, 1, 1, 1, 'done', 0, 0)",
+            [],
+        )
+        .unwrap();
+        let ep = side.last_insert_rowid();
+        side.execute(
+            "INSERT INTO topic_source (kind, ref_id, ts_unix_ms, title, indexed_at_unix_ms) VALUES ('episode', ?1, 1, 't', 0)",
+            params![ep],
+        )
+        .unwrap();
+        let sid = side.last_insert_rowid();
+        side.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')", params![acme.topic_id, sid])
+            .unwrap();
+        let cited = serde_json::json!([{"item": {"kind": "episode", "id": ep}, "label": "l", "text": "t", "open": null}]);
+        store.mark_local_only_text("A local answer.").unwrap();
+        store.append_conversation_exchange(cid, "q1", "A hosted answer.", "[]", None, 2).unwrap();
+        store
+            .append_conversation_exchange(cid, "q2", "A local answer.", &cited.to_string(), None, 3)
+            .unwrap();
+        let second = store.get_conversation(cid).unwrap().unwrap().exchanges[1].id;
+
+        let local: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversation_local_only_exchanges(handle, cid))).unwrap();
+        assert_eq!(local, serde_json::json!([second]));
+        let topics: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversation_cited_topics(handle, cid))).unwrap();
+        assert_eq!(topics.as_array().unwrap().len(), 1);
+        assert_eq!(topics[0]["topic_id"].as_i64().unwrap(), acme.topic_id);
+        assert_eq!(topics[0]["name"], "Acme");
+        // An unknown conversation has no cited topics to give: NULL, as auto_topic.
+        assert!(whimbrel_conversation_cited_topics(handle, 9999).is_null());
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn conversation_auto_topic_attaches_the_majority_topic_through_c() {
+        use rusqlite::{params, Connection};
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let db_path_c = to_cstring(db_path.to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let store = unsafe { &(*handle).0 };
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        let cid = store.insert_conversation("c", 1).unwrap();
+        let side = Connection::open(&db_path).unwrap();
+        side.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let mut cited = Vec::new();
+        for _ in 0..2 {
+            side.execute(
+                "INSERT INTO episodes (device_id, app_bundle_id, start_ts_unix_ms, end_ts_unix_ms, start_item_id, end_item_id, item_count, status, created_at_unix_ms, updated_at_unix_ms) \
+                 VALUES ('d', 'a', 1, 2, 1, 1, 1, 'done', 0, 0)",
+                [],
+            )
+            .unwrap();
+            let ep = side.last_insert_rowid();
+            side.execute(
+                "INSERT INTO topic_source (kind, ref_id, ts_unix_ms, title, indexed_at_unix_ms) VALUES ('episode', ?1, 1, 't', 0)",
+                params![ep],
+            )
+            .unwrap();
+            let sid = side.last_insert_rowid();
+            side.execute(
+                "INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')",
+                params![acme.topic_id, sid],
+            )
+            .unwrap();
+            cited.push(serde_json::json!({"item": {"kind": "episode", "id": ep}, "label": "l", "text": "t", "open": null}));
+        }
+        store
+            .append_conversation_exchange(cid, "q", "a", &serde_json::to_string(&cited).unwrap(), None, 2)
+            .unwrap();
+
+        let attached: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversation_auto_topic(handle, cid))).unwrap();
+        assert_eq!(attached["topic_id"].as_i64().unwrap(), acme.topic_id);
+        let linked: serde_json::Value =
+            serde_json::from_str(&take_json(whimbrel_conversation_topic(handle, cid))).unwrap();
+        assert_eq!(linked["topic"]["topic_id"].as_i64().unwrap(), acme.topic_id);
+        assert_eq!(linked["set_by_user"], false);
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn resolved_conversation_scope_through_c_follows_a_merge_and_widens_for_a_deleted_topic() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let db_path_c = to_cstring(db_path.to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let store = unsafe { &(*handle).0 };
+        let (acme, birch, gone) = (
+            store.create_seed_topic("Acme", &[], None).unwrap(),
+            store.create_seed_topic("Birch", &[], None).unwrap(),
+            store.create_seed_topic("Gone", &[], None).unwrap(),
+        );
+        let scoped = |topic: i64| {
+            let c = store.insert_conversation("q", 1).unwrap();
+            store.set_conversation_scope(c, &memory::ConversationScope::Topic(topic)).unwrap();
+            c
+        };
+        let (merged, deleted) = (scoped(birch.topic_id), scoped(gone.topic_id));
+        store.merge_topics(acme.topic_id, birch.topic_id).unwrap();
+        store.delete_seed_topic(&gone.key).unwrap();
+        assert_eq!(
+            take_json(whimbrel_conversation_resolved_scope(handle, merged)),
+            format!(r#"{{"kind":"topic","id":{}}}"#, acme.topic_id)
+        );
+        assert_eq!(take_json(whimbrel_conversation_resolved_scope(handle, deleted)), r#"{"kind":"everything"}"#);
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn conversation_scope_and_topic_functions_return_failure_on_a_null_handle() {
+        let scope = to_cstring(r#"{"kind":"everything"}"#);
+        assert!(!whimbrel_conversation_set_scope(ptr::null_mut(), 1, scope.as_ptr()));
+        assert!(whimbrel_conversation_scope(ptr::null_mut(), 1).is_null());
+        assert!(whimbrel_conversation_resolved_scope(ptr::null_mut(), 1).is_null());
+        assert!(!whimbrel_conversation_set_topic(ptr::null_mut(), 1, 1, true));
+        assert!(whimbrel_conversation_topic(ptr::null_mut(), 1).is_null());
+        assert!(whimbrel_conversation_auto_topic(ptr::null_mut(), 1).is_null());
+        assert!(whimbrel_topic_conversations(ptr::null_mut(), 1).is_null());
+        let q = to_cstring("anything");
+        assert!(whimbrel_llm_prepare_ask_in_topic(ptr::null_mut(), 1, q.as_ptr(), 5, ptr::null(), ptr::null()).is_null());
+    }
+
+    #[test]
+    fn prepare_ask_in_topic_says_scope_empty_for_a_topic_with_nothing_and_rejects_bad_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("test.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let store = unsafe { &(*handle).0 };
+        let cedar = store.create_seed_topic("Cedar", &[], None).unwrap();
+        let q = to_cstring("roadmap");
+        let out: serde_json::Value = serde_json::from_str(&take_json(whimbrel_llm_prepare_ask_in_topic(
+            handle,
+            cedar.topic_id,
+            q.as_ptr(),
+            5,
+            ptr::null(),
+            ptr::null(),
+        )))
+        .unwrap();
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(out["data"]["scope_empty"], true);
+        assert_eq!(out["data"]["prepare_id"], "");
+        let bad_history = to_cstring("{not json");
+        assert!(whimbrel_llm_prepare_ask_in_topic(handle, cedar.topic_id, q.as_ptr(), 5, bad_history.as_ptr(), ptr::null())
+            .is_null());
+        assert!(whimbrel_llm_prepare_ask_in_topic(handle, cedar.topic_id, ptr::null(), 5, ptr::null(), ptr::null())
+            .is_null());
+        whimbrel_memory_close(handle);
     }
 
     #[test]
@@ -8520,7 +9308,7 @@ mod tests {
         let name = to_cstring("test client");
         let scopes_json = to_cstring(r#"["memory","meetings"]"#);
         let generate_json =
-            whimbrel_mcp_generate_client_token(handle, name.as_ptr(), scopes_json.as_ptr());
+            whimbrel_mcp_generate_client_token(handle, name.as_ptr(), scopes_json.as_ptr(), false);
         assert!(!generate_json.is_null());
         let generate_str = unsafe { CStr::from_ptr(generate_json) }
             .to_str()
@@ -8589,13 +9377,102 @@ mod tests {
     }
 
     #[test]
+    fn mcp_generate_refuses_write_without_confirmation_and_accepts_it_with() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("mcp-write.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let name = to_cstring("sync");
+        let scopes_json = to_cstring(r#"["write"]"#);
+
+        let refused =
+            whimbrel_mcp_generate_client_token(handle, name.as_ptr(), scopes_json.as_ptr(), false);
+        assert!(refused.is_null(), "write needs the user's confirmation");
+        let listed = take_string(whimbrel_mcp_list_client_tokens(handle));
+        assert_eq!(listed, "[]", "nothing was made");
+
+        let made = take_string(whimbrel_mcp_generate_client_token(
+            handle,
+            name.as_ptr(),
+            scopes_json.as_ptr(),
+            true,
+        ));
+        let made: serde_json::Value = serde_json::from_str(&made).unwrap();
+        let id = made["id"].as_i64().unwrap();
+        assert!(made["token"].as_str().unwrap().starts_with(&format!("kmcp_{id}.")));
+        let listed = take_string(whimbrel_mcp_list_client_tokens(handle));
+        assert!(listed.contains(r#""scopes":["write"]"#), "{listed}");
+
+        let unknown = to_cstring(r#"["memory","admin"]"#);
+        assert!(whimbrel_mcp_generate_client_token(handle, name.as_ptr(), unknown.as_ptr(), true)
+            .is_null());
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn mcp_source_and_revoke_calls_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("mcp-sources.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let store = unsafe { &(*handle).0 };
+        let id = api::mcp::generate_client_token(store, "sync", vec!["write".into()], true).unwrap().id;
+        let item = |ext: &str| memory::mcp_items::NewMcpItem {
+            label: "outlook-work".into(),
+            external_id: ext.into(),
+            kind: "note".into(),
+            ts: "2026-11-21T14:03:00Z".into(),
+            title: None,
+            text: "notes".into(),
+            url: None,
+            people: vec![],
+        };
+        let now = 1_800_000_000_000;
+        let w = memory::mcp_items::McpWriter { token_id: id, client_name: "sync".into() };
+        store.upsert_mcp_items(&w, &[item("a"), item("b")], &Default::default(), memory::mcp_items::local_write_clock(now)).unwrap();
+
+        let sources: serde_json::Value = serde_json::from_str(&take_string(whimbrel_mcp_client_sources(handle, id))).unwrap();
+        assert_eq!(sources[0]["label"], "outlook-work");
+        assert_eq!(sources[0]["count"], 2);
+        let limits: serde_json::Value = serde_json::from_str(&take_string(whimbrel_mcp_client_limit_state(handle, id, now))).unwrap();
+        assert_eq!(limits["stored"], 2);
+        let label = to_cstring("outlook-work");
+        assert!(whimbrel_mcp_set_client_source_blocked(handle, id, label.as_ptr(), true));
+        let sources: serde_json::Value = serde_json::from_str(&take_string(whimbrel_mcp_client_sources(handle, id))).unwrap();
+        assert_eq!(sources[0]["blocked"], true);
+        assert_eq!(whimbrel_mcp_delete_client_source(handle, id, label.as_ptr(), false), 2);
+        store.upsert_mcp_items(&w, &[item("c")], &Default::default(), memory::mcp_items::local_write_clock(now)).unwrap();
+        assert_eq!(whimbrel_mcp_revoke_client_token_with_items(handle, id, true), 1);
+        let listed = take_string(whimbrel_mcp_list_client_tokens(handle));
+        assert!(!listed.contains(r#""revoked_at_unix_ms":null"#), "{listed}");
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn mcp_source_calls_refuse_a_null_handle_or_label() {
+        let label = to_cstring("outlook-work");
+        assert!(whimbrel_mcp_client_sources(ptr::null_mut(), 1).is_null());
+        assert_eq!(whimbrel_mcp_delete_client_source(ptr::null_mut(), 1, label.as_ptr(), true), -1);
+        assert!(!whimbrel_mcp_set_client_source_blocked(ptr::null_mut(), 1, label.as_ptr(), true));
+        assert_eq!(whimbrel_mcp_revoke_client_token_with_items(ptr::null_mut(), 1, true), -1);
+        assert!(whimbrel_mcp_client_limit_state(ptr::null_mut(), 1, 0).is_null());
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("mcp-null-label.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert_eq!(whimbrel_mcp_delete_client_source(handle, 1, ptr::null(), true), -1);
+        assert!(!whimbrel_mcp_set_client_source_blocked(handle, 1, ptr::null(), true));
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
     fn mcp_client_token_functions_return_null_or_false_for_a_null_handle() {
         let name = to_cstring("test client");
         let scopes_json = to_cstring("[]");
         assert!(whimbrel_mcp_generate_client_token(
             ptr::null_mut(),
             name.as_ptr(),
-            scopes_json.as_ptr()
+            scopes_json.as_ptr(),
+            false
         )
         .is_null());
         assert!(whimbrel_mcp_list_client_tokens(ptr::null_mut()).is_null());

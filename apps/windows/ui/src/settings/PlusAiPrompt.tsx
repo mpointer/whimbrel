@@ -86,8 +86,9 @@ export function startChecking(h: CheckHost): () => void {
     timer = undefined;
     h.offFocus(look);
     h.check().then(
-      (v) => {
+      (answer) => {
         if (!live) return;
+        const v = answer ?? { state: "done" as const }; // no answer (a bridge that has none): treated as nothing to ask
         if (h.showing) {
           // On screen: if it no longer applies, close it (as on the Mac, closed for this session);
           // never under an answer that is saving, whose error must still show.

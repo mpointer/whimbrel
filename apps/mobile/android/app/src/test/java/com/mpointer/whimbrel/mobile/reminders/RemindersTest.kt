@@ -1,6 +1,5 @@
 package com.mpointer.whimbrel.mobile.reminders
 
-import com.mpointer.whimbrel.mobile.core.AccountPlan
 import com.mpointer.whimbrel.mobile.read.PhoneCalendarEvent
 import com.mpointer.whimbrel.mobile.sync.FakePrefs
 import java.time.ZoneId
@@ -12,13 +11,10 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-private val cloud = AccountPlan(plan = "cloud", billing = true)
-private val free = AccountPlan(plan = "free", billing = true)
 private const val NOW = 1_800_000_000_000L
 
 private class FakeScheduler : ReminderScheduling {
@@ -33,21 +29,20 @@ private object PlainText : ReminderText {
 }
 
 private class Rig(
-    cloudAtStart: Boolean,
+    var approved: Boolean = true,
     val prefs: FakePrefs = FakePrefs(),
     val scheduler: FakeScheduler = FakeScheduler(),
-    fetchPlan: suspend () -> AccountPlan? = { null },
     readReplica: suspend (Long, Long) -> ReminderCoordinator.ReplicaRead? = { _, _ -> null },
     var permissionAsks: Int = 0,
     var permissionHandled: Boolean = true,
 ) {
-    val cache = PlanCache(prefs).also { if (cloudAtStart) it.update(cloud) }
+    val state = ReminderStateStore(prefs)
     val coordinator = ReminderCoordinator(
         scheduler = scheduler,
         settings = ReminderSettingsStore(prefs),
-        plan = cache,
+        state = state,
         text = PlainText,
-        fetchPlan = fetchPlan,
+        isApproved = { approved },
         readReplica = readReplica,
         requestPermission = { permissionAsks += 1; permissionHandled },
         clock = { NOW },
@@ -60,19 +55,11 @@ private val emptyRead = ReminderCoordinator.ReplicaRead(emptyList(), emptyList()
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemindersTest {
     @Test
-    fun planCacheKeepsValueWhenFetchFails() {
-        val cache = PlanCache(FakePrefs())
-        cache.update(cloud)
-        cache.update(null)
-        assertTrue(cache.isCloud)
-    }
-
-    @Test
-    fun planCacheClearsWhenPlanIsFree() {
-        val cache = PlanCache(FakePrefs())
-        cache.update(cloud)
-        cache.update(free)
-        assertFalse(cache.isCloud)
+    fun permissionAskedKeepsItsKey() {
+        val prefs = FakePrefs()
+        ReminderStateStore(prefs).permissionAsked = true
+        assertTrue(ReminderStateStore(prefs).permissionAsked)
+        assertTrue("the key a phone already has is kept", prefs.getBoolean("permissionAsked", false))
     }
 
     @Test
@@ -93,152 +80,101 @@ class RemindersTest {
     }
 
     @Test
-    fun coordinatorClearsRemindersOffCloud() = runTest {
-        val rig = Rig(cloudAtStart = false)
+    fun phoneNotApprovedSchedulesNothingAndIsNotAsked() = runTest {
+        var reads = 0
+        val rig = Rig(approved = false, readReplica = { _, _ -> reads += 1; emptyRead })
+        rig.coordinator.isForeground = true
         rig.coordinator.reschedule()
-        assertEquals(listOf(emptyList<PlannedReminder>()), rig.scheduler.replaced)
+        rig.coordinator.askPermissionIfNeeded()
+        assertTrue(rig.scheduler.replaced.isEmpty())
         assertEquals(0, rig.permissionAsks)
+        assertEquals(0, reads)
     }
 
     @Test
     fun coordinatorLeavesRemindersAloneWhenStoreIsNotOpen() = runTest {
-        val rig = Rig(cloudAtStart = true)
+        val rig = Rig()
         rig.coordinator.reschedule()
         assertTrue(rig.scheduler.replaced.isEmpty())
     }
 
     @Test
-    fun coordinatorSchedulesPlannedRemindersOnCloud() = runTest {
+    fun coordinatorSchedulesPlannedRemindersWithNoPlanCheck() = runTest {
+        // No plan is fetched or cached: a Free account schedules the same reminders as Cloud.
         val event = PhoneCalendarEvent(externalId = "e1", source = "google_calendar", title = "Standup", startUnixMs = NOW + 3_600_000, attendees = emptyList(), rowId = 1)
-        val rig = Rig(cloudAtStart = true, readReplica = { _, _ -> ReminderCoordinator.ReplicaRead(listOf(event), emptyList()) })
+        val rig = Rig(readReplica = { _, _ -> ReminderCoordinator.ReplicaRead(listOf(event), emptyList()) })
         rig.coordinator.reschedule()
         assertEquals(listOf("meeting:e1"), rig.scheduler.replaced.single().map { it.id })
         assertEquals("Standup in 10 minutes", rig.scheduler.replaced.single().single().title)
     }
 
     @Test
-    fun failedPlanCheckKeepsCachedPlanAndSkipsThrottleStamp() = runTest {
-        val rig = Rig(cloudAtStart = true, fetchPlan = { null })
-        rig.coordinator.refreshPlanIfDue(force = true)
-        assertTrue(rig.coordinator.isCloud.value)
-        assertTrue(rig.cache.isCloud)
-        assertNull(rig.cache.lastCheckedAtMs)
-    }
-
-    @Test
-    fun recentCheckThrottlesNonForcedRefresh() = runTest {
-        var fetches = 0
-        val rig = Rig(cloudAtStart = false, fetchPlan = { fetches += 1; cloud })
-        rig.cache.lastCheckedAtMs = NOW - 60_000
-        rig.coordinator.refreshPlanIfDue(force = false)
-        assertEquals(0, fetches)
-        assertEquals(NOW - 60_000, rig.cache.lastCheckedAtMs)
-        rig.coordinator.refreshPlanIfDue(force = true)
-        assertEquals(1, fetches)
-        assertEquals(NOW, rig.cache.lastCheckedAtMs)
-    }
-
-    @Test
-    fun oldCheckIsDueAgain() = runTest {
-        var fetches = 0
-        val rig = Rig(cloudAtStart = false, fetchPlan = { fetches += 1; free })
-        rig.cache.lastCheckedAtMs = NOW - 31 * 60_000
-        rig.coordinator.refreshPlanIfDue(force = false)
-        assertEquals(1, fetches)
-    }
-
-    @Test
-    fun permissionAskedOnceWhenCloudInForeground() = runTest {
+    fun permissionAskedOnceInForeground() = runTest {
         val prefs = FakePrefs()
-        val rig = Rig(cloudAtStart = false, prefs = prefs, fetchPlan = { cloud }, readReplica = { _, _ -> emptyRead })
+        val rig = Rig(prefs = prefs, readReplica = { _, _ -> emptyRead })
         rig.coordinator.isForeground = true
-        rig.coordinator.refreshPlanIfDue(force = true)
-        rig.coordinator.refreshPlanIfDue(force = true)
+        rig.coordinator.askPermissionIfNeeded()
         assertEquals(1, rig.permissionAsks)
         // A relaunch (new coordinator, same prefs) does not ask again.
-        val again = Rig(cloudAtStart = true, prefs = prefs, fetchPlan = { cloud }, readReplica = { _, _ -> emptyRead })
+        val again = Rig(prefs = prefs, readReplica = { _, _ -> emptyRead })
         again.coordinator.isForeground = true
-        again.coordinator.refreshPlanIfDue(force = true)
+        again.coordinator.askPermissionIfNeeded()
         assertEquals(0, again.permissionAsks)
     }
 
     @Test
     fun permissionDeferredUntilForeground() = runTest {
-        val rig = Rig(cloudAtStart = false, fetchPlan = { cloud }, readReplica = { _, _ -> emptyRead })
-        rig.coordinator.refreshPlanIfDue(force = true)
+        val rig = Rig(readReplica = { _, _ -> emptyRead })
+        rig.coordinator.askPermissionIfNeeded()
         assertEquals(0, rig.permissionAsks)
         rig.coordinator.isForeground = true
         assertEquals(1, rig.permissionAsks)
     }
 
     @Test
+    fun phoneApprovedWhileOpenIsAskedAfterSync() = runTest {
+        // Foreground before approval: nothing then. The per-sync ask catches it once approved.
+        val rig = Rig(approved = false, readReplica = { _, _ -> emptyRead })
+        rig.coordinator.isForeground = true
+        assertEquals(0, rig.permissionAsks)
+        rig.approved = true
+        rig.coordinator.askPermissionIfNeeded()
+        assertEquals(1, rig.permissionAsks)
+    }
+
+    @Test
     fun permissionNotConsumedWhenNothingCouldAsk() = runTest {
-        val rig = Rig(cloudAtStart = true, permissionHandled = false)
+        val rig = Rig(permissionHandled = false)
         rig.coordinator.isForeground = true
         assertEquals(1, rig.permissionAsks)
-        assertFalse(rig.cache.permissionAsked)
+        assertFalse(rig.state.permissionAsked)
         rig.permissionHandled = true
         rig.coordinator.isForeground = false
         rig.coordinator.isForeground = true
         assertEquals(2, rig.permissionAsks)
-        assertTrue(rig.cache.permissionAsked)
+        assertTrue(rig.state.permissionAsked)
     }
 
     @Test
     fun suppressedPromptLeavesFlagUnsetSoLaterForegroundAsksAgain() = runTest {
-        // A free user's catch-up prompt was dismissed this process; the requester reports the ask as suppressed.
-        val rig = Rig(cloudAtStart = false, fetchPlan = { cloud }, readReplica = { _, _ -> emptyRead }, permissionHandled = false)
+        // The catch-up prompt was dismissed this process; the requester reports the ask as suppressed.
+        val rig = Rig(readReplica = { _, _ -> emptyRead }, permissionHandled = false)
         rig.coordinator.isForeground = true
-        rig.coordinator.refreshPlanIfDue(force = true)
-        assertEquals(1, rig.permissionAsks)
-        assertFalse(rig.cache.permissionAsked)
+        rig.coordinator.askPermissionIfNeeded()
+        assertEquals(2, rig.permissionAsks)
+        assertFalse(rig.state.permissionAsked)
         rig.permissionHandled = true
         rig.coordinator.isForeground = false
         rig.coordinator.isForeground = true
-        assertEquals(2, rig.permissionAsks)
-        assertTrue(rig.cache.permissionAsked)
-    }
-
-    @Test
-    fun cloudToFreeClearsReminders() = runTest {
-        val rig = Rig(cloudAtStart = true, fetchPlan = { free }, readReplica = { _, _ -> emptyRead })
-        rig.coordinator.refreshPlanIfDue(force = true)
-        assertFalse(rig.cache.isCloud)
-        assertEquals(emptyList<PlannedReminder>(), rig.scheduler.replaced.last())
-    }
-
-    @Test
-    fun overlappingPlanChecksMakeOneRequest() = runTest {
-        var fetches = 0
-        val gate = CompletableDeferred<Unit>()
-        val rig = Rig(cloudAtStart = false, fetchPlan = { fetches += 1; gate.await(); free }, readReplica = { _, _ -> emptyRead })
-        val first = launch { rig.coordinator.refreshPlanIfDue(force = false) }
-        runCurrent()
-        rig.coordinator.refreshPlanIfDue(force = false)
-        rig.coordinator.refreshPlanIfDue(force = true)
-        gate.complete(Unit)
-        first.join()
-        assertEquals(1, fetches)
-    }
-
-    @Test
-    fun cancelledPlanCheckDoesNotBlockTheNext() = runTest {
-        val gate = CompletableDeferred<Unit>()
-        var fetches = 0
-        val rig = Rig(cloudAtStart = false, fetchPlan = { fetches += 1; if (fetches == 1) gate.await(); free })
-        val first = launch { rig.coordinator.refreshPlanIfDue(force = true) }
-        runCurrent()
-        first.cancel()
-        runCurrent()
-        rig.coordinator.refreshPlanIfDue(force = true)
-        assertEquals(2, fetches)
+        assertEquals(3, rig.permissionAsks)
+        assertTrue(rig.state.permissionAsked)
     }
 
     @Test
     fun staleRescheduleDoesNotOverwriteNewer() = runTest {
         val gate = CompletableDeferred<Unit>()
         var calls = 0
-        val rig = Rig(cloudAtStart = true, readReplica = { _, _ ->
+        val rig = Rig(readReplica = { _, _ ->
             calls += 1
             if (calls == 1) gate.await()
             emptyRead
@@ -253,27 +189,25 @@ class RemindersTest {
     }
 
     @Test
-    fun rescheduleDroppedWhenPlanFlipsToFreeMeanwhile() = runTest {
+    fun rescheduleDroppedWhenPhoneIsNoLongerApprovedMeanwhile() = runTest {
         val gate = CompletableDeferred<Unit>()
-        val rig = Rig(cloudAtStart = true, fetchPlan = { free }, readReplica = { _, _ -> gate.await(); emptyRead })
+        val rig = Rig(readReplica = { _, _ -> gate.await(); emptyRead })
         val older = launch { rig.coordinator.reschedule() }
         runCurrent()
-        rig.coordinator.refreshPlanIfDue(force = true)
-        assertEquals(listOf(emptyList<PlannedReminder>()), rig.scheduler.replaced)
+        rig.approved = false
         gate.complete(Unit)
         older.join()
-        assertEquals("the free clear wins", listOf(emptyList<PlannedReminder>()), rig.scheduler.replaced)
+        assertTrue(rig.scheduler.replaced.isEmpty())
     }
 
     @Test
     fun wipeClearsRemindersAndCancelsInFlightRuns() = runTest {
         val gate = CompletableDeferred<Unit>()
-        val rig = Rig(cloudAtStart = true, readReplica = { _, _ -> gate.await(); emptyRead })
+        val rig = Rig(readReplica = { _, _ -> gate.await(); emptyRead })
         val older = launch { rig.coordinator.reschedule() }
         runCurrent()
         rig.coordinator.clearOnWipe()
         assertEquals(listOf(emptyList<PlannedReminder>()), rig.scheduler.replaced)
-        assertFalse(rig.cache.isCloud)
         gate.complete(Unit)
         older.join()
         assertEquals(1, rig.scheduler.replaced.size)
@@ -281,15 +215,13 @@ class RemindersTest {
 
     @Test
     fun demoCoordinatorNeverSchedulesOrAsks() = runTest {
-        var fetches = 0
-        val rig = Rig(cloudAtStart = true, fetchPlan = { fetches += 1; cloud }, readReplica = { _, _ -> emptyRead })
+        val rig = Rig(readReplica = { _, _ -> emptyRead })
         rig.coordinator.isEnabled = false
         rig.coordinator.isForeground = true
-        rig.coordinator.refreshPlanIfDue(force = true)
+        rig.coordinator.askPermissionIfNeeded()
         rig.coordinator.reschedule()
         assertTrue(rig.scheduler.replaced.isEmpty())
         assertEquals(0, rig.permissionAsks)
-        assertEquals(0, fetches)
     }
 
     @Test
@@ -300,22 +232,22 @@ class RemindersTest {
     }
 
     @Test
-    fun refreshRunsSyncThenPlanCheckThenReschedule() = runTest {
+    fun refreshRunsSyncThenReschedule() = runTest {
         val order = mutableListOf<String>()
-        val rig = Rig(cloudAtStart = true, fetchPlan = { order += "plan"; cloud }, readReplica = { _, _ -> order += "read"; emptyRead })
+        val rig = Rig(readReplica = { _, _ -> order += "read"; emptyRead })
         assertTrue(ReminderRefresh.run(rig.coordinator) { order += "sync" })
-        assertEquals(listOf("sync", "plan", "read"), order)
+        assertEquals(listOf("sync", "read"), order)
     }
 
     @Test
     fun refreshReportsFailureInsteadOfThrowing() = runTest {
-        val rig = Rig(cloudAtStart = true)
+        val rig = Rig()
         assertFalse(ReminderRefresh.run(rig.coordinator) { throw IllegalStateException("boom") })
     }
 
     @Test
     fun refreshRespectsCancellation() = runTest {
-        val rig = Rig(cloudAtStart = true)
+        val rig = Rig()
         assertThrows(CancellationException::class.java) {
             kotlinx.coroutines.runBlocking { ReminderRefresh.run(rig.coordinator) { throw CancellationException("stopped") } }
         }
@@ -374,23 +306,23 @@ class AlarmReminderSchedulerTest {
 
 class ReminderSettingsRowsTest {
     @Test
-    fun offCloudShowsUpgradeLinesOnly() {
-        val rows = ReminderSettingsRows.make(isCloud = false, settings = ReminderSettings(), denied = true)
-        assertTrue(rows.showsUpgradeLines)
-        assertFalse(rows.showsMeetingToggle || rows.showsLeadPicker || rows.showsDigestToggle || rows.showsDigestTime || rows.showsDeniedNotice || rows.showsFooter)
+    fun everyPlanShowsControlsAndFooter() {
+        val rows = ReminderSettingsRows.make(settings = ReminderSettings(), denied = false)
+        assertTrue(rows.showsMeetingToggle && rows.showsLeadPicker && rows.showsDigestToggle && rows.showsDigestTime && rows.showsFooter)
+        assertFalse(rows.showsDeniedNotice)
     }
 
     @Test
     fun leadPickerHiddenWhenMeetingRemindersOffAndTimeWhenDigestOff() {
-        val rows = ReminderSettingsRows.make(true, ReminderSettings(meetingEnabled = false, digestEnabled = false), denied = false)
+        val rows = ReminderSettingsRows.make(ReminderSettings(meetingEnabled = false, digestEnabled = false), denied = false)
         assertFalse(rows.showsLeadPicker)
         assertFalse(rows.showsDigestTime)
         assertTrue(rows.showsMeetingToggle && rows.showsDigestToggle && rows.showsFooter)
-        assertFalse(rows.showsUpgradeLines)
     }
 
     @Test
-    fun deniedNoticeOnlyOnCloud() {
-        assertTrue(ReminderSettingsRows.make(true, ReminderSettings(), denied = true).showsDeniedNotice)
+    fun deniedNoticeOnlyWhenDenied() {
+        assertTrue(ReminderSettingsRows.make(ReminderSettings(), denied = true).showsDeniedNotice)
+        assertFalse(ReminderSettingsRows.make(ReminderSettings(), denied = false).showsDeniedNotice)
     }
 }

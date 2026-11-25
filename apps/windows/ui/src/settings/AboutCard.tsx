@@ -25,7 +25,7 @@ export function AboutCard() {
   if (!status) return <div className="card">{t("Loading…")}</div>;
 
   return (
-    <section className="card about" aria-labelledby="about-heading">
+    <section className="card about" aria-labelledby="about-heading" data-settings-anchor="general.about">
       <h2 id="about-heading" className="section-label">
         {t("About this PC")}
       </h2>

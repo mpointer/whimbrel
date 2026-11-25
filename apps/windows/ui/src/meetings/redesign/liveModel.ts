@@ -3,6 +3,7 @@
 // because the state itself stays "recording" for everything that asks. Spec: docs/ui-redesign/screens/live-meeting.md.
 
 import type { MeetingRecordingView } from "../../generated/types";
+import { t } from "../../l10n";
 
 /** What the bar and the controls show. `idle` means nothing records and nothing is being processed. */
 export type LiveState = "idle" | "starting" | "recording" | "paused" | "resuming" | "processing" | "problem" | "readOnly";
@@ -14,7 +15,7 @@ export interface LiveOptions {
 
 /**
  * The state for a status. A paused recording is paused whatever else is set (a degraded reason stays visible as a
- * warning); "resuming" is only the stretch between the resume command and audio arriving; a recording with a
+ * warning); "resuming" is only the stretch between the resume command and capture starting again; a recording with a
  * degraded reason is a problem: the bar says so and Stop stays available.
  */
 export function liveStateOf(view: MeetingRecordingView | null, options: LiveOptions = {}): LiveState {
@@ -30,6 +31,26 @@ export function liveStateOf(view: MeetingRecordingView | null, options: LiveOpti
   if (view.processing) return "processing";
   return "idle";
 }
+
+/**
+ * The recording's problem to show, or null. While the recording is paused the microphone and system audio deliver nothing by design,
+ * so "The microphone isn't delivering audio" is not true then and is not shown (the old popup showed no problem line at all while
+ * paused). Any other problem (a headset at call quality, a recording that could not start, a part that did not save) is still true
+ * while paused and is shown. Not paused: whatever the shell says. The tray's tooltip follows the same rule (tray.rs `problem_shown`):
+ * keep the two in step. The shell's words are compared with the same two sentences, in the language in use and in English.
+ */
+export function degradedShown(view: Pick<MeetingRecordingView, "degraded" | "paused"> | null | undefined): string | null {
+  const reason = view?.degraded;
+  if (!reason) return null;
+  if (view?.paused && PAUSE_CAUSED.some((key) => reason === key || reason === t(key))) return null;
+  return reason;
+}
+
+/** What the shell says when a stream is not delivering (capture/audio.rs `gave_up_reason`): a consequence of a pause, not a fault. */
+const PAUSE_CAUSED = [
+  "The microphone isn't delivering audio, so this meeting records system audio only.",
+  "System audio isn't reaching Whimbrel, so this meeting records your microphone only.",
+];
 
 /** Whether the live screen takes Home's place: a meeting is starting, recording, paused or resuming (or in trouble). */
 export function liveScreenActive(state: LiveState): boolean {
@@ -67,25 +88,34 @@ export interface LiveControls {
   /** Stop is drawn and enabled whenever a recording exists; it never waits on a pause. */
   stop: boolean;
   stopDisabled: boolean;
-  /** Mark this moment needs audio running: not while starting, paused, resuming or processing. */
+  /** Mark this moment needs a recording on its clock: not while starting, paused or processing. While resuming it works, so a
+   *  mark pressed as capture comes back is kept (its time is the clock offset, which does not wait for audio). */
   markEnabled: boolean;
 }
 
-/** The controls each state offers. Starting disables them; Stop stays available in a problem and while paused. */
+/** The controls each state offers. Starting disables Pause and Mark but not Stop: a start in flight has audio running and no meeting
+ *  to name yet, and `meeting_record_stop` cancels it (the controller completes the row the start made), so the person is never
+ *  left with a recording they cannot end. Stop also stays available in a problem and while paused. */
 export function liveControls(state: LiveState, busy = false): LiveControls {
   switch (state) {
     case "starting":
-      return { pause: "pause", pauseDisabled: true, stop: true, stopDisabled: true, markEnabled: false };
+      return { pause: "pause", pauseDisabled: true, stop: true, stopDisabled: busy, markEnabled: false };
     case "recording":
     case "problem":
       return { pause: "pause", pauseDisabled: busy, stop: true, stopDisabled: busy, markEnabled: true };
     case "paused":
       return { pause: "resume", pauseDisabled: busy, stop: true, stopDisabled: busy, markEnabled: false };
     case "resuming":
-      return { pause: "resume", pauseDisabled: true, stop: true, stopDisabled: busy, markEnabled: false };
+      return { pause: "resume", pauseDisabled: true, stop: true, stopDisabled: busy, markEnabled: true };
     default:
       return { pause: null, pauseDisabled: true, stop: false, stopDisabled: true, markEnabled: false };
   }
+}
+
+/** How often the recording status is read. Every 3 s, as the Meetings card does; while a recording starts or resumes, quickly,
+ *  so the bar leaves "Starting" or "Resuming" (and Pause comes back) as soon as capture is running, not up to 3 s later. */
+export function statusPollMs(state: LiveState): number {
+  return state === "starting" || state === "resuming" ? 500 : 3_000;
 }
 
 /** What Ctrl+Shift+P does in a state: pause a recording, resume a paused one, nothing otherwise. */

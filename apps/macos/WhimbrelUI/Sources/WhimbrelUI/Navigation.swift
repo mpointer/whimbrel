@@ -117,8 +117,11 @@ public struct WSearchBar: View {
     let shortcutHint: String?
     let onClear: (() -> Void)?
     let onSubmit: (() -> Void)?
+    let focus: FocusState<Bool>.Binding?
 
-    public init(text: Binding<String>, placeholder: String? = nil, shortcutHint: String? = "\u{2318}K", onClear: (() -> Void)? = nil, onSubmit: (() -> Void)? = nil) {
+    /// - focus: where the app holds the field's keyboard focus, so a shortcut can move it here.
+    public init(text: Binding<String>, placeholder: String? = nil, shortcutHint: String? = "\u{2318}K", focus: FocusState<Bool>.Binding? = nil, onClear: (() -> Void)? = nil, onSubmit: (() -> Void)? = nil) {
+        self.focus = focus
         self._text = text
         self.placeholder = placeholder
         self.shortcutHint = shortcutHint
@@ -135,6 +138,7 @@ public struct WSearchBar: View {
                 .wFont(.body)
                 .foregroundStyle(theme.textPrimary)
                 .accessibilityLabel(placeholder ?? strings.searchPlaceholder)
+                .wFocused(focus)
                 .onSubmit { onSubmit?() }
             if !text.isEmpty {
                 Button {
@@ -154,7 +158,7 @@ public struct WSearchBar: View {
         .padding(.horizontal, theme.space(12))
         .frame(minHeight: 34 * k)
         .background(shape.fill(theme.backgroundCard))
-        .overlay(shape.wBorder(theme.border, style: theme.borderStroke.widened(theme.isHighContrast ? 1.5 : 0.75)))
+        .overlay(shape.wBorder(theme.controlBorder, style: theme.borderStroke.widened(theme.isHighContrast ? 1.5 : 0.75)))
     }
 }
 
@@ -381,5 +385,13 @@ public struct WNowMarker: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(strings.joinDetails([strings.now, label]))
         }
+    }
+}
+
+extension View {
+    /// Ties a field to a focus state when the app gave one.
+    @ViewBuilder
+    func wFocused(_ binding: FocusState<Bool>.Binding?) -> some View {
+        if let binding { self.focused(binding) } else { self }
     }
 }

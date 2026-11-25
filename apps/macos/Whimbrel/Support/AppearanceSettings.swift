@@ -32,6 +32,7 @@ final class AppearanceSettings: ObservableObject {
     private let defaults: UserDefaults
     private let themes: ThemeStore
     private var paletteChange: AnyCancellable?
+    private var contrastChange: AnyCancellable?
 
     @Published var choice: AppearanceChoice {
         didSet {
@@ -46,11 +47,30 @@ final class AppearanceSettings: ObservableObject {
         choice = AppearanceChoice(rawValue: defaults.string(forKey: Self.key) ?? "") ?? .system
         // `revision` publishes before it changes, but the selection it announces is already in place.
         paletteChange = themes.$revision.dropFirst().sink { [weak self] _ in self?.apply() }
+        // A pinned Light or Dark has to follow the system's Increase Contrast setting while the app runs.
+        contrastChange = NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.apply() }
     }
 
     /// Re-applied whenever the palette changes, since a one-variant palette overrides `choice`.
     func apply() {
-        NSApp?.appearance = Self.appearanceName(choice: choice, variants: themes.selected.variants).flatMap { NSAppearance(named: $0) }
+        let pinned = Self.appearanceName(choice: choice, variants: themes.selected.variants)
+        let name = Self.contrastName(pinned, increased: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
+        NSApp?.appearance = name.flatMap { NSAppearance(named: $0) }
+    }
+
+    /// A pinned Light or Dark as its high contrast twin while the system asks for more contrast. A plain pinned appearance
+    /// would hide the system setting from every window, and the high contrast colors would never be drawn. nil (follow the
+    /// system) stays nil: the system's own appearance already carries the setting.
+    static func contrastName(_ name: NSAppearance.Name?, increased: Bool) -> NSAppearance.Name? {
+        guard increased, let name else { return name }
+        switch name {
+        case .aqua: return .accessibilityHighContrastAqua
+        case .darkAqua: return .accessibilityHighContrastDarkAqua
+        default: return name
+        }
     }
 
     /// A dark-only palette forces Dark and a light-only one Light, so system-drawn text (labels,

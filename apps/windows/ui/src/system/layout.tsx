@@ -237,17 +237,28 @@ export interface WStateProps {
   icon?: WIconName;
   actionLabel?: string;
   onAction?: () => void;
+  /** The action stays on screen but cannot be pressed (for example while the work it starts is running). Default: enabled. */
+  actionDisabled?: boolean;
+  /** Which button the action is. Default: the secondary one. */
+  actionKind?: "primary" | "secondary";
+  /** The title is a heading of this level for screen readers. Default: a plain paragraph, as before. */
+  titleLevel?: 2 | 3;
 }
 
-function State({ kind, icon, title, help, actionLabel, onAction }: WStateProps & { kind: "empty" | "error" }) {
+function State({ kind, icon, title, help, actionLabel, onAction, actionDisabled, actionKind, titleLevel }: WStateProps & { kind: "empty" | "error" }) {
+  const Title = titleLevel === 2 ? "h2" : titleLevel === 3 ? "h3" : "p";
   return (
     <div className={`w-state w-state-${kind}`} role={kind === "error" ? "alert" : undefined}>
       <span className="w-state-glyph">
         <WIcon name={icon ?? (kind === "error" ? "warning" : "document")} />
       </span>
-      <p className="w-state-title">{title}</p>
+      <Title className="w-state-title">{title}</Title>
       {help ? <p className="w-state-help">{help}</p> : null}
-      {actionLabel && onAction ? <WButton onClick={onAction}>{actionLabel}</WButton> : null}
+      {actionLabel && onAction ? (
+        <WButton variant={actionKind ?? "secondary"} disabled={actionDisabled} onClick={onAction}>
+          {actionLabel}
+        </WButton>
+      ) : null}
     </div>
   );
 }

@@ -31,6 +31,8 @@ rand = "0.8"
 hex = "0.4"
 subtle = "2"
 sha2 = "0.10"
+# Keyed hash of a client-deleted added item (mcp_items.rs): the forgotten record never holds the id.
+hmac = "0.12"
 # DbKey wipes its bytes on drop (already in the lockfile via other crates).
 zeroize = "1"
 # Skin image chunks on the wire (skin_sync.rs).

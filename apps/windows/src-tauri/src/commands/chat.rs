@@ -199,7 +199,7 @@ fn run(store: &StoreHandle, ask: &Ask, send: &(dyn Fn(ChatEvent) + Sync)) {
 pub(crate) const WAITING_SHOWN_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// A failed prepare that means the question involves a client excluded from hosted models.
-fn names_excluded_client(error: &CommandError) -> bool {
+pub(crate) fn names_excluded_client(error: &CommandError) -> bool {
     matches!(error, CommandError::ProviderFailure { reason: Some(crate::error::ProviderFailureReason::ExcludedClient) })
 }
 

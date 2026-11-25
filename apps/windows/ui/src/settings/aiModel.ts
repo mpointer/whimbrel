@@ -261,3 +261,6 @@ export function whimbrelPrepaidLine(view: PlusBalance): string | null {
   if (!view.plus) return whimbrelBalanceLine(view.balanceMicros);
   return view.balanceMicros > 0 ? t("Prepaid credit: {amount} left", { amount: formatMicros(view.balanceMicros) }) : null;
 }
+
+/** The read-only line in Capture & Privacy; the switch itself is in Settings → AI. */
+export const localOnlyLine = (localOnly: boolean): string => (localOnly ? t("Local-only mode: On") : t("Local-only mode: Off"));

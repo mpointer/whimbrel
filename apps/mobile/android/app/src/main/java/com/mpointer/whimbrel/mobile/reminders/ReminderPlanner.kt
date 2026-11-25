@@ -48,12 +48,10 @@ object ReminderPlanner {
         events: List<PhoneCalendarEvent>,
         snapshots: List<PhoneTopicSnapshot>,
         settings: ReminderSettings,
-        isCloud: Boolean,
         nowMs: Long,
         zone: ZoneId,
         text: ReminderText,
     ): List<PlannedReminder> {
-        if (!isCloud) return emptyList()
         val planned = mutableListOf<PlannedReminder>()
         if (settings.meetingEnabled) planned += meetingReminders(events, snapshots, settings, nowMs, text)
         if (settings.digestEnabled) digestReminder(snapshots, settings, nowMs, zone, text)?.let { planned += it }

@@ -7,6 +7,8 @@ struct TopicsView: View {
     @EnvironmentObject var appState: AppState
     @State private var topics: [TopicListEntry] = []
     @State private var page: TopicPage?
+    /// The shown topic's conversations, newest first; nil with the redesign flag off (the page shows none).
+    @State private var conversations: [CoreMemoryStore.ConversationSummary]?
     @State private var hasLoaded = false
     /// The topic the last finished load was for (nil: the first topic), so a page that came back empty stops the spinner.
     @State private var answeredFor: Int64??
@@ -61,6 +63,7 @@ struct TopicsView: View {
                 try? await Task.sleep(for: .seconds(30))
             }
         }
+        .restyledScreen(redesign: appState.redesignEnabled)
     }
 
     private var split: some View {
@@ -73,7 +76,7 @@ struct TopicsView: View {
                     if let page {
                         // A new identity per topic resets the page's expanded sections and drafts.
                         TopicPageView(page: page, errorText: errorText, run: run, clientBridge: appState.clientControlsBridge(),
-                                      openClientReview: { openClientReview(page.topic, $0) })
+                                      openClientReview: { openClientReview(page.topic, $0) }, conversations: conversations)
                             .id(page.topic.topicId)
                     }
                 case .loading:
@@ -82,14 +85,14 @@ struct TopicsView: View {
                     HStack(spacing: Spacing.sm) {
                         ProgressView().controlSize(.small)
                         Text(loadingText)
-                            .font(.whimbrelBody(.callout))
+                            .restyledFont(.callout)
                             .foregroundStyle(Color.whimbrelTextSecondary)
                     }
                     .padding(Spacing.xl)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 case .choose:
                     Text(String(localized: "Choose a topic."))
-                        .font(.whimbrelBody(.callout))
+                        .restyledFont(.callout)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                         .padding(Spacing.xl)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -104,26 +107,28 @@ struct TopicsView: View {
             ForEach(Self.groups, id: \.kind) { group in
                 let entries = topics.filter { kindGroup($0.kind) == group.kind }
                 if !entries.isEmpty {
-                    Section(group.title) {
+                    RestyledSection(title: group.title) {
                         ForEach(entries) { entry in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.topic.name)
-                                    .font(.whimbrelBody(.body))
+                                    .restyledFont(.body)
                                     .foregroundStyle(Color.whimbrelTextPrimary)
                                     .lineLimit(1)
                                 if let hint = hint(entry) {
                                     Text(hint)
-                                        .font(.whimbrelBody(.caption))
+                                        .restyledFont(.caption)
                                         .foregroundStyle(Color.whimbrelTextSecondary)
                                 }
                             }
                             .tag(entry.topic.topicId as Int64?)
+                            .restyledListRow(selected: appState.selectedTopicId == entry.topic.topicId)
                         }
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+        .restyledList()
     }
 
     enum Pane: Equatable { case page, loading, choose }
@@ -166,12 +171,15 @@ struct TopicsView: View {
     private func reload() {
         guard let store = appState.coreStore else { return }
         let wanted = appState.selectedTopicId
+        let redesign = appState.redesignEnabled
         CoreMemoryStore.accessQueue.async {
             let list = store.topicPageList()
             // Only the empty state uses the count.
             let suggested = list?.isEmpty == true ? store.topicSuggestions(limit: 100)?.count : nil
             let id = wanted ?? list?.first?.topic.topicId
             let p = id.flatMap { store.topicPage(topicId: $0) }
+            // Redesign flag only: the conversations asked on (or joined to) this topic.
+            let convs = redesign ? p.map { store.topicConversations(topicId: $0.topic.topicId) } : nil
             let flag = try? store.clientReviewFlag().get()
             DispatchQueue.main.async {
                 reviewFlag = flag
@@ -188,6 +196,7 @@ struct TopicsView: View {
                 // A reply for a topic no longer selected is dropped; the next reload covers it.
                 guard appState.selectedTopicId == wanted else { return }
                 page = p
+                conversations = convs
                 answeredFor = .some(p == nil ? wanted : p?.topic.topicId)
                 if wanted == nil, let id { appState.selectedTopicId = id }
             }
@@ -283,6 +292,9 @@ private struct TopicPageView: View {
     /// Nil until the store opens: the page then shows no Client section.
     let clientBridge: ClientControlsBridge?
     let openClientReview: (ClientReviewModel.Mode) -> Void
+    /// Redesign flag only (nil with it off): the topic's conversations, newest first. (Its Ask is the shell's Ask
+    /// bar, which asks about the topic shown: `WhimbrelTab.askTarget`.)
+    let conversations: [CoreMemoryStore.ConversationSummary]?
 
     @AppStorage("com.mpointer.kestrel.topicSummaryCollapsed") private var summaryCollapsed = false
     @State private var roleDraft = ""
@@ -298,19 +310,19 @@ private struct TopicPageView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
-                Text(page.topic.name).font(.whimbrelPageTitle).foregroundStyle(Color.whimbrelTextPrimary)
+                Text(page.topic.name).restyledFont(.pageTitle).foregroundStyle(Color.whimbrelTextPrimary)
                 if let errorText {
-                    Text(errorText).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelError)
+                    Text(errorText).restyledFont(.caption).foregroundStyle(Color.whimbrelError)
                 }
                 if let line = summaryLine {
                     DisclosureGroup(isExpanded: Binding(get: { !summaryCollapsed }, set: { summaryCollapsed = !$0 })) {
                         Text(line)
-                            .font(.whimbrelBody(.callout))
+                            .restyledFont(.callout)
                             .foregroundStyle(Color.whimbrelTextPrimary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
                     } label: {
-                        Text("Summary").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+                        Text("Summary").restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary)
                     }
                 }
                 section("Your role") { roleField }
@@ -324,6 +336,9 @@ private struct TopicPageView: View {
                 }
                 if !page.older.isEmpty {
                     DisclosureGroup(isExpanded: $showOlder) { steps(page.older, empty: nil) } label: { heading("Older") }
+                }
+                if let conversations, !conversations.isEmpty {
+                    section("Conversations") { conversationRows(conversations) }
                 }
                 section("Recent") { recent }
                 if let clientBridge {
@@ -342,6 +357,28 @@ private struct TopicPageView: View {
                 StepNoteSheet(step: step) { text in act(step, .note(text)) }
             case .edit(let step):
                 StepEditSheet(step: step) { text, due in act(step, .edit(text: text, dueDate: due)) }
+            }
+        }
+    }
+
+    // MARK: Conversations (redesign flag only)
+
+    private func conversationRows(_ list: [CoreMemoryStore.ConversationSummary]) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            ForEach(list) { conversation in
+                HStack(spacing: Spacing.sm) {
+                    Text(TopicDates.monthDay(TopicDates.date(ms: conversation.updatedAtUnixMs)))
+                        .restyledFont(.caption)
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                        .frame(width: 52, alignment: .leading)
+                    Button { appState.openConversation(id: conversation.id) } label: {
+                        Label(conversation.title, systemImage: "bubble.left.and.bubble.right")
+                            .lineLimit(1)
+                            .foregroundStyle(Color.whimbrelLink)
+                    }
+                    .buttonStyle(.plain)
+                    .restyledFont(.callout)
+                }
             }
         }
     }
@@ -367,15 +404,12 @@ private struct TopicPageView: View {
     // MARK: Role
 
     private var roleField: some View {
-        TextField("Your role on this topic", text: $roleDraft)
-            .textFieldStyle(.roundedBorder)
-            .focused($roleFocused)
+        RestyledTextField(placeholder: "Your role on this topic", text: $roleDraft, focus: $roleFocused, onSubmit: {
+            let key = page.topic.key
+            let text = roleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+            run({ $0.topicRoleSet(topicKey: key, text: text) }, "Could not save your role.")
+        })
             .frame(maxWidth: 360)
-            .onSubmit {
-                let key = page.topic.key
-                let text = roleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                run({ $0.topicRoleSet(topicKey: key, text: text) }, "Could not save your role.")
-            }
             .help(page.role.edited ? Text("Your wording. Return saves; empty it to let Whimbrel suggest one.") : Text("Whimbrel's guess. Edit it and press Return."))
     }
 
@@ -384,11 +418,11 @@ private struct TopicPageView: View {
     private func nextMeeting(_ next: TopicNextMeeting) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(verbatim: "\(TopicDates.dayTime(ms: next.startUnixMs))  \(next.title)")
-                .font(.whimbrelBody(.body))
+                .restyledFont(.body)
                 .foregroundStyle(Color.whimbrelTextPrimary)
             let orgs = attendeeLine(next)
             if !orgs.isEmpty {
-                Text(orgs).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+                Text(orgs).restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary)
             }
         }
     }
@@ -407,7 +441,7 @@ private struct TopicPageView: View {
     private func steps(_ list: [StepView], empty: LocalizedStringKey?) -> some View {
         if list.isEmpty {
             if let empty {
-                Text(empty).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+                Text(empty).restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary)
             }
         } else {
             VStack(alignment: .leading, spacing: Spacing.md) {
@@ -423,7 +457,7 @@ private struct TopicPageView: View {
                     Image(systemName: "checkmark.seal").foregroundStyle(Color.whimbrelSuccess).help("Confirmed")
                 }
                 Text(step.text)
-                    .font(.whimbrelBody(.body))
+                    .restyledFont(.body)
                     .foregroundStyle(Color.whimbrelTextPrimary)
                     .strikethrough(step.status == "done")
                     .fixedSize(horizontal: false, vertical: true)
@@ -437,13 +471,13 @@ private struct TopicPageView: View {
                     Text(text).foregroundStyle(TopicDates.isOverdue(due) ? Color.whimbrelError : Color.whimbrelTextSecondary)
                 }
             }
-            .font(.whimbrelBody(.caption))
+            .restyledFont(.caption)
             .foregroundStyle(Color.whimbrelTextSecondary)
             if let note = step.note, !note.isEmpty {
-                Text("Note: \(note)").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+                Text("Note: \(note)").restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary)
             }
             if let closedBy = step.closedBy, step.status == "done" {
-                Text("Closed by \(closedBy)").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+                Text("Closed by \(closedBy)").restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary)
             }
             HStack(spacing: Spacing.sm) {
                 if step.status == "done" {
@@ -461,8 +495,8 @@ private struct TopicPageView: View {
                     Button("Edit") { sheet = .edit(step) }
                 }
             }
-            .buttonStyle(.whimbrelQuiet)
-            .font(.whimbrelBody(.caption))
+            .restyledButton(.quiet)
+            .restyledFont(.caption)
         }
     }
 
@@ -476,24 +510,24 @@ private struct TopicPageView: View {
     @ViewBuilder
     private var recent: some View {
         if page.recent.isEmpty {
-            Text("Nothing yet.").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+            Text("Nothing yet.").restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary)
         } else {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 ForEach(showAllRecent ? page.recent : Array(page.recent.prefix(Self.recentFirst))) { m in
                     HStack(spacing: Spacing.sm) {
                         Text(TopicDates.monthDay(TopicDates.date(ms: m.tsUnixMs)))
-                            .font(.whimbrelBody(.caption))
+                            .restyledFont(.caption)
                             .foregroundStyle(Color.whimbrelTextSecondary)
                             .frame(width: 52, alignment: .leading)
                         sourceLink(kind: m.kind, title: m.title, open: m.open)
-                            .font(.whimbrelBody(.callout))
+                            .restyledFont(.callout)
                     }
                 }
                 if !showAllRecent, page.recent.count > Self.recentFirst {
-                    Button("More") { showAllRecent = true }.buttonStyle(.whimbrelQuiet)
+                    Button("More") { showAllRecent = true }.restyledButton(.quiet)
                 } else if page.recentTotal > Int64(page.recent.count) {
                     Text("\(page.recentTotal - Int64(page.recent.count)) older items not shown")
-                        .font(.whimbrelBody(.caption))
+                        .restyledFont(.caption)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }
             }
@@ -532,7 +566,7 @@ private struct TopicPageView: View {
     }
 
     private func heading(_ title: LocalizedStringKey) -> some View {
-        Text(title).font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+        Text(title).restyledFont(.calloutStrong).foregroundStyle(Color.whimbrelTextPrimary)
     }
 }
 
@@ -550,19 +584,17 @@ private struct StepNoteSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
-            Text("Note").font(.whimbrelDisplay())
-            Text(step.text).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
-            TextField("e.g. sent v2 Monday", text: $text, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(2...6)
+            Text("Note").restyledFont(.display)
+            Text(step.text).restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary)
+            RestyledTextField(placeholder: "e.g. sent v2 Monday", text: $text, axis: .vertical, lineLimit: 2...6)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.buttonStyle(.whimbrelSecondary)
+                Button("Cancel") { dismiss() }.restyledButton(.secondary)
                 Button("Save") {
                     onSave(text.trimmingCharacters(in: .whitespacesAndNewlines))
                     dismiss()
                 }
-                .buttonStyle(.whimbrelPrimary)
+                .restyledButton(.primary)
             }
         }
         .padding(Spacing.lg)
@@ -589,22 +621,20 @@ private struct StepEditSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
-            Text("Edit step").font(.whimbrelDisplay())
-            TextField("Step", text: $text, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...4)
+            Text("Edit step").restyledFont(.display)
+            RestyledTextField(placeholder: "Step", text: $text, axis: .vertical, lineLimit: 1...4)
             Toggle("Due date", isOn: $hasDue)
             if hasDue {
                 DatePicker("Due", selection: $due, displayedComponents: .date).labelsHidden()
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.buttonStyle(.whimbrelSecondary)
+                Button("Cancel") { dismiss() }.restyledButton(.secondary)
                 Button("Save") {
                     onSave(text.trimmingCharacters(in: .whitespacesAndNewlines), hasDue ? TopicDates.iso.string(from: due) : nil)
                     dismiss()
                 }
-                .buttonStyle(.whimbrelPrimary)
+                .restyledButton(.primary)
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }

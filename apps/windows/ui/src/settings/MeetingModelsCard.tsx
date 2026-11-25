@@ -53,7 +53,7 @@ export function MeetingModelsCard() {
   const choices = qualityChoices();
 
   return (
-    <section className="card about" aria-labelledby="meeting-models-heading">
+    <section className="card about" aria-labelledby="meeting-models-heading" data-settings-anchor="meetings.models">
       <h2 id="meeting-models-heading" className="section-label">
         {t("Meeting models")}
       </h2>

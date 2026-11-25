@@ -51,7 +51,7 @@ export function RetentionCard({ onSaved }: { onSaved?: () => void } = {}) {
   const { settings, lastRun } = view;
 
   return (
-    <section className="card about" aria-labelledby="retention-heading">
+    <section className="card about" aria-labelledby="retention-heading" data-settings-anchor="capture.retention">
       <h2 id="retention-heading" className="section-label">
         {t("Keeping data")}
       </h2>

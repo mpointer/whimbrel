@@ -51,6 +51,13 @@ pub async fn meeting_record_resume(app: AppHandle) -> Result<MeetingRecordingVie
     off_main(app, |m| m.resume()).await
 }
 
+/// "Show in-meeting window" in the tray popup (redesign only): the same as the tray menu's item. It forgets a close and opens
+/// the window when a meeting records; the window itself is made on a thread of its own (`meeting_bar::sync`).
+#[tauri::command]
+pub fn meeting_bar_show(app: AppHandle) {
+    crate::meetings::meeting_bar::show_from_tray(&app);
+}
+
 /// The level meter's reading (redesign only; nothing calls it with the switch off, so nothing is sampled
 /// then). A brief read of two atomics: read, drawn and thrown away.
 #[tauri::command]
@@ -278,20 +285,20 @@ mod settings_tests {
     }
 
     #[test]
-    fn with_the_redesign_on_an_absent_notice_setting_means_on_and_a_stored_choice_wins() {
+    fn an_absent_notice_setting_means_on_and_a_stored_choice_wins() {
         let dir = std::env::temp_dir().join(format!("whimbrel-recording-notice-default-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut file = SettingsFile::load(&dir.join("settings.json"));
-        assert!(!file.recording_notice_on(), "switch off, nothing stored: off, as today");
-        file.set(crate::settings::keys::REDESIGN_ENABLED, Some(true));
-        assert!(file.recording_notice_on(), "switch on, nothing stored: on");
+        assert!(file.recording_notice_on(), "nothing stored: on");
         assert!(!file.recording_notice_enabled(), "the stored-only reading is unchanged");
         file.set_recording_notice(false, "");
-        assert!(!file.recording_notice_on(), "a stored off wins with the switch on");
+        assert!(!file.recording_notice_on(), "a stored off stays off");
         file.set_recording_notice(true, "");
+        assert!(file.recording_notice_on(), "a stored on is on");
+        // The old hidden switch is not read, so a stored false there changes nothing.
         file.set(crate::settings::keys::REDESIGN_ENABLED, Some(false));
-        assert!(file.recording_notice_on(), "a stored on wins with the switch off");
+        assert!(file.recording_notice_on());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

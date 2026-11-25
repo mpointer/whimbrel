@@ -16,12 +16,23 @@ struct DevicesSettingsPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             Text("Devices")
+                .settingsAnchor("devices.overview")
                 .font(.whimbrelDisplay())
                 .foregroundStyle(Color.whimbrelTextPrimary)
             Text("Sync your timeline across Macs. Sign in once per device, then approve new devices from here.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
-            MobileBetaCard()
+            Group {
+                switch PhoneCardState.state(devices: appState.syncState.devices) {
+                case .beta:
+                    MobileBetaCard()
+                case .connected:
+                    Text("Phone: connected")
+                        .font(.whimbrelBody(.caption))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                }
+            }
+            .settingsAnchor("devices.phone")
 
             Divider().overlay(Color.whimbrelBorder)
 
@@ -29,6 +40,7 @@ struct DevicesSettingsPane: View {
 
             StaleSyncLine(sync: appState.contentSyncCoordinator, inset: 0)
             SyncNowControl(sync: appState.contentSyncCoordinator)
+                .settingsAnchor("devices.syncNow")
             if case .ready = appState.syncState.status, let bridge = appState.clientControlsBridge() {
                 ClientPendingDevicesLine(bridge: bridge, sync: appState.contentSyncCoordinator) { appState.deviceLabel(for: $0) }
             }
@@ -158,7 +170,7 @@ struct DevicesSettingsPane: View {
                     }
                     .font(.whimbrelBody(.body))
                     .foregroundStyle(Color.whimbrelTextPrimary)
-                    upgradeButtons
+                    PlanPurchaseButtons(working: $working)
                 }
             } else if appState.syncState.planReadFailed {
                 Text("Couldn't check your plan. Try again in a moment.")
@@ -207,69 +219,6 @@ struct DevicesSettingsPane: View {
         }
     }
 
-    /// Monthly and yearly purchase, each opening Stripe Checkout in the browser. When the Worker
-    /// says Plus is for sale, Plus replaces Cloud here; otherwise only today's Cloud buttons show.
-    @ViewBuilder
-    private var upgradeButtons: some View {
-        if appState.syncState.plan?.plusAvailable == true {
-            HStack {
-                Button("Get Plus: $15 a month") {
-                    Task {
-                        working = true
-                        await appState.syncState.upgrade(interval: "month", plan: "plus")
-                        working = false
-                    }
-                }
-                .buttonStyle(.whimbrelPrimary)
-                Button("Get Plus: $144 a year") {
-                    Task {
-                        working = true
-                        await appState.syncState.upgrade(interval: "year", plan: "plus")
-                        working = false
-                    }
-                }
-                .buttonStyle(.whimbrelSecondary)
-            }
-            .disabled(working)
-            Text("Plus includes hosted sync on all your devices and a monthly Whimbrel AI allowance. Tax is added at checkout where it applies.")
-                .font(.whimbrelBody(.caption))
-                .foregroundStyle(Color.whimbrelTextSecondary)
-        } else {
-            HStack {
-                Button("Upgrade to Cloud: $5 a month") {
-                    Task {
-                        working = true
-                        await appState.syncState.upgrade(interval: "month")
-                        working = false
-                    }
-                }
-                .buttonStyle(.whimbrelPrimary)
-                Button("Upgrade to Cloud: $50 a year") {
-                    Task {
-                        working = true
-                        await appState.syncState.upgrade(interval: "year")
-                        working = false
-                    }
-                }
-                .buttonStyle(.whimbrelSecondary)
-            }
-            .disabled(working)
-            Text("Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server.")
-                .font(.whimbrelBody(.caption))
-                .foregroundStyle(Color.whimbrelTextSecondary)
-        }
-        billingError
-    }
-
-    @ViewBuilder
-    private var billingError: some View {
-        if let billingError = appState.syncState.billingError {
-            Text(billingError)
-                .font(.whimbrelBody(.caption))
-                .foregroundStyle(Color.whimbrelError)
-        }
-    }
-
     @ViewBuilder
     private var deviceList: some View {
         HStack {
@@ -278,6 +227,7 @@ struct DevicesSettingsPane: View {
                 set: { appState.syncState.deviceName = $0 }
             ))
                 .textFieldStyle(.roundedBorder)
+                .settingsAnchor("devices.name")
             Button("Save") {
                 Task { await appState.syncState.saveDeviceName() }
             }
@@ -403,34 +353,6 @@ struct DevicesSettingsPane: View {
                 .foregroundStyle(Color.whimbrelTextSecondary)
         }
 
-        if let plan = appState.syncState.plan {
-            Divider().overlay(Color.whimbrelBorder)
-            VStack(alignment: .leading, spacing: Spacing.sm) {
-                Text("Plan")
-                    .font(.whimbrelBody(.body))
-                    .foregroundStyle(Color.whimbrelTextPrimary)
-                Text(PlusCopy.planLine(plan))
-                    .font(.whimbrelBody(.caption))
-                    .foregroundStyle(Color.whimbrelTextSecondary)
-                if plan.billing {
-                    if plan.isCloud {
-                        Button("Manage subscription") {
-                            Task {
-                                working = true
-                                await appState.syncState.manageSubscription()
-                                working = false
-                            }
-                        }
-                        .buttonStyle(.whimbrelSecondary)
-                        .disabled(working)
-                        billingError
-                    } else {
-                        upgradeButtons
-                    }
-                }
-            }
-        }
-
         Divider().overlay(Color.whimbrelBorder)
         Button("Delete my sync account…") {
             confirmingAccountDeletion = true
@@ -438,6 +360,7 @@ struct DevicesSettingsPane: View {
             Task { await appState.syncState.refreshAIBalance() }
         }
         .buttonStyle(.whimbrelSecondary)
+        .settingsAnchor("devices.deleteAccount")
         .tint(Color.whimbrelError)
     }
 }

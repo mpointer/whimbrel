@@ -40,8 +40,50 @@ pub struct CaptureStatus {
     pub last_stored_at_ms: Option<i64>,
     pub last_app: Option<String>,
     pub last_error: Option<String>,
+    /// How screen-text reading (OCR) last went wrong: "unavailable" (it could not start this session) or "failed" (a window's picture could not be read). Cleared when an OCR read works again.
+    pub ocr_problem: Option<String>,
+    /// When `ocr_problem` was recorded (unix ms).
+    pub ocr_problem_at_unix_ms: Option<i64>,
     /// When a timed pause ends (unix ms). Set only while one runs; `enabled` stays true during it.
     pub resume_at_unix_ms: Option<i64>,
+}
+
+/// How long a "failed" OCR read counts as current when no later OCR read has worked: a window that needed OCR failed, and
+/// nothing has needed it since. After this the problem is history, not news.
+pub const OCR_PROBLEM_FRESH_MS: i64 = 10 * 60 * 1000;
+
+/// What is wrong with screen-text reading now, in a form the tray and the popup can say in plain words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadProblem {
+    /// OCR could not start (no engine, or no screen grabber): it stays off until Whimbrel restarts.
+    Unavailable,
+    /// The last OCR read of a window failed, recently.
+    Failed,
+}
+
+impl CaptureStatus {
+    /// Records that OCR could not start (`kind` "unavailable") or that a read failed ("failed").
+    pub(crate) fn note_ocr_problem(&mut self, kind: &str, now_ms: i64) {
+        self.ocr_problem = Some(kind.to_string());
+        self.ocr_problem_at_unix_ms = Some(now_ms);
+    }
+
+    /// Records that an OCR read worked: a "failed" problem is over. "unavailable" is not: OCR cannot have run.
+    pub(crate) fn note_ocr_worked(&mut self) {
+        if self.ocr_problem.as_deref() == Some("failed") {
+            self.ocr_problem = None;
+            self.ocr_problem_at_unix_ms = None;
+        }
+    }
+
+    /// The OCR problem that is current at `now_ms`. Same rule as the popup's `ocrProblem` (ui/src/popup/popupModel.ts).
+    pub fn read_problem(&self, now_ms: i64) -> Option<ReadProblem> {
+        match self.ocr_problem.as_deref() {
+            Some("unavailable") => Some(ReadProblem::Unavailable),
+            Some("failed") if self.ocr_problem_at_unix_ms.is_some_and(|at| now_ms - at < OCR_PROBLEM_FRESH_MS) => Some(ReadProblem::Failed),
+            _ => None,
+        }
+    }
 }
 
 enum Msg {
@@ -275,7 +317,9 @@ impl Service {
                     Ok(o) => self.ocr = Some(o),
                     Err(e) => {
                         self.ocr_unavailable = true;
-                        self.status.lock().unwrap().last_error = Some(format!("OCR unavailable: {e}"));
+                        let mut st = self.status.lock().unwrap();
+                        st.last_error = Some(format!("OCR unavailable: {e}"));
+                        st.note_ocr_problem("unavailable", now_unix_ms());
                     }
                 }
             }
@@ -285,10 +329,21 @@ impl Service {
                     Ok(out) if uia::count_chars(&out.text) >= policy::MAC_MIN_CHARS => {
                         text = out.text;
                         source = "ocr";
-                        self.status.lock().unwrap().ocr_runs += 1;
+                        let mut st = self.status.lock().unwrap();
+                        st.ocr_runs += 1;
+                        st.note_ocr_worked();
                     }
-                    Ok(_) => self.status.lock().unwrap().ocr_runs += 1,
-                    Err(e) => self.status.lock().unwrap().last_error = Some(format!("OCR: {e}")),
+                    Ok(_) => {
+                        // The engine ran and found little text: it worked.
+                        let mut st = self.status.lock().unwrap();
+                        st.ocr_runs += 1;
+                        st.note_ocr_worked();
+                    }
+                    Err(e) => {
+                        let mut st = self.status.lock().unwrap();
+                        st.last_error = Some(format!("OCR: {e}"));
+                        st.note_ocr_problem("failed", now_unix_ms());
+                    }
                 }
             }
         }
@@ -334,5 +389,37 @@ impl Service {
                 self.status.lock().unwrap().last_error = Some("The capture could not be stored; retrying.".to_string());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_read_is_current_until_one_works_or_it_goes_stale() {
+        let mut st = CaptureStatus::default();
+        assert_eq!(st.read_problem(1_000), None);
+        st.note_ocr_problem("failed", 1_000);
+        assert_eq!(st.read_problem(1_000 + OCR_PROBLEM_FRESH_MS - 1), Some(ReadProblem::Failed));
+        assert_eq!(st.read_problem(1_000 + OCR_PROBLEM_FRESH_MS), None, "old news is not shown");
+        st.note_ocr_worked();
+        assert_eq!(st.read_problem(1_001), None);
+        assert_eq!(st.ocr_problem_at_unix_ms, None);
+    }
+
+    #[test]
+    fn unavailable_stays_until_restart_and_a_working_read_cannot_clear_it() {
+        let mut st = CaptureStatus::default();
+        st.note_ocr_problem("unavailable", 5);
+        st.note_ocr_worked();
+        assert_eq!(st.read_problem(5 + 100 * OCR_PROBLEM_FRESH_MS), Some(ReadProblem::Unavailable));
+    }
+
+    #[test]
+    fn an_unknown_kind_is_no_problem() {
+        let mut st = CaptureStatus::default();
+        st.note_ocr_problem("something else", 1);
+        assert_eq!(st.read_problem(2), None);
     }
 }

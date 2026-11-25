@@ -122,6 +122,11 @@ describe("phaseTitle", () => {
     expect(phaseTitle(view({ phase: "after" }))).toBe("After the meeting");
     expect(phaseTitle(view({ phase: "cancelled" }))).toBe("Cancelled");
   });
+  it("heads a paused meeting Paused, not Recording", () => {
+    expect(phaseTitle(view({ phase: "during" }), true)).toBe("Paused");
+    expect(phaseTitle(view({ phase: "during" }), false)).toBe("Recording");
+    expect(phaseTitle(view({ phase: "after" }), true)).toBe("After the meeting");
+  });
 });
 
 const snap = (id: number, over: Partial<SnapshotView> = {}): SnapshotView => ({

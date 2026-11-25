@@ -5,6 +5,9 @@ import { markdownComponents } from "../chat/AskView";
 import { isBusy, statusLine } from "../chat/chatModel";
 import { describeError, isCommandError } from "../errors";
 import { useL10n } from "../l10n";
+import { conversationSaveExchange } from "../api";
+import { meetingPointers, savedInput } from "../conversations/model";
+import { conversationsChanged, openConversation } from "../conversations/nav";
 import { ASK_PRESETS, applyMeetingEvent, historyOf, newExchange, transcriptCitationIds, type MeetingExchange } from "./meetingAskModel";
 
 function message(e: unknown): string {
@@ -22,6 +25,7 @@ export function MeetingAskBar({
   disabledReason,
   onCite,
   request,
+  continuable = false,
 }: {
   meetingId: number;
   /** During the call: answers come from the transcript so far, and say so. */
@@ -30,6 +34,8 @@ export function MeetingAskBar({
   onCite: (segmentId: number) => void;
   /** A question asked elsewhere (the in-meeting window): asked here once per `seq`, so the answer shows in this window. */
   request?: { seq: number; text: string };
+  /** The redesigned note: each finished answer offers Continue as a conversation, which keeps it (scope: this meeting) and opens it. */
+  continuable?: boolean;
 }) {
   const { t } = useL10n();
   const [exchanges, setExchanges] = useState<MeetingExchange[]>([]);
@@ -91,6 +97,30 @@ export function MeetingAskBar({
 
   const stoppable = busy ? (last?.turn.runId ?? null) : null;
 
+  // Continue as a conversation (screen 6): the question and answer as shown become a conversation's first exchange, with no second model call.
+  // What the answer's own events said is the page's to supply; the shell saves pointers to the cited lines only.
+  const [continuing, setContinuing] = useState<number | null>(null);
+  const [continueError, setContinueError] = useState<string | null>(null);
+  const keep = (index: number) => {
+    const { turn, question: shown } = exchanges[index];
+    setContinuing(index);
+    setContinueError(null);
+    // `false` is the real value: the meeting Ask has no "hold to this PC" (its button says only "Ask"), so no question here was held. The shell
+    // decides for itself whether the exchange stays on this PC (an excluded meeting, the provider, a reroute: `routedLocally` below).
+    conversationSaveExchange(null, { kind: "meeting", id: meetingId }, savedInput(turn, false, meetingPointers(turn.text, turn.citations), shown), (event) => {
+      if (event.kind === "titled") conversationsChanged();
+    }).then(
+      (kept) => {
+        conversationsChanged();
+        openConversation(kept.conversationId);
+      },
+      (e: unknown) => {
+        if (mounted.current) setContinueError(message(e));
+        setContinuing(null);
+      },
+    );
+  };
+
   const handled = useRef(0);
   useEffect(() => {
     if (request && request.seq !== handled.current) {
@@ -106,9 +136,10 @@ export function MeetingAskBar({
           {live && <p className="muted small">{t("Based on the transcript so far")}</p>}
           <ol className="turns">
             {exchanges.map((exchange, i) => (
-              <ExchangeView key={i} exchange={exchange} busy={busy} onRetry={() => retry(i)} onCite={onCite} />
+              <ExchangeView key={i} exchange={exchange} busy={busy} onRetry={() => retry(i)} onCite={onCite} onContinue={continuable ? () => keep(i) : undefined} continuing={continuing === i} />
             ))}
           </ol>
+          {continueError ? <p role="alert">{continueError}</p> : null}
         </div>
       )}
       {!disabled && (
@@ -154,11 +185,15 @@ function ExchangeView({
   busy,
   onRetry,
   onCite,
+  onContinue,
+  continuing,
 }: {
   exchange: MeetingExchange;
   busy: boolean;
   onRetry: () => void;
   onCite: (segmentId: number) => void;
+  onContinue?: () => void;
+  continuing?: boolean;
 }) {
   const { t } = useL10n();
   const { turn } = exchange;
@@ -195,6 +230,13 @@ function ExchangeView({
                 {t("Open AI settings")}
               </button>
             )}
+          </div>
+        )}
+        {onContinue && turn.status === "done" && turn.text.trim() !== "" && (
+          <div className="toolbar">
+            <button className="mode" disabled={busy || continuing} onClick={onContinue}>
+              {t("Continue as a conversation")}
+            </button>
           </div>
         )}
         {exchange.narrowed && <p className="muted small">{t("Answered from the most relevant parts of a long transcript.")}</p>}

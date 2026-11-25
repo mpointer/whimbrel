@@ -156,14 +156,8 @@ private extension SettingsSheet {
 
     @ViewBuilder var remindersSection: some View {
         let current = reminders ?? coordinator.settings.settings
-        let rows = ReminderSettingsRows.make(isCloud: coordinator.isCloud, settings: current, denied: notificationsDenied)
+        let rows = ReminderSettingsRows.make(settings: current, denied: notificationsDenied)
         Section {
-            if rows.showsUpgradeLines {
-                Text("Reminders come with Cloud.").foregroundStyle(Color.theme(.textPrimary))
-                    .listRowBackground(Color.theme(.backgroundCard))
-                Text("Upgrade in Whimbrel on your computer.").foregroundStyle(Color.theme(.textSecondary))
-                    .listRowBackground(Color.theme(.backgroundCard))
-            }
             if rows.showsMeetingToggle {
                 Toggle("Meeting reminders", isOn: reminderBinding(\.meetingEnabled))
                     .listRowBackground(Color.theme(.backgroundCard))

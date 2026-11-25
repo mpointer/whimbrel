@@ -69,6 +69,30 @@ pub fn ollama_serves(model: &str) -> bool {
             .unwrap_or(false)
 }
 
+/// What [`ollama_serves_cached`] last learned: the model asked about, when, and the answer.
+static PROBE: std::sync::Mutex<Option<(String, std::time::Instant, bool)>> = std::sync::Mutex::new(None);
+
+/// [`ollama_serves`] for a route preview, which runs on every change of a filter or the question: the
+/// answer for `model` is kept for a few seconds, so a preview is not a network probe each time.
+/// [`forget_ollama_probe`] drops it (the AI settings were saved, so what the preview shows may have
+/// changed). The real ask never uses this: it probes for itself.
+pub fn ollama_serves_cached(model: &str) -> bool {
+    const KEPT: Duration = Duration::from_secs(5);
+    if let Some((m, at, up)) = PROBE.lock().unwrap().as_ref() {
+        if m == model && at.elapsed() < KEPT {
+            return *up;
+        }
+    }
+    let up = ollama_serves(model);
+    *PROBE.lock().unwrap() = Some((model.to_string(), std::time::Instant::now(), up));
+    up
+}
+
+/// Drops the answer [`ollama_serves_cached`] kept.
+pub fn forget_ollama_probe() {
+    *PROBE.lock().unwrap() = None;
+}
+
 /// Where Ollama stands for `model`, for a refusal that says what to do (the hotkey panel).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OllamaState {
@@ -397,6 +421,23 @@ pub enum ChatEvent {
     /// `excluded_client`: it ran on this PC because the question names a client excluded from hosted models.
     #[serde(rename_all = "camelCase")]
     AnsweredBy { model: String, excluded_client: bool },
+    /// The sourced ask (redesign only): the numbered items the answering model was given, as cards read from their live
+    /// rows. Sent after `Started` on a stream and just before `Cited` on the blocking path. A later one replaces an
+    /// earlier one (a stream that fell back to the blocking path numbers its items again).
+    #[serde(rename_all = "camelCase")]
+    Sourced {
+        sources: Vec<crate::commands::find::NumberedSourceView>,
+        provider: String,
+        answered_locally: bool,
+        /// The date range retrieval used (the filter's own, or a day question's window); null for no date bound.
+        date_range: Option<crate::commands::find::UsedRangeView>,
+    },
+    /// The sourced ask: which numbers the answer cited, where it was made, and how many items were left out. Sent just
+    /// before `Completed`; the exchange is saved with these.
+    #[serde(rename_all = "camelCase")]
+    Cited { cited: Vec<usize>, answered_locally: bool, provider: String, left_out: i64 },
+    /// A question asked inside one topic found nothing in it to answer from; nothing was sent to a model.
+    ScopeEmpty,
 }
 
 /// How many retrieved items an answer was made without because they involve an excluded client, for the

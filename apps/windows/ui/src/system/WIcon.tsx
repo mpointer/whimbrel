@@ -120,6 +120,8 @@ const GLYPHS = {
     </>
   ),
   flag: <path d="M5 17V3.5M5 4.5h9l-1.8 3 1.8 3H5" />,
+  star: <path d="M10 2.8l2.2 4.5 5 .7-3.6 3.5.9 4.9-4.5-2.4-4.5 2.4.9-4.9L2.8 8l5-.7z" />,
+  pencil: <path d="M13.5 3.5l3 3L7 16H4v-3zM11.5 5.5l3 3" />,
   warning: <path d="M10 3l7.5 13h-15zM10 8v4M10 14.2h.01" />,
   info: (
     <>
@@ -127,6 +129,20 @@ const GLYPHS = {
       <path d="M10 9v4.5M10 6.5h.01" />
     </>
   ),
+  error: (
+    <>
+      <circle cx="10" cy="10" r="7.5" />
+      <path d="M7.5 7.5l5 5M12.5 7.5l-5 5" />
+    </>
+  ),
+  more: (
+    <>
+      <circle cx="4.5" cy="10" r="1.2" {...FILL} />
+      <circle cx="10" cy="10" r="1.2" {...FILL} />
+      <circle cx="15.5" cy="10" r="1.2" {...FILL} />
+    </>
+  ),
+  external: <path d="M8 4.5H5A1.5 1.5 0 0 0 3.5 6v9A1.5 1.5 0 0 0 5 16.5h9a1.5 1.5 0 0 0 1.5-1.5v-3M11 3.5h5.5V9M16.5 3.5L9 11" />,
 } satisfies Record<string, ReactNode>;
 
 export type WIconName = keyof typeof GLYPHS;

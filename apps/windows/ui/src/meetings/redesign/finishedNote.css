@@ -46,6 +46,40 @@
   display: inline-flex;
   align-items: center;
 }
+/* The bar's own width decides (a container query in rem, so a narrow window and a large text size fold alike): rows of actions wrap
+   first (flex-wrap above); under this width a group that is still wider than the bar wraps too, and nothing is wider than the bar,
+   so no action is clipped and the page never scrolls sideways. */
+.th-fin-bar {
+  container-type: inline-size;
+  container-name: th-fin-bar;
+}
+@container th-fin-bar (max-width: 26rem) {
+  .th-fin-bar-end,
+  .th-fin-bar-end > * {
+    max-width: 100%;
+  }
+  .th-fin-switch {
+    flex-wrap: wrap;
+    row-gap: var(--w-space-xs);
+  }
+  .th-fin-bar-end .w-button {
+    min-width: 0;
+    white-space: normal;
+    /* A button that is narrower than its icon, words and keycap side by side lets them wrap inside its own box (icon, words, keycap
+       on lines of their own) instead of poking out of both sides, centred, as a flex row does when it cannot shrink. */
+    flex-wrap: wrap;
+    row-gap: var(--w-space-xxs);
+    padding-block: var(--w-space-xs);
+    text-align: center;
+  }
+  .th-fin-bar-end .w-button > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .th-fin-bar-end .w-button > span {
+    overflow-wrap: anywhere;
+  }
+}
 .th-fin-switch .w-button + .w-button {
   margin-left: calc(var(--sx-border-width) * -1);
 }
@@ -407,7 +441,25 @@
   margin-top: var(--w-space-xs);
 }
 
+/* A note with nothing for the margin (no sources and no Whimbrel line: a meeting with no transcript and no summary) takes the margin's
+   width and is centred under the width its own column had, so the page is not a column of text beside a blank one. */
+.th-fin-page[data-has-margin="false"] {
+  width: 100%;
+  max-width: calc(78rem - var(--th-fin-margin) - var(--w-space-xl));
+  margin-inline: auto;
+}
+
 @container th-fin (min-width: 56rem) {
+  .th-fin-page[data-has-margin="false"] .th-fin-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--w-space-xs);
+  }
+  .th-fin-page[data-has-margin="false"]::after {
+    display: none;
+  }
+  .th-fin-page[data-has-margin="false"] .th-fin-notices {
+    padding-right: var(--w-space-xl);
+  }
   .th-fin-row {
     grid-template-columns: minmax(0, 1fr) var(--th-fin-margin);
     gap: var(--w-space-xl);

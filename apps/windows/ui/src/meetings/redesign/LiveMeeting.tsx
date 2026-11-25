@@ -17,10 +17,10 @@ import { LiveAlertsSection } from "../LiveAlertsSection";
 import { followsNewLines, liveClock, LIVE_POLL_MS } from "../liveTranscriptModel";
 import { MeetingAskBar } from "../MeetingAskBar";
 import { disabledReason } from "../meetingAskModel";
-import { dismissNotice, noticeText, noticeVisible, useRecordingNotice } from "../recordingNotice";
+import { dismissNotice, liveNoticeShown, noticeText, useRecordingNotice } from "../recordingNotice";
 import { meetingTitleLabel, speakerLabel } from "../sentinels";
 import { useAutosave } from "../Workspace";
-import { clockOffsetCs, liveControls, type LiveState } from "./liveModel";
+import { clockOffsetCs, degradedShown, liveControls, type LiveState } from "./liveModel";
 import { markClockMs, markLabel, sortedMarks } from "./marksModel";
 import { MARK_EVENT, useRecordingContext } from "./recordingContext";
 import { RecordingBar } from "./RecordingBar";
@@ -178,14 +178,14 @@ export function LiveMeeting({ meetingId, readOnly: readOnlyGiven }: LiveMeetingP
     meetingBarTakeAsk(meetingId).then((text) => text && setAsked((a) => ({ seq: (a?.seq ?? 0) + 1, text })), () => {});
   }, [meetingId, canAsk, pending]);
   const lines = live?.lines.slice(-LATEST_LINES) ?? [];
-  const noticeOn = !readOnly && state !== "processing" && meetingId != null && noticeVisible(noticeState.settings, meetingId, noticeState.dismissed);
+  const noticeOn = !readOnly && state !== "processing" && meetingId != null && liveNoticeShown(meetingId, rec.view?.meetingId, noticeState.settings, noticeState.dismissed);
 
   const copyNotice = () => {
     void navigator.clipboard?.writeText(noticeText(noticeState.settings?.text ?? "")).then(() => setCopied(true), () => {});
   };
 
   const when = started != null ? startLine(started, rec.now, locale, workspace?.attendees ?? [], t) : "";
-  const degraded = rec.view?.degraded ?? null;
+  const degraded = degradedShown(rec.view);
 
   return (
     <div className="th-live" data-state={state} data-columns={showRight ? "3" : "2"}>

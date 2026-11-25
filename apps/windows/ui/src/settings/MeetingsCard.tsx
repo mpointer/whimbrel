@@ -123,7 +123,7 @@ export function MeetingsCard() {
   if (!settings) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   return (
-    <section className="card about" aria-labelledby="meetings-heading">
+    <section className="card about" aria-labelledby="meetings-heading" data-settings-anchor="meetings.meetings">
       <h2 id="meetings-heading" className="section-label">
         {t("Meetings")}
       </h2>

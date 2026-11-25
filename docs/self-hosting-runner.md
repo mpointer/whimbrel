@@ -218,6 +218,107 @@ nothing. This is on purpose. The stderr line names the cause (exit code 1 for al
 A routine that names an excluded client is skipped on the runner. The app shows it as "left for
 your computer", and a computer runs it.
 
+## One-time history backfill
+
+Older rows on the relay were pushed before apps tagged them, so the runner's pull cannot skip them at the
+query. Two tags matter: a `kind_tag` (which kind of item a row is) and a `slice_tag` (its kind, for calendar
+events whether the source is Google, and its month). The apps tag old rows with the `kind_tag` only, in short steps, which can take very
+long on a big account. The apps never fill the `slice_tag` of old rows; only the runner does. It can walk
+the whole history in one long run:
+
+```bash
+whimbrel-cloud-runner backfill --max-minutes 50
+whimbrel-cloud-runner backfill --slice-only --max-minutes 300
+```
+
+- It uses the same four settings as a run. `--max-minutes` is optional: 50 by default, 1 to 1380 (the
+  runner's token lasts one day).
+- A plain run makes two passes, the kind pass and then the slice pass, and both share the one
+  `--max-minutes` budget. The slice pass runs whenever at least 10 seconds of budget remain, including after the kind pass stopped
+  with `budget` or `claim_held`.
+- The runner keeps its store in memory, but each pass saves its position on the relay (in the runner's own claim
+  row, encrypted, positions only) after every step, and the next run takes it back. A rerun resumes where the last
+  one stopped, and a finished pass is remembered. If the saved position cannot be read, the walk starts at 0:
+  slower, never wrong. `--slice-only` still skips the kind pass.
+- The Cloud Run job needs a task timeout above `--max-minutes`, for example `--task-timeout 1h` for 50.
+  If the host kills the job first, what was tagged stays tagged.
+- It prints the report as one JSON line and exits 0, both when it finished and when time ran out with
+  progress. It exits 1 with a short reason on an error. Standard error gets one line about every minute:
+  `backfill: <done>/<total> positions` for the kind pass and `backfill slice: <done>/<total> positions` for the slice pass. The fields:
+  - `done`, `total`: the kind pass's position, counted over every device's rows (positions, not rows).
+  - `finished`: `true` when the kind pass reached the end.
+  - `undecryptable`: rows that could not be opened or decoded. They stay untagged and the pull still reads them.
+  - `steps`: steps taken by the kind pass only. The slice pass is not counted.
+  - `duration_ms`: how long the whole run took.
+  - `stopped`: why the kind pass stopped: `finished`, `budget` (time ran out), `claim_held` (an app's claim
+    was fresh), or `skipped` (`--slice-only` skipped the kind pass; its counts are then 0).
+  - `slice_done`, `slice_total`: the slice pass's position, in the same positions.
+  - `slice_stopped`: why the slice pass stopped: `finished`, `budget` or `claim_held`. `budget` with
+    `slice_total` of 0 means the slice pass never ran: the kind pass used the time, or too little was left.
+- Done means the kind pass is complete (an earlier plain run reported `finished:true`) and the slice pass
+  reports `slice_stopped:"finished"`. `finished:true` alone only means the kind pass is complete. A
+  `--slice-only` run always reports `finished:false`, because it skips the kind pass, so judge it by
+  `slice_stopped`. Until both hold, run it again, with `--slice-only` once the kind pass is done.
+- While the runner's claim is fresh (it renews it every minute), the Mac and Windows apps pause their own
+  step. Quit the Mac and Windows apps (or wait 10 minutes after their last sync) before starting the kind
+  pass: if an app's claim is fresh when the runner starts, it stops after 2 steps with `stopped:"claim_held"`
+  instead of waiting. Run it again later. The apps never take the slice claim, so `slice_stopped:"claim_held"`
+  can only mean another runner is running the slice pass; quitting the apps is not needed for it.
+- Run the Cloud Run job with `--max-retries 0`: a restart walks from position 0 and is billed again. The
+  runner itself retries a failed step 3 times and names the failing pass in the error.
+- It is safe to run again. Each run reads the whole history again but writes only rows still untagged.
+  Apps that are up to date tag the rows they push at push time. Rows pushed by older apps stay untagged:
+  the pull still fetches them and filters them after decrypting, so rerun the backfill now and then to
+  tag them.
+- Privacy: it opens item payloads in memory to compute each tag and writes only the tag back. Nothing from a
+  payload is logged or reported. The relay can see which rows share an opaque tag, including rows of the same
+  kind, calendar source class and month. It cannot read the kind, source or date.
+
+## Relay indexes
+
+The runner reads the relay with filtered queries (by row type and slice tag). Two partial indexes on the
+relay's `sync_row` table let those queries read about the rows they return instead of scanning the
+peer's whole range:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_sync_row_slice ON sync_row(device_id, slice_tag, local_seq) WHERE row_type = 'items';
+CREATE INDEX IF NOT EXISTS idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'items';
+```
+
+- **One-time live migration, run by the operator.** Neither the runner nor the apps ever run
+  `CREATE INDEX`. Run the two statements yourself against the relay database, once. Both must exist: with
+  only one, the runner uses neither. An index with the right name but the wrong shape is found on first
+  use; the runner then falls back to the scan for that round.
+- **Before you build them: finish the slice backfill.** Run `backfill --slice-only` until it reports
+  `slice_stopped:"finished"` (see above). The indexed query for `items` rows without a `slice_tag` reads
+  every such row of a peer from the runner's position, because `kind_tag` is not in the index. Many
+  unsliced rows make that query slow. To check how many are left per device (this scans the whole table
+  once, so it costs a full read of `sync_row`):
+
+  ```sql
+  SELECT device_id, COUNT(*) FROM sync_row WHERE row_type='items' AND slice_tag IS NULL GROUP BY device_id;
+  ```
+
+- **Cost.** `CREATE INDEX` reads every row of `sync_row` once, and your host bills that as rows read. It
+  writes one index entry per matching row: `idx_sync_row_slice` covers nearly every `items` row, so expect
+  several GB of extra storage. It holds the database's write lock for the whole build, so pushes from the
+  apps stall or time out until it ends. Run it at a quiet time. Estimate the time and size on a copy of the
+  relay first. After that, each write to `sync_row` costs a little more.
+- **Confirm it.** The main check is the runner's stderr: after a run, the by-type line ends with
+  `pull_index=on` when the indexed fetch served at least one query that pull, and `pull_index=off` when it
+  did not. A plain `EXPLAIN QUERY PLAN` of the pull query does not show the index; it keeps the
+  primary-key scan, because the runner names the index in its query. To see that the index can serve a
+  query, run this statement and look for `idx_sync_row_slice` in the plan:
+
+  ```sql
+  EXPLAIN QUERY PLAN SELECT local_seq FROM sync_row INDEXED BY idx_sync_row_slice WHERE device_id='x' AND row_type='items' AND slice_tag IS NULL AND local_seq > 0 ORDER BY local_seq LIMIT 1;
+  ```
+
+- **Rollback.** `DROP INDEX IF EXISTS idx_sync_row_slice; DROP INDEX IF EXISTS idx_sync_row_type;`
+- **The runner works without them.** It detects that the indexes are missing, or that an indexed query
+  failed, and pulls through the slower span-window scan for that round; the line then reads
+  `pull_index=off`.
+
 ## Logs
 
 The runner writes one JSON line to standard output on success (what ran, what was left for the

@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { alertAccept, alertDismiss, alertStatus } from "../api";
 import type { AlertView as AlertStatus } from "../generated/types";
 import { useL10n } from "../l10n";
+import { useRedesign } from "../redesign";
+import { WButton, WINDOW_DESIGN, WWindowFrame, mainActionOnReturn } from "../system";
+import { dismissWords } from "./meetingAlertModel";
 
 /**
  * The "meeting detected" window (M3.3 Task 6). It asks once; with auto-start on, the
@@ -10,6 +13,7 @@ import { useL10n } from "../l10n";
  */
 export function AlertView() {
   const { t } = useL10n();
+  const redesign = useRedesign();
   const [status, setStatus] = useState<AlertStatus | null>(null);
 
   useEffect(() => {
@@ -29,7 +33,36 @@ export function AlertView() {
     if (counting && status!.countdownSeconds <= 0) void alertAccept(false);
   }, [counting, status]);
 
-  if (!meeting) return <div className="alert" />;
+  const dismiss = dismissWords(counting, t);
+
+  if (!meeting) return redesign ? <div className="w-sys w-win-root" /> : <div className="alert" />;
+  if (redesign)
+    return (
+      <WWindowFrame
+        design={WINDOW_DESIGN.alert}
+        title={t("Meeting detected")}
+        lines={[<span className="w-win-strong">{meeting.title}</span>]}
+        // Pinned, not in the scroller: what recording means is in view at every text size.
+        pinned={t("Record it? Audio stays on this PC.")}
+        // The countdown answers for you. Its way out is the action row's dismiss button, which reads Don't record while it runs.
+        countdown={counting ? <span>{t("Recording starts in {seconds} s", { seconds: status!.countdownSeconds })}</span> : undefined}
+        // No Return shortcut: Record starts a recording, and a key typed into the app behind this window must not decide that.
+        // Return presses the focused button; Escape is Not now (`WINDOW_KEYS.meetingAlert`).
+        onPrimary={mainActionOnReturn("meetingAlert", () => void alertAccept(false))}
+        onDismiss={() => void alertDismiss()}
+        actions={
+          <>
+            <WButton variant="primary" onClick={() => void alertAccept(false)}>
+              {t("Record")}
+            </WButton>
+            <WButton onClick={() => void alertAccept(true)}>{t("Record & open")}</WButton>
+            <WButton onClick={() => void alertDismiss()} title={dismiss.help}>
+              {dismiss.label}
+            </WButton>
+          </>
+        }
+      />
+    );
   return (
     <div className="alert">
       <span className="popup-brand">{t("Meeting detected")}</span>

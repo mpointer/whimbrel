@@ -2,7 +2,7 @@
 import type { ThemeWindow } from "./theme";
 
 /** A window that records what the page is told, with real listener bookkeeping. */
-export function fakeWindow(opts: { stored?: Record<string, string>; storageThrows?: boolean; systemDark?: boolean } = {}) {
+export function fakeWindow(opts: { stored?: Record<string, string>; storageThrows?: boolean; systemDark?: boolean; contrastMore?: boolean } = {}) {
   const props = new Map<string, string>();
   const attrs = new Map<string, string>();
   const data = { ...opts.stored };
@@ -20,6 +20,7 @@ export function fakeWindow(opts: { stored?: Record<string, string>; storageThrow
     setItem: (key: string, value: string) => void (data[key] = value),
   };
   let systemDark = opts.systemDark ?? false;
+  let contrastMore = opts.contrastMore ?? false;
   const mediaListeners = new Set<() => void>();
   const windowListeners = new Set<(event: Event) => void>();
   const win: ThemeWindow = {
@@ -28,9 +29,10 @@ export function fakeWindow(opts: { stored?: Record<string, string>; storageThrow
       return store;
     },
     document: { documentElement: root },
-    matchMedia: () => ({
+    // The color scheme and the contrast ask are different queries with their own answers.
+    matchMedia: (query: string) => ({
       get matches() {
-        return systemDark;
+        return query.includes("prefers-contrast") ? contrastMore : systemDark;
       },
       addEventListener: (_type, listener) => void mediaListeners.add(listener),
       removeEventListener: (_type, listener) => void mediaListeners.delete(listener),
@@ -47,6 +49,10 @@ export function fakeWindow(opts: { stored?: Record<string, string>; storageThrow
     listeners: () => mediaListeners.size + windowListeners.size,
     flipSystem(dark: boolean) {
       systemDark = dark;
+      mediaListeners.forEach((l) => l());
+    },
+    flipContrast(more: boolean) {
+      contrastMore = more;
       mediaListeners.forEach((l) => l());
     },
     storageEvent(key: string | null) {

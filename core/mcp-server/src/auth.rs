@@ -69,6 +69,8 @@ use tower::{Layer, Service};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthContext {
     pub client_id: i64,
+    /// The token's name as stored now (`refs.client` of what it adds).
+    pub client_name: String,
     pub scopes: Vec<String>,
 }
 
@@ -235,6 +237,7 @@ fn authenticate(
 
     Ok(AuthContext {
         client_id: stored.id,
+        client_name: stored.name,
         scopes: stored.scopes,
     })
 }
@@ -366,6 +369,7 @@ mod tests {
     fn authorize_succeeds_when_the_granted_scopes_include_the_required_one() {
         let auth = AuthContext {
             client_id: 1,
+            client_name: "test client".to_string(),
             scopes: vec!["memory".to_string()],
         };
         assert!(authorize(Some(&auth), "memory").is_ok());
@@ -375,6 +379,7 @@ mod tests {
     fn authorize_fails_distinctly_when_a_token_is_valid_but_lacks_the_scope() {
         let auth = AuthContext {
             client_id: 1,
+            client_name: "test client".to_string(),
             scopes: vec!["meetings".to_string()],
         };
         let err = authorize(Some(&auth), "memory").unwrap_err();

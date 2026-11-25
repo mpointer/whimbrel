@@ -25,6 +25,31 @@ final class MeetingAskFormattingTests: XCTestCase {
         XCTAssertTrue(prompt.contains("questions or contributions"))
     }
 
+    /// Review M12: an answer drawn on an item a local MCP client added shows its links as plain text, so
+    /// added text cannot steer the model into a clickable link.
+    func testAnAnswerCitingAnAddedItemShowsLinksAsPlainText() {
+        let md = "See [the invoice](https://evil.example/pay) and https://evil.example/x"
+        let linked = AskMarkdown.attributed(md)
+        XCTAssertNotNil(linked.attribute(.link, at: (linked.string as NSString).range(of: "the invoice").location, effectiveRange: nil))
+        let plain = AskMarkdown.attributed(md, allowLinks: false)
+        var any = false
+        plain.enumerateAttribute(.link, in: NSRange(location: 0, length: plain.length)) { value, _, _ in if value != nil { any = true } }
+        XCTAssertFalse(any)
+        XCTAssertEqual(plain.string, linked.string, "the same words, only not clickable")
+        XCTAssertFalse(AskMarkdown.linksAllowed(citations: [CoreContextItemRef(kind: .capture, id: 1), CoreContextItemRef(kind: .mcpItem, id: 2)]))
+        XCTAssertTrue(AskMarkdown.linksAllowed(citations: [CoreContextItemRef(kind: .capture, id: 1)]))
+        XCTAssertFalse(AskMarkdown.linksAllowed(citations: [], sourceKinds: ["capture", "mcp_item"]))
+        let exchange = AskExchange(query: "q", answer: md, citations: [CoreContextItemRef(kind: .mcpItem, id: 2)], model: nil, answeredLocally: false)
+        XCTAssertFalse(AskMarkdown.linksAllowed(exchange))
+        let alert = LiveAlertsSection.row(
+            CoreLiveAlert(id: 1, meetingId: 1, originDeviceId: nil, sourceId: 1, sourceMeetingId: 1, meetingTitle: "M", quote: "q",
+                          restatement: "r", asker: nil, atCs: 0, createdAtUnixMs: 1,
+                          draftJson: #"{"text":"See [x](https://evil.example)","citations":[{"kind":"mcp_item","id":2}]}"#,
+                          emailStatus: nil, notifiedAtUnixMs: nil),
+            resolve: { _ in [] })
+        XCTAssertFalse(alert.linksAllowed)
+    }
+
     func testMarkdownRendersHeadingsListsAndBold() {
         let md = "## Key points\n- **Budget** is approved\n- Ship *Friday*\n1. First\n\nPlain `code` line"
         let text = AskMarkdown.attributed(md)

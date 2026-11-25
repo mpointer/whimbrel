@@ -1,0 +1,428 @@
+/* Today's answer and the Conversations section in the Thread look (redesign flag only). Layout only: colors, fonts and shape come from the
+   selected skin through the system components and the skin variables, with the --w-* tokens as the fallback. The widths that decide are the
+   page's own, in rem, so a narrow window and a large text size fold the same way. */
+
+/* ---- Today's answer, under the bar ---- */
+.th-today-answer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  width: 100%;
+  max-width: 48rem;
+  margin: 0 auto var(--w-space-md);
+  /* Its own scroll, capped, so a long answer never pushes Today's line off the window. */
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-bottom: var(--w-space-sm);
+  border-bottom: var(--sx-line);
+}
+
+/* ---- One exchange, on Today and on a page ---- */
+.th-cv-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  min-width: 0;
+}
+.th-cv-asked {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-caption-size, var(--w-text-secondary-size));
+}
+.th-cv-question {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+/* The answer inside an exchange sits on the page, not in a card of its own. */
+.th-cv-answer {
+  padding: 0;
+  border: 0;
+  border-top: 0;
+  background: transparent;
+}
+.th-cv-stop {
+  display: flex;
+}
+.th-cv-cards {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.th-cv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+/* The quiet bar under a question that is still being answered. */
+.th-cv-quiet {
+  height: 2px;
+  margin: 0;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--w-color-ai-ink), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: th-cv-quiet 1.6s ease-in-out infinite;
+}
+@keyframes th-cv-quiet {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+
+/* ---- The page ---- */
+.th-cv-page {
+  container-type: inline-size;
+  container-name: th-cv;
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-md);
+  width: 100%;
+  max-width: 48rem;
+  margin: 0 auto;
+}
+/* The page's parts, one gap apart: Back, the header, the scope line, the exchanges and the composer. */
+.th-cv-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-md);
+  /* The stuck composer's height, so the last card scrolls clear of it. */
+  padding-bottom: 4.5rem;
+}
+.th-cv-body[hidden] {
+  display: none;
+}
+.th-cv-scopes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xs);
+}
+.th-cv-back {
+  display: flex;
+  margin-block-end: var(--w-space-xs);
+}
+/* The quiet button's own padding would push the word in from the title's edge. */
+.th-cv-back .w-button {
+  margin-inline-start: calc(-1 * var(--w-space-md));
+}
+.th-cv-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xs);
+}
+.th-cv-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+  min-width: 0;
+}
+.th-cv-title {
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--w-text-title-size, 1.25rem);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.th-cv-title:focus-visible {
+  outline-offset: 2px;
+}
+.th-cv-title-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  text-align: start;
+  cursor: text;
+}
+.th-cv-title-field {
+  flex: 1 1 12rem;
+  min-width: 0;
+  min-height: var(--w-target);
+  padding: 0 var(--w-space-sm);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+.th-cv-scope {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-cv-chip {
+  display: inline-flex;
+}
+.th-cv-topic {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--w-target);
+  padding: 0 var(--w-space-sm);
+  border: var(--sx-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--w-text-secondary-size);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.th-cv-row-meta .th-cv-topic {
+  min-height: 0;
+  cursor: inherit;
+}
+.th-cv-menu-note {
+  padding: var(--w-space-sm);
+}
+.th-cv-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+.th-cv-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-lg);
+  min-width: 0;
+}
+.th-cv-nothing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--w-space-sm);
+}
+.th-cv-nothing p {
+  margin: 0;
+}
+.th-cv-composer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-sm);
+  position: sticky;
+  bottom: 0;
+  padding: var(--w-space-sm) 0;
+  border-top: var(--sx-line);
+  background: var(--color-background-page, var(--color-background-card));
+}
+/* Scrolling text never shows through the page's bottom padding under the stuck composer. */
+.th-cv-composer:not(.th-cv-topic-ask)::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  height: 2rem;
+  background: inherit;
+}
+.th-cv-composer input {
+  flex: 1 1 14rem;
+  min-width: 0;
+  min-height: var(--w-target);
+  padding: 0 var(--w-space-md);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+/* ---- The list ---- */
+.th-cv-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-md);
+  width: 100%;
+  max-width: 48rem;
+  margin: 0 auto;
+}
+.th-cv-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm) var(--w-space-md);
+}
+.th-cv-search {
+  flex: 1 1 12rem;
+  min-width: 0;
+  min-height: var(--w-target);
+  padding: 0 var(--w-space-md);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+.th-cv-empty {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+.th-cv-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.th-cv-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w-space-xs);
+  min-width: 0;
+  border-bottom: var(--sx-line);
+}
+.th-cv-open {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--w-space-xs);
+  min-width: 0;
+  min-height: var(--w-target);
+  padding: var(--w-space-sm);
+  border: 0;
+  border-radius: var(--sx-radius-control);
+  background: transparent;
+  color: var(--color-text-primary);
+  text-align: start;
+  cursor: pointer;
+  font: inherit;
+}
+.th-cv-open:hover {
+  background: var(--color-selection);
+}
+.th-cv-row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-xs);
+  max-width: 100%;
+  font-weight: 600;
+}
+.th-cv-row-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.th-cv-row-line {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-cv-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-cv-actions-row {
+  display: flex;
+  flex: none;
+  padding-top: var(--w-space-xs);
+}
+.th-cv-actions-row .w-icon-button[aria-pressed="true"] .w-icon path {
+  fill: currentColor;
+}
+/* One starred mark: the star before the title is filled, like the row's own Star button when it is on. */
+.th-cv-row-title .w-icon path,
+.th-cv-title-row .w-icon-button[aria-pressed="true"] .w-icon path {
+  fill: currentColor;
+}
+.th-cv-radio {
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+.th-cv-check {
+  display: inline-flex;
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+}
+.th-cv-radio[aria-checked="true"] {
+  font-weight: 600;
+}
+.th-cv-row .th-conv-edit {
+  flex: 1 1 auto;
+  padding: var(--w-space-sm) 0;
+}
+.th-cv-row .th-conv-edit input {
+  flex: 1 1 8rem;
+}
+
+/* A narrow window or large text: the page and its composer take the whole width, and the row's actions go under it. */
+@container th-cv (max-width: 28rem) {
+  .th-cv-body {
+    padding-bottom: 7.5rem;
+  }
+  .th-cv-composer .w-button {
+    flex: 1 1 100%;
+  }
+}
+@media (max-width: 40rem) {
+  .th-cv-row {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .th-cv-quiet {
+    animation: none;
+    background-position: 50% 0;
+  }
+  .th-cv-page *,
+  .th-cv-list *,
+  .th-today-answer * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
+@media (forced-colors: active) {
+  .th-cv-title-field,
+  .th-cv-composer input,
+  .th-cv-search,
+  .th-cv-topic {
+    border: 1px solid CanvasText;
+  }
+  .th-cv-quiet {
+    background: Highlight;
+    animation: none;
+  }
+  .th-cv-open:focus-visible,
+  .th-cv-title-button:focus-visible {
+    outline: 2px solid Highlight;
+  }
+  .th-cv-row {
+    border-bottom: 1px solid CanvasText;
+  }
+}
+
+/* The header's menus open downward: the header is at the top of the page, so an upward menu would be cut off. */
+.th-cv-header .w-more-menu {
+  top: calc(100% + var(--w-space-xs));
+  bottom: auto;
+  margin: 0;
+  list-style: none;
+}
+.th-cv-chip .w-more-menu {
+  right: auto;
+  inset-inline-start: 0;
+}
+
+/* A topic page's Ask box sits in the page, not stuck to the window's bottom. */
+.th-cv-composer.th-cv-topic-ask {
+  position: static;
+  padding-inline: 0;
+}

@@ -472,7 +472,7 @@ pub fn run_topic_index_job(store: &Store, batch: usize) -> rusqlite::Result<bool
     tx.commit()?;
     // Embedding can be slow; do it outside the write transaction.
     for (sid, text) in pending {
-        if let Ok(v) = store.embed(&text) {
+        if let Ok(v) = store.embed_passage(&text) {
             let live = store
                 .conn
                 .query_row(
@@ -887,7 +887,7 @@ mod tests {
         let v = crate::topics::cluster::source_vec(&s.conn, sid)
             .unwrap()
             .unwrap();
-        assert_eq!(v, s.embed(&text).unwrap());
+        assert_eq!(v, s.embed_passage(&text).unwrap());
     }
 
     fn n(s: &Store, sql: &str) -> i64 {

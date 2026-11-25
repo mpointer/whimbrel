@@ -27,7 +27,7 @@ struct ConnectorsSettingsPane: View {
             Divider().overlay(Color.whimbrelBorder)
 
             VStack(alignment: .leading, spacing: Spacing.sm) {
-                Text("Google Calendar").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text("Google Calendar").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("connectors.calendar")
                 calendarAccountRows
                 addAccountControl(
                     state: appState.calendarConnectorState.addAccountState,
@@ -39,7 +39,7 @@ struct ConnectorsSettingsPane: View {
             Divider().overlay(Color.whimbrelBorder)
 
             VStack(alignment: .leading, spacing: Spacing.sm) {
-                Text("Gmail").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text("Gmail").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("connectors.gmail")
                 gmailAccountRows
                 addAccountControl(
                     state: appState.gmailConnectorState.addAccountState,
@@ -51,7 +51,7 @@ struct ConnectorsSettingsPane: View {
             Divider().overlay(Color.whimbrelBorder)
 
             VStack(alignment: .leading, spacing: Spacing.sm) {
-                Text("Outlook 365").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text("Outlook 365").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("connectors.outlook")
                 outlookAccountRows
                 addAccountControl(
                     state: appState.outlook365ConnectorState.addAccountState,
@@ -105,7 +105,7 @@ struct ConnectorsSettingsPane: View {
     @ViewBuilder
     private var customGoogleClientSection: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            Text("Use your own Google Cloud project").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Use your own Google Cloud project").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("connectors.ownClient")
             Text("For Gmail reading. Create a Desktop OAuth client in your own Google Cloud project, add yourself as its user, and publish it (an unverified app is fine for yourself).")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)

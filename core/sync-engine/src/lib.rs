@@ -29,7 +29,11 @@ use tokio::runtime::Runtime;
 mod content;
 mod kind_backfill;
 mod outbox;
-pub use kind_backfill::{kind_backfill_percent, kind_backfill_step, KindBackfillProgress};
+mod slice_backfill;
+pub use kind_backfill::{kind_backfill_percent, BackfillStop, kind_backfill_step, KindBackfillProgress};
+/// Below this much of a runner backfill's total budget left, no new step starts (nor, in the runner's `backfill`
+/// command, the slice pass after the kind pass).
+pub const BACKFILL_MIN_STEP_REMAINING: Duration = kind_backfill::MIN_STEP_REMAINING;
 pub use content::{
     ensure_content_schema, last_pull_stats_json, more_to_pull, pull_content, push_content,
     seal_client_cleanup, take_forgotten_meeting_files, PullOptions,
@@ -491,6 +495,86 @@ pub struct RunnerPullReport {
     /// run cost in rows read. Counts only.
     pub rows_fetched: usize,
     pub rounds: usize,
+    /// Per row type (see [`PULL_TYPE_NAMES`]): rows fetched and rows applied. "Dropped" is fetched minus
+    /// applied (not counted apart, so a row that was skipped, undecodable or already applied all read as
+    /// dropped). The fetched counts sum to `rows_fetched`; the applied counts plus `own_results_applied`
+    /// sum to `rows_applied`.
+    pub by_type: [PullTypeCounts; PULL_TYPE_NAMES.len()],
+    /// Of `rows_applied`: the runner's own earlier results read back after the rounds (not fetched in them).
+    pub own_results_applied: usize,
+    /// Why fetched rows were not applied, summed over the pull: already applied earlier, would not decrypt
+    /// or decode, left out by the allowlist, outside the item window.
+    pub already_applied: usize,
+    pub undecodable: usize,
+    pub skipped_allowlist: usize,
+    pub skipped_window: usize,
+    /// Of the skipped `items` rows, by reason: an added (MCP) item, a kind not granted, a Google Calendar
+    /// event, outside the item window.
+    pub skip_mcp: usize,
+    pub skip_kind: usize,
+    pub skip_google_cal: usize,
+    pub skip_item_window: usize,
+    /// Rows fetched but not handled in their page (a budget stopped it): fetched again by a later pass, so
+    /// they count as fetched more than once. And rows deferred to the parent-meeting pass (applied there,
+    /// not counted as applied). Fetched minus applied is about already_applied + undecodable +
+    /// skipped_allowlist + skipped_window + refetch + deferred.
+    pub refetch: usize,
+    pub deferred: usize,
+    /// Over every round: time fetching from the relay, time applying (live pages and gap pages), and the longest single round.
+    pub fetch_ms: u64,
+    pub apply_ms: u64,
+    pub max_round_ms: u64,
+    /// How many slice tags the `items` query carried (a per-query constant: the most any round's did). 0 without a
+    /// kind restriction, when they would be too many, or on a relay without the `slice_tag` column.
+    pub slice_tags: usize,
+    /// Whether the relay's pull indexes served at least one query (any round): `pull_index=on|off` in the diagnostics.
+    pub pull_index: bool,
+}
+
+/// Row types a pull diagnostic names. Fixed names only: a row type read from the relay that is not one of
+/// these counts as "other", so no relay-supplied text is ever printed.
+pub const PULL_TYPE_NAMES: [&str; 18] = [
+    "items",
+    "meeting",
+    "capture_item",
+    "transcript_segment",
+    "routine_run",
+    "meeting_prep",
+    "tombstone",
+    "marker",
+    "topic_seed",
+    "topic_verdict",
+    "topic_other",
+    "person",
+    "meeting_speaker",
+    "profile_suggestion",
+    "live_alert",
+    "provider_spend",
+    "skin",
+    "other",
+];
+
+/// Rows of one type in a pull: how many were fetched and how many applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PullTypeCounts {
+    pub fetched: usize,
+    pub applied: usize,
+}
+
+/// The index in [`PULL_TYPE_NAMES`] a relay `row_type` counts under: the delete rows are "tombstone", the
+/// capability and bookkeeping rows "marker".
+pub fn pull_type_index(row_type: &str) -> usize {
+    let name = match row_type {
+        "items" | "meeting" | "capture_item" | "transcript_segment" | "routine_run" | "meeting_prep" | "topic_seed"
+        | "topic_verdict" | "person" | "meeting_speaker" | "live_alert" | "provider_spend" => row_type,
+        "profile_suggestion" | "profile_suggestion_status" => "profile_suggestion",
+        "skin" | "skin_image_chunk" => "skin",
+        t if t.starts_with("topic_") && !t.ends_with("_capability") && t != "topic_seed_purged" => "topic_other",
+        "meeting_forgotten" | "client_item_forgotten" | "topic_seed_purged" => "tombstone",
+        t if t.ends_with("_capability") || t == "device_retired" || t == "kind_backfill_claim" || t == "slice_backfill_claim" => "marker",
+        _ => "other",
+    };
+    PULL_TYPE_NAMES.iter().position(|n| *n == name).unwrap_or(PULL_TYPE_NAMES.len() - 1)
 }
 
 /// How long the cloud runner's pull keeps starting rounds. Its store starts empty every run, so one
@@ -577,10 +661,31 @@ async fn runner_pull_phased(
     let mut report = RunnerPullReport::default();
     loop {
         // Each round applies tombstones and runs the owed full-text clean-up after a delete.
-        let (more, applied, fetched) = content::runner_pull_round(conn, group_key, store, device_id, options).await?;
-        report.rows_applied += applied;
-        report.rows_fetched += fetched;
+        let round_started = std::time::Instant::now();
+        let round = content::runner_pull_round(conn, group_key, store, device_id, options).await?;
+        let more = round.more;
+        report.rows_applied += round.applied;
+        report.rows_fetched += round.fetched;
         report.rounds += 1;
+        for (total, add) in report.by_type.iter_mut().zip(round.by_type) {
+            total.fetched += add.fetched;
+            total.applied += add.applied;
+        }
+        report.already_applied += round.already_applied;
+        report.undecodable += round.undecodable;
+        report.skipped_allowlist += round.skipped_allowlist;
+        report.skipped_window += round.skipped_window;
+        report.skip_mcp += round.skip_mcp;
+        report.skip_kind += round.skip_kind;
+        report.skip_google_cal += round.skip_google_cal;
+        report.skip_item_window += round.skip_item_window;
+        report.refetch += round.refetch;
+        report.deferred += round.deferred;
+        report.fetch_ms += round.fetch_ms;
+        report.apply_ms += round.apply_ms;
+        report.max_round_ms = report.max_round_ms.max(round_started.elapsed().as_millis() as u64);
+        report.slice_tags = report.slice_tags.max(round.slice_tags);
+        report.pull_index |= round.pull_index;
         let caught_up = content::tombstones_caught_up(store);
         if !more && caught_up {
             // One more round retries lines read before their (held) meeting, which only a round's
@@ -608,10 +713,116 @@ async fn runner_pull_phased(
         Some(allow) => allow.iter().map(String::as_str).collect(),
         None => vec![memory::OUTBOX_ROW_TYPE_ROUTINE_RUN, memory::OUTBOX_ROW_TYPE_MEETING_PREP],
     };
-    report.rows_applied += content::read_own_results(conn, group_key, store, device_id, &own_types).await?;
+    report.own_results_applied = content::read_own_results(conn, group_key, store, device_id, &own_types).await?;
+    report.rows_applied += report.own_results_applied;
     report.exclusion_rows_published = content::client_settings_published(conn, device_id).await?;
     content::record_pending_tombstone_devices(conn, store, device_id).await;
     Ok(report)
+}
+
+/// The cloud runner's one-time `kind_tag` backfill over the whole relay (`kind_backfill_step` in a loop, see
+/// `kind_backfill::run_runner_backfill`): for at most about `total_budget`, in steps of `step_budget`. Returns where
+/// it stands: `finished`, or not (budget spent, or another device's fresh claim holds the walk). A new store walks
+/// again from the start and skips rows already tagged, so a later run resumes. Nothing but the tag is written back.
+pub fn runner_kind_backfill(
+    turso_url: &str,
+    turso_token: &str,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    total_budget: Duration,
+    step_budget: Duration,
+) -> Result<KindBackfillProgress, SyncEngineError> {
+    runner_kind_backfill_observed(turso_url, turso_token, group_key, store, device_id, total_budget, step_budget, &mut |_, _| {}).map(|(p, _)| p)
+}
+
+/// [`runner_kind_backfill`], calling `on_step(progress, steps so far)` after every step (the CLI's progress line).
+/// Also returns the [`BackfillStop`]: why it stopped (finished, budget spent, or another device's claim held it).
+#[allow(clippy::too_many_arguments)]
+pub fn runner_kind_backfill_observed(
+    turso_url: &str,
+    turso_token: &str,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    total_budget: Duration,
+    step_budget: Duration,
+    on_step: &mut dyn FnMut(&KindBackfillProgress, usize),
+) -> Result<(KindBackfillProgress, BackfillStop), SyncEngineError> {
+    runtime().block_on(with_timeout(
+        total_budget + step_budget + kind_backfill::BACKSTOP_SLACK + SYNC_TIMEOUT,
+        "runner kind backfill",
+        async {
+            let conn = remote_connection(turso_url, turso_token).await?;
+            kind_backfill::run_runner_backfill(&conn, group_key, store, device_id, total_budget, step_budget, on_step).await
+        },
+    ))
+}
+
+/// The body of [`runner_kind_backfill`] after connecting, public so tests can run it against a local database.
+pub async fn runner_kind_backfill_with_connection(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    total_budget: Duration,
+    step_budget: Duration,
+) -> Result<KindBackfillProgress, SyncEngineError> {
+    runner_kind_backfill_observed_with_connection(conn, group_key, store, device_id, total_budget, step_budget, &mut |_, _| {})
+        .await
+        .map(|(p, _)| p)
+}
+
+/// [`runner_kind_backfill_with_connection`] with the per-step callback; also returns the [`BackfillStop`] (why it stopped).
+pub async fn runner_kind_backfill_observed_with_connection(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    total_budget: Duration,
+    step_budget: Duration,
+    on_step: &mut dyn FnMut(&KindBackfillProgress, usize),
+) -> Result<(KindBackfillProgress, BackfillStop), SyncEngineError> {
+    kind_backfill::run_runner_backfill(conn, group_key, store, device_id, total_budget, step_budget, on_step).await
+}
+
+/// The cloud runner's one-time `slice_tag` backfill over the whole relay, run by its `backfill` command after
+/// [`runner_kind_backfill_observed`]: the same walk, steps, retries and stop rules over `slice_tag`, with its own
+/// claim and progress keys (`slice_backfill::run_runner_slice_backfill`). The apps never run it. Nothing but the
+/// tag is written back.
+#[allow(clippy::too_many_arguments)]
+pub fn runner_slice_backfill_observed(
+    turso_url: &str,
+    turso_token: &str,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    total_budget: Duration,
+    step_budget: Duration,
+    on_step: &mut dyn FnMut(&KindBackfillProgress, usize),
+) -> Result<(KindBackfillProgress, BackfillStop), SyncEngineError> {
+    runtime().block_on(with_timeout(
+        total_budget + step_budget + kind_backfill::BACKSTOP_SLACK + SYNC_TIMEOUT,
+        "runner slice backfill",
+        async {
+            let conn = remote_connection(turso_url, turso_token).await?;
+            slice_backfill::run_runner_slice_backfill(&conn, group_key, store, device_id, total_budget, step_budget, on_step).await
+        },
+    ))
+}
+
+/// The body of [`runner_slice_backfill_observed`] after connecting, public so tests can run it against a local
+/// database.
+pub async fn runner_slice_backfill_observed_with_connection(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    total_budget: Duration,
+    step_budget: Duration,
+    on_step: &mut dyn FnMut(&KindBackfillProgress, usize),
+) -> Result<(KindBackfillProgress, BackfillStop), SyncEngineError> {
+    slice_backfill::run_runner_slice_backfill(conn, group_key, store, device_id, total_budget, step_budget, on_step).await
 }
 
 /// The cloud runner's send, after its routines ran: delivers its outbox (the `routine_run` and

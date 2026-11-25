@@ -109,6 +109,9 @@ describe("memory blocks", () => {
     expect(appName("MSEdge.profile2.Default")).toBe("Microsoft Edge");
     expect(appName("figma.exe")).toBe("Figma");
   });
+  it("calls a note imported from a folder an imported note, not by its app id", () => {
+    expect(appName("import.markdown")).toBe("Imported note");
+  });
   it("gives the same app the same color", () => expect(appDot("slack.exe")).toBe(appDot("Slack")));
   it("lists titles, then what was left out", () => {
     const items = blockItems(block(at(9, 0), at(9, 30), [{ app_bundle_id: "excel.exe", items: ["Pricing v3.xlsx", "Budget.xlsx"], more_items: 2 }, { app_bundle_id: "slack.exe", items: [], more_items: 0 }], 3));
@@ -162,5 +165,56 @@ describe("people and the line's order", () => {
     expect(earlierGroups([m(1, 17, 15), m(2, 17, 9), m(3, 12, 10)], NOW, "en-US").map((g) => [g.id, g.meetings.length])).toEqual([["yesterday", 2], ["lastWeek", 1]]);
     expect(earlierGroups([m(3, 12, 10)], NOW, "en-US").map((g) => g.id)).toEqual(["lastWeek"]);
     expect(earlierGroups([], NOW, "en-US")).toEqual([]);
+  });
+});
+
+describe("moving through a filter chip's menu with the keyboard", () => {
+  it("moves down and up between the choices, wrapping at the ends", async () => {
+    const { menuStep } = await import("./homeModel");
+    expect(menuStep("ArrowDown", 0, 4)).toBe(1);
+    expect(menuStep("ArrowDown", 3, 4)).toBe(0);
+    expect(menuStep("ArrowUp", 0, 4)).toBe(3);
+    expect(menuStep("ArrowUp", 2, 4)).toBe(1);
+  });
+  it("goes to the first and last choice with Home and End, and from outside the choices to the first or last", async () => {
+    const { menuStep } = await import("./homeModel");
+    expect(menuStep("Home", 2, 4)).toBe(0);
+    expect(menuStep("End", 0, 4)).toBe(3);
+    expect(menuStep("ArrowDown", -1, 4)).toBe(0);
+    expect(menuStep("ArrowUp", -1, 4)).toBe(3);
+  });
+  it("leaves every other key, and an empty menu, alone", async () => {
+    const { menuStep } = await import("./homeModel");
+    expect(menuStep("Enter", 1, 4)).toBeNull();
+    expect(menuStep("a", 1, 4)).toBeNull();
+    expect(menuStep("ArrowDown", -1, 0)).toBeNull();
+  });
+});
+
+describe("a capture's detail header", () => {
+  it("says an imported note is one, never the raw app id or how the screen was read", async () => {
+    const { captureHeader } = await import("./homeModel");
+    expect(captureHeader({ app: "import.markdown", source: "import" })).toEqual({ app: "Imported note", how: null });
+  });
+  it("names the app and how its text was read for a screen capture", async () => {
+    const { captureHeader } = await import("./homeModel");
+    expect(captureHeader({ app: "excel.exe", source: "uia" })).toEqual({ app: "Excel", how: "Accessibility" });
+    expect(captureHeader({ app: "excel.exe", source: "ax" })).toEqual({ app: "Excel", how: "Accessibility" });
+    expect(captureHeader({ app: "excel.exe", source: "ocr" })).toEqual({ app: "Excel", how: "OCR fallback" });
+    expect(captureHeader({ app: "notes.exe", source: "something new" })).toEqual({ app: "Notes", how: null });
+  });
+});
+
+describe("a custom date chip", () => {
+  it("reads in the chips' date words, not as stored dates", async () => {
+    const { dateChoiceLabel } = await import("./homeModel");
+    expect(dateChoiceLabel({ kind: "custom", from: "2026-11-16", to: "2026-11-22" }, "en-US")).toBe("Nov 16 to Nov 22");
+    expect(dateChoiceLabel({ kind: "custom", from: "2026-11-16", to: "2026-11-16" }, "en-US")).toBe("Nov 16");
+    expect(dateChoiceLabel({ kind: "custom", from: "2026-12-28", to: "2027-01-03" }, "en-US")).toBe("Dec 28, 2026 to Jan 3, 2027");
+    expect(dateChoiceLabel({ kind: "custom", from: "2026-11-16", to: "2026-11-22" }, "de")).toBe("16. Nov. to 22. Nov.");
+  });
+  it("uses the language on screen when no locale is given", async () => {
+    const { dateChoiceLabel } = await import("./homeModel");
+    expect(dateChoiceLabel({ kind: "custom", from: "2026-11-16", to: "2026-11-22" })).toBe("Nov 16 to Nov 22");
   });
 });

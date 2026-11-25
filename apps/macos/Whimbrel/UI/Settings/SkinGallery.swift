@@ -136,8 +136,8 @@ struct SkinGallery: View {
     /// A skin you made (they live in `UserSkinStore`, whose ids all start `user-`).
     static func isUserSkin(_ skin: Skin) -> Bool { skin.id.hasPrefix("user-") }
 
-    /// Built-ins in installed order, then your skins by name. The built-in Thread skin is listed only with the hidden
-    /// redesign switch on (`RedesignFlag`), and it never changes the selected skin.
+    /// Built-ins in installed order, then your skins by name. The built-in Thread skin is listed when `redesign`
+    /// is on (always, in the app: `RedesignFlag`); listing it never changes the selected skin (`ThreadMove` does that, once).
     static func orderedCards(skins: [Skin], redesign: Bool) -> [Skin] {
         let listed = RedesignFlag.visible(skins, redesign: redesign)
         return listed.filter { !isUserSkin($0) } + listed.filter(isUserSkin).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }

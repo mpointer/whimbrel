@@ -118,8 +118,9 @@ pub struct Live {
     /// A recording pause is on: each stream releases its audio client (so Windows stops showing the
     /// microphone in use) and keeps its WAV open until resume or stop.
     paused: AtomicBool,
-    /// When resume was asked for, until the microphone's first packet arrives; 0 otherwise.
-    resumed_at_unix_ms: AtomicI64,
+    /// "Resuming": from the resume until every stream the pause closed has started capturing again
+    /// (`meetings::pause_clock::ResumeGate`).
+    resume: Mutex<crate::meetings::pause_clock::ResumeGate>,
     /// Someone asked for the level meter (redesign only), so packets keep a decaying peak. Never set with the
     /// switch off, so nothing is sampled then.
     level_wanted: AtomicBool,
@@ -161,24 +162,38 @@ impl Live {
     /// Starts or ends a recording pause. Resuming stamps `now_unix_ms` first, so "resuming" is
     /// already true when the streams see the pause end.
     pub fn set_paused(&self, paused: bool, now_unix_ms: i64) {
-        if paused {
-            self.resumed_at_unix_ms.store(0, Ordering::Relaxed);
-        } else {
-            self.resumed_at_unix_ms.store(now_unix_ms.max(1), Ordering::Relaxed);
+        {
+            let mut gate = self.resume.lock().unwrap();
+            if paused {
+                gate.pause();
+            } else {
+                gate.resume(now_unix_ms);
+            }
         }
         self.paused.store(paused, Ordering::Relaxed);
     }
 
-    /// Resume was asked for and the microphone has still delivered nothing past the limit: the caller reports the
-    /// microphone's own degraded wording (`gave_up_reason`) until audio arrives or the stall logic gives up.
+    /// Resume was asked for and a stream the pause closed has still not started again past the limit: the caller
+    /// reports a degraded reason until it does or the stream gives up with its own.
     pub fn resume_stalled(&self, now_unix_ms: i64) -> bool {
-        crate::meetings::pause_clock::resume_stalled(self.resumed_at_unix_ms.load(Ordering::Relaxed), now_unix_ms)
+        self.resume.lock().unwrap().stalled(now_unix_ms)
     }
 
-    /// Resume was asked for and the microphone has not delivered audio yet (see
-    /// `meetings::pause_clock::still_resuming`).
+    /// Resume was asked for and a stream the pause closed has not started capturing again yet (see
+    /// `meetings::pause_clock::ResumeGate`). Not the first packet: a microphone that opens and stays quiet must not hold
+    /// Pause and Mark for the whole limit.
     pub fn resuming(&self, now_unix_ms: i64) -> bool {
-        crate::meetings::pause_clock::still_resuming(self.resumed_at_unix_ms.load(Ordering::Relaxed), now_unix_ms)
+        self.resume.lock().unwrap().resuming(now_unix_ms)
+    }
+
+    /// A stream closed its audio client for the pause.
+    fn stream_held(&self) {
+        self.resume.lock().unwrap().stream_held();
+    }
+
+    /// A held stream started capturing again, gave up, or ended.
+    fn stream_back(&self) {
+        self.resume.lock().unwrap().stream_back();
     }
 
     /// Keeps the first reason: it's the one that explains the rest.
@@ -645,10 +660,16 @@ fn capture_into(
     let spec = hound::WavSpec { channels: 1, sample_rate: SAMPLE_RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
     let mut wav = hound::WavWriter::create(wav_path, spec).map_err(|e| e.to_string())?;
     let mut written: i64 = 0;
+    // This stream is counted in `Live`'s resume gate: closed by a pause and not started again yet.
+    let mut held = false;
 
     loop {
         // A recording pause: hold with no client open, then pad to now and go on to reopen below.
         if options.supervise && options.live.is_paused() && !stop.load(Ordering::Relaxed) {
+            if !held {
+                options.live.stream_held();
+                held = true;
+            }
             hold_while_paused(source, t0, stop, options, &mut wav, &mut written, stats);
             if stop.load(Ordering::Relaxed) {
                 break;
@@ -666,7 +687,7 @@ fn capture_into(
                 if options.supervise {
                     tracing::info!(?source, ?wire, "audio stream opened");
                 }
-                run_client(&client, wire, source, t0, stop, options, &mut wav, &mut written, stats)
+                run_client(&client, wire, source, t0, stop, options, &mut wav, &mut written, stats, &mut held)
             }
             Err(e) => ClientEnd::Failed(format!("open {source:?}: {e}")),
         };
@@ -687,6 +708,10 @@ fn capture_into(
                 }
                 tracing::warn!(?source, reason = %reason, "an audio stream gave up");
                 options.live.set_degraded(gave_up_reason(source));
+                // It will not come back: "Resuming" must not wait for it, and the degraded reason says why.
+                if std::mem::take(&mut held) {
+                    options.live.stream_back();
+                }
                 stats.error = Some(reason);
                 // Keep the file's timeline: wait for the stop, then pad to it below.
                 while !stop.load(Ordering::Relaxed) {
@@ -697,6 +722,9 @@ fn capture_into(
         }
     }
 
+    if held {
+        options.live.stream_back();
+    }
     // Pad to the stop instant so every stream from one recording ends together.
     let end = ((now_100ns() - t0) as i128 * SAMPLE_RATE as i128 / 10_000_000) as i64;
     if end > written {
@@ -757,6 +785,7 @@ fn run_client<W: std::io::Write + std::io::Seek>(
     wav: &mut hound::WavWriter<W>,
     written: &mut i64,
     stats: &mut StreamStats,
+    held: &mut bool,
 ) -> ClientEnd {
     let opened = now_100ns();
     let ms_since = |t: u64| now_100ns().saturating_sub(t) as f64 / 10_000.0;
@@ -794,6 +823,11 @@ fn run_client<W: std::io::Write + std::io::Seek>(
                 return ClientEnd::Failed(e.to_string());
             }
         };
+        // Capturing again after a pause: "Resuming" is over for this stream, whether or not a packet has come yet.
+        if std::mem::take(held) {
+            options.live.stream_back();
+            tracing::info!(?source, "recording resumed: audio stream started");
+        }
 
         let end = loop {
             let stopping = stop.load(Ordering::Relaxed);
@@ -822,10 +856,6 @@ fn run_client<W: std::io::Write + std::io::Seek>(
                         break;
                     }
                     got_packet = true;
-                    if options.supervise && source == Source::Microphone {
-                        // Audio is arriving again: "resuming" is over (a store of 0 is harmless otherwise).
-                        options.live.resumed_at_unix_ms.store(0, Ordering::Relaxed);
-                    }
                     stats.packets += 1;
                     if stats.first_packet_ms.is_none() && qpc != 0 {
                         stats.first_packet_ms = Some((qpc as f64 - t0 as f64) / 10_000.0);

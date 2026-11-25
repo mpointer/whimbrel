@@ -753,6 +753,9 @@ extension TimelineView {
         guard let store = appState.coreStore else { return }
         // The title is a background model call: it must not hold the lane the user's next question uses.
         let titleLane = appState.backgroundModelLane
+        // FR-CHAT-6: `titleGenEffective` is the sentinel non-time-critical route (see
+        // `nonTimeCriticalSentinelQuery`), not the original question's classification.
+        let titleRouting = appState.routing.routingConfig(preferredProvider: titleGenEffective.provider, preferredModel: titleGenEffective.modelLabel)
         let citationsJson = (try? JSONEncoder().encode(citations.map(\.saved))).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         CoreMemoryStore.accessQueue.async {
             let conversationId: Int64?
@@ -778,52 +781,12 @@ extension TimelineView {
                 refreshConversationList()
             }
             if isFirstMessageInConversation, let titleLane {
-                scheduleConversationTitle(lane: titleLane, conversationId: conversationId, query: query, answer: answer, ollamaModel: capturedOllamaModel, effective: titleGenEffective, attemptsLeft: 8)
+                // The placeholder title (set by `createConversation`) stays on any failure.
+                ConversationTitleJob.schedule(
+                    lane: titleLane, conversationId: conversationId, query: query, answer: answer,
+                    ollamaModel: capturedOllamaModel, routing: titleRouting, completion: { refreshConversationList() })
             }
         }
-    }
-
-    /// Runs `generateConversationTitle` on the background model lane, but only while no user request is
-    /// queued: otherwise it tries again later (a few times; the placeholder title stays if it never runs).
-    func scheduleConversationTitle(
-        lane: (store: CoreMemoryStore, queue: DispatchQueue), conversationId: Int64, query: String, answer: String,
-        ollamaModel: String, effective: (provider: RoutingSettings.Provider, modelLabel: String), attemptsLeft: Int
-    ) {
-        lane.queue.async {
-            if case .retryLater(let seconds) = BackgroundModelLane.start(userBusy: UserModelGate.shared.isBusy()) {
-                guard attemptsLeft > 0 else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
-                    scheduleConversationTitle(lane: lane, conversationId: conversationId, query: query, answer: answer, ollamaModel: ollamaModel, effective: effective, attemptsLeft: attemptsLeft - 1)
-                }
-                return
-            }
-            generateConversationTitle(store: lane.store, conversationId: conversationId, query: query, answer: answer, ollamaModel: ollamaModel, effective: effective)
-        }
-    }
-
-    /// Always routes through Ollama-substitution logic the same way any other
-    /// non-time-critical Ask-mode call would — title generation is itself
-    /// non-time-critical by definition. On any failure the placeholder title (already
-    /// set by `createConversation`) simply stays; no retry, no error surfaced anywhere.
-    /// `ollamaModel` is the value captured in `askIfNeeded` at send time, not read live,
-    /// for the same reason `persistExchange` captures its conversation id. `effective`
-    /// is `askIfNeeded`'s `titleGenEffective` -- a routing decision computed from the
-    /// sentinel non-time-critical query, NOT the original question's classification
-    /// (see `nonTimeCriticalSentinelQuery`'s doc comment).
-    func generateConversationTitle(
-        store: CoreMemoryStore,
-        conversationId: Int64,
-        query: String,
-        answer: String,
-        ollamaModel: String,
-        effective: (provider: RoutingSettings.Provider, modelLabel: String)
-    ) {
-        let titleRouting = appState.routing.routingConfig(preferredProvider: effective.provider, preferredModel: effective.modelLabel)
-        guard let generated = store.generateConversationTitle(model: ollamaModel, query: query, answer: answer, routing: titleRouting) else {
-            return
-        }
-        _ = store.setConversationTitleIfPlaceholder(id: conversationId, generatedTitle: generated)
-        DispatchQueue.main.async { refreshConversationList() }
     }
 
     func refreshSpendToday() {

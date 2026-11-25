@@ -4,7 +4,7 @@
 
 use serde::Serialize;
 
-use crate::ask::{prepared_asks, provider_for_streamed_answer, PreparedAsk};
+use crate::ask::{provider_for_streamed_answer, PreparedAsk};
 use crate::budget::check_provider;
 use crate::envelope::ApiError;
 use crate::routing::RoutingConfig;
@@ -196,7 +196,7 @@ fn window_prompt_with_history(
         if truncated { ", cut to fit" } else { "" },
     ));
     for (i, item) in background.iter().enumerate() {
-        prompt.push_str(&format!("[{}] ({}) {}\n", i + 1, item.display_label(), item.text()));
+        prompt.push_str(&format!("[{}] ({}) {}\n", i + 1, item.display_label(), item.prompt_text()));
     }
     if !history.is_empty() {
         prompt.push_str("\nConversation so far:\n");
@@ -298,7 +298,7 @@ fn prepare_with(
     // round 5, N2, N3).
     let window = window_stamp_text(input);
     let clean_keys = crate::ask::clean_keys_for(store, &filter, exclusion, &context, [], &[query, &window], &history);
-    prepared_asks().lock().unwrap().insert(
+    crate::ask::stash_prepared(
         prepare_id.clone(),
         PreparedAsk { context, provider, exclusion, clean_keys, history_google: Some(history_google) },
     );
@@ -308,6 +308,7 @@ fn prepare_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ask::prepared_asks;
 
     fn input(text: &str, is_selection: bool) -> WindowInput {
         WindowInput { app_name: "Mail".into(), title: "Inbox".into(), text: text.into(), is_selection }
@@ -454,7 +455,8 @@ mod tests {
         let store = memory::Store::open_in_memory().unwrap();
         let r = prepare_with(&store, &input("text", true), "q?", &[], &routing(true, "anthropic"), true, None).unwrap();
         assert_eq!(r.destination, Destination::LocalOnly);
-        assert!(prepared_asks().lock().unwrap().remove(&r.prepare_id).is_some());
+        let stashed = prepared_asks().lock().unwrap().remove(&r.prepare_id).is_some();
+        assert!(stashed);
     }
 
     /// Limited Use: an earlier answer built from Google data is not sent to a streamed
@@ -474,7 +476,8 @@ mod tests {
         ];
         let r = RoutingConfig { openrouter_key: Some("k".into()), ..routing(false, "openrouter") };
         let out = prepare_with(&store, &input("text", false), "q?", &history, &r, true, None).unwrap();
-        assert!(prepared_asks().lock().unwrap().remove(&out.prepare_id).is_some());
+        let stashed = prepared_asks().lock().unwrap().remove(&out.prepare_id).is_some();
+        assert!(stashed);
         assert!(!out.prompt.contains("GMAILANSWER") && !out.prompt.contains("UNKNOWNANSWER"), "{}", out.prompt);
         assert!(out.prompt.contains("CLEANANSWER"));
     }

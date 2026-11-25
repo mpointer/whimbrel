@@ -126,9 +126,14 @@ enum HomeRedesignAdapter {
 
     // MARK: Capture state
 
-    static func memoryState(enabled: Bool, resumeAt: Date?, now: Date) -> WMemoryState {
+    /// `capturing` is whether screen text is actually being saved (`ScreenTextCaptureService.isRunning`). Memory that is switched
+    /// on while that is not true (the Accessibility permission is off, or capture did not start) is never called "Memory on":
+    /// the old status line said "waiting for permissions" for the same facts. The menu and the shell both read this one rule.
+    /// `since` is when memory was last switched on (`AppState.memoryOnSince`): a state that has not held for a few seconds is
+    /// not yet called a problem (`WMemoryHold`). Nil holds nothing back.
+    static func memoryState(enabled: Bool, resumeAt: Date?, now: Date, capturing: Bool = true, since: Date? = nil) -> WMemoryState {
         switch CapturePauseModel.state(captureOn: enabled, resumeAt: resumeAt) {
-        case .on: return .on
+        case .on: return capturing ? .on : WMemoryHold.state(.onNotCapturing, since: since, now: now)
         case .paused: return .pausedUntil(CapturePauseModel.untilText(resumeAt ?? now, now: now))
         case .off: return .off
         }
@@ -137,8 +142,9 @@ enum HomeRedesignAdapter {
     static func nowLabel(_ memory: WMemoryState) -> String {
         switch memory {
         case .on: return String(localized: "Memory on", comment: "Work memory state in the sidebar footer: Whimbrel is saving context.")
+        case .onNotCapturing: return String(localized: "Memory on, but not capturing", comment: "Work memory state: memory is switched on but Whimbrel is not saving text from the screen, for example because a permission is off.")
         case .off: return String(localized: "Memory off", comment: "Work memory state in the sidebar footer: Whimbrel is not saving context.")
-        case .pausedUntil(let time): return String(localized: "Paused until \(time)", comment: "Work memory state in the sidebar footer. The placeholder is a clock time, for example 10:52 AM.")
+        case .pausedUntil(let time): return String(localized: "Memory paused until \(time)", comment: "Work memory paused, as written on the memory control and the time line and as spoken. It says Memory because a recording can be paused too. The placeholder is a clock time, for example 3:10 PM.")
         }
     }
 
@@ -146,6 +152,7 @@ enum HomeRedesignAdapter {
     static func notice(_ memory: WMemoryState) -> String? {
         switch memory {
         case .on: return nil
+        case .onNotCapturing: return String(localized: "Memory is on, but screen text is not being saved.", comment: "One line on the time line of Today when memory is switched on but Whimbrel is not saving text from the screen, for example because a permission is off.")
         case .off: return String(localized: "Memory is off.", comment: "One line on the time line of Today when Whimbrel is not saving context.")
         case .pausedUntil(let time): return String(localized: "Memory is paused until \(time).", comment: "One line on the time line of Today during a timed pause. The placeholder is a clock time, for example 3:10 PM.")
         }
@@ -327,6 +334,7 @@ enum HomeRedesignAdapter {
             case .custom(let from, let to):
                 let style = Date.FormatStyle().month(.abbreviated).day()
                 out.dateLabel = "\(from.formatted(style)) - \(to.formatted(style))"
+            case .exact(_, _, let title): out.dateLabel = title
             }
         }
         return out
@@ -346,18 +354,29 @@ struct TodayHomeRedesignView: View {
     /// A block's Open (the Library range).
     let openBlock: (CoreDayBlock) -> Void
 
+    /// The 30 s clock's anchor, kept so the schedule is the same value between draws.
+    @State private var tickAnchor = Date()
+
+    /// The end of the memory hold while it is holding (see `WMemoryHold.holdEnds`): Home redraws then, not at the next tick.
+    private var memoryHoldEnd: Date? {
+        guard appState.activityCaptureEnabled else { return nil }
+        return WMemoryHold.holdEnds(capturing: appState.screenText.isRunning, since: appState.memoryOnSince, now: Date())
+    }
+
     var body: some View {
         // The clock ticks so the now marker moves and a finished meeting goes behind it.
-        SwiftUI.TimelineView(.periodic(from: .now, by: 30)) { context in
+        SwiftUI.TimelineView(WRedrawSchedule(anchor: tickAnchor, interval: 30, extra: memoryHoldEnd)) { context in
             let skin = SkinStore.shared.selected
             let model = HomeRedesignAdapter.model(
                 content: content, data: data,
-                memory: HomeRedesignAdapter.memoryState(enabled: appState.activityCaptureEnabled, resumeAt: appState.captureResumeAt, now: context.date),
+                memory: HomeRedesignAdapter.memoryState(enabled: appState.activityCaptureEnabled, resumeAt: appState.captureResumeAt, now: context.date, capturing: appState.screenText.isRunning, since: appState.memoryOnSince),
                 elapsedSeconds: appState.activeMeetingStartedAt.map { max(0, Int(context.date.timeIntervalSince($0))) },
                 now: context.date, voice: skin.voice, elements: WHomeElements.resolve(options: skin.archetypeOptions, archetype: skin.archetype.rawValue))
             let thread = model.thread(todayTitle: String(localized: "Today"), nowTime: MeetingRowText.time(context.date))
             // While a meeting records, the live meeting screen takes Home's place (redesign flag only).
-            Group {
+            VStack(spacing: 0) {
+                // Ask on Today answers here, directly under the shell's Ask bar (`TodayAnswerArea`; empty until asked).
+                TodayAnswerArea(model: appState.todayAnswer)
                 if let live { live } else { WHomeView(model: model, actions: wiring(), scroll: scroll) { EmptyView() } }
             }
                 .redesignThemed()

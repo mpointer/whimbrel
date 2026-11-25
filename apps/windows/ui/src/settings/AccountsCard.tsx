@@ -48,7 +48,7 @@ export function AccountsCard() {
   if (!accounts) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   return (
-    <section className="card about" aria-labelledby="accounts-heading">
+    <section className="card about" aria-labelledby="accounts-heading" data-settings-anchor="connectors.accounts">
       <h2 id="accounts-heading" className="section-label">
         {t("Connected accounts")}
       </h2>

@@ -1,6 +1,6 @@
 import { describeError } from "../errors";
 import { t } from "../l10n";
-import type { ChatEvent, ChatSpend, ContextEntry, ContextItemRef, ExchangeView } from "../generated/types";
+import type { ChatEvent, ChatSpend, ContextEntry, ContextItemRef, ConversationRow, ExchangeView } from "../generated/types";
 
 export type TurnStatus = "starting" | "waiting" | "streaming" | "blocking" | "done" | "failed" | "cancelled";
 
@@ -85,6 +85,11 @@ export function applyEvent(turn: Turn, event: ChatEvent): Turn {
         budgetSpent: event.error.kind === "budget_spent",
       };
     case "titled":
+    // The sourced ask's two events belong to the redesigned Find page (library/redesign/askSession.ts); this model draws none of it.
+    case "sourced":
+    case "cited":
+    // A question asked inside one topic that found nothing: the Conversations page handles it before the turn sees it.
+    case "scope_empty":
       return turn;
   }
 }
@@ -150,4 +155,15 @@ export function promptToSend(request: AskRequest | null | undefined, handledId: 
   if (!request || request.id === handledId) return null;
   const prompt = request.prompt.trim();
   return prompt === "" ? null : prompt;
+}
+
+/** The names of a conversation row's Star, Rename and Delete buttons. Each holds the conversation's title, so moving through the list
+ *  with Tab reads "Star Bake sale prices", not a bare "Star" with no word of which conversation it acts on. */
+export function conversationActionLabels(row: Pick<ConversationRow, "title" | "starred">): { star: string; rename: string; delete: string } {
+  const title = row.title;
+  return {
+    star: row.starred ? t("Unstar {title}", { title }) : t("Star {title}", { title }),
+    rename: t("Rename {title}", { title }),
+    delete: t("Delete {title}", { title }),
+  };
 }

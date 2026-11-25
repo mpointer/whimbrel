@@ -152,30 +152,57 @@ public struct WSourceMark: View {
 
 // MARK: Button
 
-public enum WButtonKind: Sendable { case primary, secondary, quiet, destructive }
+/// `destructive` is the loud filled red button, for the one button that does the damage. `destructiveText` is plain red
+/// text on no fill: for a row's Remove or Revoke, which still ask before they do anything, so a page of rows is not a page
+/// of red buttons.
+public enum WButtonKind: Sendable { case primary, secondary, quiet, destructive, destructiveText }
+
+public struct WDisabledButtonLookKey: EnvironmentKey { public static let defaultValue = false }
+
+public extension EnvironmentValues {
+    /// True inside the Settings window: a disabled button keeps readable text on a quiet fill. Everywhere else a disabled
+    /// button is the same button at 45% strength, as it always was. A button with a `reason` opts in by itself.
+    var wDisabledButtonLook: Bool {
+        get { self[WDisabledButtonLookKey.self] }
+        set { self[WDisabledButtonLookKey.self] = newValue }
+    }
+}
 
 private struct WButtonBody: View {
     @Environment(\.wTheme) private var theme
     @Environment(\.wTextScale) private var k
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.wDisabledButtonLook) private var settingsLook
     let kind: WButtonKind
+    /// This button was given a reason for being off, so it uses the readable disabled look wherever it is.
+    var hasReason = false
+    /// A secondary button whose edge must stand out from the card it sits on (the menu and the small windows).
+    let firm: Bool
     let configuration: ButtonStyleConfiguration
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: theme.shape.controlRadius, style: .continuous)
+        // A disabled button keeps readable text: secondary ink on a quiet fill, not the same button at half strength (which
+        // left white on a pale blue in dark and high contrast).
+        let readable = settingsLook || hasReason
+        let solid = kind == .primary || kind == .destructive
         let fill: Color = {
+            if readable && !isEnabled && solid { return theme.selection }
             switch kind {
             case .primary: return theme.accentPrimary
             case .secondary: return theme.backgroundCard
-            case .quiet: return configuration.isPressed ? theme.selection : .clear
+            case .quiet, .destructiveText: return configuration.isPressed ? theme.selection : .clear
             case .destructive: return theme.error
             }
         }()
         let ink: Color = {
+            // In high contrast the secondary ink is as dark as the primary one, so a button that is off is dimmed too: it must not read as on.
+            if readable && !isEnabled { return theme.isHighContrast ? theme.textSecondary.opacity(0.55) : theme.textSecondary }
             switch kind {
             case .primary, .destructive: return theme.textOnAccent
             case .secondary: return theme.textPrimary
             case .quiet: return theme.accentPrimary
+            case .destructiveText: return theme.error
             }
         }()
         configuration.label
@@ -185,22 +212,24 @@ private struct WButtonBody: View {
             .frame(minHeight: WTokens.Size.target * k)
             .background(shape.fill(fill))
             .overlay {
-                if kind == .secondary {
-                    shape.wBorder(theme.isHighContrast ? theme.border : theme.border, style: theme.borderStroke.widened(theme.isHighContrast ? 1.5 : 0.75))
+                if kind == .secondary || (readable && !isEnabled && solid) {
+                    shape.wBorder(firm ? theme.firmEdge : theme.border, style: theme.borderStroke.widened(theme.isHighContrast ? (readable && !isEnabled ? 0.75 : 1.5) : 0.75))
                 } else if theme.isHighContrast {
                     shape.strokeBorder(theme.textPrimary, lineWidth: theme.shape.highContrastBorderWidth)
                 }
             }
-            .overlay(shape.fill(Color.black.opacity(configuration.isPressed && kind != .quiet ? 0.12 : 0)))
-            .opacity(isEnabled ? 1 : 0.45)
+            .overlay(shape.fill(Color.black.opacity(configuration.isPressed && kind != .quiet && kind != .destructiveText ? 0.12 : 0)))
+            .opacity(readable || isEnabled ? 1 : 0.45)
             .contentShape(shape)
     }
 }
 
 struct WButtonStyle: ButtonStyle {
     let kind: WButtonKind
+    var firm = false
+    var hasReason = false
     func makeBody(configuration: Configuration) -> some View {
-        WButtonBody(kind: kind, configuration: configuration)
+        WButtonBody(kind: kind, hasReason: hasReason, firm: firm, configuration: configuration)
     }
 }
 
@@ -211,9 +240,12 @@ public struct WButton: View {
     let glyph: String?
     let shortcutHint: String?
     let kind: WButtonKind
+    /// Why the button is off, when the caller turns it off: the hover help and the spoken hint. Nil when it is on.
+    let reason: String?
     let action: () -> Void
 
-    public init(_ title: String, glyph: String? = nil, shortcutHint: String? = nil, kind: WButtonKind = .secondary, action: @escaping () -> Void) {
+    public init(_ title: String, glyph: String? = nil, shortcutHint: String? = nil, kind: WButtonKind = .secondary, reason: String? = nil, action: @escaping () -> Void) {
+        self.reason = reason
         self.title = title
         self.glyph = glyph
         self.shortcutHint = shortcutHint
@@ -230,7 +262,16 @@ public struct WButton: View {
                 if let shortcutHint { WKeycap(text: shortcutHint, onFill: hintInk) }
             }
         }
-        .buttonStyle(WButtonStyle(kind: kind))
+        .buttonStyle(WButtonStyle(kind: kind, hasReason: reason != nil))
         .accessibilityLabel(title)
+        .modifier(WReasonHint(reason: reason))
+    }
+}
+
+/// The hover help and the spoken hint, only when there is a reason: no button carries an empty one.
+private struct WReasonHint: ViewModifier {
+    let reason: String?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let reason, !reason.isEmpty { content.help(reason).accessibilityHint(reason) } else { content }
     }
 }

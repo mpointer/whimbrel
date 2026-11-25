@@ -29,7 +29,10 @@ jobs:
   publish:
     # Only the upstream repository has the runner, the signing key and the bucket.
     if: github.repository == 'mpointer/kestrel'
-    runs-on: [self-hosted, Windows, X64, kestrel-windows]
+    # With the repository variable WINDOWS_HEAVY on, only the runner instance labelled
+    # kestrel-windows-heavy takes this job, as with rust-tests.yml's Windows jobs, so a release
+    # build never shares the PC with another Rust build (it may then wait for one to finish).
+    runs-on: ${{ fromJSON(vars.WINDOWS_HEAVY == 'on' && '["self-hosted","Windows","X64","kestrel-windows","kestrel-windows-heavy"]' || '["self-hosted","Windows","X64","kestrel-windows"]') }}
     # x64 then Arm64, each a full release build.
     timeout-minutes: 150
     env:

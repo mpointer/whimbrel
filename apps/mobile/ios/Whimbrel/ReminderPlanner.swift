@@ -33,8 +33,7 @@ enum ReminderPlanner {
     static let maxMeetingReminders = 60
 
     static func plan(events: [PhoneCalendarEvent], snapshots: [PhoneTopicSnapshot], settings: ReminderSettings,
-                     isCloud: Bool, now: Date, calendar: Calendar) -> [PlannedReminder] {
-        guard isCloud else { return [] }
+                     now: Date, calendar: Calendar) -> [PlannedReminder] {
         var planned: [PlannedReminder] = []
         if settings.meetingEnabled {
             planned += meetingReminders(events: events, snapshots: snapshots, settings: settings, now: now)

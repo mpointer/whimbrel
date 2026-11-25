@@ -20,12 +20,12 @@ import com.mpointer.whimbrel.mobile.core.MeetingSyncStore
 import com.mpointer.whimbrel.mobile.core.Native
 import com.mpointer.whimbrel.mobile.core.SyncWorkerClient
 import com.mpointer.whimbrel.mobile.reminders.AlarmReminderScheduler
-import com.mpointer.whimbrel.mobile.reminders.PlanCache
 import com.mpointer.whimbrel.mobile.reminders.ReminderCoordinator
 import com.mpointer.whimbrel.mobile.reminders.ReminderReceiver
 import com.mpointer.whimbrel.mobile.reminders.ReminderRefreshWorker
 import com.mpointer.whimbrel.mobile.update.UpdateCheckWorker
 import com.mpointer.whimbrel.mobile.reminders.ReminderSettingsStore
+import com.mpointer.whimbrel.mobile.reminders.ReminderStateStore
 import com.mpointer.whimbrel.mobile.reminders.ResourceReminderText
 import com.mpointer.whimbrel.mobile.reminders.SystemAlarmBackend
 import com.mpointer.whimbrel.mobile.secrets.KeystoreCipher
@@ -148,7 +148,7 @@ class WhimbrelApplication : Application() {
     private val reminderPrefs by lazy { getSharedPreferences("reminders", MODE_PRIVATE) }
 
     /**
-     * Reminders: planning, the plan check and scheduling. Only ever read when [coreSupported]. Its models are
+     * Reminders: planning, the permission ask and scheduling. Only ever read when [coreSupported]. Its models are
      * looked up on use, so a demo started later is the one it sees (and the demo turns it off).
      */
     val reminders: ReminderCoordinator by lazy {
@@ -157,7 +157,7 @@ class WhimbrelApplication : Application() {
             enrollment = { enrollment },
             scheduler = AlarmReminderScheduler(reminderPrefs, SystemAlarmBackend(this)),
             settings = ReminderSettingsStore(reminderPrefs),
-            plan = PlanCache(reminderPrefs),
+            state = ReminderStateStore(reminderPrefs),
             text = ResourceReminderText(this),
             requestPermission = { (activity as? MainActivity)?.requestNotificationPermission() ?: false },
         )
@@ -255,12 +255,11 @@ class WhimbrelApplication : Application() {
         if (resumed) return
         resumed = true
         appScope.launch { enrollment.launch() }
-        // The plan check at launch, then after every sync: a throttled check and a fresh set of reminders.
-        appScope.launch { reminderStep { reminders.refreshPlanIfDue(force = true) } }
+        // After every sync: a fresh set of reminders, and the permission ask if it is still owed.
         appScope.launch {
             sync.readRevision.collect {
-                reminderStep { reminders.refreshPlanIfDue(force = false) }
                 reminderStep { reminders.reschedule() }
+                reminderStep { reminders.askPermissionIfNeeded() }
             }
         }
     }

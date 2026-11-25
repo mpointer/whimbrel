@@ -115,7 +115,7 @@ pub trait ActiveAudio: Send {
     /// Starts or ends a recording pause: while paused no audio is captured. The files stay open
     /// and the gap is written as silence on resume. Nothing to do for a recording that cannot pause.
     fn set_paused(&self, _paused: bool, _now_unix_ms: i64) {}
-    /// Resume was asked for and audio has not arrived yet.
+    /// Resume was asked for and capture has not started again yet.
     fn resuming(&self, _now_unix_ms: i64) -> bool {
         false
     }
@@ -279,8 +279,9 @@ impl ActiveAudio for WasapiRecording {
     }
 
     fn degraded(&self) -> Option<String> {
-        // A resume whose microphone stayed silent past the limit reads as the microphone problem, not as a healthy recording.
-        // The stream keeps retrying through the existing stall logic (8 s without a packet reopens it, twice, then gives up).
+        // A resume whose capture did not start again within the limit reads as a problem, not as a healthy recording; the
+        // microphone is the stream that fails to open in practice. A stream that gives up sets its own reason first, and one
+        // that opens and stays silent goes through the existing stall logic (8 s without a packet reopens it, twice, then gives up).
         self.live.degraded().or_else(|| {
             let now = chrono::Utc::now().timestamp_millis();
             self.live.resume_stalled(now).then(|| audio::gave_up_reason(Source::Microphone))

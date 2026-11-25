@@ -20,11 +20,11 @@ struct EpisodeDetailView: View {
                 EpisodeDetailContentView(episode: loadedEpisode)
             } else if loadFailed {
                 Text("This episode is no longer available.")
-                    .font(.whimbrelBody(.callout))
+                    .restyledFont(.callout)
                     .foregroundStyle(Color.whimbrelTextSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ProgressView()
+                RestyledProgress()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -47,7 +47,7 @@ struct EpisodeDetailView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                     .accessibilityLabel("Close")
-                        .font(.system(size: 20))
+                        .restyledGlyph(classicSize: 20)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }
                 .buttonStyle(.plain)
@@ -56,6 +56,7 @@ struct EpisodeDetailView: View {
             .padding(Spacing.md)
         }
         .onAppear { loadEpisodeIfNeeded() }
+        .restyledScreen(redesign: appState.redesignEnabled)
     }
 
     private func loadEpisodeIfNeeded() {
@@ -92,33 +93,33 @@ private struct EpisodeDetailContentView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
-                Text(episode.windowTitle ?? episode.appBundleId).font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text(episode.windowTitle ?? episode.appBundleId).restyledFont(.display).foregroundStyle(Color.whimbrelTextPrimary)
                 Text(episode.appBundleId)
-                    .font(.whimbrelBody(.caption))
+                    .restyledFont(.caption)
                     .foregroundStyle(Color.whimbrelTextSecondary)
                 HStack(spacing: Spacing.sm) {
                     Text(Self.formattedRange(startUnixMs: episode.startTsUnixMs, endUnixMs: episode.endTsUnixMs))
-                        .font(.whimbrelBody(.caption))
+                        .restyledFont(.caption)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                     DeviceChip(deviceId: episode.deviceId)
                 }
 
                 Divider().overlay(Color.whimbrelBorder)
 
-                Text("Summary").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text("Summary").restyledFont(.calloutStrong).foregroundStyle(Color.whimbrelTextPrimary)
                 switch episode.status {
                 case "summarized":
                     Text(episode.summary ?? String(localized: "Summary unavailable"))
-                        .font(.whimbrelBody(.callout))
+                        .restyledFont(.callout)
                         .foregroundStyle(Color.whimbrelTextPrimary)
                         .textSelection(.enabled)
                 case "summarize_failed":
                     Text("Summary unavailable.")
-                        .font(.whimbrelBody(.callout))
+                        .restyledFont(.callout)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 default:
                     Text("Summarizing…")
-                        .font(.whimbrelBody(.callout))
+                        .restyledFont(.callout)
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }
             }

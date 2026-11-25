@@ -2623,7 +2623,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Afficher plus"
+            "value" : "Charger plus"
           }
         },
         "fr-CA" : {
@@ -4088,46 +4088,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Lembretes"
-          }
-        }
-      }
-    },
-    "Reminders come with Cloud." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Erinnerungen sind in Cloud enthalten."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Reminders come with Cloud."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Los recordatorios vienen con Cloud."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Les rappels sont inclus avec Cloud."
-          }
-        },
-        "fr-CA" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Les rappels sont inclus avec Cloud."
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Os lembretes vêm com o Cloud."
           }
         }
       }
@@ -6234,46 +6194,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "É necessário atualizar outro dos seus dispositivos antes que ele aplique exclusões."
-          }
-        }
-      }
-    },
-    "Upgrade in Whimbrel on your computer." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Upgraden Sie in Whimbrel auf Ihrem Computer."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Upgrade in Whimbrel on your computer."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mejora tu plan en Whimbrel en tu computadora."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Passez à Cloud dans Whimbrel sur votre ordinateur."
-          }
-        },
-        "fr-CA" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Passez à Cloud dans Whimbrel sur votre ordinateur."
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Faça o upgrade no Whimbrel no seu computador."
           }
         }
       }

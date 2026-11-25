@@ -6,10 +6,13 @@ import { t, useL10n } from "../l10n";
 import { Workspace } from "../meetings/Workspace";
 import { MeetingPane } from "../meetings/redesign/LiveGate";
 import { useRedesign } from "../redesign";
+import { WErrorState, WLoadingState } from "../system";
 import { DeviceChip } from "./LibraryView";
 import { episodeSummaryText, fullDateTimeLabel, spanLabel } from "./rows";
+import { captureHeader } from "../today/redesign/homeModel";
 
-export type Selection = { kind: "capture" | "meeting" | "episode"; id: number };
+/** `line`: a meeting opened at one transcript line (a search result or an Ask source; the redesigned note only). */
+export type Selection = { kind: "capture" | "meeting" | "episode"; id: number; line?: number };
 
 type Loaded =
   | { kind: "capture"; data: CaptureDetail }
@@ -38,7 +41,7 @@ export function Detail({ selection, onBack }: { selection: Selection; onBack: ()
     const forgotten = () => meetingWorkspace(selection.id).then((view) => view ?? onBack(), () => {});
     return (
       <article className="detail">
-        <MeetingPane meetingId={selection.id} onBack={onBack} onChanged={forgotten}>
+        <MeetingPane meetingId={selection.id} initialLine={selection.line} onBack={onBack} onChanged={forgotten}>
           <Workspace meetingId={selection.id} onChanged={forgotten} />
         </MeetingPane>
       </article>
@@ -58,24 +61,27 @@ export function Detail({ selection, onBack }: { selection: Selection; onBack: ()
       </article>
     );
 
+  const header = loaded?.kind === "capture" ? captureHeader(loaded.data) : { app: "", how: null };
   return (
-    <article className="detail">
+    <article className={redesign ? "detail rt" : "detail"}>
       <button className="mode" onClick={onBack}>
         {t("← Back")}
       </button>
-      {error && (
-        <p role="alert" className="card">
-          {error}
-        </p>
-      )}
-      {!error && !loaded && <p className="muted">{t("Loading…")}</p>}
+      {error &&
+        (redesign ? (
+          <WErrorState title={error} />
+        ) : (
+          <p role="alert" className="card">
+            {error}
+          </p>
+        ))}
+      {!error && !loaded && (redesign ? <WLoadingState title={t("Loading…")} /> : <p className="muted">{t("Loading…")}</p>)}
       {loaded?.kind === "capture" && (
         <>
-          <h2 className="display">{loaded.data.title || loaded.data.app}</h2>
+          <h2 className="display">{loaded.data.title || header.app}</h2>
           <p className="row-meta muted">
-            {loaded.data.app} · {fullDateTimeLabel(loaded.data.tsUnixMs, locale)} ·{" "}
-            {loaded.data.source === "ocr" ? t("OCR fallback") : t("Accessibility")}{" "}
-            <DeviceChip device={loaded.data.device} />
+            {header.app} · {fullDateTimeLabel(loaded.data.tsUnixMs, locale)}
+            {header.how ? ` · ${header.how}` : ""} <DeviceChip device={loaded.data.device} />
           </p>
           {loaded.data.url && <p className="mono small">{loaded.data.url}</p>}
           <pre className="card capture-text">{loaded.data.text}</pre>

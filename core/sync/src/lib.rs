@@ -239,6 +239,85 @@ pub fn kind_tag(group_key: &GroupKey, kind: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(&digest[..16])
 }
 
+/// The calendar source class of an `items` row, one input of `slice_tag`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceClass {
+    /// Any kind other than `calendar_event`.
+    None,
+    /// A `calendar_event` whose source is empty or `google_calendar`.
+    Google,
+    /// A `calendar_event` from any other source.
+    Other,
+}
+
+/// Latest month bucket (months since 2000-01, UTC); later dates land here.
+pub const MAX_MONTH_BUCKET: u16 = 359;
+
+/// The class of an item: for `calendar_event`, `Google` when the source is
+/// empty (after trimming) or `google_calendar`, otherwise `Other`; `None` for
+/// every other kind.
+pub fn source_class(kind: &str, source: Option<&str>) -> SourceClass {
+    if kind != "calendar_event" {
+        return SourceClass::None;
+    }
+    match source.map(str::trim) {
+        Option::None => SourceClass::Google,
+        Some(s) if s.is_empty() || s == "google_calendar" => SourceClass::Google,
+        Some(_) => SourceClass::Other,
+    }
+}
+
+/// Whole UTC months from 2000-01 to the month of `ts_unix_ms`, clamped to
+/// `0..=MAX_MONTH_BUCKET`. Boundaries fall at UTC midnight on the 1st.
+pub fn month_bucket(ts_unix_ms: i64) -> u16 {
+    // Days since 1970-01-01 to (year, month), days-from-civil inverse.
+    let days = ts_unix_ms.div_euclid(86_400_000);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    let months = (year - 2000) * 12 + (month - 1);
+    months.clamp(0, i64::from(MAX_MONTH_BUCKET)) as u16
+}
+
+/// An opaque keyed tag for an item's kind, calendar source class and UTC
+/// month, so the relay can filter rows by slice without reading any of them.
+/// Same construction and encoding as `kind_tag` (HKDF subkey of the group key,
+/// HMAC-SHA256 truncated to 16 bytes, base64) with its own HKDF label and the
+/// input `u32_be(len(kind)) || kind || class byte || u16_be(month)`. No device
+/// id: every device derives the same tag. A group-key change gives new tags.
+pub fn slice_tag(
+    group_key: &GroupKey,
+    kind: &str,
+    source_class: SourceClass,
+    month: u16,
+) -> String {
+    use base64::Engine;
+    use hkdf::hmac::{Hmac, Mac};
+
+    let ikm = Zeroizing::new(group_key.to_bytes());
+    let mut k_tag = Zeroizing::new([0u8; 32]);
+    Hkdf::<Sha256>::new(None, &*ikm)
+        .expand(b"whimbrel sync slice_tag v1", &mut *k_tag)
+        .expect("32 bytes is a valid HKDF-SHA256 output length");
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&*k_tag)
+        .expect("HMAC-SHA256 accepts a key of any length");
+    mac.update(&(kind.len() as u32).to_be_bytes());
+    mac.update(kind.as_bytes());
+    mac.update(&[match source_class {
+        SourceClass::None => 0u8,
+        SourceClass::Google => 1,
+        SourceClass::Other => 2,
+    }]);
+    mac.update(&month.to_be_bytes());
+    let digest = mac.finalize().into_bytes();
+    base64::engine::general_purpose::STANDARD.encode(&digest[..16])
+}
+
 /// Encrypts arbitrary payload bytes (a serialized `capture_item`, `meeting`,
 /// `transcript_segment`, or `summary` row) under the group key. `aad`
 /// (additional authenticated data — e.g. `account_id || device_id ||
@@ -343,6 +422,76 @@ mod tests {
             crate::entity_tag(&key, "ab", "c"),
             crate::entity_tag(&key, "a", "bc")
         );
+    }
+
+    #[test]
+    fn slice_tag_is_stable_and_differs_by_kind_class_and_month() {
+        use crate::SourceClass::{Google, None as NoClass, Other};
+        let key = crate::GroupKey::from_bytes([7; 32]);
+        let base = crate::slice_tag(&key, "calendar_event", Google, 300);
+        assert_eq!(base, crate::slice_tag(&key, "calendar_event", Google, 300));
+        assert_eq!(base.len(), 24);
+        assert_ne!(base, crate::slice_tag(&key, "email", Google, 300));
+        assert_ne!(base, crate::slice_tag(&key, "calendar_event", Other, 300));
+        assert_ne!(
+            crate::slice_tag(&key, "capture", NoClass, 300),
+            crate::slice_tag(&key, "capture", Other, 300)
+        );
+        assert_ne!(base, crate::slice_tag(&key, "calendar_event", Google, 301));
+        assert_ne!(base, crate::kind_tag(&key, "calendar_event"));
+        let other = crate::GroupKey::from_bytes([8; 32]);
+        assert_ne!(base, crate::slice_tag(&other, "calendar_event", Google, 300));
+    }
+
+    #[test]
+    fn slice_tag_matches_the_known_answer_vector() {
+        // Locks the wire format: changing the label or input layout breaks this.
+        let key = crate::GroupKey::from_bytes([7; 32]);
+        assert_eq!(
+            crate::slice_tag(&key, "calendar_event", crate::SourceClass::Google, 300),
+            "+fMBayBUXoUpFPdwO1HSWQ=="
+        );
+    }
+
+    #[test]
+    fn month_bucket_handles_leap_days() {
+        use crate::month_bucket;
+        assert_eq!(month_bucket(951_868_799_999), 1); // 2000-02-29T23:59:59.999Z
+        assert_eq!(month_bucket(951_868_800_000), 2); // 2000-03-01T00:00:00Z
+        assert_eq!(month_bucket(1_709_251_199_999), 289); // 2024-02-29T23:59:59.999Z
+        assert_eq!(month_bucket(1_709_251_200_000), 290); // 2024-03-01T00:00:00Z
+    }
+
+    #[test]
+    fn source_class_follows_the_calendar_rule() {
+        use crate::{source_class, SourceClass};
+        for s in [None, Some(""), Some("  "), Some("google_calendar"), Some(" google_calendar ")] {
+            assert_eq!(source_class("calendar_event", s), SourceClass::Google);
+        }
+        assert_eq!(source_class("calendar_event", Some("outlook")), SourceClass::Other);
+        for s in [None, Some(""), Some("google_calendar"), Some("outlook")] {
+            assert_eq!(source_class("capture", s), SourceClass::None);
+        }
+    }
+
+    #[test]
+    fn month_bucket_counts_utc_months_from_2000_and_clamps() {
+        use crate::{month_bucket, MAX_MONTH_BUCKET};
+        assert_eq!(MAX_MONTH_BUCKET, 359);
+        assert_eq!(month_bucket(946_684_800_000), 0); // 2000-01-01T00:00:00Z
+        assert_eq!(month_bucket(946_684_799_999), 0); // before 2000
+        assert_eq!(month_bucket(-5), 0);
+        assert_eq!(month_bucket(i64::MIN), 0);
+        assert_eq!(month_bucket(949_363_200_000), 1); // 2000-02-01T00:00:00Z
+        assert_eq!(month_bucket(949_363_199_999), 0); // 1ms before
+        assert_eq!(month_bucket(1_764_547_200_000), 311); // 2025-12-01T00:00:00Z
+        assert_eq!(month_bucket(1_767_225_599_999), 311); // 2025-12-31T23:59:59.999Z
+        assert_eq!(month_bucket(1_767_225_600_000), 312); // 2026-01-01
+        assert_eq!(month_bucket(1_798_761_600_000), 324); // 2027-01-01
+        assert_eq!(month_bucket(1_893_456_000_000), 359); // 2030-01-01
+        assert_eq!(month_bucket(1_893_455_999_999), 359); // 2029-12-31T23:59:59.999Z
+        assert_eq!(month_bucket(4_102_444_800_000), 359);
+        assert_eq!(month_bucket(i64::MAX), 359);
     }
 
     #[test]

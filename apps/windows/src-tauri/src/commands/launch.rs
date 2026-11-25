@@ -374,7 +374,9 @@ pub fn use_restored_key(launch: &LaunchState, key: KeyBytes, wait: Duration) -> 
     let Some(generation) = launch.presenter.restored_key(key) else { return UseKeyResult::Failed };
     match launch.presenter.wait_past(generation, wait) {
         Stage::Opened => UseKeyResult::Opened,
-        Stage::Recovery { .. } => UseKeyResult::KeyRejected,
+        // Rejected only when the launch showed the recovery screen again. The same screen still
+        // up means the wait ran out while the launch was still proving the key: not a verdict.
+        Stage::Recovery { .. } if launch.presenter.snapshot().1 > generation => UseKeyResult::KeyRejected,
         _ => UseKeyResult::Failed,
     }
 }

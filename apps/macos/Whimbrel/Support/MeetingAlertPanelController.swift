@@ -28,6 +28,8 @@ final class MeetingAlertPanelController: ObservableObject {
     private static let screenMargin: CGFloat = 16
 
     private var panel: NSPanel?
+    /// Whether `panel` is the redesign's (built only with the switch on; see `RedesignFloatingPanel`).
+    private var panelIsRedesign = false
     private var countdownTimer: Timer?
     private var onAccept: (() -> Void)?
     private var onAcceptAndOpenTimeline: (() -> Void)?
@@ -163,7 +165,30 @@ final class MeetingAlertPanelController: ObservableObject {
     }
 
     private func ensurePanel() -> NSPanel {
-        if let panel { return panel }
+        let redesign = RedesignFlag.isOn()
+        if let panel, panelIsRedesign == redesign { return panel }
+        panel?.orderOut(nil)
+        panelIsRedesign = redesign
+        let built = redesign ? makeRedesignPanel() : makeLegacyPanel()
+        self.panel = built
+        return built
+    }
+
+    /// The redesign's panel: Escape dismisses once the panel has the keyboard. Return activates the main action only when that
+    /// action is marked as the safe default (`WAlertAction.isSafeDefault`), which Start Recording and Keep together are not, so
+    /// Return never starts a recording. It is shown with `orderFrontRegardless`, so it never takes focus from the app in front
+    /// when it appears.
+    private func makeRedesignPanel() -> NSPanel {
+        let host = NSHostingController(rootView: ThemedRoot { MeetingAlertRedesignView(controller: self) })
+        host.sizingOptions = [.preferredContentSize]
+        let panel = RedesignFloatingPanel.make(content: host)
+        // Escape is Dismiss, the same call as the Dismiss button (and Cancel on the countdown).
+        panel.onCancel = { [weak self] in self?.dismissTapped() }
+        panel.setAccessibilityLabel(String(localized: "Whimbrel alert", comment: "Spoken name of the small window that asks about a meeting or a long recording."))
+        return panel
+    }
+
+    private func makeLegacyPanel() -> NSPanel {
         let hostingView = NSHostingView(rootView: MeetingAlertView(controller: self))
         hostingView.frame = NSRect(origin: .zero, size: Self.panelSize)
 
@@ -184,11 +209,14 @@ final class MeetingAlertPanelController: ObservableObject {
         panel.isReleasedWhenClosed = false
         panel.contentView = hostingView
 
-        self.panel = panel
         return panel
     }
 
     private func positionPanel(_ panel: NSPanel) {
+        if panelIsRedesign, let panel = panel as? RedesignFloatingPanel {
+            panel.placeTopRight(margin: Self.screenMargin)
+            return
+        }
         guard let screenFrame = NSScreen.main?.visibleFrame else { return }
         let origin = NSPoint(
             x: screenFrame.maxX - Self.panelSize.width - Self.screenMargin,

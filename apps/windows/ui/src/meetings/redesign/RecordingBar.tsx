@@ -32,6 +32,11 @@ export function useAnnouncement(state: LiveState): string {
   return text;
 }
 
+/** The bar's word while a recording is starting (the shared indicator word stays "Starting" for the windows that use it). */
+export function startingWord(): string {
+  return t("Starting recording");
+}
+
 export interface RecordingBarProps {
   rec: RecordingControls;
   /** The state to draw: `rec.state`, or "readOnly" for a meeting on another device. */
@@ -59,6 +64,8 @@ export function RecordingBar({ rec, state: given, readOnlyElapsedSeconds, stage 
         state={barState}
         elapsedSeconds={seconds}
         reason={state === "problem" ? t("Some audio may be missing") : undefined}
+        // While a start is in flight the bar says what is happening, not just "Starting".
+        word={state === "starting" ? startingWord() : undefined}
         meter={showMeter ? <WLevelMeter level={level} arriving={audioIsArriving(level)} idle={state === "paused"} /> : undefined}
         actions={
           controls.pause || controls.stop ? (

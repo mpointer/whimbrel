@@ -35,7 +35,25 @@ pub enum ItemKind {
     Step,
     VaultNote,
     ExportFolder,
+    /// An item a local MCP client added (`items` kind `mcp_item`). Never linked: listed under Possible
+    /// matches by name or by a client contact's address.
+    McpItem,
 }
+
+/// Every `items` kind and whether the client review lists it (held to `memory::ITEM_KINDS` by
+/// `mcp_item_coverage.rs`).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const INVENTORY_ITEM_KINDS: [(&str, memory::mcp_items::Coverage); 6] = {
+    use memory::mcp_items::Coverage::{Covered, NotApplicable};
+    [
+        ("capture", Covered("possible matches by name")),
+        ("transcript", NotApplicable("its meeting is the unit")),
+        ("email", Covered("possible matches by name")),
+        ("calendar_event", Covered("possible matches by name")),
+        ("snapshot", NotApplicable("listed as its meeting")),
+        ("mcp_item", Covered("possible matches by name or contact")),
+    ]
+};
 
 /// One piece of a client's material. `id` is the row id (the step key for a step). A capture's id is its
 /// `capture_item.id`, or `i:<items.id>` for a capture this device holds only in `items` (pulled from another
@@ -130,6 +148,7 @@ pub(crate) fn item_excerpt(store: &memory::Store, kind: ItemKind, id: &str, term
         ItemKind::Capture => "capture",
         ItemKind::Conversation => "conversation",
         ItemKind::Step => "step",
+        ItemKind::McpItem => "mcp_item",
         _ => return None,
     };
     store
@@ -161,6 +180,7 @@ pub(crate) fn item_label(store: &memory::Store, kind: ItemKind, id: &str) -> Opt
         ItemKind::Episode => "episode",
         ItemKind::Conversation => "conversation",
         ItemKind::Step => "step",
+        ItemKind::McpItem => "mcp_item",
         ItemKind::Thread | ItemKind::VaultNote | ItemKind::ExportFolder => return None,
     };
     store.client_item_label(k, id).ok().flatten().as_deref().and_then(short_label)
@@ -336,6 +356,7 @@ fn build(
             "calendar_event" => ItemKind::CalendarEvent,
             "capture" => ItemKind::Capture,
             "conversation" => ItemKind::Conversation,
+            "mcp_item" => ItemKind::McpItem,
             _ => continue,
         };
         let id = h.ref_id.to_string();
@@ -349,6 +370,14 @@ fn build(
             _ => None,
         };
         possible.push(ClientItem { kind, id, also_client: other, date_unix_ms: h.ts_unix_ms, removed: false, label: None, excerpt: None, app: None });
+    }
+    // Added items carrying a client contact's address (they name no one by text, or not only).
+    for (item, ts) in store.mcp_items_with_client_contacts(key).map_err(db)? {
+        let id = item.to_string();
+        if possible.iter().any(|p| p.kind == ItemKind::McpItem && p.id == id) {
+            continue;
+        }
+        possible.push(ClientItem { kind: ItemKind::McpItem, id, also_client: None, date_unix_ms: ts, removed: false, label: None, excerpt: None, app: None });
     }
 
     if display {
@@ -466,6 +495,40 @@ mod tests {
         let mut v: Vec<String> = items.iter().filter(|i| i.kind == kind).map(|i| i.id.clone()).collect();
         v.sort();
         v
+    }
+
+    #[test]
+    fn an_added_item_naming_the_client_is_a_possible_match() {
+        let e = env();
+        let acme = e.store.create_seed_topic("Acme", &[], None).unwrap();
+        let id = crate::test_store::add_mcp_item(&e.store, "a", "Renewal notes", "Budget line\nAcme wants the discount", None);
+        crate::test_store::add_mcp_item(&e.store, "b", "Lunch", "Tacos", None);
+        let inv = inventory(&e.store, &acme.key).unwrap();
+        assert_eq!(ids(&inv.possible, ItemKind::McpItem), vec![id.to_string()]);
+        assert!(inv.linked.iter().all(|i| i.kind != ItemKind::McpItem));
+        let row = inv.possible.iter().find(|i| i.kind == ItemKind::McpItem).unwrap();
+        assert_eq!(row.label.as_deref(), Some("Renewal notes"));
+        assert_eq!(row.excerpt.as_deref(), Some("Acme wants the discount"));
+        assert_eq!(serde_json::to_value(row.kind).unwrap(), "mcp_item");
+    }
+
+    #[test]
+    fn an_added_item_from_a_client_contact_is_a_possible_match() {
+        let e = env();
+        let acme = e.store.create_seed_topic("Acme", &[], None).unwrap();
+        let m = meeting(&e, "Weekly", 100);
+        file(&e, acme.topic_id, "meeting", m, 100, "seed");
+        let sid: i64 = e.c.query_row("SELECT id FROM topic_source WHERE kind = 'meeting' AND ref_id = ?1", [m], |r| r.get(0)).unwrap();
+        e.c.execute("INSERT INTO entity (kind, key, display, updated_at_unix_ms) VALUES ('person', 'email:ana@contoso.com', 'Ana', 1)", []).unwrap();
+        let ent = e.c.last_insert_rowid();
+        e.c.execute("INSERT INTO entity_mention (entity_id, source_id) VALUES (?1, ?2)", params![ent, sid]).unwrap();
+        let from_contact = crate::test_store::add_mcp_item(&e.store, "a", "Quick question", "About the invoice", Some("ana@contoso.com"));
+        let both = crate::test_store::add_mcp_item(&e.store, "b", "Acme invoice", "Paid", Some("ana@contoso.com"));
+        crate::test_store::add_mcp_item(&e.store, "c", "Other", "Nothing", Some("pat@x.com"));
+        let inv = inventory(&e.store, &acme.key).unwrap();
+        let mut want = vec![from_contact.to_string(), both.to_string()];
+        want.sort();
+        assert_eq!(ids(&inv.possible, ItemKind::McpItem), want, "a name match and a contact match are listed once each");
     }
 
     #[test]

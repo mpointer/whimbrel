@@ -49,6 +49,15 @@ describe("the gallery card", () => {
     expect(show(DEFAULT_SELECTION)).not.toMatch(/class="mode[^"]*"[^>]*disabled/);
   });
 
+  it("keeps the selected card the size of the others: its palettes are one strip under the grid (ticket 941)", () => {
+    const retro = skins.find((d) => d.skin.id === "retro-terminal")!;
+    const html = show({ skinId: "retro-terminal", paletteId: retro.palettes[0].id, appearance: "dark" });
+    const cards = html.slice(html.indexOf('class="skin-gallery"'), html.indexOf('class="skin-palettes"'));
+    expect(cards).not.toContain("skin-palette");
+    expect(html.indexOf('class="skin-palettes"')).toBeGreaterThan(html.indexOf('class="skin-gallery"'));
+    expect(html.indexOf('class="skin-palettes"')).toBeLessThan(html.indexOf("Each PC keeps its own skin."));
+  });
+
   it("puts the skin chat below the gallery, its Send held until the shell says a provider is usable", () => {
     const html = show(DEFAULT_SELECTION);
     expect(html.indexOf("Make a skin")).toBeGreaterThan(html.indexOf("Each PC keeps its own skin."));

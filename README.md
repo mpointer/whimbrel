@@ -34,14 +34,15 @@ All of it aggregates **across devices and app instances** — Macs and Windows P
 | [07 – Sync & Web Viewer](docs/07-sync-and-web-viewer.md) | Superseded design — shipped sync uses Cloudflare Worker + per-account Turso (see 04/05) |
 | [08 – Littlebird Parity & Beyond](docs/08-littlebird-parity-spec.md) | Phased requirements to match, then surpass, Littlebird's feature set |
 | [12 – Windows Desktop Client](docs/12-windows-app-design.md) | Phase 3 design: Tauri/Rust shell, UIA + WASAPI capture layer, the core consolidation it depends on |
-| [14 – Pricing Proposal](docs/14-pricing-proposal.md) | Proposed tiers vs. Granola and Littlebird, AI cost model, what billing needs built first |
 | [15 – Mobile App Design](docs/15-mobile-app-design.md) | Phone app vs. Littlebird's and Granola's: brief, ask, approve, record; phone as a sync peer, push, approvals, milestones |
 | [16 – Open Source and What People Pay For](docs/16-open-core-commercial-model.md) | The commercial model: everything local is free; Cloud and Team are the paid lines; decisions of 2026-10-29 |
-| [17 – Competitive Gaps, Roadmap, Monetization](docs/17-competitive-gaps-roadmap-monetization.md) | Gaps against Granola, Littlebird, Obsidian and the field at 2026-10-31; three adoption releases before billing; Cloud as a hosted routine runner |
 | [Self-hosting](docs/self-hosting.md) | Running the sync relay and the update feed under your own Cloudflare, Turso and Google accounts |
 
 The design plans and specs these documents refer to (`docs/superpowers/`) stay in the
 private development repository; a link into that folder points at an internal document.
+So do the internal pricing, competitive and roadmap analyses (documents 14, 17 and 18),
+the agent briefs drawn from them, the CI runner setup and the translation review sheets; `scripts/public-exclude.txt` lists everything that is
+left out.
 
 ## Development and this repository
 

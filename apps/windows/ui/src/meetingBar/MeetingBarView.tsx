@@ -11,7 +11,7 @@ import { meetingTitleLabel } from "../meetings/sentinels";
 import { audioIsArriving, liveControls, recordedSeconds } from "../meetings/redesign/liveModel";
 import { useAudioLevel } from "../meetings/redesign/useAudioLevel";
 import { useAnnouncement } from "../meetings/redesign/RecordingBar";
-import { WButton, WIcon, WLevelMeter, WRoot, formatClock, recordingName, recordingWord, type WRecordingState } from "../system";
+import { WButton, WIcon, WLevelMeter, WRoot, WINDOW_DESIGN, formatClock, recordingWord, spokenDuration, useCompactWindow, type WRecordingState } from "../system";
 import { useRecording } from "../shell/redesign/useRecording";
 import "./meetingBar.css";
 
@@ -19,6 +19,9 @@ const WORD: Record<string, WRecordingState> = { recording: "recording", paused: 
 
 export function MeetingBarView() {
   const { t } = useL10n();
+  // The shell grows this window with the Windows text size (meeting_bar.rs). When the work area capped it, the compact layout keeps the
+  // state word, the time, Pause or Resume and Stop and drops what can wait (the level meter, the footer, the "always on top" note).
+  const compact = useCompactWindow(WINDOW_DESIGN.meetingBar);
   const rec = useRecording(true);
   const [title, setTitle] = useState<string | null>(null);
   const [askOn, setAskOn] = useState(false);
@@ -64,7 +67,7 @@ export function MeetingBarView() {
   };
   return (
     <WRoot className="mb-root">
-      <main className="mb" aria-label={t("Whimbrel, in-meeting window")} data-state={rec.state}>
+      <main className={compact ? "mb mb--compact" : "mb"} aria-label={t("Whimbrel, in-meeting window")} data-state={rec.state}>
         <header className="mb-head" data-tauri-drag-region>
           <span className="mb-title" data-tauri-drag-region>
             {title ?? t("Meeting")}
@@ -73,11 +76,13 @@ export function MeetingBarView() {
             {t("Always on top")}
           </span>
         </header>
-        <div className="mb-state" role="status" aria-label={recordingName(barState, seconds)}>
-          <span className="mb-word" data-state={barState} aria-hidden="true">
+        {/* Not a live region: one whose name held the ticking time was announced every second, so Narrator said "Whimbrel" over and
+            over through a recording. State changes are announced once, by the hidden region at the end (`useAnnouncement`). */}
+        <div className="mb-state">
+          <span className="mb-word" data-state={barState}>
             {recordingWord(barState)}
           </span>
-          <span className="mb-time" aria-hidden="true">
+          <span className="mb-time" role="timer" aria-label={spokenDuration(seconds)}>
             {formatClock(seconds)}
           </span>
         </div>

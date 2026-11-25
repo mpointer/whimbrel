@@ -8,6 +8,17 @@ use std::sync::LazyLock;
 
 use regex::{Regex, RegexSet};
 
+/// The query parameter names the "URL secret" pattern treats as credentials, as a regex
+/// alternation. One list, used by that pattern and by [`strip_url_secrets`].
+macro_rules! url_secret_params {
+    () => {
+        "token|access_token|refresh_token|id_token|api_?key|key|pwd|password|secret|sig|signature|code|auth"
+    };
+}
+
+/// [`url_secret_params!`] as a constant.
+pub const URL_SECRET_PARAMS: &str = url_secret_params!();
+
 /// (kind, pattern). A pattern with a capture group named `v` redacts only that group;
 /// otherwise the whole match is redacted.
 ///
@@ -50,7 +61,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ),
     (
         "URL secret",
-        r"(?i)[?&](?:token|access_token|refresh_token|id_token|api_?key|key|pwd|password|secret|sig|signature|code|auth)=(?P<v>[^&#\s]{8,})",
+        concat!(r"(?i)[?&](?:", url_secret_params!(), r")=(?P<v>[^&#\s]{8,})"),
     ),
 ];
 
@@ -95,6 +106,91 @@ pub fn redact_secrets(text: &str) -> Cow<'_, str> {
         }
     }
     out
+}
+
+static URL_SECRET_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(concat!("(?i)^(?:", url_secret_params!(), ")$")).unwrap());
+
+/// Query parameter names that carry a credential whatever their value's length (security review
+/// M6): any `*signature` or `*sig` (Azure SAS, CloudFront, GCS `X-Goog-Signature`), OneDrive and
+/// Dropbox share keys, and the GCS and S3 credential and token parameters.
+static URL_CREDENTIAL_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        "(?i)^(?:.*signature|.*sig|authkey|resourcekey|rlkey|x-goog-credential|x-goog-security-token|x-amz-credential|x-amz-security-token)$",
+    )
+    .unwrap()
+});
+
+/// `url` without the `user:password@` of its authority, if it has one.
+fn without_userinfo(url: &str) -> Cow<'_, str> {
+    let Some((scheme, rest)) = url.split_once("://") else { return Cow::Borrowed(url) };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    match rest[..end].rfind('@') {
+        Some(at) => Cow::Owned(format!("{scheme}://{}", &rest[at + 1..])),
+        None => Cow::Borrowed(url),
+    }
+}
+
+/// Minimum length of a URL parameter's value for it to count as a credential (as in the
+/// "URL secret" pattern).
+const URL_SECRET_MIN_CHARS: usize = 8;
+
+/// A link with its credentials taken out, so it can be stored as a working link rather than one
+/// holding `[REDACTED ...]` (review M3). In three steps:
+///
+/// 0. Userinfo (`user:password@`) is removed from the authority (security review M6).
+/// 1. Each `name=value` query pair whose name is a [`URL_SECRET_PARAMS`] name and whose value is
+///    at least 8 characters, or a credential name of any length (`*signature`, `*sig`, `authkey`,
+///    `resourcekey`, `rlkey`, the GCS and S3 credential and token names), is removed; the other pairs keep their order, and a `?` left with
+///    nothing after it is dropped.
+/// 2. If [`redact_secrets`] would still change what is left (a JWT, an AWS key, a `client_secret=`
+///    name), the whole query and fragment are dropped.
+/// 3. If it would change even that (a key in the path), `None`: there is no safe link to keep.
+///
+/// Every `Some` is a fixed point of [`redact_secrets`], so the stored-secrets sweep never touches
+/// it and a repeat of the same item hashes the same. Borrowed when nothing was removed.
+pub fn strip_url_secrets(url: &str) -> Option<Cow<'_, str>> {
+    let clean = |s: &str| redact_secrets(s) == s;
+    let credential = |pair: &&str| {
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        (URL_SECRET_NAME.is_match(name) && value.chars().count() >= URL_SECRET_MIN_CHARS) || URL_CREDENTIAL_NAME.is_match(name)
+    };
+    let stripped = without_userinfo(url);
+    let has_credential = stripped.split('#').next().and_then(|b| b.split_once('?')).is_some_and(|(_, q)| q.split('&').any(|p| credential(&p)));
+    if !has_credential && clean(&stripped) {
+        return Some(match stripped {
+            Cow::Borrowed(_) => Cow::Borrowed(url),
+            Cow::Owned(o) => Cow::Owned(o),
+        });
+    }
+    let url: &str = &stripped;
+    let (before_fragment, fragment) = match url.split_once('#') {
+        Some((b, f)) => (b, Some(f)),
+        None => (url, None),
+    };
+    let (base, query) = match before_fragment.split_once('?') {
+        Some((b, q)) => (b, Some(q)),
+        None => (before_fragment, None),
+    };
+    // Step 1.
+    let mut out = base.to_string();
+    if let Some(query) = query {
+        let kept: Vec<&str> = query.split('&').filter(|pair| !credential(pair)).collect();
+        let kept = kept.join("&");
+        if !kept.is_empty() {
+            out.push('?');
+            out.push_str(&kept);
+        }
+    }
+    if let Some(fragment) = fragment {
+        out.push('#');
+        out.push_str(fragment);
+    }
+    if clean(&out) {
+        return Some(Cow::Owned(out));
+    }
+    // Steps 2 and 3.
+    clean(base).then(|| Cow::Owned(base.to_string()))
 }
 
 #[cfg(test)]
@@ -248,4 +344,71 @@ mod tests {
             assert!(matches!(redact_secrets(s), Cow::Borrowed(_)), "{s}");
         }
     }
+
+    #[test]
+    fn strip_url_secrets_removes_the_credential_and_keeps_a_link() {
+        let cases: &[(&str, Option<&str>)] = &[
+            ("https://x.sharepoint.com/f?a=1&sig=abcdefgh12&b=2", Some("https://x.sharepoint.com/f?a=1&b=2")),
+            ("https://x/f?sig=abcdefgh12", Some("https://x/f")),
+            ("https://x/f?code=short", Some("https://x/f?code=short")),
+            ("https://x/f?key=abcdefgh12#frag", Some("https://x/f#frag")),
+            ("https://x/f?SIG=abcdefgh12&a=1", Some("https://x/f?a=1")),
+            (
+                "https://x.sharepoint.com/download.aspx?tempauth=eyJ0eXAiOiJKV1Qi.eyJhdWQiOiIwMDAw.SflKxwRJSMeKKF2QT4",
+                Some("https://x.sharepoint.com/download.aspx"),
+            ),
+            ("https://b.s3.amazonaws.com/f?X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F2026", Some("https://b.s3.amazonaws.com/f")),
+            ("https://x/f?client_secret=abcdefgh12", Some("https://x/f")),
+            ("https://x/f?api-key=abcdefgh12", Some("https://x/f")),
+            ("https://x/f#access_token=abcdefgh12", Some("https://x/f")),
+            ("https://x/AKIAIOSFODNN7EXAMPLE/f", None),
+            ("https://outlook.office.com/mail/1", Some("https://outlook.office.com/mail/1")),
+            ("https://x/f?", Some("https://x/f?")),
+        ];
+        for (input, want) in cases {
+            let got = strip_url_secrets(input);
+            assert_eq!(got.as_deref(), *want, "{input}");
+            if let Some(out) = got {
+                assert_eq!(redact_secrets(&out), out, "{input}: what is kept is a fixed point of redact_secrets");
+            }
+        }
+        assert!(matches!(strip_url_secrets("https://outlook.office.com/mail/1"), Some(Cow::Borrowed(_))));
+    }
+
+    #[test]
+    fn strip_url_secrets_never_panics_on_odd_input() {
+        for odd in ["", "?", "#", "&&&", "?sig=abcdefgh12", "https://x/f?&&sig=abcdefgh12&&", "https://\u{e9}/f?\u{e9}=1&sig=\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}"] {
+            if let Some(out) = strip_url_secrets(odd) {
+                assert_eq!(redact_secrets(&out), out, "{odd}");
+            }
+        }
+    }
+
+    /// Security review M6: Google Cloud Storage V4 signatures, OneDrive share keys, any `*signature`
+    /// or `*sig` parameter, and userinfo are removed too.
+    #[test]
+    fn strip_url_secrets_removes_more_credential_shapes() {
+        let cases: &[(&str, &str)] = &[
+            (
+                "https://storage.googleapis.com/b/o?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=svc%40p.iam.gserviceaccount.com%2F20261122&X-Goog-Date=20261122T000000Z&X-Goog-Signature=0123456789abcdef",
+                "https://storage.googleapis.com/b/o?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Date=20261122T000000Z",
+            ),
+            ("https://onedrive.live.com/redir?resid=ABC!123&authkey=!AbCd", "https://onedrive.live.com/redir?resid=ABC!123"),
+            ("https://1drv.ms/f?resourcekey=0-abc&x=1", "https://1drv.ms/f?x=1"),
+            ("https://www.dropbox.com/scl/fi/a/b.pdf?rlkey=abc12&dl=0", "https://www.dropbox.com/scl/fi/a/b.pdf?dl=0"),
+            ("https://cdn.example/f?Expires=1&Signature=abc&Key-Pair-Id=K", "https://cdn.example/f?Expires=1&Key-Pair-Id=K"),
+            ("https://x/f?x-sig=abc", "https://x/f"),
+            ("https://x/f?sig=abc", "https://x/f"),
+            ("https://user:hunter2@host.example/f?a=1", "https://host.example/f?a=1"),
+            ("https://user@host.example/f", "https://host.example/f"),
+            ("https://host.example/a@b/f", "https://host.example/a@b/f"),
+            ("https://x/f?design=1&page=2", "https://x/f?design=1&page=2"),
+        ];
+        for (input, want) in cases {
+            let got = strip_url_secrets(input);
+            assert_eq!(got.as_deref(), Some(*want), "{input}");
+            assert_eq!(redact_secrets(want), *want);
+        }
+    }
 }
+

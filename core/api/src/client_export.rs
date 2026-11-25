@@ -222,6 +222,7 @@ fn write_text(
     let mut episodes = String::new();
     let mut conversations = String::new();
     let mut steps = String::new();
+    let mut mcp_items = String::new();
     items.sort_by(|a, b| a.date_unix_ms.cmp(&b.date_unix_ms).then(a.id.cmp(&b.id)));
     for item in items {
         let row_id = || item.id.parse::<i64>().map_err(|_| ApiError::ProviderFailure);
@@ -289,18 +290,19 @@ fn write_text(
                 }
             }
             ItemKind::Conversation => {
-                if let Some(c) = store.get_conversation(row_id()?).map_err(db)? {
-                    let value = serde_json::json!({
-                        "id": c.id, "title": c.title, "starred": c.starred,
-                        "created_at_unix_ms": c.created_at_unix_ms, "updated_at_unix_ms": c.updated_at_unix_ms,
-                        "exchanges": c.exchanges,
-                    });
+                // `find_filter_json` is not exported, as `scope_kind` is not: it holds only a date range and an app id.
+                if let Some(value) = store.get_conversation_export(row_id()?).map_err(db)? {
                     line(&mut conversations, &value)?;
                 }
             }
             ItemKind::Step => {
                 if let Some(row) = store.step_export_row(&item.id).map_err(db)? {
                     line(&mut steps, &row)?;
+                }
+            }
+            ItemKind::McpItem => {
+                if let Some(row) = store.export_mcp_item_row(row_id()?).map_err(db)? {
+                    line(&mut mcp_items, &row)?;
                 }
             }
             ItemKind::Thread | ItemKind::VaultNote | ItemKind::ExportFolder => {}
@@ -313,6 +315,7 @@ fn write_text(
         ("episodes.jsonl", &episodes),
         ("conversations.jsonl", &conversations),
         ("steps.jsonl", &steps),
+        ("mcp_items.jsonl", &mcp_items),
     ] {
         write_new(&inside(folder, name)?, text).map_err(ioe)?;
     }
@@ -344,8 +347,9 @@ fn readme(now_unix_ms: i64, media: bool) -> String {
          notes and transcript. A meeting shared with another client is here whole.\n\
          - `emails.jsonl`, `calendar.jsonl`, `captures.jsonl`: one JSON object per line.\n\
          - `episodes.jsonl`: screen activity summaries.\n\
-         - `conversations.jsonl`: Ask conversations with their answers.\n\
+         - `conversations.jsonl`: Ask conversations with their answers and, for an answer with numbered sources, the sources it cited (number, kind and id).\n\
          - `steps.jsonl`: steps and their notes.\n\
+         - `mcp_items.jsonl`: items a client such as Claude added through MCP, one JSON object per line (what it was, its source, the client that added it, time, title, text, link and people).\n\
          - `topic.json`: the client's page.\n\
          {}\n\
          This folder is a plain copy of private data, and it is yours to keep or delete. Whimbrel remembers \
@@ -785,6 +789,29 @@ mod tests {
     }
 
     #[test]
+    fn a_client_export_writes_the_ticked_added_items() {
+        let e = env();
+        let a = e.store.create_seed_topic("Zorblax", &[], None).unwrap();
+        let ticked = crate::test_store::add_mcp_item(&e.store, "a", "Zorblax renewal", "ticked added text", Some("ana@contoso.com"));
+        crate::test_store::add_mcp_item(&e.store, "b", "Zorblax lunch", "unticked added text", None);
+        let inv = inventory(&e.store, &a.key).unwrap();
+        let pick = inv.possible.iter().find(|p| p.kind == ItemKind::McpItem && p.id == ticked.to_string()).unwrap().clone();
+        let out = e.dir.path().join("out");
+        let opts = ExportOptions { include_possible: vec![pick], ..Default::default() };
+        let folder = export_client(&e.store, &a.key, &out, &opts).unwrap();
+        let lines = read(&folder, "mcp_items.jsonl");
+        assert_eq!(lines.lines().count(), 1, "{lines}");
+        let row: serde_json::Value = serde_json::from_str(lines.lines().next().unwrap()).unwrap();
+        assert_eq!(row["declared_kind"], "email");
+        assert_eq!(row["source_label"], "outlook-work");
+        assert_eq!(row["client"], "Claude Code");
+        assert_eq!(row["text"], "ticked added text");
+        assert_eq!(row["people"][0]["email"], "ana@contoso.com");
+        assert!(!all_text(&folder).contains("unticked added text"));
+        assert!(read(&folder, "README.md").contains("mcp_items.jsonl"));
+    }
+
+    #[test]
     fn export_includes_captures_by_either_id_and_episodes() {
         let e = env();
         let a = e.store.create_seed_topic("Zorblax", &[], None).unwrap();
@@ -832,6 +859,40 @@ mod tests {
         assert_eq!(caps.lines().count(), 2);
         assert!(caps.contains("episode capture words") && caps.contains("pulled capture words"));
         assert!(read(&folder, "episodes.jsonl").contains("episode summary words"));
+    }
+
+    /// Finding: a client's export of a new-page answer keeps its saved sources and the three fields it holds.
+    #[test]
+    fn export_holds_the_saved_sources_of_a_new_page_conversation() {
+        let e = env();
+        let a = e.store.create_seed_topic("Zorblax", &[], None).unwrap();
+        let conv = e.store.insert_conversation("Pricing with Zorblax", 1).unwrap();
+        e.store.append_conversation_exchange(conv, "what did Zorblax say?", "old a", "[]", None, 10).unwrap();
+        e.store
+            .append_conversation_exchange_sourced(&memory::cards::NewSourcedExchange {
+                conversation_id: conv,
+                query: "and about Zorblax pricing?",
+                answer: "new a [1]",
+                sources: &[memory::cards::SavedSource { n: 1, kind: "capture".into(), id: 5 }],
+                model: Some("gemma"),
+                provider: Some("ollama"),
+                answered_locally: true,
+                left_out: 0,
+                now_unix_ms: 20,
+            })
+            .unwrap();
+        // A conversation that names the client is a possible match: the person ticks it.
+        let inv = inventory(&e.store, &a.key).unwrap();
+        let pick = inv.possible.iter().find(|p| p.kind == ItemKind::Conversation).cloned().expect("the conversation is offered");
+        let out = e.dir.path().join("out");
+        let opts = ExportOptions { include_possible: vec![pick], ..Default::default() };
+        let folder = export_client(&e.store, &a.key, &out, &opts).unwrap();
+        let text = fs::read_to_string(folder.join("conversations.jsonl")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        let ex = v["exchanges"].as_array().unwrap();
+        assert!(ex[0].get("sources").is_none() && ex[0].get("provider").is_none(), "an old exchange is as it was");
+        assert_eq!(ex[1]["sources"], serde_json::json!([{"n": 1, "kind": "capture", "id": 5}]));
+        assert_eq!((ex[1]["provider"].as_str(), ex[1]["answered_locally"].as_bool(), ex[1]["left_out"].as_i64()), (Some("ollama"), Some(true), Some(0)));
     }
 
     #[test]

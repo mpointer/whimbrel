@@ -3,9 +3,13 @@
 // in core/skins; this draws what `skins_list` returns, from CSS variables and data attributes on the
 // root element. Colours come from the skin's palette; everything else from the skin.
 //
-// Whimbrel with its Default palette under System appearance is left to tokens.css alone, exactly as
-// before skins existed. Every other choice sets the variables, and follows the OS live when the
+// Whimbrel (shown as Classic) with its Default palette under System appearance is left to tokens.css alone,
+// exactly as before skins existed. Every other choice sets the variables, and follows the OS live when the
 // appearance is System.
+//
+// Two rules sit on top of the choice (docs/ui-redesign/screens/switch-removal.md, A2). Once per device, a person
+// still on the cream default is moved to Thread (`moveToThreadOnce`). And while the system asks for more contrast,
+// every screen draws the High Contrast palette whatever skin is picked, without changing what is stored.
 
 import { skinsList, skinsRevision } from "./api";
 import { APPEARANCE_KEY, cssVariable, parseAppearance, resolveMode, type Appearance, type Mode, type ThemeWindow } from "./theme";
@@ -176,6 +180,21 @@ export const WHIMBREL: SkinDto = {
   builtIn: true,
 };
 
+// --- Thread, always present too ----------------------------------------------------------------
+
+export const THREAD_ID = "thread";
+export const THREAD_PALETTE_ID = "thread";
+const bundledThread = import.meta.glob("../../../../skins/thread.json", { import: "default", eager: true }) as Record<string, SkinManifest>;
+const bundledThreadPalette = import.meta.glob("../../../../skins/palettes/thread.json", { import: "default", eager: true }) as Record<string, SkinPalette>;
+const threadManifest = Object.values(bundledThread)[0];
+const threadPalette = Object.values(bundledThreadPalette)[0];
+if (!threadManifest || !threadPalette) throw new Error("skins/thread.json or its palette is missing from the build");
+
+/** Thread as it draws before the shell has answered (and if its list never has it): the bundled manifest and palette,
+ *  so the first paint of a window is already Thread and a short list cannot take it away. The shell's own entry
+ *  replaces it once `skins_list` answers. */
+export const THREAD: SkinDto = { skin: threadManifest, palettes: [threadPalette], builtIn: true };
+
 // --- migration --------------------------------------------------------------------------------
 
 /** The skin and palette a stored plain-theme id becomes (the Mac's `SkinStore.migrated`). */
@@ -201,13 +220,19 @@ export interface Selection {
   appearance: Appearance;
 }
 
+/** The cream default: Classic (id `whimbrel`) in its Default palette. */
 export const DEFAULT_SELECTION: Selection = { skinId: WHIMBREL_ID, paletteId: "default", appearance: "system" };
+/** Where the once-per-device move sends a person who is on the cream default. */
+export const THREAD_SELECTION: Selection = { skinId: THREAD_ID, paletteId: THREAD_PALETTE_ID, appearance: "system" };
 
 // Per device, so localStorage and never synced.
 export const SKIN_KEY = "skinId";
 export const PALETTE_KEY = "paletteId";
 /** Before skins: the plain theme's id. It stays stored after the move, so a downgrade finds it. */
 export const LEGACY_THEME_KEY = "themeId";
+/** Set once the move to Thread has been looked at on this device, whether or not it moved anyone, so a person who
+ *  later picks Classic is not moved again. Per device, never synced. */
+export const THREAD_MOVE_KEY = "skinThreadMoveDone";
 
 type Store = Pick<Storage, "getItem" | "setItem">;
 
@@ -220,10 +245,12 @@ function storeOf(win: ThemeWindow): Store | null {
   }
 }
 
+/** What is stored. With storage missing or blocked nothing can be remembered, so the move to Thread cannot be recorded
+ *  either: the page shows Thread (the new default) for the session, and a pick still applies for the session. */
 export function readSelection(win: ThemeWindow = window): Selection {
   try {
     const store = storeOf(win);
-    if (!store) return DEFAULT_SELECTION;
+    if (!store) return THREAD_SELECTION;
     const appearance = parseAppearance(store.getItem(APPEARANCE_KEY));
     const skinId = store.getItem(SKIN_KEY);
     if (skinId) return { skinId, paletteId: store.getItem(PALETTE_KEY) || DEFAULT_SELECTION.paletteId, appearance };
@@ -232,7 +259,37 @@ export function readSelection(win: ThemeWindow = window): Selection {
     saveSelection({ ...moved, appearance }, win);
     return { ...moved, appearance };
   } catch {
-    return DEFAULT_SELECTION;
+    return THREAD_SELECTION;
+  }
+}
+
+/** Whether `selection` is the cream default: Classic in its Default palette. */
+export const isCreamDefault = (selection: Selection): boolean => selection.skinId === WHIMBREL_ID && selection.paletteId === "default";
+
+/** The once-per-device move, as a decision: the cream default becomes Thread (keeping the appearance); anything else,
+ *  and anyone the move has already been looked at for, stays as it is. Pure. */
+export function movedToThread(selection: Selection, done: boolean): Selection {
+  if (done || !isCreamDefault(selection)) return selection;
+  return { ...THREAD_SELECTION, appearance: selection.appearance };
+}
+
+/** Runs the move on this device if it has not run: reads the stored choice (carrying an old plain theme over first),
+ *  stores Thread when the choice is the cream default, then stores the done-marker. It runs before the first paint
+ *  resolves the selection, in every window. Several windows starting at once are safe: they all decide from the same
+ *  storage, a second one that finds Thread (or the marker) writes nothing different, and the choice is written before
+ *  the marker so a window that sees the marker never reads a choice that is still cream. A person who then picks
+ *  Classic keeps it, because the marker stays. Without usable storage nothing is written (`readSelection` already
+ *  answers Thread for the session). */
+export function moveToThreadOnce(win: ThemeWindow = window): void {
+  try {
+    const store = storeOf(win);
+    if (!store || store.getItem(THREAD_MOVE_KEY)) return;
+    const stored = readSelection(win);
+    const moved = movedToThread(stored, false);
+    if (moved !== stored) saveSelection(moved, win);
+    store.setItem(THREAD_MOVE_KEY, "1");
+  } catch {
+    // Not remembered: it is looked at again next time, which moves the same people.
   }
 }
 
@@ -247,12 +304,38 @@ export function saveSelection(selection: Selection, win: ThemeWindow = window): 
   }
 }
 
-/** The skin a selection shows and the palette it shows it in: a skin that is gone is Whimbrel, and a
- *  palette the skin does not offer is the skin's first. */
-export function resolveSelection(skins: readonly SkinDto[], selection: Selection): { dto: SkinDto; palette: SkinPalette } {
-  const dto = skins.find((s) => s.skin.id === selection.skinId) ?? skins.find((s) => s.skin.id === WHIMBREL_ID) ?? WHIMBREL;
+/** The High Contrast palette: the bundled plain theme of that id, which the High Contrast skin also names. */
+const highContrastTheme = THEMES.find((t) => t.id === "high-contrast");
+export const HIGH_CONTRAST_PALETTE: SkinPalette | null = highContrastTheme
+  ? { id: highContrastTheme.id, name: highContrastTheme.name, author: highContrastTheme.author, light: highContrastTheme.light, dark: highContrastTheme.dark }
+  : null;
+
+/** The media query for "the system asks for more contrast". Not while Windows contrast themes are on
+ *  (`forced-colors: active`): there the browser forces the colors itself and the page is left as it was. */
+export const MORE_CONTRAST_QUERY = "(prefers-contrast: more) and (not (forced-colors: active))";
+
+/** Which palette is drawn: `palette` as picked, or the High Contrast palette while the system asks for more contrast,
+ *  whatever the pick. Pure. Why a palette and not the tokens' own high contrast values: the page's colors come from
+ *  the skin's palette as inline variables on the root, and those win over any stylesheet, so a media query could not
+ *  bring text and backgrounds to high contrast; and the tokens give high contrast values to the Thread-only colors
+ *  (the control border) and to nothing for the plain root. One palette, applied by the same code as any other, keeps
+ *  text, backgrounds and parts together in light and in dark, and `data-palette` then says "high-contrast", so the
+ *  Thread control border steps aside for that palette's own border. */
+export function paletteToDraw(palette: SkinPalette, contrastMore: boolean): SkinPalette {
+  return contrastMore && HIGH_CONTRAST_PALETTE ? HIGH_CONTRAST_PALETTE : palette;
+}
+
+/** The skin a selection shows and the palette it shows it in: a skin that is gone is Whimbrel (Thread, which always
+ *  ships, is never gone), and a palette the skin does not offer is the skin's first. With `contrastMore` the palette
+ *  is the High Contrast one whatever the skin; the skin itself is the one picked. */
+export function resolveSelection(skins: readonly SkinDto[], selection: Selection, contrastMore = false): { dto: SkinDto; palette: SkinPalette } {
+  const dto =
+    skins.find((s) => s.skin.id === selection.skinId) ??
+    (selection.skinId === THREAD_ID ? THREAD : undefined) ??
+    skins.find((s) => s.skin.id === WHIMBREL_ID) ??
+    WHIMBREL;
   const palette = dto.palettes.find((p) => p.id === selection.paletteId) ?? dto.palettes[0] ?? WHIMBREL.palettes[0];
-  return { dto, palette };
+  return { dto, palette: paletteToDraw(palette, contrastMore) };
 }
 
 // --- the page ---------------------------------------------------------------------------------
@@ -266,32 +349,49 @@ export interface SkinRoot {
 
 const systemIsDark = (): boolean => typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
 
-/** Shows `dto` in `paletteId` (the skin's first when it does not offer that one) under `appearance`. */
-export function applySkin(dto: SkinDto, paletteId: string, appearance: Appearance, root: SkinRoot, systemDark: boolean = systemIsDark()): void {
-  const palette = dto.palettes.find((p) => p.id === paletteId) ?? dto.palettes[0];
+const moreContrast = (): boolean => typeof window !== "undefined" && window.matchMedia(MORE_CONTRAST_QUERY).matches;
+
+/** Shows `dto` in `paletteId` (the skin's first when it does not offer that one) under `appearance`; with
+ *  `contrastMore` the palette is the High Contrast one (`paletteToDraw`). */
+export function applySkin(
+  dto: SkinDto,
+  paletteId: string,
+  appearance: Appearance,
+  root: SkinRoot,
+  systemDark: boolean = systemIsDark(),
+  contrastMore: boolean = moreContrast(),
+): void {
+  const picked = dto.palettes.find((p) => p.id === paletteId) ?? dto.palettes[0];
+  const palette = picked && paletteToDraw(picked, contrastMore);
   for (const [name, value] of Object.entries(skinVariables(dto.skin))) root.style.setProperty(name, value);
   for (const [name, value] of Object.entries(skinAttributes(dto.skin))) root.setAttribute(name, value);
   if (!palette) return;
   if (dto.skin.id === WHIMBREL_ID && palette.id === "default" && appearance === "system") {
     for (const token of TOKENS) root.style.removeProperty(cssVariable(token));
     root.removeAttribute("data-theme");
+    root.removeAttribute("data-palette");
     root.style.colorScheme = "";
     return;
   }
   const mode = paletteMode(palette, appearance, systemDark);
   for (const [name, value] of Object.entries(paletteColors(palette, mode))) root.style.setProperty(name, value);
   root.setAttribute("data-theme", mode);
+  // Which palette is showing, so tokens.generated.css can give Thread's palette its own control border.
+  root.setAttribute("data-palette", palette.id);
   // An explicit choice also tells the browser, so scrollbars and form controls match; System
   // leaves `color-scheme: light dark` from tokens.css in charge. A single-variant palette forces its mode.
   root.style.colorScheme = appearance === "system" && palette.light && palette.dark ? "" : mode;
 }
 
-/** What is installed right now: Whimbrel until the shell answers. */
-let installed: readonly SkinDto[] = [WHIMBREL];
+/** What is installed right now: Whimbrel and Thread until the shell answers. */
+let installed: readonly SkinDto[] = [WHIMBREL, THREAD];
 /** What is applied right now, so an OS change repaints even when storage could not be written. */
 let current: Selection = DEFAULT_SELECTION;
+/** Whether the system asks for more contrast right now (`MORE_CONTRAST_QUERY`), as of the last repaint. */
+let contrastMore = false;
 
 export const currentSelection = (): Selection => current;
+export const currentContrastMore = (): boolean => contrastMore;
 export const installedSkins = (): readonly SkinDto[] => installed;
 
 /** Replaces what is installed. Whimbrel is always first and always present. */
@@ -317,15 +417,17 @@ export const REVISION_POLL_MS = 5000;
  *  windows follow through storage. */
 function install(list: readonly SkinDto[], win: ThemeWindow): void {
   setInstalledSkins(list);
-  if (!installed.some((s) => s.skin.id === current.skinId)) {
+  // Thread is bundled with the page, so a list that lacks it (a short one) must not reset a person off it for good.
+  if (current.skinId !== THREAD_ID && !installed.some((s) => s.skin.id === current.skinId)) {
     current = { ...DEFAULT_SELECTION, appearance: current.appearance };
     saveSelection(current, win);
   }
 }
 
 function paint(win: ThemeWindow): void {
-  const { dto, palette } = resolveSelection(installed, current);
-  applySkin(dto, palette.id, current.appearance, win.document.documentElement, win.matchMedia("(prefers-color-scheme: dark)").matches);
+  contrastMore = win.matchMedia(MORE_CONTRAST_QUERY).matches;
+  const { dto, palette } = resolveSelection(installed, current, contrastMore);
+  applySkin(dto, palette.id, current.appearance, win.document.documentElement, win.matchMedia("(prefers-color-scheme: dark)").matches, contrastMore);
   revision += 1;
   listeners.forEach((listener) => listener());
 }
@@ -338,6 +440,7 @@ export function startSkin(
   load: typeof skinsList = skinsList,
   revision: typeof skinsRevision | null = skinsRevision,
 ): () => void {
+  moveToThreadOnce(win);
   current = readSelection(win);
   paint(win);
   let live = true;
@@ -364,6 +467,7 @@ export function startSkin(
       }, REVISION_POLL_MS)
     : null;
   const system = win.matchMedia("(prefers-color-scheme: dark)");
+  const contrast = win.matchMedia(MORE_CONTRAST_QUERY);
   const onSystem = () => paint(win);
   const onStorage = (event: Event) => {
     const key = (event as StorageEvent).key;
@@ -372,11 +476,13 @@ export function startSkin(
     paint(win);
   };
   system.addEventListener("change", onSystem);
+  contrast.addEventListener("change", onSystem);
   win.addEventListener("storage", onStorage);
   return () => {
     live = false;
     if (poll !== null) clearInterval(poll);
     system.removeEventListener("change", onSystem);
+    contrast.removeEventListener("change", onSystem);
     win.removeEventListener("storage", onStorage);
   };
 }

@@ -1,7 +1,7 @@
 <!--
 {
   "title": "Precios: gratis y de código abierto",
-  "description": "Whimbrel es gratis y de código abierto, con todas las funciones y tus propios modelos. Cloud, a $5 al mes, cubre servidores que operamos por ti.",
+  "description": "Whimbrel es gratis y de código abierto, con todas las funciones y tus propios modelos. Plus, a $15 al mes, añade sincronización alojada e IA incluida.",
   "schema": [
     "software"
   ],
@@ -19,26 +19,30 @@
     },
     {
       "q": "¿Necesito una clave de API de IA?",
-      "a": "Tú eliges. Ejecuta modelos en tu computadora con Ollama sin costo, o usa tu propia clave de Anthropic, OpenAI, Google Gemini u OpenRouter y paga directamente a ese proveedor. Por defecto, las tareas pequeñas van al modelo más económico que tengas, así que la mayoría de las personas gasta menos de un dólar al mes en modelos alojados. Si usas tu propia clave de API, Whimbrel no agrega nada a lo que cobra tu proveedor. Whimbrel AI es crédito prepago opcional, al costo más 30%."
+      "a": "Tú eliges. Ejecuta modelos en tu computadora con Ollama sin costo, o usa tu propia clave de Anthropic, OpenAI, Google Gemini u OpenRouter y paga directamente a ese proveedor. Por defecto, las tareas pequeñas van al modelo más económico que tengas, así que la mayoría de las personas gasta menos de un dólar al mes en modelos alojados. Si usas tu propia clave de API, Whimbrel no agrega nada a lo que cobra tu proveedor. Plus incluye IA cada mes, sin clave de API: elige Whimbrel AI en Ajustes. Si quieres más que la asignación, puedes recargar manualmente con crédito prepago: pagas lo que usas más 30%, y se detiene en $0. Con Whimbrel AI (la asignación de Plus o el crédito prepago), el texto de tus solicitudes pasa por nuestro servidor hasta Anthropic, y el servidor guarda un conteo de los tokens usados, no lo que preguntaste. Las solicitudes con tu propia clave de API van directamente a ese proveedor."
     },
     {
       "q": "¿Cuánto cuesta la sincronización?",
-      "a": "Nada. La sincronización tiene cifrado de extremo a extremo. En un relay que tú mismo operas, es ilimitada. En el relay que alojamos nosotros, una cuenta gratuita sincroniza una computadora y un teléfono. Cloud añade dispositivos ilimitados en nuestro relay por $5 al mes."
+      "a": "Nada. La sincronización tiene cifrado de extremo a extremo. En un relay que tú mismo operas, es ilimitada. En el relay que alojamos nosotros, una cuenta gratuita sincroniza una computadora y un teléfono. Plus añade dispositivos ilimitados en nuestro relay por $15 al mes."
     },
     {
-      "q": "¿Cuánto cuesta Cloud?",
-      "a": "$5 al mes o $50 al año, más impuestos donde corresponda. Te suscribes desde la app: Ajustes → Sincronización y dispositivos. Cloud te da dispositivos ilimitados en nuestro relay alojado, conserva tu cuenta sin importar cuánto tiempo estés sin usarla e incluye soporte por correo. Todo lo de la app sigue siendo gratis."
+      "q": "¿Cuánto cuesta Plus?",
+      "a": "$15 al mes, o $144 al año ($12 al mes facturado anualmente), más impuestos donde corresponda. Te suscribes desde la app: Ajustes → Sincronización y dispositivos. Plus te da sincronización alojada en dispositivos ilimitados, conserva tu cuenta sin importar cuánto tiempo estés sin usarla, incluye soporte por correo e incluye IA cada mes cuando eliges Whimbrel AI en Ajustes. Cuando se agota la asignación del mes, Whimbrel pasa al siguiente modelo que hayas configurado, por ejemplo un modelo en tu computadora, hasta que la asignación se renueva. Tu asignación y lo que te queda se muestran en Ajustes. La asignación sin usar no se acumula. Las copias de seguridad diarias y la restauración, abrir tu vault desde cualquier lugar y las notificaciones push en tu teléfono llegarán a Plus sin costo adicional. ¿Ya estás en Cloud? Tu plan continúa como está, y estas funciones también llegarán a los planes Cloud existentes. Todo lo demás de la app sigue siendo gratis."
     },
     {
       "q": "¿Qué pasa si cancelo?",
-      "a": "Cancela cuando quieras desde Gestionar suscripción en la app. Cloud dura hasta el final del periodo que pagaste y luego tu cuenta pasa a Free: no se borra nada y todos los dispositivos que ya sincronizan siguen sincronizando; solo agregar un dispositivo más allá de una computadora y un teléfono vuelve a requerir Cloud. Los pagos no se reembolsan automáticamente; escríbenos si quieres un reembolso. Si eliminas tu cuenta de Whimbrel, la suscripción también se cancela."
+      "a": "Cancela cuando quieras desde Gestionar suscripción en la app. Tu plan dura hasta el final del periodo que pagaste y luego tu cuenta pasa a Free: no se borra nada y todos los dispositivos que ya sincronizan siguen sincronizando; solo agregar un dispositivo más allá de una computadora y un teléfono vuelve a requerir un plan de pago. Un reembolso termina de inmediato el plan y cualquier asignación mensual sin usar. Si eliminas tu cuenta de Whimbrel, la suscripción también se cancela."
+    },
+    {
+      "q": "¿Puedo pedir un reembolso?",
+      "a": "Sí. Si Plus no es para ti, escribe a <a href=\"mailto:{{site.contactEmail}}\">{{site.contactEmail}}</a> dentro de los 14 días posteriores a tu primer pago o a una renovación anual y te lo reembolsamos por completo. El crédito prepagado sin usar se puede reembolsar dentro de los 14 días posteriores a su compra. Una renovación mensual no se reembolsa por un mes parcial: cancela y tu plan dura hasta el final del periodo que pagaste. Si te cobramos dos veces o por error, lo reembolsamos cuando nos avises. Los reembolsos vuelven a la tarjeta con la que pagaste."
     },
     {
       "q": "¿Mi empresa puede obtener soporte o ejecutar sus propios servidores?",
       "a": "Sí. El relay de sincronización y el feed de actualizaciones son de código abierto y están documentados para autoalojarlos. Si quieres que una persona se responsabilice de tu implementación, <a href=\"mailto:{{site.salesEmail}}?subject=Whimbrel%20support\">habla con nosotros</a> sobre un contrato de soporte."
     }
   ],
-  "sourceHash": "d4565081cce2"
+  "sourceHash": "d7aa3db01925"
 }
 -->
 {{{crumbs}}}
@@ -46,14 +50,14 @@
   <div class="narrow center">
     <p class="eyebrow">Precios</p>
     <h1>Gratis y de código abierto. Paga solo por los servidores que operamos por ti.</h1>
-    <p class="lede">Whimbrel trabaja en tu computadora con los modelos de IA que elijas, así que toda la app es gratis. Cloud cubre lo que realmente necesita un servidor que operamos nosotros: dispositivos ilimitados en nuestro relay de sincronización alojado, por $5 al mes. Las funciones para equipos están planificadas.</p>
+    <p class="lede">Whimbrel trabaja en tu computadora con los modelos de IA que elijas, así que toda la app es gratis. Plus cubre lo que realmente necesita un servidor que operamos nosotros: sincronización alojada en dispositivos ilimitados, con IA incluida, por $15 al mes. Los planes para equipos están planificados.</p>
   </div>
 </section>
 
 <div class="container">
   <div class="early-access-banner" role="note">
     <strong>Todas las funciones de la app son gratis.</strong>
-    <span>Cloud es opcional: añade dispositivos ilimitados en nuestro relay alojado. Team está planificado.</span>
+    <span>Plus es opcional: sincronización alojada en dispositivos ilimitados, con IA incluida. Los planes para equipos están planificados.</span>
   </div>
 </div>
 
@@ -79,69 +83,31 @@
       </article>
 
       <article class="card plan">
-        <h2>Cloud</h2>
-        <p class="plan-for">Para una persona que quiere que nosotros operemos el servidor.</p>
-        <p class="price"><span class="amount">$5</span> <span class="per">al mes, o $50 al año</span></p>
+        <h2>Plus</h2>
+        <p class="plan-for">Para una persona que quiere que nosotros operemos el servidor y la IA.</p>
+        <p class="price"><span class="amount">$15</span> <span class="per">al mes, o $144 al año ($12 al mes facturado anualmente)</span></p>
         <p class="price-note">Más impuestos donde corresponda</p>
         <a class="btn btn-primary btn-block" href="/download/#register">Suscríbete desde la app: Ajustes → Sincronización y dispositivos</a>
         <ul class="plan-features">
           <li><strong>Todo lo de Free, más:</strong></li>
-          <li>Dispositivos ilimitados en nuestro relay alojado</li>
+          <li>Sincronización alojada en dispositivos ilimitados</li>
           <li>Tu cuenta no se elimina por inactividad</li>
           <li>Soporte por correo</li>
-          <li><strong>Próximamente en Cloud, sin costo adicional:</strong></li>
+          <li>IA incluida cada mes, sin clave de API: elige Whimbrel AI en Ajustes. Cuando se agota la asignación del mes, Whimbrel pasa al siguiente modelo que hayas configurado, por ejemplo un modelo en tu computadora, hasta que la asignación se renueva.</li>
+          <li>Tu asignación y lo que te queda se muestran en Ajustes. La asignación sin usar no se acumula.</li>
+          <li>Con Whimbrel AI (la asignación de Plus o el crédito prepago), el texto de tus solicitudes pasa por nuestro servidor hasta Anthropic, y el servidor guarda un conteo de los tokens usados, no lo que preguntaste. Las solicitudes con tu propia clave de API van directamente a ese proveedor.</li>
+          <li>¿Quieres más IA alojada? Recarga manualmente con crédito prepago: pagas lo que usas más 30%, y se detiene en $0.</li>
+          <li><strong>Próximamente en Plus, sin costo adicional:</strong></li>
           <li>Copias de seguridad diarias y restauración</li>
           <li>Abre tu vault desde cualquier lugar</li>
           <li>Notificaciones push en tu teléfono</li>
         </ul>
-      </article>
-
-      <article class="card plan">
-        <h2>Whimbrel AI</h2>
-        <p class="plan-for">Para cuando no quieres manejar una clave de API.</p>
-        <p class="price"><span class="amount">$10</span> <span class="per">o $25 de crédito prepago</span></p>
-        <p class="price-note">Más impuestos donde corresponda</p>
-        <a class="btn btn-primary btn-block" href="/download/#register">Compra crédito desde la app: Ajustes → Proveedores de IA</a>
-        <ul class="plan-features">
-          <li>Usa los modelos Claude sin tu propia clave de API</li>
-          <li>Pagas lo que usas más 30%</li>
-          <li>Se detiene en $0, así que no hay cobros sorpresa</li>
-          <li>El crédito no vence</li>
-          <li>Tu solicitud pasa por el servidor de Whimbrel hasta Anthropic. Whimbrel guarda un registro de los tokens usados, no de lo que preguntaste.</li>
-        </ul>
-      </article>
-
-      <article class="card plan">
-        <p class="plan-badge">Planificado</p>
-        <h2>Team</h2>
-        <p class="plan-for">Para equipos pequeños que comparten la memoria de reuniones.</p>
-        <p class="price"><span class="amount amount-sm">Aún sin precio</span></p>
-        <p class="price-note">Por usuario, después de Cloud</p>
-        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20for%20teams">Cuéntanos sobre tu equipo</a>
-        <ul class="plan-features">
-          <li><strong>Todo lo de Cloud, más:</strong></li>
-          <li>Memoria de reuniones compartida, con el consentimiento de quien capturó cada elemento</li>
-          <li>Routines que pasan trabajo a un compañero</li>
-          <li>Una clave de IA de la organización para todos los usuarios</li>
-          <li>Administración básica y una sola factura</li>
-        </ul>
-      </article>
-
-      <article class="card plan">
-        <h2>Support</h2>
-        <p class="plan-for">Para empresas que operan Whimbrel por su cuenta.</p>
-        <p class="price"><span class="amount amount-sm">Contrato</span></p>
-        <p class="price-note">Relay autoalojado, una persona responsable</p>
-        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20support">Habla con nosotros</a>
-        <ul class="plan-features">
-          <li>Ayuda para implementar el relay de código abierto y el feed de actualizaciones en tu propia cuenta de Cloudflare</li>
-          <li>Incorporación para tu equipo</li>
-          <li>Las claves de IA propias de tu empresa, o solo modelos locales</li>
-          <li>Los datos de trabajo se quedan en los dispositivos de los empleados y en tu propia infraestructura</li>
-        </ul>
+        <p class="fine muted">¿Ya estás en Cloud? Tu plan continúa como está, y estas funciones también llegarán a los planes Cloud existentes.</p>
       </article>
     </div>
-    <p class="fine muted table-note center">Si usas tu propia clave de API, Whimbrel no agrega nada a lo que cobra tu proveedor. Whimbrel AI es crédito prepago opcional, al costo más 30%. <a href="/open-source/">Cómo funciona el modelo de código abierto</a>.</p>
+    <p class="center">Los planes para equipos están planificados. <a href="mailto:{{site.salesEmail}}?subject=Whimbrel%20for%20teams">Cuéntanos sobre tu equipo</a>.</p>
+    <p class="center">Autoalojamiento: opera tu propio relay, gratis e ilimitado. Si quieres que una persona se responsabilice de tu implementación, <a href="mailto:{{site.salesEmail}}?subject=Whimbrel%20support">habla con nosotros</a> sobre soporte.</p>
+    <p class="fine muted table-note center">Si usas tu propia clave de API, Whimbrel no agrega nada a lo que cobra tu proveedor. Plus incluye IA con una asignación mensual; las recargas manuales con crédito prepago son al costo más 30%. <a href="/open-source/">Cómo funciona el modelo de código abierto</a>.</p>
   </div>
 </section>
 
@@ -149,20 +115,20 @@
   <div class="narrow">
     <div class="section-head center">
       <h2>Cómo se compara Whimbrel en precio</h2>
-      <p class="lede">Los planes de pago de esta categoría parten de $14 a $17 al mes, con el modelo de IA incluido. La app de Whimbrel es gratis; pagas directamente a tu proveedor de modelos, pagas a Whimbrel AI lo que usas más 30%, o no pagas nada si usas modelos locales.</p>
+      <p class="lede">Los planes de pago de esta categoría parten de $14 a $20 al mes, con el modelo de IA incluido. La app de Whimbrel es gratis; pagas directamente a tu proveedor de modelos, tienes IA incluida con Plus, o no pagas nada si usas modelos locales.</p>
     </div>
     <div class="table-wrap">
       <table class="compare">
         <caption class="sr-only">Planes gratuitos y planes de pago de entrada de Whimbrel, Granola y Littlebird</caption>
         <thead><tr><th scope="col">Producto</th><th scope="col">Plan gratuito</th><th scope="col">Plan de pago de entrada</th><th scope="col">Código abierto</th></tr></thead>
         <tbody>
-          <tr><th scope="row">Whimbrel</th><td class="yes">Todas las funciones, historial ilimitado</td><td>No hace falta; Cloud cuesta $5 al mes</td><td class="yes">Sí, Apache 2.0</td></tr>
+          <tr><th scope="row">Whimbrel</th><td class="yes">Todas las funciones, historial ilimitado</td><td>No hace falta; Plus es opcional y cuesta $15 al mes ($144 al año)</td><td class="yes">Sí, Apache 2.0</td></tr>
           <tr><th scope="row">Granola</th><td>Historial de reuniones de 30 días</td><td>Business, $14 por usuario al mes</td><td class="no">No</td></tr>
-          <tr><th scope="row">Littlebird</th><td>Créditos de uso diarios</td><td>Plus, $17 al mes facturado anualmente</td><td class="no">No</td></tr>
+          <tr><th scope="row">Littlebird</th><td>Créditos de uso diarios</td><td>Plus, $17 al mes facturado anualmente o $20 al mes</td><td class="no">No</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="fine muted table-note">Precios de la competencia tomados de sus páginas públicas de precios, 16 de octubre de 2026. Consulta la <a href="/compare/">comparación completa</a>.</p>
+    <p class="fine muted table-note">Precios de la competencia tomados de sus páginas públicas de precios, 24 de noviembre de 2026. Consulta la <a href="/compare/">comparación completa</a>.</p>
   </div>
 </section>
 

@@ -766,7 +766,8 @@ impl Store {
             return;
         };
         let aliases: Vec<String> = serde_json::from_str(&aliases).unwrap_or_default();
-        let Ok(v) = self.embed(&format!("{name}: {}", aliases.join(", "))) else {
+        // A seed is a short label (its name and aliases) that rows are matched against, so it is embedded as a query.
+        let Ok(v) = self.embed_query(&format!("{name}: {}", aliases.join(", "))) else {
             return;
         };
         let blob: Vec<u8> = v.iter().flat_map(|f| f.to_le_bytes()).collect();

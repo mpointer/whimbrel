@@ -13,8 +13,11 @@ final class RecordingNoticeTests: XCTestCase {
         return d
     }
 
-    func testItIsOffByDefault() {
-        XCTAssertFalse(RecordingNoticeSettings(defaults: defaults()).enabled)
+    func testItIsOnUnlessAPersonTurnedItOff() {
+        XCTAssertTrue(RecordingNoticeSettings(defaults: defaults()).enabled, "a value never stored means on")
+        let d = defaults()
+        RecordingNoticeSettings(defaults: d).enabled = false
+        XCTAssertFalse(RecordingNoticeSettings(defaults: d).enabled, "a stored off stays off")
     }
 
     func testCustomWordingWinsAndPersists() {

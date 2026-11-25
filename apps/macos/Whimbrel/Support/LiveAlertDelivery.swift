@@ -232,6 +232,7 @@ final class LiveAlertDelivery: AlertDelivering {
                              DeepLink.meetingURL(id: segment.meetingId, atCs: segment.startCs, origin: origin))
             case .snapshot: entry = Evidence(text: String(localized: "A meeting slide"), link: nil)
             case .routineRun: entry = Evidence(text: String(localized: "A routine result"), link: nil)
+            case .mcpItem: entry = Evidence(text: String(localized: "An added item"), link: nil)
             }
             out.append(entry)
         }

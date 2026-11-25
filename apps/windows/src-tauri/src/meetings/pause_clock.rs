@@ -13,9 +13,11 @@
 /// question repeats at the same interval and never ends the recording.
 pub const PAUSED_CHECK_MS: i64 = 60 * 60_000;
 
-/// How long "Resuming" may last without audio arriving. Past this the status stops saying it, so
-/// a microphone that never delivers does not leave the bar on "Resuming" for good.
-pub const RESUMING_MAX_MS: i64 = 20_000;
+/// How long "Resuming" may last while a capture stream is still opening again. Past this the status
+/// stops saying it and the recording reads as a problem ([`resume_stalled`]), so a device that never
+/// opens does not leave the bar on "Resuming" with Pause and Mark held. A stream normally opens in
+/// about a second; this leaves room for its reopen attempts.
+pub const RESUMING_MAX_MS: i64 = 10_000;
 
 /// One recording's pause history. Times are unix ms.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -72,9 +74,56 @@ pub fn paused_check_due(paused_since: i64, last_asked: Option<i64>, now: i64) ->
 }
 
 /// Whether the status should say "resuming": a resume was asked for at `resumed_at` (0 for none)
-/// and audio has not arrived yet, within [`RESUMING_MAX_MS`].
+/// and capture has not started again yet, within [`RESUMING_MAX_MS`].
 pub fn still_resuming(resumed_at: i64, now: i64) -> bool {
     resumed_at > 0 && now - resumed_at < RESUMING_MAX_MS
+}
+
+/// "Resuming" for a recording whose capture streams close while paused (Windows): from the resume until
+/// every stream that was held by the pause has started capturing again (its audio client started), not
+/// until the first packet of one source. A stream that gives up instead counts as back too; its own
+/// degraded reason says what is wrong. [`RESUMING_MAX_MS`] is the fallback for a stream that hangs
+/// while opening. Pure: the capture threads report to it under a lock.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResumeGate {
+    /// Streams closed by the pause that have not started again.
+    held: u32,
+    /// When resume was asked for, while a held stream is still opening; 0 otherwise.
+    resumed_at: i64,
+}
+
+impl ResumeGate {
+    /// A stream closed for the pause.
+    pub fn stream_held(&mut self) {
+        self.held += 1;
+    }
+
+    /// A held stream started capturing again, gave up, or ended with the recording.
+    pub fn stream_back(&mut self) {
+        self.held = self.held.saturating_sub(1);
+        if self.held == 0 {
+            self.resumed_at = 0;
+        }
+    }
+
+    pub fn pause(&mut self) {
+        self.resumed_at = 0;
+    }
+
+    /// Resume was asked for at `now`: resuming while any stream is still held.
+    pub fn resume(&mut self, now: i64) {
+        self.resumed_at = if self.held > 0 { now.max(1) } else { 0 };
+    }
+
+    /// Whether the status says "Resuming" (see [`still_resuming`]).
+    pub fn resuming(&self, now: i64) -> bool {
+        still_resuming(self.resumed_at, now)
+    }
+
+    /// A held stream has not started again within the limit (see [`resume_stalled`]).
+    pub fn stalled(&self, now: i64) -> bool {
+        resume_stalled(self.resumed_at, now)
+    }
 }
 
 /// A span that has not ended yet: the recording stopped, or the app died, while paused.
@@ -145,18 +194,53 @@ impl PausedSpans {
         PausedSpans { spans }
     }
 
-    /// Whether a transcript segment falls in a pause: its midpoint is inside a span. A segment that
-    /// straddles the edge of a pause (speech that ran into it) stays unless more than half of it is
-    /// inside.
+    /// What is left of a transcript segment once the pauses are taken out, or `None` when it is text from a pause.
+    ///
+    /// Nothing is captured while paused (the file holds digital silence there), so any words in a segment were heard outside
+    /// the spans. whisper's times are not exact at a long silence: it often starts the first line after one where the silence
+    /// began, and can run the last line before one into it. So a segment is dropped only when less than
+    /// [`MIN_HEARD_OUTSIDE_CS`] of it lies outside every span (what the model "heard" in the silence); one that runs past a
+    /// span's edge is kept and moved off it, so its time is where the speech was. This replaced a midpoint rule, which dropped
+    /// the whole first sentence after Resume on a real PC whenever whisper timed it from inside the pause.
+    pub fn outside(&self, start_cs: i64, end_cs: i64) -> Option<(i64, i64)> {
+        let end_cs = end_cs.max(start_cs);
+        if end_cs == start_cs {
+            let inside = self.spans.iter().any(|&(start, end)| start_cs >= start && start_cs < end);
+            return (!inside).then_some((start_cs, end_cs));
+        }
+        let inside: i64 = self.spans.iter().map(|&(start, end)| (end_cs.min(end) - start_cs.max(start)).max(0)).sum();
+        if inside == 0 {
+            return Some((start_cs, end_cs));
+        }
+        if end_cs - start_cs - inside < MIN_HEARD_OUTSIDE_CS {
+            return None;
+        }
+        let (mut start, mut end) = (start_cs, end_cs);
+        for &(span_start, span_end) in &self.spans {
+            if start >= span_start && start < span_end && end > span_end {
+                start = span_end;
+            }
+            if end > span_start && end <= span_end && start < span_start {
+                end = span_start;
+            }
+        }
+        Some((start, end))
+    }
+
+    /// Whether a transcript segment is text from a pause, to be dropped ([`outside`](Self::outside) is `None`).
     pub fn covers(&self, start_cs: i64, end_cs: i64) -> bool {
-        let middle = start_cs + (end_cs - start_cs).max(0) / 2;
-        self.spans.iter().any(|&(start, end)| middle >= start && middle < end)
+        self.outside(start_cs, end_cs).is_none()
     }
 }
 
-/// Resume was asked for, and no audio arrived within [`RESUMING_MAX_MS`]: the microphone did not come back. The recording
-/// must then read as a problem, never as "recording" with all well. The complement of [`still_resuming`] while a resume is
-/// pending; audio arriving clears `resumed_at`, which clears this.
+/// How much of a transcript segment must lie outside every paused span for it to hold speech (see [`PausedSpans::outside`]).
+/// Half a second: a word. A line spoken after Resume always clears it, since the streams take most of a second to reopen
+/// and the pause's span ends at the click.
+pub const MIN_HEARD_OUTSIDE_CS: i64 = 50;
+
+/// Resume was asked for, and capture did not start again within [`RESUMING_MAX_MS`]. The recording must then read as a
+/// problem, never as "recording" with all well. The complement of [`still_resuming`] while a resume is pending; the last
+/// held stream starting again clears `resumed_at`, which clears this.
 pub fn resume_stalled(resumed_at: i64, now: i64) -> bool {
     resumed_at > 0 && now - resumed_at >= RESUMING_MAX_MS
 }
@@ -242,6 +326,62 @@ mod tests {
         assert!(!still_resuming(10_000, 10_000 + RESUMING_MAX_MS));
     }
 
+    /// The real-PC test: with no working microphone "Resuming" lasted the full limit, since it ended only on a microphone
+    /// packet, while system audio had been flowing again 1.2 s after the click.
+    #[test]
+    fn resuming_ends_when_every_held_stream_has_started_again() {
+        let mut gate = ResumeGate::default();
+        gate.stream_held();
+        gate.stream_held();
+        gate.resume(10_000);
+        assert!(gate.resuming(10_500));
+        gate.stream_back();
+        assert!(gate.resuming(11_000), "one stream still opening");
+        gate.stream_back();
+        assert!(!gate.resuming(11_200), "both started: recording again");
+        assert!(!gate.stalled(10_000 + RESUMING_MAX_MS));
+    }
+
+    #[test]
+    fn a_stream_that_never_paused_does_not_hold_resuming_up() {
+        // The microphone had given up before the pause, so only system audio was held.
+        let mut gate = ResumeGate::default();
+        gate.stream_held();
+        gate.resume(10_000);
+        gate.stream_back();
+        assert!(!gate.resuming(10_100));
+        // Resumed before any stream got to its hold: nothing to wait for.
+        let mut quick = ResumeGate::default();
+        quick.resume(10_000);
+        assert!(!quick.resuming(10_000));
+    }
+
+    #[test]
+    fn a_stream_that_never_starts_again_stops_saying_resuming_at_the_limit_and_reads_as_stalled() {
+        let mut gate = ResumeGate::default();
+        gate.stream_held();
+        gate.resume(10_000);
+        assert!(gate.resuming(10_000 + RESUMING_MAX_MS - 1) && !gate.stalled(10_000 + RESUMING_MAX_MS - 1));
+        assert!(!gate.resuming(10_000 + RESUMING_MAX_MS));
+        assert!(gate.stalled(10_000 + RESUMING_MAX_MS));
+        gate.stream_back();
+        assert!(!gate.stalled(10_000 + RESUMING_MAX_MS + 1), "it came back late: no longer a problem");
+    }
+
+    #[test]
+    fn pausing_again_clears_a_resume_and_a_stream_back_while_paused_changes_nothing() {
+        let mut gate = ResumeGate::default();
+        gate.stream_held();
+        gate.resume(10_000);
+        gate.pause();
+        assert!(!gate.resuming(10_100));
+        gate.stream_back();
+        gate.stream_back();
+        gate.stream_held();
+        gate.resume(20_000);
+        assert!(gate.resuming(20_100), "the count never goes below zero");
+    }
+
     #[test]
     fn a_pause_is_a_span_from_when_it_began_to_when_it_ended() {
         let mut spans = PausedSpans::default();
@@ -261,7 +401,63 @@ mod tests {
         spans.open(6_000);
         spans.close(9_000);
         assert!(!spans.covers(5_000, 6_400), "most of it was spoken before the pause");
-        assert!(spans.covers(5_900, 8_000), "most of it is inside");
+        assert!(!spans.covers(5_900, 8_000), "a second outside the pause is speech, however much whisper ran into it");
+        assert!(spans.covers(5_980, 8_000), "a sliver outside is not");
+    }
+
+    /// The Windows test on a real PC (docs/ui-redesign/screenshots/after/windows/README.md): a pause from 0:36 to 1:09, then
+    /// "Banana. The first word after resuming was banana." spoken right after Resume. whisper timed that line from inside the
+    /// pause (it often starts the first line after a long silence where the silence began), its midpoint fell in the span, and
+    /// the whole sentence went. Nothing is captured while paused (the file holds digital silence there), so the words of a
+    /// line that runs well past the pause were heard after it.
+    #[test]
+    fn the_first_line_after_resume_is_kept_when_whisper_times_it_from_inside_the_pause() {
+        let mut spans = PausedSpans::default();
+        spans.open(3_600);
+        spans.close(6_900);
+        assert_eq!(spans.outside(4_200, 7_400), Some((6_900, 7_400)), "the sentence, moved to where audio came back");
+        assert_eq!(spans.outside(5_000, 7_000), Some((6_900, 7_000)), "\"Banana.\" on its own");
+        assert!(!spans.covers(4_200, 7_400));
+    }
+
+    #[test]
+    fn the_last_line_before_a_pause_is_kept_when_whisper_runs_it_into_the_pause() {
+        let mut spans = PausedSpans::default();
+        spans.open(3_600);
+        spans.close(6_900);
+        assert_eq!(spans.outside(3_000, 5_000), Some((3_000, 3_600)));
+    }
+
+    #[test]
+    fn text_from_the_silence_of_a_pause_is_still_dropped() {
+        let mut spans = PausedSpans::default();
+        spans.open(3_600);
+        spans.close(6_900);
+        assert_eq!(spans.outside(4_000, 4_300), None, "inside");
+        assert_eq!(spans.outside(6_500, 6_900 + MIN_HEARD_OUTSIDE_CS - 1), None, "a sliver past the end is the silence, not speech");
+        assert_eq!(spans.outside(3_600 - MIN_HEARD_OUTSIDE_CS + 1, 4_500), None, "a sliver before the start too");
+        assert_eq!(spans.outside(5_000, 5_000), None, "a point inside");
+        spans.open(9_000);
+        assert_eq!(spans.outside(9_500, 20_000), None, "a pause still open runs to the end");
+    }
+
+    #[test]
+    fn lines_outside_every_pause_are_left_as_they_are() {
+        let mut spans = PausedSpans::default();
+        spans.open(3_600);
+        spans.close(6_900);
+        assert_eq!(spans.outside(100, 400), Some((100, 400)));
+        assert_eq!(spans.outside(7_000, 7_010), Some((7_000, 7_010)), "a short line after the pause");
+        assert_eq!(spans.outside(500, 500), Some((500, 500)), "a point outside");
+        assert_eq!(PausedSpans::default().outside(10, 20), Some((10, 20)));
+    }
+
+    #[test]
+    fn a_line_that_runs_across_a_whole_pause_is_kept_whole() {
+        let mut spans = PausedSpans::default();
+        spans.open(3_600);
+        spans.close(4_000);
+        assert_eq!(spans.outside(3_000, 4_600), Some((3_000, 4_600)));
     }
 
     #[test]

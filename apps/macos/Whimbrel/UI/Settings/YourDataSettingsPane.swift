@@ -14,6 +14,7 @@ enum VaultSettings {
 /// docs/superpowers/specs/2026-11-04-trust-surface-design.md).
 struct YourDataSettingsPane: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.openSettings) private var openSettings
     @State private var counts: CoreDataCounts?
     @State private var dataFolderBytes: Int64 = 0
     @State private var mediaBytes: Int64 = 0
@@ -42,12 +43,13 @@ struct YourDataSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text("Your data").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Your data").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("capture.yourData")
             Text("What Whimbrel keeps on this Mac, what leaves it, and how to take it with you or remove it.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            localOnlyRow
             onThisMac
             Divider().overlay(Color.whimbrelBorder)
             leaves
@@ -67,6 +69,23 @@ struct YourDataSettingsPane: View {
             guard wanted else { return }
             appState.pendingYourDataExport = false
             exportEverything()
+        }
+    }
+
+    // MARK: Local-only mode (read-only; the switch lives in AI settings)
+
+    private var localOnlyRow: some View {
+        HStack {
+            Text(LocalOnlyLine.text(localOnly: appState.routing.localOnlyMode))
+                .font(.whimbrelBody(.callout))
+                .foregroundStyle(Color.whimbrelTextPrimary)
+            Spacer()
+            Button("Open AI settings") {
+                appState.pendingSettingsSection = .ai
+                openSettings()
+            }
+            .buttonStyle(.whimbrelSecondary)
+            .controlSize(.small)
         }
     }
 
@@ -216,6 +235,7 @@ struct YourDataSettingsPane: View {
                 Button(exporting ? "Exporting…" : "Export everything…") { exportEverything() }
                     .buttonStyle(.whimbrelSecondary)
                     .disabled(exporting)
+                    .settingsAnchor("capture.export")
                 if let exportFolder {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([exportFolder]) }
                         .buttonStyle(.whimbrelSecondary)
@@ -248,12 +268,13 @@ struct YourDataSettingsPane: View {
             }
             .buttonStyle(.whimbrelSecondary)
             .tint(Color.whimbrelError)
+            .settingsAnchor("capture.delete")
         }
     }
 
     private var vaultSection: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
-            Toggle("Keep an Obsidian vault up to date", isOn: $vaultEnabled)
+            Toggle("Keep an Obsidian vault up to date", isOn: $vaultEnabled).settingsAnchor("capture.obsidian")
             HStack {
                 Button("Choose folder…") { chooseVaultFolder() }
                     .buttonStyle(.whimbrelSecondary)

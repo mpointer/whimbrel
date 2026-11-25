@@ -40,6 +40,9 @@ import {
   receiptHeadline,
   reviewRows,
   groupTitle,
+  itemLine,
+  kindName,
+  kindSingular,
   rollbackCopyRemovedLine,
   rowDetail,
   rowTitle,
@@ -915,4 +918,11 @@ describe("review rows (PR 875)", () => {
     await m.delete();
     expect(bridge.deleteCalls[0].includePossible).toEqual([{ kind: "capture", id: "i:1" }]);
   });
+});
+
+it("an_added_item_says_what_it_is", () => {
+  expect(kindName("mcp_item")).toBe("Added items");
+  expect(kindSingular("mcp_item")).toBe("Added item");
+  const item: ClientItem = { kind: "mcp_item", id: "12", also_client: null, date_unix_ms: 1_700_000_000_000, removed: false };
+  expect(itemLine(item, "en-US").startsWith("Added item, ")).toBe(true);
 });

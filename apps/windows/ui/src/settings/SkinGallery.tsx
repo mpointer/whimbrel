@@ -164,6 +164,8 @@ export function SkinGallery() {
   const skins = installedSkins();
   const selection = currentSelection();
   const cards = galleryState(skins, selection, lang);
+  // Its palettes show as one strip under the grid, so the selected card stays the height of its row.
+  const selectedCard = cards.find((c: Card) => c.selected);
   const { palette } = resolveSelection(skins, selection);
   const caption = lockedCaption(palette);
   const labels = appearanceLabels(t);
@@ -183,7 +185,7 @@ export function SkinGallery() {
   };
 
   return (
-    <section className="card" aria-labelledby="appearance-heading">
+    <section className="card" aria-labelledby="appearance-heading" data-settings-anchor="general.appearance">
       <h2 id="appearance-heading" className="section-label">
         {t("Appearance")}
       </h2>
@@ -215,28 +217,28 @@ export function SkinGallery() {
               <span className="muted small">{card.tagline}</span>
             </button>
             {card.yours && <YoursRow card={card} enabled={actionsEnabled(turnRunning)} />}
-            {card.selected && card.palettes.length > 1 && (
-              <div className="skin-palettes" role="group" aria-label={t("{name} palettes", { name: card.name })}>
-                {card.palettes.map((p) => {
-                  const choice = skins.find((s) => s.skin.id === card.id)?.palettes.find((x) => x.id === p.id);
-                  return (
-                    <button
-                      key={p.id}
-                      className={p.current ? "skin-palette skin-palette--current" : "skin-palette"}
-                      aria-pressed={p.current}
-                      title={p.name}
-                      aria-label={p.name}
-                      onClick={() => pick(pickPalette(selection, card.id, p.id))}
-                    >
-                      {choice && <Swatches colors={swatchColors(choice, mode)} />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
           </div>
         ))}
       </div>
+      {selectedCard && selectedCard.palettes.length > 1 && (
+        <div className="skin-palettes" role="group" aria-label={t("{name} palettes", { name: selectedCard.name })}>
+          {selectedCard.palettes.map((p) => {
+            const choice = skins.find((s) => s.skin.id === selectedCard.id)?.palettes.find((x) => x.id === p.id);
+            return (
+              <button
+                key={p.id}
+                className={p.current ? "skin-palette skin-palette--current" : "skin-palette"}
+                aria-pressed={p.current}
+                title={p.name}
+                aria-label={p.name}
+                onClick={() => pick(pickPalette(selection, selectedCard.id, p.id))}
+              >
+                {choice && <Swatches colors={swatchColors(choice, mode)} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="field-row skin-gallery-footer">
         <p className="muted small grow">{galleryFootnote()}</p>
         <button type="button" className="skin-action mode" disabled={!actionsEnabled(turnRunning)} onClick={importSkin}>

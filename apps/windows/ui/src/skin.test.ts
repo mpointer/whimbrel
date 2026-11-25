@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_SELECTION,
   FONT_MAP,
+  HIGH_CONTRAST_PALETTE,
+  MORE_CONTRAST_QUERY,
+  THREAD,
+  THREAD_MOVE_KEY,
+  THREAD_SELECTION,
   WHIMBREL,
   LEGACY_THEME_KEY,
   PALETTE_KEY,
@@ -13,8 +18,12 @@ import {
   controlRadius,
   currentSelection,
   installedSkins,
+  isCreamDefault,
   migrateThemeId,
+  moveToThreadOnce,
+  movedToThread,
   paletteColors,
+  paletteToDraw,
   paletteMode,
   parseFace,
   readSelection,
@@ -30,7 +39,7 @@ import {
   type SkinPalette,
 } from "./skin";
 import { APPEARANCE_KEY, cssVariable } from "./theme";
-import { DEFAULT_THEME, THEMES, TOKENS, parseTheme, themeById } from "./themes";
+import { DEFAULT_THEME, THEMES, TOKENS, contrastFailures, parseTheme, themeById } from "./themes";
 import { fakeWindow } from "./testWindow";
 
 const tokensCss = (await import("./tokens.css?raw")).default;
@@ -151,6 +160,14 @@ describe("applying a skin", () => {
     expect(f.attrs.has("data-theme")).toBe(false);
     expect(f.root.style.colorScheme).toBe("");
     expect(f.props.get("--radius")).toBe("12px");
+  });
+
+  it("names the palette on the root (data-palette), so CSS can give Thread's palette its own control border; Default with System has none", () => {
+    const f = fakeWindow();
+    applySkin(WHIMBREL, "slate", "light", f.root as unknown as HTMLElement, false);
+    expect(f.attrs.get("data-palette")).toBe("slate");
+    applySkin(WHIMBREL, "default", "system", f.root as unknown as HTMLElement, true);
+    expect(f.attrs.has("data-palette")).toBe(false);
   });
 
   it("draws the first palette when the one asked for is not offered", () => {
@@ -337,7 +354,8 @@ describe("remembering the choice", () => {
 
   it("copes with storage that throws, on both read and write", () => {
     const { win } = fakeWindow({ storageThrows: true });
-    expect(readSelection(win)).toEqual(DEFAULT_SELECTION);
+    // Nothing can be remembered, so the move to Thread cannot be recorded: the session shows Thread, the new default.
+    expect(readSelection(win)).toEqual(THREAD_SELECTION);
     expect(() => saveSelection({ skinId: "almanac", paletteId: "paper", appearance: "dark" }, win)).not.toThrow();
   });
 });
@@ -393,8 +411,8 @@ describe("Whimbrel before the shell answers", () => {
 describe("the page follows the choice", () => {
   const fixture = (id: string): SkinDto => dtoFor(bundledManifests.find((m) => m.id === id)!);
 
-  it("paints Whimbrel's own look at once, with nothing from the shell", () => {
-    const f = fakeWindow({ systemDark: true });
+  it("paints Classic's own look at once, with nothing from the shell, for someone the move was already looked at for", () => {
+    const f = fakeWindow({ systemDark: true, stored: { [THREAD_MOVE_KEY]: "1" } });
     startSkin(f.win, () => new Promise(() => {}));
     expect(colorProps(f.props)).toHaveLength(0); // Default and System: tokens.css alone
     expect(f.props.get("--radius")).toBe("12px");
@@ -443,7 +461,7 @@ describe("the page follows the choice", () => {
   });
 
   it("repaints when another window changes the choice, and ignores unrelated storage", () => {
-    const f = fakeWindow();
+    const f = fakeWindow({ stored: { [THREAD_MOVE_KEY]: "1" } });
     startSkin(f.win, () => new Promise(() => {}));
     f.data[SKIN_KEY] = "whimbrel";
     f.data[PALETTE_KEY] = "sepia";
@@ -539,10 +557,195 @@ describe("the page follows the choice", () => {
   it("knows every bundled plain theme through Whimbrel and High Contrast", () => {
     for (const theme of THEMES) {
       const { skinId, paletteId } = migrateThemeId(theme.id);
-      const f = fakeWindow({ stored: { skinId, paletteId, appearance: "light" } });
+      const f = fakeWindow({ stored: { skinId, paletteId, appearance: "light", [THREAD_MOVE_KEY]: "1" } });
       setInstalledSkins([fixture("high-contrast")]);
       startSkin(f.win, () => new Promise(() => {}));
       expect(f.props.get("--color-text-primary"), theme.id).toBe(theme.light.textPrimary);
     }
+  });
+});
+
+describe("the move to Thread, once per device", () => {
+  const sel = (skinId: string, paletteId: string, appearance: "system" | "light" | "dark" = "system") => ({ skinId, paletteId, appearance });
+
+  it("moves the cream default, keeping the appearance, and nothing else", () => {
+    expect(movedToThread(sel("whimbrel", "default"), false)).toEqual(sel("thread", "thread"));
+    expect(movedToThread(sel("whimbrel", "default", "dark"), false)).toEqual(sel("thread", "thread", "dark"));
+    for (const keep of [sel("whimbrel", "slate"), sel("whimbrel", "sepia"), sel("high-contrast", "high-contrast"), sel("almanac", "parchment"), sel("retro-terminal", "phosphor"), sel("thread", "thread"), sel("user-mine-1", "default"), sel("whimbrel", "someone-elses")]) {
+      expect(movedToThread(keep, false), `${keep.skinId}/${keep.paletteId}`).toBe(keep);
+    }
+  });
+
+  it("never moves anyone once it has been looked at on the device", () => {
+    const cream = sel("whimbrel", "default");
+    expect(movedToThread(cream, true)).toBe(cream);
+    expect(isCreamDefault(cream)).toBe(true);
+    expect(isCreamDefault(sel("whimbrel", "slate"))).toBe(false);
+  });
+
+  it("moves a device with nothing stored, and leaves the marker", () => {
+    const f = fakeWindow({ stored: { appearance: "dark" } });
+    moveToThreadOnce(f.win);
+    expect(f.data).toMatchObject({ skinId: "thread", paletteId: "thread", appearance: "dark", [THREAD_MOVE_KEY]: "1" });
+  });
+
+  it("moves a stored Classic with the Default palette", () => {
+    const f = fakeWindow({ stored: { skinId: "whimbrel", paletteId: "default", appearance: "light" } });
+    moveToThreadOnce(f.win);
+    expect(readSelection(f.win)).toEqual(sel("thread", "thread", "light"));
+  });
+
+  it("keeps Slate, Sepia and every other skin, and still leaves the marker", () => {
+    for (const stored of [{ skinId: "whimbrel", paletteId: "slate" }, { skinId: "whimbrel", paletteId: "sepia" }, { skinId: "retro-terminal", paletteId: "phosphor" }, { skinId: "high-contrast", paletteId: "high-contrast" }]) {
+      const f = fakeWindow({ stored });
+      moveToThreadOnce(f.win);
+      expect(f.data).toMatchObject({ ...stored, [THREAD_MOVE_KEY]: "1" });
+    }
+  });
+
+  it("carries an old plain theme over first: Default moves, Slate stays, High Contrast stays High Contrast", () => {
+    const run = (themeId: string) => {
+      const f = fakeWindow({ stored: { themeId } });
+      moveToThreadOnce(f.win);
+      return readSelection(f.win);
+    };
+    expect(run("default")).toEqual(sel("thread", "thread"));
+    expect(run("slate")).toEqual(sel("whimbrel", "slate"));
+    expect(run("high-contrast")).toEqual(sel("high-contrast", "high-contrast"));
+  });
+
+  it("does not move a person who picks Classic afterwards, on the next launch or in another window", () => {
+    const f = fakeWindow();
+    startSkin(f.win, () => new Promise(() => {}));
+    expect(currentSelection()).toEqual(sel("thread", "thread"));
+    chooseSkin(DEFAULT_SELECTION, f.win);
+    startSkin(f.win, () => new Promise(() => {})); // the next launch, or another window
+    expect(currentSelection()).toEqual(DEFAULT_SELECTION);
+    expect(f.data).toMatchObject({ skinId: "whimbrel", paletteId: "default" });
+  });
+
+  it("is safe when several windows start at once: they decide from the same storage and agree", () => {
+    const f = fakeWindow({ stored: { skinId: "whimbrel", paletteId: "default" } });
+    const windows = [f.win, f.win, f.win];
+    windows.forEach((w) => moveToThreadOnce(w));
+    expect(readSelection(f.win)).toEqual(sel("thread", "thread"));
+    // A window that starts between the two writes still ends in the same place.
+    const g = fakeWindow({ stored: { skinId: "thread", paletteId: "thread" } });
+    moveToThreadOnce(g.win);
+    expect(readSelection(g.win)).toEqual(sel("thread", "thread"));
+    expect(g.data[THREAD_MOVE_KEY]).toBe("1");
+  });
+
+  it("writes the choice before the marker, so a window that sees the marker never reads cream", () => {
+    const order: string[] = [];
+    const f = fakeWindow({ stored: { skinId: "whimbrel", paletteId: "default" } });
+    const store = f.win.localStorage;
+    const setItem = store.setItem.bind(store);
+    store.setItem = (key: string, value: string) => {
+      order.push(key);
+      setItem(key, value);
+    };
+    moveToThreadOnce(f.win);
+    expect(order.indexOf(SKIN_KEY)).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf(SKIN_KEY)).toBeLessThan(order.indexOf(THREAD_MOVE_KEY));
+  });
+
+  it("copes with storage that throws or is missing", () => {
+    expect(() => moveToThreadOnce(fakeWindow({ storageThrows: true }).win)).not.toThrow();
+  });
+
+  it("is already done by the first paint: a fresh window paints Thread's colors with nothing from the shell", () => {
+    const f = fakeWindow();
+    startSkin(f.win, () => new Promise(() => {}));
+    expect(f.attrs.get("data-skin")).toBe("thread");
+    expect(f.attrs.get("data-palette")).toBe("thread");
+    expect(f.props.get("--color-background-page")).toBe(THREAD.palettes[0].light!.backgroundPage);
+  });
+
+  it("is not undone by a skin list that lacks Thread: the choice, the marker and the paint stay", async () => {
+    const f = fakeWindow();
+    startSkin(f.win, async () => [WHIMBREL]);
+    await Promise.resolve();
+    await reloadSkins(f.win, async () => [WHIMBREL]);
+    expect(f.data).toMatchObject({ skinId: "thread", paletteId: "thread", [THREAD_MOVE_KEY]: "1" });
+    expect(currentSelection().skinId).toBe("thread");
+    expect(f.attrs.get("data-skin")).toBe("thread");
+  });
+
+  it("takes the shell's own Thread entry once it answers", async () => {
+    const f = fakeWindow();
+    const shells = { ...THREAD, skin: { ...THREAD.skin, name: "Thread (from the shell)" } };
+    startSkin(f.win, async () => [WHIMBREL, shells]);
+    await vi.waitFor(() => expect(installedSkins().find((s) => s.skin.id === "thread")?.skin.name).toBe("Thread (from the shell)"));
+  });
+});
+
+describe("high contrast follows the system", () => {
+  const fixture = (id: string): SkinDto => dtoFor(bundledManifests.find((m) => m.id === id)!);
+  const hc = HIGH_CONTRAST_PALETTE!;
+
+  it("has a palette, readable in light and in dark", () => {
+    expect(hc.id).toBe("high-contrast");
+    expect(contrastFailures(hc.light!)).toEqual([]);
+    expect(contrastFailures(hc.dark!)).toEqual([]);
+  });
+
+  it("picks the palette to draw: the picked one normally, High Contrast whatever the pick while more contrast is asked for", () => {
+    for (const dto of [WHIMBREL, THREAD, fixture("retro-terminal"), fixture("game-day")]) {
+      for (const palette of dto.palettes) {
+        expect(paletteToDraw(palette, false)).toBe(palette);
+        expect(paletteToDraw(palette, true)).toBe(hc);
+      }
+    }
+  });
+
+  it("asks for more contrast only when the system does and Windows contrast themes are not in charge", () => {
+    expect(MORE_CONTRAST_QUERY).toBe("(prefers-contrast: more) and (not (forced-colors: active))");
+  });
+
+  it("draws every bundled skin's own shape and fonts in the High Contrast colors, in light and dark", () => {
+    for (const manifest of bundledManifests) {
+      const dto = dtoFor(manifest);
+      for (const mode of ["light", "dark"] as const) {
+        const f = fakeWindow();
+        applySkin(dto, dto.palettes[0].id, mode, f.root as unknown as HTMLElement, mode === "dark", true);
+        for (const token of TOKENS) expect(f.props.get(`--color-${token.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`), `${manifest.id} ${mode} ${token}`).toBe(hc[mode]![token]);
+        expect(f.attrs.get("data-palette")).toBe("high-contrast");
+        expect(f.attrs.get("data-theme")).toBe(mode);
+        expect(f.attrs.get("data-skin")).toBe(manifest.id);
+        expect(f.props.get("--radius")).toBe(`${manifest.shape.radius}px`);
+      }
+    }
+  });
+
+  it("covers the cream default too, which is otherwise left to tokens.css", () => {
+    const f = fakeWindow();
+    applySkin(WHIMBREL, "default", "system", f.root as unknown as HTMLElement, true, true);
+    expect(colorProps(f.props)).toHaveLength(15);
+    expect(f.props.get("--color-background-page")).toBe(hc.dark!.backgroundPage);
+  });
+
+  it("starts in high contrast, follows the setting live both ways, and never changes what is stored", () => {
+    const f = fakeWindow({ stored: { skinId: "retro-terminal", paletteId: "phosphor", appearance: "dark", [THREAD_MOVE_KEY]: "1" }, contrastMore: true });
+    setInstalledSkins([WHIMBREL, fixture("retro-terminal")]);
+    const before = { ...f.data };
+    startSkin(f.win, () => new Promise(() => {}));
+    expect(f.props.get("--color-background-page")).toBe(hc.dark!.backgroundPage);
+    expect(f.attrs.get("data-skin")).toBe("retro-terminal");
+    f.flipContrast(false);
+    expect(f.props.get("--color-background-page")).toBe(fixture("retro-terminal").palettes[0].dark!.backgroundPage);
+    expect(f.attrs.get("data-palette")).toBe("phosphor");
+    f.flipContrast(true);
+    expect(f.props.get("--color-background-page")).toBe(hc.dark!.backgroundPage);
+    expect(f.data).toEqual(before);
+  });
+
+  it("shows components the palette that is drawn, and stops listening when asked to", () => {
+    const f = fakeWindow({ stored: { skinId: "whimbrel", paletteId: "slate", [THREAD_MOVE_KEY]: "1" }, contrastMore: true });
+    const stop = startSkin(f.win, () => new Promise(() => {}));
+    expect(resolveSelection(installedSkins(), currentSelection(), true).palette).toBe(hc);
+    expect(resolveSelection(installedSkins(), currentSelection()).palette.id).toBe("slate");
+    stop();
+    expect(f.listeners()).toBe(0);
   });
 });

@@ -19,6 +19,8 @@ final class RecordingCheckInPanelController: ObservableObject {
     private static let screenMargin: CGFloat = 16
 
     private var panel: NSPanel?
+    /// Whether `panel` is the redesign's (built only with the switch on; see `RedesignFloatingPanel`).
+    private var panelIsRedesign = false
     private var countdownTimer: Timer?
     private var deadline: Date?
     private var onKeep: (() -> Void)?
@@ -97,7 +99,31 @@ final class RecordingCheckInPanelController: ObservableObject {
     }
 
     private func ensurePanel() -> NSPanel {
-        if let panel { return panel }
+        let redesign = RedesignFlag.isOn()
+        if let panel, panelIsRedesign == redesign { return panel }
+        panel?.orderOut(nil)
+        panelIsRedesign = redesign
+        let built = redesign ? makeRedesignPanel() : makeLegacyPanel()
+        self.panel = built
+        return built
+    }
+
+    /// The redesign's panel. Escape answers the question the safe way: while a stop is counting down it means Keep
+    /// recording (hiding the panel alone would leave the countdown running with nothing on screen), and the paused
+    /// reminder just closes, since nothing here ends a paused recording.
+    private func makeRedesignPanel() -> NSPanel {
+        let host = NSHostingController(rootView: ThemedRoot { RecordingCheckInRedesignView(controller: self) })
+        host.sizingOptions = [.preferredContentSize]
+        let panel = RedesignFloatingPanel.make(content: host)
+        panel.onCancel = { [weak self] in
+            guard let self else { return }
+            if self.isPausedPrompt { self.hide() } else { self.keepTapped() }
+        }
+        panel.setAccessibilityLabel(String(localized: "Whimbrel alert", comment: "Spoken name of the small window that asks about a meeting or a long recording."))
+        return panel
+    }
+
+    private func makeLegacyPanel() -> NSPanel {
         let hostingView = NSHostingView(rootView: RecordingCheckInView(controller: self))
         hostingView.frame = NSRect(origin: .zero, size: Self.panelSize)
 
@@ -116,11 +142,14 @@ final class RecordingCheckInPanelController: ObservableObject {
         panel.isReleasedWhenClosed = false
         panel.contentView = hostingView
 
-        self.panel = panel
         return panel
     }
 
     private func positionPanel(_ panel: NSPanel) {
+        if panelIsRedesign, let panel = panel as? RedesignFloatingPanel {
+            panel.placeTopRight(margin: Self.screenMargin)
+            return
+        }
         guard let screenFrame = NSScreen.main?.visibleFrame else { return }
         panel.setFrameOrigin(NSPoint(
             x: screenFrame.maxX - Self.panelSize.width - Self.screenMargin,

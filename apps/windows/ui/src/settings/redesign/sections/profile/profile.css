@@ -1,0 +1,29 @@
+/* Profile section only. Tokens only; sizes in rem. */
+.rs-profileplan-preview {
+  margin: 0;
+  padding: var(--w-space-sm) var(--w-space-md);
+  max-height: 16rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-body);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  color: var(--color-text-primary);
+  background: var(--color-background-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--w-radius-control);
+}
+.rs-profileplan-over {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w-space-sm);
+  margin: 0;
+  padding: var(--w-space-sm) var(--w-space-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+.rs-profileplan-source {
+  overflow-wrap: anywhere;
+}

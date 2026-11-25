@@ -160,6 +160,17 @@ pub fn sign_in_expired(kind: Kind, email: &str) -> bool {
     EXPIRED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|s| s.contains(&account_name_for(kind, email)))
 }
 
+/// Whether any Calendar or Gmail account is marked expired. In-memory only (one lock, no store, no Credential Manager, no
+/// network), so the tray can ask on every refresh. It leaves out what `needs_sign_in` adds (the Google client changed), which
+/// needs a Credential Manager read; Settings and the main window's banner still show that case.
+pub fn any_sign_in_expired() -> bool {
+    any_expired(EXPIRED.lock().unwrap_or_else(|e| e.into_inner()).as_ref())
+}
+
+fn any_expired(set: Option<&HashSet<String>>) -> bool {
+    set.is_some_and(|s| !s.is_empty())
+}
+
 /// An unexpired access token for `email`, refreshing and saving when it has aged out.
 pub fn fresh_access_token_for(kind: Kind, secrets: &dyn SecretStore, config: &SyncConfig, email: &str) -> Result<String, CommandError> {
     let stored = tokens_for(kind, secrets, email)?;
@@ -281,6 +292,8 @@ fn check_reconnected(
 
 /// Forgets an account's tokens. Its calendar rows stay: they are already in the store.
 pub fn disconnect_for(kind: Kind, secrets: &dyn SecretStore, email: &str) -> Result<(), CommandError> {
+    // A disconnected account has nothing to sign in again, so it must not keep the tray's warning up.
+    set_expired(kind, email, false);
     google_client::forget_issuer(secrets, kind, email);
     secrets
         .delete(GOOGLE_OAUTH_SERVICE, &account_name_for(kind, email))
@@ -331,6 +344,15 @@ mod tests {
         assert!(!sign_in_expired(Kind::Gmail, email), "Gmail's grant is separate");
         set_expired(Kind::Calendar, email, false);
         assert!(!sign_in_expired(Kind::Calendar, email));
+    }
+
+    #[test]
+    fn any_expired_says_whether_the_set_holds_an_account() {
+        assert!(!any_expired(None));
+        let mut set = HashSet::new();
+        assert!(!any_expired(Some(&set)));
+        set.insert(account_name_for(Kind::Gmail, "a@x.com"));
+        assert!(any_expired(Some(&set)));
     }
 
     #[test]

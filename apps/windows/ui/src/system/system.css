@@ -19,6 +19,9 @@
 .w-sys {
   /* Here, not on :root: it names --color-border, which a palette class below :root changes. */
   --sx-line: var(--sx-border-width) var(--sx-border-style) var(--color-border);
+  /* The edge of a control (input, select, number box, segmented choice, secondary button): Thread's own 3:1 color, and
+     for any other skin its own border, which is what these controls always used. */
+  --sx-control-line: var(--sx-border-width) var(--sx-border-style) var(--w-control-border, var(--color-border));
 }
 
 .w-sys,
@@ -531,8 +534,10 @@
 .w-icon-button {
   display: inline-grid;
   place-items: center;
-  width: var(--w-target);
-  height: var(--w-target);
+  /* At least the target size, and as big as the glyph needs at large text, so the glyph is never wider than its box. */
+  min-width: var(--w-target);
+  min-height: var(--w-target);
+  padding: var(--w-space-xs);
   border: 0;
   border-radius: var(--sx-radius-control);
   background: transparent;
@@ -737,6 +742,12 @@
   color: var(--color-accent-primary);
   font-size: var(--w-text-secondary-size);
   font-weight: 600;
+}
+/* A skin's accent on its selection color is not always readable (3.6 to 4.4 to 1 in Classic, Game Day and Hypermodern
+   palettes), so outside Thread the tag is written in the skin's text color and keeps the selection fill and the weight.
+   Thread's own accent passes on its selection color and stays. */
+:root:not([data-palette="thread"]) .w-meeting-tag {
+  color: var(--color-text-primary);
 }
 .w-meeting-gist {
   flex-basis: 100%;
@@ -1447,7 +1458,7 @@
   width: 100%;
   min-height: var(--w-target);
   padding: var(--w-space-xs) var(--w-space-md);
-  border: var(--sx-line);
+  border: var(--sx-control-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
   color: var(--color-text-primary);
@@ -2020,4 +2031,439 @@
   .w-button-link {
     color: LinkText;
   }
+}
+
+/* ---- Small windows: the frame, the recording row, the memory control, the popup ---- */
+.w-win-root {
+  height: 100vh;
+  display: flex;
+  background: var(--color-background-card);
+  border: var(--sx-line);
+}
+.w-win {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  padding: var(--w-space-lg);
+  overflow-y: auto;
+}
+.w-win-head {
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  font-weight: 600;
+}
+.w-mark {
+  flex: none;
+  display: block;
+  color: var(--color-accent-primary);
+}
+.w-win-title {
+  font-family: var(--sx-font-title);
+  font-size: var(--w-text-subtitle-size);
+  line-height: var(--w-text-subtitle-line);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.w-win-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xs);
+}
+.w-win-line {
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  overflow-wrap: anywhere;
+}
+.w-win-strong {
+  color: var(--color-text-primary);
+  font-size: var(--w-text-body-size);
+  line-height: var(--w-text-body-line);
+  font-weight: 600;
+}
+.w-win-countdown {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-xs) var(--w-space-sm);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  font-variant-numeric: tabular-nums;
+}
+.w-win-actions {
+  margin-top: auto;
+  padding-top: var(--w-space-sm);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-sm);
+}
+
+/* The frame of the alerts and prompts (WWindowFrame). Whatever the text size, the header, the countdown and the action row
+   are pinned: Record, Not now (Don't record while the countdown runs) can never be below the fold, because with auto-start on a recording begins by
+   itself. Only the lines scroll, with a line and a chevron when they are clipped (and in forced colors, where they are
+   drawn in the text color). The chrome around the text is capped in px so a large text size does not spend the window on
+   padding: the words stay at the size the person chose, the space around them does not grow with it. */
+.w-win-frame {
+  padding: var(--w-space-md);
+  gap: var(--w-space-xs);
+}
+.w-win-frame > * {
+  flex: none;
+}
+.w-win-frame .w-win-head {
+  font-size: min(var(--w-text-secondary-size), 14px);
+  line-height: 1.25;
+}
+.w-win-frame .w-mark {
+  width: min(1.25rem, 22px);
+  height: min(1.25rem, 22px);
+}
+.w-win-frame .w-win-top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xs);
+  min-width: 0;
+}
+/* At a large text size the mark and name sit on the title's line, in px so they cost no row. The name does not shrink or wrap;
+   the title takes what is left (one line, an ellipsis, the whole text in its tooltip and to screen readers). */
+.w-win-frame .w-win-top--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+.w-win-frame .w-win-top--inline .w-win-head {
+  flex: none;
+  font-size: 12px;
+}
+.w-win-frame .w-win-top--inline .w-mark {
+  width: 16px;
+  height: 16px;
+}
+.w-win-frame .w-win-top--inline .w-win-title {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* The compact layout: the window has less CSS space than its design size (the shell capped it to a small screen at a large text
+   size). Less chrome around the words, and the lines keep about two lines of room so they do not collapse under the pinned parts;
+   when even that does not fit, the whole window scrolls (the header, then the pinned parts, are reached in order). */
+.w-win-frame--compact {
+  padding: var(--w-space-sm);
+  gap: 2px;
+}
+.w-win-frame--compact .w-win-scrollwrap {
+  min-height: calc(2 * var(--w-text-secondary-line));
+}
+.w-win-frame .w-win-pinned {
+  font-size: min(var(--w-text-secondary-size), 16px);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.w-win-frame .w-win-title {
+  font-size: min(var(--w-text-subtitle-size), 22px);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.w-win-frame .w-button,
+.w-pop .w-button {
+  min-height: var(--w-target);
+  padding: 0 var(--w-space-sm);
+  line-height: 1.15;
+}
+.w-win-frame .w-win-actions {
+  gap: var(--w-space-xs) var(--w-space-sm);
+  padding-top: var(--w-space-xs);
+}
+.w-win-scrollwrap {
+  position: relative;
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.w-win-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.w-win-scrollwrap[data-more="true"] .w-win-scroll {
+  padding-right: 28px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid var(--color-text-secondary);
+}
+.w-win-more {
+  position: absolute;
+  right: 0;
+  bottom: 2px;
+  display: inline-flex;
+  padding: 0 var(--w-space-xs);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+  color: var(--color-text-primary);
+}
+.w-win-scroll:focus-visible {
+  outline: 2px solid var(--w-color-focus);
+  outline-offset: 2px;
+}
+
+/* The popup: pinned parts (the recording row with Stop, the memory state line, the footer) and a body that scrolls between
+   them. Same chrome caps as the frame above. */
+.w-pop {
+  padding: var(--w-space-md);
+  gap: var(--w-space-sm);
+}
+.w-pop > * {
+  flex: none;
+}
+.w-pop .w-win-head {
+  font-size: min(var(--w-text-secondary-size), 14px);
+  line-height: 1.25;
+}
+.w-pop .w-mark {
+  width: min(1.25rem, 22px);
+  height: min(1.25rem, 22px);
+}
+.w-pop-pinned {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+}
+/* The body never shrinks below about three lines, so Needs attention and Next meeting stay reachable at a large text size.
+   When the pinned parts and this minimum together are taller than the window, the whole window scrolls (`.w-win` scrolls
+   as a fallback; the header and the recording row with Stop come first, so they are what is in view). */
+.w-pop > .w-pop-body {
+  flex: 1 1 auto;
+  min-height: calc(3 * var(--w-text-body-line));
+}
+.w-pop-body .w-win-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-md);
+}
+.w-pop .w-recrow {
+  padding: var(--w-space-xs) var(--w-space-sm);
+}
+.w-pop-unreadable-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-sm);
+}
+.w-menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+}
+.w-menu-label {
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  font-weight: 600;
+}
+.w-menu-notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+}
+.w-menu-notice .w-notice {
+  padding: var(--w-space-sm) var(--w-space-md);
+}
+.w-menu-notice .w-notice p {
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+}
+.w-menu-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--w-space-xs) var(--w-space-sm);
+}
+.w-menu-next-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.w-menu-next-time {
+  color: var(--color-text-secondary);
+}
+
+/* The recording row */
+.w-recrow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xs);
+  padding: var(--w-space-sm) var(--w-space-md);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-card);
+  background: var(--color-background-page);
+}
+.w-recrow-recording {
+  border-color: var(--w-color-recording);
+}
+.w-recrow-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w-space-sm);
+}
+.w-recrow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-sm);
+}
+.w-recrow .w-rec-menu {
+  font-size: var(--w-text-body-size);
+}
+.w-recrow .w-rec-reason {
+  display: none;
+}
+.w-recrow-reason {
+  color: var(--color-text-primary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  overflow-wrap: anywhere;
+}
+.w-recrow-problem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w-space-sm);
+}
+.w-recrow-problem > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.w-recrow-problem .w-icon {
+  flex: none;
+  margin-top: 0.125rem;
+  color: var(--w-color-recording);
+}
+.w-recrow-has-problem {
+  border-width: 2px;
+}
+
+/* The memory control */
+.w-mem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+}
+.w-mem-state {
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+.w-mem-paused .w-mem-state .w-icon {
+  color: var(--w-color-paused);
+}
+.w-mem-off .w-mem-state,
+.w-mem-stopped .w-mem-state {
+  color: var(--color-text-secondary);
+}
+.w-mem-pause {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xs);
+}
+.w-mem-pause-label {
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+}
+.w-mem-note {
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  overflow-wrap: anywhere;
+}
+.w-mem-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w-space-xs) var(--w-space-sm);
+}
+.w-mem-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-xs);
+}
+.w-mem-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-xs);
+}
+.w-mem-choices .w-button {
+  padding: 0 var(--w-space-sm);
+}
+.w-pop-foot {
+  border-top: var(--sx-line);
+  padding-top: var(--w-space-sm);
+  margin-top: 0;
+}
+@media (forced-colors: active) {
+  .w-recrow {
+    border-width: 2px;
+  }
+}
+
+/* The hotkey panel: a field, what it reads, where the text goes, and the answer, which scrolls inside the window. */
+.w-hk-row {
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+.w-hk-input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--w-target);
+  padding: 0 var(--w-space-md);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-page);
+  color: var(--color-text-primary);
+}
+.w-hk-input:disabled {
+  opacity: 0.55;
+}
+.w-hk-input::placeholder {
+  color: var(--color-text-secondary);
+}
+.w-hk-line {
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  overflow-wrap: anywhere;
+}
+.w-hk-strong {
+  color: var(--color-text-primary);
+  font-size: var(--w-text-body-size);
+  line-height: var(--w-text-body-line);
+}
+.w-hk-error {
+  color: var(--color-error);
+  font-size: var(--w-text-body-size);
+  line-height: var(--w-text-body-line);
+}
+.w-hk-answer {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  user-select: text;
+  padding: var(--w-space-md);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-card);
+  background: var(--color-background-page);
+}
+.w-hk .w-win-actions {
+  margin-top: 0;
+  padding-top: 0;
 }

@@ -99,6 +99,17 @@ describe("the words and the QR", () => {
   });
 });
 
+describe("the printed page takes optional words", () => {
+  it("with words it prints those; without, the page is unchanged", () => {
+    const html = renderToStaticMarkup(<PrintPage words={WORDS} copy={{ notice: "NOTICE LINE", footer: "FOOTER LINE" }} />);
+    expect(html).toContain("NOTICE LINE");
+    expect(html).toContain("FOOTER LINE");
+    expect(html).not.toContain("memory database");
+    const plain = renderToStaticMarkup(<PrintPage words={WORDS} />);
+    expect(plain.match(/memory database/g)?.length).toBe(2);
+  });
+});
+
 describe("the setup screen", () => {
   const model = () =>
     new SetupModel({
@@ -125,6 +136,20 @@ describe("the setup screen", () => {
     expect(html.indexOf(line)).toBeGreaterThan(-1);
     expect(html.indexOf(line)).toBeLessThan(html.indexOf("Create your recovery key"));
     expect(renderToStaticMarkup(<SetupView model={model()} continueTitle="Continue" onContinue={() => {}} onQuit={() => {}} />)).not.toContain(line);
+  });
+
+  it("embedded (the redesigned Settings card): the title is a real heading below the card's, and no section is a card inside the card", () => {
+    const html = renderToStaticMarkup(
+      <SetupView model={model()} continueTitle="Encrypt" onContinue={() => {}} onCancel={() => {}} embedded words={{ intro: "I", sameDisk: "S", wordsWarning: "W", footer: "F", printNotice: "N", printFooter: "P" }} />,
+    );
+    expect(html).toMatch(/<h4[^>]*>Create your recovery key<\/h4>/);
+    expect(html).not.toContain("<h1");
+    expect(html).not.toMatch(/class="card/);
+    expect(html).toMatch(/<h5[^>]*>1\. Choose a passphrase<\/h5>/);
+    // The launch screen and the old tab keep their own look.
+    const launch = renderToStaticMarkup(<SetupView model={model()} continueTitle="Continue" onContinue={() => {}} onQuit={() => {}} />);
+    expect(launch).toMatch(/<h1 class="display">Create your recovery key<\/h1>/);
+    expect(launch).toMatch(/class="card stack-sm"/);
   });
 
   it("Settings: Encrypt the memory database and Cancel, no Quit", () => {

@@ -60,7 +60,7 @@ struct TopicsSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text("Topics").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Topics").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("topics.list")
             Text("Name the customers, products and projects you care about. Whimbrel groups your meetings, emails and notes under them.")
                 .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
             if let errorText {
@@ -94,7 +94,7 @@ struct TopicsSettingsPane: View {
             HStack {
                 Text("Your topics").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
                 Spacer()
-                Button("Add topic") { editor = .init(seed: nil) }.buttonStyle(.whimbrelSecondary)
+                Button("Add topic") { editor = .init(seed: nil) }.buttonStyle(.whimbrelSecondary).settingsAnchor("topics.add")
             }
             if seeds.isEmpty {
                 Text("No topics yet. Add one, or accept a suggestion below.")
@@ -186,7 +186,7 @@ struct TopicsSettingsPane: View {
 
     private var namesSection: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            Text("Names I go by").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Names I go by").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("topics.names")
             Text("Whimbrel uses these to tell steps you owe from steps owed to you.")
                 .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
             ForEach(names, id: \.self) { name in

@@ -1,11 +1,13 @@
 // The Apps and Dates chips under Home's search bar. People is not drawn: captures record no person.
-// A chip opens a small menu; choosing a value selects the chip, and its Remove button clears it.
+// A chip opens a small menu; choosing a value selects the chip, and its Remove button clears it. The menus follow the WAI-ARIA menu
+// pattern: Enter or Space on a chip opens its menu with focus in it, the arrows move between the choices, Enter or Space chooses one and
+// closes the menu, and Escape closes it; either way focus goes back to the chip.
 
 import { useEffect, useRef, useState } from "react";
 import type { CaptureApp } from "../../api";
 import { t } from "../../l10n";
 import { WButton, WFilterChip } from "../../system";
-import { appName, dateChoiceLabel, type DateChoice, type SearchFilter } from "./homeModel";
+import { appName, dateChoiceLabel, menuStep, type DateChoice, type SearchFilter } from "./homeModel";
 
 type Open = "people" | "apps" | "dates" | null;
 
@@ -34,18 +36,48 @@ export function HomeFilters({ filter, onChange, apps, onOpenApps, people, onOpen
   const [to, setTo] = useState(() => ymd(now));
   const root = useRef<HTMLDivElement>(null);
 
-  // Escape closes the menu; a press outside it does too.
+  // A press outside the menu closes it. Opened, focus goes into it: to the choice that is on, else the first.
   useEffect(() => {
     if (!open) return;
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(null);
     const away = (e: MouseEvent) => root.current && !root.current.contains(e.target as Node) && setOpen(null);
-    window.addEventListener("keydown", key);
     window.addEventListener("mousedown", away);
-    return () => {
-      window.removeEventListener("keydown", key);
-      window.removeEventListener("mousedown", away);
-    };
-  }, [open]);
+    const items = choices(open);
+    (items.find((b) => b.getAttribute("aria-checked") === "true") ?? items[0])?.focus();
+    return () => window.removeEventListener("mousedown", away);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const choices = (which: Exclude<Open, null>) => [...(root.current?.querySelectorAll<HTMLButtonElement>(`[data-chip="${which}"] [role="menuitemradio"]`) ?? [])];
+  const chipButton = (which: Exclude<Open, null>) => root.current?.querySelector<HTMLButtonElement>(`[data-chip="${which}"] .w-chip-main`);
+  /** The menu closes and focus goes back to its chip. */
+  const close = () => {
+    const which = open;
+    setOpen(null);
+    if (which) requestAnimationFrame(() => chipButton(which)?.focus());
+  };
+
+  // In an open menu the arrows move between its choices, Home and End go to the ends, and Escape closes it with focus back on the chip.
+  // Enter and Space press the focused choice (they are buttons), which chooses it and closes the menu.
+  const onKey = (e: React.KeyboardEvent) => {
+    if (!open) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
+    const items = choices(open);
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    // The date fields keep their own arrows.
+    if (at < 0 && (document.activeElement as HTMLElement | null)?.tagName === "INPUT") return;
+    const next = menuStep(e.key, at, items.length);
+    if (next === null) return;
+    e.preventDefault();
+    items[next].focus();
+  };
+  // Focus leaving the chips and their menus (Tab, or a click that takes it elsewhere) closes the menu without taking focus back.
+  const onBlur = (e: React.FocusEvent) => {
+    if (open && !root.current?.contains(e.relatedTarget as Node | null)) setOpen(null);
+  };
 
   const toggle = (which: Exclude<Open, null>) => {
     if (which === "apps" && open !== "apps") onOpenApps();
@@ -54,21 +86,22 @@ export function HomeFilters({ filter, onChange, apps, onOpenApps, people, onOpen
   };
   const pickPerson = (person: string | null) => {
     onChange({ ...filter, person });
-    setOpen(null);
+    close();
   };
   const pickApp = (app: string | null) => {
     onChange({ ...filter, app });
-    setOpen(null);
+    close();
   };
   const pickDates = (dates: DateChoice | null) => {
     onChange({ ...filter, dates });
-    setOpen(null);
+    close();
   };
 
   return (
-    <div className="th-filters" ref={root}>
-      <div className="th-chip">
+    <div className="th-filters" ref={root} onKeyDown={onKey} onBlur={onBlur}>
+      <div className="th-chip" data-chip="people">
         <WFilterChip
+          expanded={open === "people"}
           label={filter.person ? t("People: {name}", { name: filter.person }) : t("People")}
           icon="people"
           menu={!filter.person}
@@ -89,8 +122,9 @@ export function HomeFilters({ filter, onChange, apps, onOpenApps, people, onOpen
           </div>
         ) : null}
       </div>
-      <div className="th-chip">
+      <div className="th-chip" data-chip="apps">
         <WFilterChip
+          expanded={open === "apps"}
           label={filter.app ? t("Apps: {name}", { name: appName(filter.app) }) : t("Apps")}
           icon="apps"
           menu={!filter.app}
@@ -111,8 +145,9 @@ export function HomeFilters({ filter, onChange, apps, onOpenApps, people, onOpen
           </div>
         ) : null}
       </div>
-      <div className="th-chip">
+      <div className="th-chip" data-chip="dates">
         <WFilterChip
+          expanded={open === "dates"}
           label={filter.dates ? t("Dates: {range}", { range: dateChoiceLabel(filter.dates) }) : t("Dates")}
           icon="calendar"
           menu={!filter.dates}
@@ -121,7 +156,7 @@ export function HomeFilters({ filter, onChange, apps, onOpenApps, people, onOpen
           onRemove={filter.dates ? () => pickDates(null) : undefined}
         />
         {open === "dates" ? (
-          <div className="th-menu" role="menu" aria-label={t("Dates")}>
+          <div className="th-menu th-menu-dates" role="menu" aria-label={t("Dates")}>
             <button type="button" role="menuitemradio" aria-checked={!filter.dates} className="w-menu-item" onClick={() => pickDates(null)}>
               {t("Any date")}
             </button>

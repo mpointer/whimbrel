@@ -28,7 +28,7 @@ import Testing
 
     @Test func captureStateTitles() {
         #expect(WMemoryState.on.title == "Memory on")
-        #expect(WMemoryState.pausedUntil("10:52").title == "Paused until 10:52")
+        #expect(WMemoryState.pausedUntil("10:52").title == "Memory paused until 10:52")
         #expect(WMemoryState.off.title == "Memory off")
     }
 }
@@ -75,6 +75,8 @@ import Testing
         #expect(WRecordingState.paused.word(using: Self.marked) == "[paused]")
         #expect(WMemoryState.pausedUntil("10:52").title(using: Self.marked) == "[until 10:52]")
         #expect(WSourceKind.seenOnScreen.label(using: .english) == "Seen on screen")
+        #expect(WSourceKind.email.label(using: .english) == "Email")
+        #expect(WSourceKind.routineRun.label(using: .english) == "Routine run")
         #expect(Self.marked.sourceNumber(2) == "[source 2]")
         #expect(Self.marked.quoted("a") == "<<a>>")
     }
@@ -215,9 +217,9 @@ import Testing
     ///    `Label(`, `Toggle(`, `TextField(`, `accessibilityLabel(`, `accessibilityHint(`,
     ///    `accessibilityValue(`, `Announcement(` or `.help(`, or is the default of a `String` parameter.
     /// 3. Everything else is text, and text lives in WStrings.swift.
-    /// Exempt files: WStrings.swift (the home of the English), WGallery.swift (developer-only labels and
+    /// Exempt files: WStrings.swift and SettingsStrings.swift and SettingsPaneStrings.swift (the home of the English), WGallery.swift, SettingsPartsGallery.swift and SettingsWindowGallery.swift (developer-only labels and
     /// sample data) and Tokens.generated.swift (generated, no UI). Exempt literals: the keyboard hint.
-    static let exemptFiles: Set<String> = ["WStrings.swift", "WGallery.swift", "Tokens.generated.swift"]
+    static let exemptFiles: Set<String> = ["WStrings.swift", "WGallery.swift", "Tokens.generated.swift", "SettingsStrings.swift", "SettingsPartsGallery.swift", "SettingsPaneStrings.swift", "SettingsWindowGallery.swift", "SettingsMemoryStrings.swift", "SettingsMemoryGallery.swift", "SettingsMeetingsAIStrings.swift", "SettingsMeetingsAIGallery.swift", "SettingsSyncStrings.swift", "SettingsSyncGallery.swift", "FindQuestionWords.swift"]  // FindQuestionWords: words matched against a typed query, never shown
     static let exemptLiterals: Set<String> = ["\\u{2318}K", "\\u{21E7}\\u{2318}M", "\\u{2318}T"]  // the command-K keycap: notation, not a word
 
     static func withoutComments(_ source: String) -> String {

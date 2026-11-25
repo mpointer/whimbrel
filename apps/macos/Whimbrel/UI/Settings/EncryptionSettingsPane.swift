@@ -224,7 +224,7 @@ struct EncryptionSettingsPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
             HStack {
-                Text(EncryptionCopy.settingsTitle).font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text(EncryptionCopy.settingsTitle).font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("capture.encryption")
                 Spacer()
                 stateBadge
             }

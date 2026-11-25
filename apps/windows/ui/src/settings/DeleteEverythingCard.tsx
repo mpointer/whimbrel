@@ -104,7 +104,7 @@ export function DeleteEverythingCard() {
   };
 
   return (
-    <section className="card about" aria-labelledby="delete-everything-heading">
+    <section className="card about" aria-labelledby="delete-everything-heading" data-settings-anchor="capture.delete">
       <h2 id="delete-everything-heading" className="section-label">
         {t("Delete everything")}
       </h2>

@@ -203,6 +203,7 @@ struct WPromptField: View {
     @Environment(\.wStrings) private var strings
     @Binding var text: String
     let placeholder: String
+    var focus: FocusState<Bool>.Binding? = nil
     let onSubmit: () -> Void
 
     var body: some View {
@@ -213,13 +214,14 @@ struct WPromptField: View {
                 .wFont(.body)
                 .foregroundStyle(theme.textPrimary)
                 .accessibilityLabel(placeholder)
+                .wFocused(focus)
                 .onSubmit(onSubmit)
             WKeycap(text: "\u{2318}K")
         }
         .padding(.horizontal, theme.space(12))
         .frame(minHeight: 34 * k)
         .background(theme.backgroundCard)
-        .overlay(Rectangle().strokeBorder(theme.border, lineWidth: max(1, theme.borderWidth)))
+        .overlay(Rectangle().strokeBorder(theme.controlBorder, lineWidth: max(1, theme.borderWidth)))
     }
 }
 
@@ -231,6 +233,8 @@ struct WHomeFilterChips: View {
     let people: [String]
     let apps: [WHomeAppChoice]
     @Binding var filter: WHomeFilter
+    /// At the right end of the chips: how many results the page found.
+    var trailing: String? = nil
     @State private var showPeople = false
     @State private var showApps = false
     @State private var showDates = false
@@ -248,10 +252,12 @@ struct WHomeFilterChips: View {
         case .custom(let from, let to):
             let style = Date.FormatStyle().month(.abbreviated).day()
             return "\(from.formatted(style)) - \(to.formatted(style))"
+        case .exact(_, _, let title): return title
         }
     }
 
     var body: some View {
+        HStack(alignment: .top, spacing: theme.space(12)) {
         WFlowLayout(spacing: theme.space(8), lineSpacing: theme.space(8)) {
             WFilterChip(filter.person ?? strings.home.peopleFilter, glyph: "person.2", isSelected: filter.person != nil, onRemove: filter.person == nil ? nil : { filter.person = nil }) { showPeople = true }
                 .popover(isPresented: $showPeople, arrowEdge: .bottom) { peopleList }
@@ -259,6 +265,14 @@ struct WHomeFilterChips: View {
                 .popover(isPresented: $showApps, arrowEdge: .bottom) { appList }
             WFilterChip(dateTitle, glyph: "calendar", isSelected: filter.dates != nil, onRemove: filter.dates == nil ? nil : { filter.dates = nil }) { showDates = true }
                 .popover(isPresented: $showDates, arrowEdge: .bottom) { dateList }
+        }
+            if let trailing {
+                Spacer(minLength: theme.space(8))
+                // Rigid: the count keeps its whole width and the chips wrap in what is left, so neither squeezes or clips the other.
+                Text(trailing).wFont(.secondary).foregroundStyle(theme.textSecondary).lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minHeight: WTokens.Size.target).accessibilityLabel(trailing)
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(strings.home.searchFilters)

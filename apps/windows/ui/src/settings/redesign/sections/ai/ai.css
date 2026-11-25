@@ -1,0 +1,27 @@
+/* The AI section: classes of its own, tokens only. */
+.rs-ai-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  min-width: 0;
+}
+.rs-ai-day-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.rs-ai-wrap > .w-setting-note {
+  padding: var(--w-space-sm) var(--w-space-lg);
+  background: var(--color-background-card);
+}
+.rs-ai-day {
+  padding: var(--w-space-sm) var(--w-space-lg);
+}
+.rs-ai-wrap {
+  border-radius: inherit;
+  overflow: clip;
+}
+.rs-ai-wrap > :last-child {
+  padding-bottom: var(--w-space-md);
+}

@@ -10,6 +10,7 @@ import { GmailCard } from "./GmailCard";
 import { GoogleClientCard } from "./GoogleClientCard";
 import { HotkeyCard } from "./HotkeyCard";
 import { McpCard } from "./McpCard";
+import { PlanCard } from "./PlanCard";
 import { MeetingModelsCard } from "./MeetingModelsCard";
 import { MeetingsCard } from "./MeetingsCard";
 import { ProfileCard } from "./ProfileCard";
@@ -20,6 +21,7 @@ import { DeleteEverythingCard } from "./DeleteEverythingCard";
 import { ForeignFilesCard } from "./ForeignFilesCard";
 import { SearchModelCard } from "./SearchModelCard";
 import { SETTINGS_SECTIONS, sectionTitle, type SettingsSectionId } from "./settingsSections";
+import { searchSettings, type SettingsSearchEntry } from "./settingsSearch";
 import { SkinGallery } from "./SkinGallery";
 import { StatusPage } from "./StatusPage";
 import { SyncCard } from "./SyncCard";
@@ -31,6 +33,35 @@ import { TypeSafeCard } from "./TypeSafeCard";
 /** How often the Profile badge recounts the suggestions waiting for Add or Dismiss. */
 const BADGE_REFRESH_MS = 30_000;
 
+/** How long a found setting stays highlighted, and how long to wait for its card to load. */
+const HIGHLIGHT_MS = 1500;
+const FIND_ROW_MS = 3000;
+
+/**
+ * Scrolls the row with this anchor into view and highlights it briefly. Cards load their data first,
+ * so it looks again each frame until the row is there (or gives up). Returns a cancel function.
+ */
+export function revealAnchor(id: string, doc: Document = document): () => void {
+  const started = Date.now();
+  let frame = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const look = () => {
+    const el = doc.querySelector<HTMLElement>(`[data-settings-anchor="${CSS.escape(id)}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("settings-found");
+      timer = setTimeout(() => el.classList.remove("settings-found"), HIGHLIGHT_MS);
+      return;
+    }
+    if (Date.now() - started < FIND_ROW_MS) frame = requestAnimationFrame(look);
+  };
+  frame = requestAnimationFrame(look);
+  return () => {
+    cancelAnimationFrame(frame);
+    if (timer) clearTimeout(timer);
+  };
+}
+
 /** Settings: a list of sections on the left and the chosen section's cards on the right (the Mac's layout). */
 export function SettingsView(props: {
   section: SettingsSectionId;
@@ -40,6 +71,18 @@ export function SettingsView(props: {
 }) {
   const { section, onSection, onRetentionSaved, onOpenAutomations } = props;
   const [pending, setPending] = useState(0);
+  const [query, setQuery] = useState("");
+  const [found, setFound] = useState<{ id: string; n: number } | null>(null);
+  const results = searchSettings(query, sectionTitle);
+
+  // After a result opens its section, bring its row into view.
+  useEffect(() => (found ? revealAnchor(found.id) : undefined), [found]);
+
+  const choose = (entry: SettingsSearchEntry) => {
+    onSection(entry.section);
+    setQuery("");
+    setFound((f) => ({ id: entry.id, n: (f?.n ?? 0) + 1 }));
+  };
 
   useEffect(() => {
     const count = () => profileSuggestions().then((list) => setPending(list.length), () => {});
@@ -51,7 +94,20 @@ export function SettingsView(props: {
   return (
     <div className="settings-layout">
       <nav className="settings-nav" aria-label={t("Settings")}>
-        <ul>
+        <input
+          type="search"
+          className="input settings-search"
+          placeholder={t("Search settings")}
+          aria-label={t("Search settings")}
+          value={query}
+          onChange={(ev) => setQuery(ev.target.value)}
+          onKeyDown={(ev) => {
+            if (ev.key === "Enter" && results[0]) choose(results[0]);
+            if (ev.key === "Escape") setQuery("");
+          }}
+        />
+        {query.trim() ? <SearchResults results={results} onChoose={choose} /> : null}
+        <ul hidden={!!query.trim()}>
           {SETTINGS_SECTIONS.map((id) => (
             <li key={id}>
               <button
@@ -71,14 +127,38 @@ export function SettingsView(props: {
         {section === "status" ? (
           <StatusPage onSection={onSection} onOpenAutomations={onOpenAutomations} />
         ) : (
-          <SectionCards section={section} onRetentionSaved={onRetentionSaved} />
+          <SectionCards section={section} onSection={onSection} onRetentionSaved={onRetentionSaved} />
         )}
       </div>
     </div>
   );
 }
 
-function SectionCards({ section, onRetentionSaved }: { section: Exclude<SettingsSectionId, "status">; onRetentionSaved: () => void }) {
+export function SearchResults({ results, onChoose }: { results: SettingsSearchEntry[]; onChoose: (e: SettingsSearchEntry) => void }) {
+  if (results.length === 0) return <p className="muted small settings-search-empty">{t("No matching settings")}</p>;
+  return (
+    <ul className="settings-search-results" aria-label={t("Search settings")}>
+      {results.map((r) => (
+        <li key={r.id}>
+          <button type="button" className="settings-nav-item" onClick={() => onChoose(r)}>
+            <span>{r.title}</span>
+            <span className="muted small"> · {sectionTitle(r.section)}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SectionCards({
+  section,
+  onSection,
+  onRetentionSaved,
+}: {
+  section: Exclude<SettingsSectionId, "status">;
+  onSection: (id: SettingsSectionId) => void;
+  onRetentionSaved: () => void;
+}) {
   switch (section) {
     case "general":
       return (
@@ -90,10 +170,12 @@ function SectionCards({ section, onRetentionSaved }: { section: Exclude<Settings
       );
     case "profile":
       return <ProfileCard />;
+    case "plan":
+      return <PlanCard onSection={onSection} />;
     case "capture":
       return (
         <>
-          <CaptureCard />
+          <CaptureCard onOpenAi={() => onSection("ai")} />
           <HotkeyCard />
           <RetentionCard onSaved={onRetentionSaved} />
           <StorageCard />

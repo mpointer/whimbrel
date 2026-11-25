@@ -14,6 +14,24 @@ import WhimbrelUI
 // renders the finished note (with sources, without, narrow, processing, regenerating, another device's meeting, editing,
 // failed, 200 percent text, a larger reading size, high contrast) and the transcript with speaker lanes, a continued
 // meeting and a crowded one (made-up data), each in light and dark where it says so.
+//   WhimbrelUIGallery --ask --out <folder> --scale 1
+// renders Library's Find page (empty, results, answered with sources, streaming, no results, a person with mentions, failed, no model,
+// an older saved answer, a source no longer on this device, narrow, 200 percent text, high contrast) and Recent, Episodes and Digest
+// (made-up data), in light and dark where it says so. (--find is the same.)
+//   WhimbrelUIGallery --conversations --out <folder> --scale 1
+// renders the conversation page's header (a Find conversation reopened with its kept Apps and Dates, the same with the People
+// filter not kept note, a conversation asked about one topic), made-up data, light and dark.
+//   WhimbrelUIGallery --menu --out <folder> --scale 1
+// renders the menu bar menu, the launch menu, the meeting alert and check-in windows and the hotkey panel (made-up data),
+// each in light and dark, the short list again in high contrast and at 200 percent text.
+//   WhimbrelUIGallery --settings --out <folder> --scale 1
+// renders the redesigned Settings window: the chrome (search, section list or picker, detail column) with General, Profile
+// and Plan & billing from sample models (signed out, free, Plus; search with and without results; narrow; light, dark,
+// high contrast, light at 200 percent text). Write to docs/ui-redesign/screenshots/after/mac/settings/.
+//   WhimbrelUIGallery --onboarding --out <folder>
+// renders the settings parts (nav and search results, rows, secrets, lists, values, chips and notices, sheets and confirms,
+// skin cards; made-up data), each page in light, dark, high contrast and light at 200 percent text. Write to
+// docs/ui-redesign/screenshots/after/mac/settings-parts/.
 //   WhimbrelUIGallery --onboarding --out <folder>
 // renders the first run, launch and setup screens (made-up data) at 900 points wide, 2x:
 // <screen>-light, -dark, -light-2.0 (text at 200 percent) and -high-contrast.
@@ -35,6 +53,11 @@ var onboarding = false
 var home = false
 var live = false
 var note = false
+var ask = false
+var conversations = false
+var menu = false
+var settingsParts = false
+var settingsWindow = false
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
     let flag = args.removeFirst()
@@ -45,6 +68,11 @@ while !args.isEmpty {
     case "--home": home = true
     case "--live": live = true
     case "--note": note = true
+    case "--ask", "--find": ask = true
+    case "--conversations": conversations = true
+    case "--menu": menu = true
+    case "--settings-parts": settingsParts = true
+    case "--settings": settingsWindow = true
     case "--scale": if !args.isEmpty { pixelScale = CGFloat(Double(args.removeFirst()) ?? 2) }
     default:
         FileHandle.standardError.write(Data("Unknown argument \(flag)\n".utf8))
@@ -136,6 +164,49 @@ func renderLive() throws { try renderCases(WLiveGallery.cases()) }
 func renderNote() throws { try renderCases(WNoteGallery.cases()) }
 
 @MainActor
+func renderAsk() throws { try renderCases(WFindGallery.cases()) }
+
+@MainActor
+func renderConversations() throws { try renderCases(WConversationGallery.cases()) }
+
+@MainActor
+func renderMenu() throws {
+    for item in WMenuGallery.cases() {
+        let theme = WTheme.thread(variant: item.mode.variant)
+        let root = item.view
+            .padding(24)
+            .environment(\.wTheme, theme)
+            .environment(\.wTextScale, item.textScale)
+            .environment(\.wScrollsContent, false)
+            .preferredColorScheme(item.mode.variant.colorScheme)
+            .frame(width: item.width)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(theme.backgroundPage)
+        width = item.width
+        try render(name: item.id, root: root, mode: item.mode, minHeight: 60)
+    }
+}
+
+@MainActor
+func renderSettingsParts() throws {
+    for item in WSettingsPartsGallery.cases() {
+        let theme = WTheme.thread(variant: item.mode.variant)
+        let root = item.view
+            .padding(24)
+            .environment(\.wTheme, theme)
+            .environment(\.wTextScale, item.textScale)
+            .environment(\.wScrollsContent, false)
+            .environment(\.wDisabledButtonLook, true)
+            .preferredColorScheme(item.mode.variant.colorScheme)
+            .frame(width: item.width, alignment: .topLeading)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(theme.backgroundPage)
+        width = item.width
+        try render(name: item.id, root: root, mode: item.mode, minHeight: 60)
+    }
+}
+
+@MainActor
 func renderCases(_ cases: [WHomeGalleryCase]) throws {
     for item in cases {
         let theme = WTheme.thread(variant: item.mode.variant)
@@ -152,6 +223,41 @@ func renderCases(_ cases: [WHomeGalleryCase]) throws {
 }
 
 MainActor.assumeIsolated {
+    if settingsWindow {
+        do { try renderCases(WSettingsWindowGallery.cases()) } catch {
+            FileHandle.standardError.write(Data("Failed settings window render: \(error)\n".utf8))
+            exit(1)
+        }
+        exit(0)
+    }
+    if settingsParts {
+        do { try renderSettingsParts() } catch {
+            FileHandle.standardError.write(Data("Failed settings parts render: \(error)\n".utf8))
+            exit(1)
+        }
+        exit(0)
+    }
+    if menu {
+        do { try renderMenu() } catch {
+            FileHandle.standardError.write(Data("Failed menu render: \(error)\n".utf8))
+            exit(1)
+        }
+        exit(0)
+    }
+    if conversations {
+        do { try renderConversations() } catch {
+            FileHandle.standardError.write(Data("Failed conversations render: \(error)\n".utf8))
+            exit(1)
+        }
+        exit(0)
+    }
+    if ask {
+        do { try renderAsk() } catch {
+            FileHandle.standardError.write(Data("Failed ask render: \(error)\n".utf8))
+            exit(1)
+        }
+        exit(0)
+    }
     if note {
         do { try renderNote() } catch {
             FileHandle.standardError.write(Data("Failed note render: \(error)\n".utf8))

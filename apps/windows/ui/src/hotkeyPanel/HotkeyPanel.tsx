@@ -2,6 +2,8 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { hotkeyPanelClose, hotkeyPanelRead, openAiSettings, windowAsk } from "../api";
 import { describeError, isCommandError } from "../errors";
 import { useL10n } from "../l10n";
+import { useRedesign } from "../redesign";
+import { WButton, WIconButton, WRoot } from "../system";
 import { askErrorText, contextLine, initialState, reduce } from "./hotkeyPanelModel";
 
 /**
@@ -10,6 +12,7 @@ import { askErrorText, contextLine, initialState, reduce } from "./hotkeyPanelMo
  */
 export function HotkeyPanel() {
   const { t } = useL10n();
+  const redesign = useRedesign();
   const [state, dispatch] = useReducer(reduce, initialState);
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
@@ -64,6 +67,75 @@ export function HotkeyPanel() {
 
   const line = state.read && state.destination ? contextLine(state.read.window, state.destination, state.truncated) : null;
   const blocked = state.phase === "blocked";
+
+  // The same states and buttons, drawn in the design system (redesign only). The text sent, where it goes and the answer
+  // are exactly what the classic panel shows; the panel is also hidden from a shared screen (the shell, window.rs).
+  if (redesign)
+    return (
+      <WRoot className="w-win-root">
+        <main className="w-win w-hk" aria-label={t("Ask about this window")}>
+          <div className="w-hk-row">
+            <input
+              className="w-hk-input"
+              autoFocus
+              value={query}
+              disabled={blocked}
+              placeholder={t("Ask about this window")}
+              aria-label={t("Ask about this window")}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  ask();
+                }
+              }}
+            />
+            <WIconButton icon="close" label={t("Dismiss")} onClick={close} />
+          </div>
+          {line?.reading ? <p className="w-hk-line">{line.reading}</p> : null}
+          {/* Reading: nothing is known yet, so nothing is said about where text goes; the line below comes with the read. */}
+          {state.phase === "reading" ? (
+            <p role="status" className="w-hk-line">
+              {t("Reading this window…")}
+            </p>
+          ) : null}
+          {blocked ? (
+            <>
+              <p role="status" className="w-hk-line w-hk-strong">
+                {state.blocked}
+              </p>
+              {state.read?.cannotAnswer?.kind === "local_model_missing" ? (
+                <div className="w-win-actions">
+                  <WButton onClick={() => void openAiSettings()}>{t("Install a local model")}</WButton>
+                </div>
+              ) : null}
+            </>
+          ) : line ? (
+            <p role="status" className="w-hk-line">
+              {line.destination}
+              {state.destinationChanged ? ` ${t("Press Return to ask.")}` : ""}
+            </p>
+          ) : null}
+          {state.phase === "failed" && state.error ? (
+            <p role="alert" className="w-hk-error">
+              {state.error}
+            </p>
+          ) : null}
+          {state.answer ? (
+            <div className="w-hk-answer" aria-live="polite">
+              {state.answer}
+            </div>
+          ) : null}
+          {state.phase === "answered" ? (
+            <div className="w-win-actions">
+              <WButton icon="copy" onClick={copy}>
+                {copied ? t("Copied") : t("Copy")}
+              </WButton>
+            </div>
+          ) : null}
+        </main>
+      </WRoot>
+    );
 
   return (
     <div className="alert hotkey-panel">

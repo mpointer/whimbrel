@@ -1,11 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import { PNG } from "pngjs";
 import { composite, parseColor, ratio, type Rgb } from "./contrast";
+import { elementsFromOptions } from "../src/today/redesign/elements";
 import { ARCHETYPES, BUILT_IN, catalogText, installBridge, worstCase, type SkinDto } from "./fakeBridge";
 
-// No skin may make Today overrun, overlap or become unreadable. Every installed skin × palette × light/dark,
-// and the spec's worst-case skin on every layout with and without imagery, at two window widths. A failure is
-// a layout bug to fix in src/today, not a check to relax (plan Task 9).
+// No skin may make Home overrun, overlap or become unreadable. Every installed skin × palette × light/dark (eight
+// skins with Thread), and the spec's worst-case skin on every old layout with and without imagery, at two window
+// widths. Home is the only front page now (the redesign switch is on for everyone), so each skin draws it with its
+// five element choices, the ones it names or the ones its old layout converts to (docs/ui-redesign/skins.md). A
+// failure is a layout bug to fix in src/today/redesign, not a check to relax (plan Task 9).
 //
 // No language may either (localization plan W6, W8). English and German, which runs longest, run every case.
 // French (France and Canada), Spanish and Portuguese run the worst-case skin at the narrow width, where long
@@ -14,7 +17,7 @@ import { ARCHETYPES, BUILT_IN, catalogText, installBridge, worstCase, type SkinD
 // sidebar's model download line as well.
 
 const WIDTHS = [900, 1400];
-const HEIGHT = 2400; // tall enough that Today never scrolls inside the window
+const HEIGHT = 2400; // tall enough that Home never scrolls inside the window
 const MIN_CONTRAST = 4.5;
 const FULL_LOCALES = ["en-US", "de-DE"];
 const SUBSET_LOCALES = ["fr-FR", "fr-CA", "es-ES", "pt-BR"];
@@ -75,6 +78,8 @@ function measure(): Measured {
   const sectionEls = [...content.querySelectorAll("[data-section]")];
   for (const el of document.body.querySelectorAll("*")) {
     if (!hasOwnText(el) || hidden(el)) continue;
+    // Text only a screen reader gets is a 1 x 1 clipped box on purpose; it has nothing to overrun and nothing to read.
+    if (el.closest(".w-visually-hidden")) continue;
     const display = getComputedStyle(el).display;
     if (display !== "inline" && !clamps(el) && !scrolls(el)) {
       if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) overflows.push(`${name(el)} scroll ${el.scrollWidth}x${el.scrollHeight} in ${el.clientWidth}x${el.clientHeight}`);
@@ -185,25 +190,42 @@ for (const lang of [...FULL_LOCALES, ...SUBSET_LOCALES])
         cases.push({ title: `${lang} / worst case / ${archetype} / ${imagery ? "with" : "no"} imagery / ${mode}`, skins: [...BUILT_IN, dto], skinId: dto.skin.id, paletteId: dto.palettes[0].id, mode, archetype, lang, widths });
       }
 
-/** What the fixture day gives a layout to place, each once, wherever the layout puts it. Reference also lists the
- *  devices line among its Contents; the others draw it as an unlabelled footer. */
-const expectedSections = (archetype: string) => (archetype === "reference" ? ["devices"] : []).concat(["earlier", "recap", "schedule", "threads", "upNext"]).sort();
+/** What the fixture day gives Home to draw, each once: the next meeting, the day's schedule, open threads and the recap.
+ *  Earlier days are collapsed groups with no section of their own, and no skin changes which sections there are. */
+const EXPECTED_SECTIONS = ["recap", "schedule", "threads", "upNext"];
+
+/** The page is drawn at one fixed moment, as the audit does (Wed 18 Nov 2026, 10:22 UTC), so the fixture day (a meeting in 9 minutes,
+ *  earlier ones this morning) lands in the same sections whatever the time of day the run is at. */
+const NOW = Date.UTC(2026, 10, 18, 10, 22, 0);
+test.use({ timezoneId: "UTC" });
 
 for (const width of WIDTHS)
   for (const c of cases.filter((each) => each.widths.includes(width)))
     test(`${c.title} @${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: HEIGHT });
-      await installBridge(page, c);
+      const problems: string[] = [];
+      page.on("pageerror", (e) => problems.push(`pageerror ${e.message.split("\n")[0]}`));
+      // The preview server has no favicon; that 404 is not the page's.
+      page.on("console", (m) => m.type() === "error" && !m.location().url.endsWith("/favicon.ico") && problems.push(`console ${m.text().slice(0, 200)} ${m.location().url}`));
+      await page.clock.setFixedTime(NOW);
+      await installBridge(page, { ...c, now: NOW });
       await page.goto("/");
       await page.locator(".today").first().waitFor();
       await page.locator("[data-skin]").first().waitFor();
       await expect(page.locator("html")).toHaveAttribute("data-archetype", c.archetype);
+      // Home draws the skin's five element choices, named or converted from its old layout (skins.md).
+      const wanted = elementsFromOptions(c.skins.find((d) => d.skin.id === c.skinId)!.skin.today.options, c.archetype);
+      const home = page.locator(".th-home");
+      await expect(home).toHaveAttribute("data-next", wanted.nextMeeting);
+      await expect(home).toHaveAttribute("data-timeline", wanted.timeline);
+      await expect(home).toHaveAttribute("data-labels", wanted.labels);
+      await expect(home).toHaveAttribute("data-actions", wanted.actions);
       // The page is really in the language asked for, or a pass would say nothing about it.
       const settingsLabel = catalogText("Settings", c.lang);
       if (!c.lang.startsWith("en")) expect(settingsLabel, "the catalog translates the Settings tab").not.toBe("Settings");
       await expect(page.locator("#tab-settings"), "the tabs are in the language asked for").toContainText(settingsLabel);
       // The fixture is a first launch, so the sidebar's model download line is drawn and checked too.
-      await expect(page.locator(".sidebar-footer"), "the model download line is drawn").toBeVisible();
+      await expect(page.locator('.sidebar-footer[role="status"]'), "the model download line is drawn").toBeVisible();
       await page.waitForTimeout(400); // images decoded, layout settled
 
       const m = await page.evaluate(measure);
@@ -212,7 +234,9 @@ for (const width of WIDTHS)
       expect(m.overflows, "text overruns its box").toEqual([]);
       expect(m.escapes, "text leaves its section").toEqual([]);
       expect(m.intersections, "sections overlap").toEqual([]);
-      if (c.archetype !== "standard") expect([...new Set(m.sections)].sort(), "each section is drawn once").toEqual(expectedSections(c.archetype));
+      expect([...new Set(m.sections)].sort(), "each section is drawn once").toEqual(EXPECTED_SECTIONS);
       expect(m.sections.length, "no section is drawn twice").toBe(new Set(m.sections).size);
-      expect(await contrastFailures(page, m.boxes), `text under ${MIN_CONTRAST}:1`).toEqual([]);
+      const failures = await contrastFailures(page, m.boxes);
+      expect(failures, `text under ${MIN_CONTRAST}:1`).toEqual([]);
+      expect(problems, "console errors or page errors").toEqual([]);
     });

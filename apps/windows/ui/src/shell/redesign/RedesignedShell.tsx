@@ -3,24 +3,23 @@
 // Ctrl+6 and Ctrl+K. App.tsx decides (after all its own hooks) and hands over what it already holds. Nothing here
 // loads the sections' data.
 
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { WCaptureState, WRoot, WSidebar, WSidebarItem, type WIconName } from "../../system";
 import { ModelStatusLine } from "../../settings/ModelStatusLine";
 import { SyncStoppedLine } from "../../settings/SyncStoppedLine";
 import { waitingLabel } from "../../automations/automationsModel";
 import { MARK_EVENT, RecordingContext } from "../../meetings/redesign/recordingContext";
 import { RecordingBar } from "../../meetings/redesign/RecordingBar";
-import { clockOffsetCs, pauseToggle } from "../../meetings/redesign/liveModel";
+import { clockOffsetCs, degradedShown, pauseToggle } from "../../meetings/redesign/liveModel";
 import { meetingMarkerAdd } from "../../api";
 import { useLiveScreenShown, useLiveScreenTitle } from "./liveScreen";
 import { useScreenTitle } from "./screenTitle";
 import { t, useL10n } from "../../l10n";
-import type { SearchRequest } from "../../library/searchRequest";
+import type { RoutePreviewView } from "../../generated/types";
 import { SkinHeader, TabIcon } from "../../SkinIcon";
 import { timeLabel } from "../../library/rows";
 import type { Tab, TabId } from "../../tabs";
 import { elementsFromOptions } from "../../today/redesign/elements";
-import { voiceText, localizedVoice } from "../../today/layoutModel";
 import { useSkin } from "../../useSkin";
 import { pauseChoiceLabel } from "./captureChoices";
 import { PAUSE_CHOICES, pauseDeadline, pauseEndLabel, type PauseChoice } from "./captureModel";
@@ -29,9 +28,11 @@ import { scrollToThreadPart, useThreadParts } from "./outline";
 import { liveShortcutOf, shortcutHint, shortcutOf } from "./shortcuts";
 import { useCapture } from "./useCapture";
 import { useRecording } from "./useRecording";
+import { useShortViewport } from "./shortViewport";
+import "../../system/restyle.css";
 import "./shell.css";
 
-const ICONS: Record<TabId, WIconName> = { today: "today", meetings: "meetings", library: "library", topics: "topics", automations: "automations", settings: "settings" };
+const ICONS: Record<TabId, WIconName> = { today: "today", meetings: "meetings", library: "library", topics: "topics", conversations: "chat", automations: "automations", settings: "settings" };
 
 export interface RedesignedShellProps {
   tabs: readonly Tab[];
@@ -43,20 +44,21 @@ export interface RedesignedShellProps {
   onWhatIsCaptured: () => void;
   /** The sync line's Open: Settings, Status. */
   onOpenStatus: () => void;
-  /** The search and ask bar: a question, a filtered search, and the "set up" action. */
-  onAsk: (prompt: string) => void;
-  onSearch: (request: Omit<SearchRequest, "id">) => void;
-  onOpenAiSettings: () => void;
+  /** The header field's Enter and Ctrl+Enter: open the Library tab on Find (what to search or ask is in the Find store). */
+  onFind: () => void;
+  /** The header's Ask control (Ctrl+Enter), screen 6: true when the section answers it itself (Today, a new conversation); false leaves it to the Find page. */
+  onAsk?: (query: string, shown: RoutePreviewView | null, filtered: boolean) => boolean;
   /** The banners, the heading and the section, as the old shell lays them out inside its panel. */
   children: ReactNode;
 }
 
-export function RedesignedShell({ tabs, active, onChoose, waiting, onWhatIsCaptured, onOpenStatus, onAsk, onSearch, onOpenAiSettings, children }: RedesignedShellProps) {
-  const { locale, lang } = useL10n();
+export function RedesignedShell({ tabs, active, onChoose, waiting, onWhatIsCaptured, onOpenStatus, onFind, onAsk, children }: RedesignedShellProps) {
+  const { locale } = useL10n();
   const skin = useSkin();
   const elements = elementsFromOptions(skin.skin.today.options, skin.skin.today.archetype);
   const capture = useCapture(true);
   const recording = useRecording(true);
+  const short = useShortViewport();
   const liveShown = useLiveScreenShown();
   const liveTitle = useLiveScreenTitle();
   const screenTitle = useScreenTitle();
@@ -65,6 +67,8 @@ export function RedesignedShell({ tabs, active, onChoose, waiting, onWhatIsCaptu
   latest.current = recording;
   const parts = useThreadParts();
   const search = useRef<HTMLInputElement>(null);
+  // Ctrl+K: the header opens its field first (it is an icon at a middle width), then takes focus.
+  const [focusTick, setFocusTick] = useState(0);
   const order = useMemo(() => tabs.map((x) => x.id), [tabs]);
   const tab = tabs.find((x) => x.id === active) ?? tabs[0];
 
@@ -92,7 +96,7 @@ export function RedesignedShell({ tabs, active, onChoose, waiting, onWhatIsCaptu
       if (!action) return;
       e.preventDefault();
       if (action.kind === "section") onChoose(action.id);
-      else search.current?.focus();
+      else setFocusTick((n) => n + 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -116,17 +120,32 @@ export function RedesignedShell({ tabs, active, onChoose, waiting, onWhatIsCaptu
   ) : null;
 
   const date = new Intl.DateTimeFormat(locale, { weekday: "long", month: "long", day: "numeric" }).format(new Date(capture.now));
-  const showBar = recording.state !== "idle" && !liveShown;
+  // The shell's recording bar sits above the header on every section except the live screen, which draws the same bar itself. In a
+  // short window the bar is part of the pinned row everywhere, so it is drawn here on the live screen too, and the live screen's own
+  // is hidden (CSS, `w-shell-box--live-pinned`): the recording state is then pinned on every screen.
+  const recordingNow = recording.state !== "idle";
+  const showBar = recordingNow && (short || !liveShown);
+  const livePinned = short && liveShown && recordingNow;
+  const recordingBar = showBar ? (
+    <div className="w-shell-recording">
+      <RecordingBar rec={recording} stage={recording.view?.processing?.label ?? null} />
+      {degradedShown(recording.view) && recording.state !== "processing" && !liveShown ? (
+        <p role="status" className="w-shell-recording-note">
+          {degradedShown(recording.view)}
+        </p>
+      ) : null}
+    </div>
+  ) : null;
   return (
     <RecordingContext.Provider value={recording}>
-    <div className="w-shell-box">
+    <div className={short ? (livePinned ? "w-shell-box w-shell-box--short w-shell-box--live-pinned" : "w-shell-box w-shell-box--short") : "w-shell-box"}>
     <WRoot className="shell w-shell">
       <WSidebar
         label={t("Sections")}
         footerClass="sidebar-footer"
         items={
           <>
-            {tabs.map((each, i) => (
+            {tabs.map((each) => (
               <WSidebarItem
                 key={each.id}
                 id={`tab-${each.id}`}
@@ -134,7 +153,7 @@ export function RedesignedShell({ tabs, active, onChoose, waiting, onWhatIsCaptu
                 glyph={<TabIcon id={each.id} />}
                 label={each.label}
                 selected={each.id === active}
-                shortcut={shortcutHint(i)}
+                shortcut={shortcutHint(each.id)}
                 badge={each.id === "automations" && waiting > 0 ? waiting : undefined}
                 badgeLabel={each.id === "automations" && waiting > 0 ? waitingLabel(waiting) : undefined}
                 onPress={() => onChoose(each.id)}
@@ -170,28 +189,28 @@ export function RedesignedShell({ tabs, active, onChoose, waiting, onWhatIsCaptu
       />
       <div className="stage">
         <SkinHeader />
-        {showBar ? (
-          <div className="w-shell-recording">
-            <RecordingBar rec={recording} stage={recording.view?.processing?.label ?? null} />
-            {recording.view?.degraded && recording.state !== "processing" ? (
-              <p role="status" className="w-shell-recording-note">
-                {recording.view.degraded}
-              </p>
-            ) : null}
+        {short ? (
+          // A short window (CSS height under 480, as the main window is at a large Windows text size): the recording state and the
+          // Memory state are one compact pinned row; the title, search and filter rows scroll away with the content.
+          <div className="w-shell-pinned">
+            {recordingBar}
+            {captureControl ? <div className="w-shell-pinned-capture">{captureControl}</div> : null}
           </div>
-        ) : null}
+        ) : (
+          recordingBar
+        )}
         <HeaderRow
           title={liveShown && liveTitle ? liveTitle : (screenTitle ?? tab.label)}
           date={liveShown && liveTitle ? t("Now, {time}", { time: timeLabel(capture.now, locale) }) : active === "today" && !screenTitle ? date : undefined}
-          capture={captureControl}
+          capture={short ? null : captureControl}
           ask={elements.ask}
-          placeholder={voiceText(localizedVoice(skin.skin, lang), "askPlaceholder")}
+          placeholder={t("Search your work memory")}
           filters={active === "today" && !liveShown && !screenTitle}
           now={capture.now}
           inputRef={search}
+          focusTick={focusTick}
+          onFind={onFind}
           onAsk={onAsk}
-          onSearch={onSearch}
-          onOpenAiSettings={onOpenAiSettings}
         />
         <main id="panel" aria-label={tab.label} className="content w-content">
           {children}

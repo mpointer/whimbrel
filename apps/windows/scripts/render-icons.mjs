@@ -15,6 +15,7 @@ const full = readFileSync(join(design, "app-icon-flat.svg"), "utf8");
 // Below 64 px the full bird goes too thin; the small crop has a heavier bill.
 const small = readFileSync(join(design, "app-icon-flat-small.svg"), "utf8");
 const glyph = readFileSync("apps/windows/design/tray-glyph.svg", "utf8");
+const glyphRecordingPaused = readFileSync("apps/windows/design/tray-glyph-recording-paused.svg", "utf8");
 
 const pngs = [
   ["32x32.png", 32, small],
@@ -39,17 +40,26 @@ const TRAY_SIZES = [16, 20, 24, 32, 40, 48, 64];
 const DARK = "#1f1f1f";
 const LIGHT = "#ffffff";
 const PAUSED = 0.4;
+// [name, color, opacity, glyph]. A paused recording keeps the full glyph in the taskbar color and adds a pause badge, so it
+// differs from paused memory (a dimmed glyph) by shape, not only by tone, and is never the recording red.
 const tray = [
-  ["idle-light", DARK, 1],
-  ["idle-dark", LIGHT, 1],
-  ["paused-light", DARK, PAUSED],
-  ["paused-dark", LIGHT, PAUSED],
-  ["sync-error", "#f0a020", 1],
-  ["recording", "#dc2626", 1],
+  ["idle-light", DARK, 1, glyph],
+  ["idle-dark", LIGHT, 1, glyph],
+  ["paused-light", DARK, PAUSED, glyph],
+  ["paused-dark", LIGHT, PAUSED, glyph],
+  ["sync-error", "#f0a020", 1, glyph],
+  ["recording", "#dc2626", 1, glyph],
+  ["recording-paused-light", DARK, 1, glyphRecordingPaused],
+  ["recording-paused-dark", LIGHT, 1, glyphRecordingPaused],
 ];
 
+// ICON_ONLY=name,name renders just those tray icons and nothing else (the other icons are left untouched), and
+// ICON_OUT sends them to another folder. ICON_CHANNEL picks the browser (default msedge; "chrome" on a Mac).
+const only = process.env.ICON_ONLY ? process.env.ICON_ONLY.split(",") : null;
+const trayOut = process.env.ICON_OUT || join(out, "tray");
+
 // Edge ships with Windows, so no Playwright browser download is needed.
-const browser = await chromium.launch({ channel: "msedge" });
+const browser = await chromium.launch({ channel: process.env.ICON_CHANNEL || "msedge" });
 const page = await browser.newPage();
 
 async function render(svg, size, style = "") {
@@ -79,22 +89,27 @@ function writeIco(path, images) {
   writeFileSync(path, Buffer.concat([header, ...images.map(([, png]) => png)]));
 }
 
-for (const [name, size, svg] of pngs) {
-  writeFileSync(join(out, name), await render(svg, size));
+if (!only) {
+  for (const [name, size, svg] of pngs) {
+    writeFileSync(join(out, name), await render(svg, size));
+  }
+
+  const images = [];
+  for (const [size, svg] of ico) images.push([size, await render(svg, size)]);
+  writeIco(join(out, "icon.ico"), images);
 }
 
-const images = [];
-for (const [size, svg] of ico) images.push([size, await render(svg, size)]);
-writeIco(join(out, "icon.ico"), images);
-
-for (const [name, color, opacity] of tray) {
+const trayNames = [];
+for (const [name, color, opacity, source] of tray) {
+  if (only && !only.includes(name)) continue;
   const sizes = [];
   for (const size of TRAY_SIZES) {
     // Below 24 px the eye is a smudge of one or two pixels, so it's left out.
-    const svg = size < 24 ? glyph.replace(' mask="url(#eye)"', "") : glyph;
+    const svg = size < 24 ? source.replace(' mask="url(#eye)"', "") : source;
     sizes.push([size, await render(svg, size, `color:${color};opacity:${opacity}`)]);
   }
-  writeIco(join(out, "tray", `${name}.ico`), sizes);
+  writeIco(join(trayOut, `${name}.ico`), sizes);
+  trayNames.push(name);
 }
 await browser.close();
-console.log(`wrote ${pngs.length} PNGs, icon.ico (${ico.map(([s]) => s).join(", ")}) and ${tray.length} tray icons`);
+console.log(only ? `wrote ${trayNames.length} tray icons (${trayNames.join(", ")})` : `wrote ${pngs.length} PNGs, icon.ico (${ico.map(([s]) => s).join(", ")}) and ${tray.length} tray icons`);

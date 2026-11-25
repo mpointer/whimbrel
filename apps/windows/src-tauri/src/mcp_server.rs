@@ -570,7 +570,7 @@ mod tests {
         let db = dir.join("core-memory.sqlite");
         // The app's own connection stays open throughout, like the real app's.
         let store = memory::Store::open(&db, &dir.join("models")).unwrap();
-        let good = crate::commands::mcp::create_client(&store, "e2e", &["memory".to_string()]).unwrap();
+        let good = crate::commands::mcp::create_client(&store, "e2e", &["memory".to_string()], false).unwrap();
 
         let status_of = |token: Option<&str>| -> u16 {
             let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}}"#;

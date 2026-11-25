@@ -13,6 +13,8 @@ struct LiveAlertsSection: View {
         let evidence: [LiveAlertDelivery.Evidence]
         /// The draft cites sources this device can't resolve: another device recorded it.
         var sourcesElsewhere = false
+        /// False when the draft cites an item a local MCP client added: its links show as plain text.
+        var linksAllowed = true
         var id: Int64 { alert.id }
     }
 
@@ -50,7 +52,7 @@ struct LiveAlertsSection: View {
             Text(verbatim: "\u{201C}\(row.alert.quote)\u{201D}")
                 .font(.whimbrelBody(.callout)).italic().foregroundStyle(Color.whimbrelTextSecondary)
             if let draft = row.draft {
-                AskAnswerText(markdown: draft)
+                AskAnswerText(markdown: draft, allowLinks: row.linksAllowed)
             } else {
                 Text("No draft answer yet.").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
             }
@@ -118,10 +120,11 @@ struct LiveAlertsSection: View {
     static func row(_ alert: CoreLiveAlert, resolve: ([CoreContextItemRef]) -> [LiveAlertDelivery.Evidence]) -> Row {
         let answer = alert.draftJson.flatMap { try? JSONDecoder().decode(CoreChatAnswer.self, from: Data($0.utf8)) }
         let citations = answer?.citations ?? []
+        let links = AskMarkdown.linksAllowed(citations: citations)
         guard alert.originDeviceId == nil else {
-            return Row(alert: alert, draft: answer?.text, evidence: [], sourcesElsewhere: !citations.isEmpty)
+            return Row(alert: alert, draft: answer?.text, evidence: [], sourcesElsewhere: !citations.isEmpty, linksAllowed: links)
         }
-        return Row(alert: alert, draft: answer?.text, evidence: citations.isEmpty ? [] : resolve(citations))
+        return Row(alert: alert, draft: answer?.text, evidence: citations.isEmpty ? [] : resolve(citations), linksAllowed: links)
     }
 
     /// The id of the line whose start is closest to `atCs`.

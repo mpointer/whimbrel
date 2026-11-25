@@ -266,7 +266,6 @@
 		59B506F17DDA4F28150BFCEF = {
 			isa = PBXGroup;
 			children = (
-				1E37126CF20E730E5F9EAEEF /* Base.xcconfig */,
 				23D13A3A2C0A40856E27F72B /* ios */,
 				4FB3FCF4ABC481CA894C7FD5 /* Shared */,
 				B967CA916666E9EBE328EF71 /* Whimbrel */,
@@ -595,7 +594,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.81;
+				MARKETING_VERSION = 0.9.82;
 				PRODUCT_NAME = Whimbrel;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Whimbrel/Bridging-Header.h";
@@ -785,7 +784,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.81;
+				MARKETING_VERSION = 0.9.82;
 				PRODUCT_NAME = Whimbrel;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Whimbrel/Bridging-Header.h";

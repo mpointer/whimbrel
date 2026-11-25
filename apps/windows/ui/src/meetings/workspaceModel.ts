@@ -73,13 +73,13 @@ export function displayOrder(items: ActionItemView[]): ActionItemView[] {
   return [...items.filter((i) => !i.completed), ...items.filter((i) => i.completed)];
 }
 
-/** The workspace's heading for each phase. */
-export function phaseTitle(view: WorkspaceView): string {
+/** The workspace's heading for each phase; a meeting in progress whose recording is paused is headed Paused. */
+export function phaseTitle(view: WorkspaceView, paused = false): string {
   switch (view.phase) {
     case "before":
       return t("Before the meeting");
     case "during":
-      return t("Recording");
+      return paused ? t("Paused") : t("Recording");
     case "cancelled":
       return t("Cancelled");
     default:

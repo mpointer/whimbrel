@@ -87,6 +87,9 @@ public enum WHomeDateRange: Equatable, Sendable {
     case today, yesterday, lastSevenDays
     /// First and last day, both included.
     case custom(from: Date, to: Date)
+    /// An exact stretch, [start, end), under a title of its own. Home's memory block Open filters by the block's time range, which is
+    /// not whole days.
+    case exact(start: Date, end: Date, title: String)
 
     /// The range as [start, end): midnight to midnight on the calendar's days.
     public func bounds(now: Date, calendar: Calendar = .current) -> (start: Date, end: Date) {
@@ -99,6 +102,7 @@ public enum WHomeDateRange: Equatable, Sendable {
         case .custom(let from, let to):
             let a = calendar.startOfDay(for: min(from, to)), b = calendar.startOfDay(for: max(from, to))
             return (a, day(1, from: b))
+        case .exact(let start, let end, _): return (start, end)
         }
     }
 }

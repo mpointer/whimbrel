@@ -223,7 +223,6 @@ private fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
 private fun RemindersSection(coordinator: ReminderCoordinator) {
     val scope = rememberCoroutineScope() // Main
     val context = LocalContext.current
-    val isCloud by coordinator.isCloud.collectAsState()
     var current by remember { mutableStateOf(coordinator.settings.settings) }
     // Refused notifications: re-read on return from the system settings. Before the prompt has ever been shown
     // Android reports the same "off", so the notice waits for it.
@@ -236,15 +235,11 @@ private fun RemindersSection(coordinator: ReminderCoordinator) {
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer) }
     }
-    val rows = ReminderSettingsRows.make(isCloud, current, denied = !enabled && coordinator.permissionAsked)
+    val rows = ReminderSettingsRows.make(current, denied = !enabled && coordinator.permissionAsked)
     val change: (ReminderSettings) -> Unit = { updated ->
         current = updated
         coordinator.settings.settings = updated
         scope.launch { coordinator.reschedule() }
-    }
-    if (rows.showsUpgradeLines) {
-        Text(stringResource(R.string.reminders_need_cloud), style = WTokens.TypeScale.body.style())
-        Note(stringResource(R.string.reminders_upgrade))
     }
     if (rows.showsMeetingToggle) {
         ToggleRow(stringResource(R.string.reminders_meeting_toggle), current.meetingEnabled) { change(current.copy(meetingEnabled = it)) }

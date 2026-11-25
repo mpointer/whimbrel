@@ -114,6 +114,17 @@ struct MenuBarContentView: View {
                     Task { @MainActor in appState.endActiveMeetingIfNeeded() }
                 }
                 .buttonStyle(.whimbrelSecondary)
+            } else if appState.canStopStartingRecording {
+                // Audio is already on and the meeting is still being saved: a Stop stops the audio now.
+                Button("End Meeting") {
+                    Task { @MainActor in appState.endActiveMeetingIfNeeded() }
+                }
+                .buttonStyle(.whimbrelSecondary)
+            } else if appState.isStopPendingForRow {
+                // Stopped, audio off, the meeting row still being written: nothing to start or stop.
+                Button("Saving…") {}
+                    .buttonStyle(.whimbrelSecondary)
+                    .disabled(true)
             } else {
                 Button("Start Meeting") {
                     Task { @MainActor in appState.startManualMeeting() }

@@ -35,7 +35,9 @@ export type ClientItemKind =
   | "conversation"
   | "step"
   | "vault_note"
-  | "export_folder";
+  | "export_folder"
+  /** An item a local MCP client (such as Claude) added. */
+  | "mcp_item";
 
 /** An item as the review screen sends it back: core matches it against a fresh inventory by kind and id. */
 export interface ClientItemRef {

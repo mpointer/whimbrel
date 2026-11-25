@@ -240,7 +240,7 @@ public struct WField: View {
         .padding(.horizontal, theme.space(10))
         .frame(minHeight: WTokens.Size.target * k)
         .background(shape.fill(theme.backgroundCard))
-        .overlay(shape.wBorder(theme.border, style: theme.borderStroke.widened(theme.isHighContrast ? 1.5 : 1)))
+        .overlay(shape.wBorder(theme.controlBorder, style: theme.borderStroke.widened(theme.isHighContrast ? 1.5 : 1)))
         .overlay {
             if focused { shape.strokeBorder(theme.focus, lineWidth: 2.5).padding(-1).allowsHitTesting(false) }
         }
@@ -252,51 +252,7 @@ public struct WField: View {
     }
 }
 
-/// An error under the field or step it belongs to. Announced when it appears.
-struct WErrorLine: View {
-    @Environment(\.wTheme) private var theme
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: theme.space(6)) {
-            WGlyph(name: "exclamationmark.circle.fill", size: 12, weight: .semibold)
-            Text(text).wFont(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        .foregroundStyle(theme.error)
-        .accessibilityElement(children: .combine)
-        .onAppear { AccessibilityNotification.Announcement(text).post() }
-    }
-}
-
-/// A positive result line: a check and the words.
-struct WSuccessLine: View {
-    @Environment(\.wTheme) private var theme
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: theme.space(6)) {
-            WGlyph(name: "checkmark.circle.fill", size: 12, weight: .semibold)
-            Text(text).wFont(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        .foregroundStyle(theme.success)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// A caution line: a triangle and the words.
-struct WWarningLine: View {
-    @Environment(\.wTheme) private var theme
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: theme.space(6)) {
-            WGlyph(name: "exclamationmark.triangle.fill", size: 12, weight: .semibold)
-            Text(text).wFont(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        .foregroundStyle(theme.isDark ? theme.warning : theme.textPrimary)
-        .accessibilityElement(children: .combine)
-    }
-}
+// WErrorLine, WSuccessLine and WWarningLine live in SettingsParts.swift (public).
 
 // MARK: Word list
 

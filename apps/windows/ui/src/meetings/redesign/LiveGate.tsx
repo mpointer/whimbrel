@@ -46,8 +46,11 @@ export function MeetingPane({
   onBack,
   onChanged,
   onFullWidth,
+  initialLine,
 }: {
   meetingId: number;
+  /** Open the finished note's transcript at this line (a search result or an Ask source). */
+  initialLine?: number;
   children: ReactNode;
   onOpenSettings?: () => void;
   onBack?: () => void;
@@ -87,6 +90,7 @@ export function MeetingPane({
     return (
       <FinishedNote
         meetingId={meetingId}
+        initialLine={initialLine}
         onBack={onBack}
         onChanged={onChanged ?? (() => {})}
         onOpenSettings={onOpenSettings}

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { aiSettings, appStatus, retentionSettings, routineRuns, routinesHost, statusOverview, syncDevices, syncStatus, updateCheckStatus, updateReady } from "../api";
-import type { AiSettings, DeviceView, HostView, RetentionSettings, RunView, StatusView, SyncView, UpdateCheck } from "../generated/types";
+import { aiSettings, appStatus, retentionSettings, routineRuns, routinesHost, statusOverview, syncDevices, syncStatus, updateCheckStatus, updateReady, whimbrelAiStatus } from "../api";
+import type { AiSettings, DeviceView, HostView, RetentionSettings, RunView, StatusView, SyncView, UpdateCheck, WhimbrelAiView } from "../generated/types";
 import { t, useL10n } from "../l10n";
 import type { SettingsSectionId } from "./settingsSections";
+import { planStatusLines } from "./planModel";
 import { aiLines, routineLines, storageLines, syncLines, updateLines } from "./statusModel";
 
 /** How often the page looks again while it is open; sync and updates change in the background. */
@@ -22,6 +23,7 @@ export function StatusPage(props: { onSection: (id: SettingsSectionId) => void; 
   const [check, setCheck] = useState<UpdateCheck | null>(null);
   const [host, setHost] = useState<HostView | null>(null);
   const [lastRun, setLastRun] = useState<RunView | null>(null);
+  const [whimbrel, setWhimbrel] = useState<WhimbrelAiView | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -30,6 +32,7 @@ export function StatusPage(props: { onSection: (id: SettingsSectionId) => void; 
       setNow(Date.now());
       syncStatus().then(setSync, () => {});
       syncDevices().then(setDevices, () => {});
+      whimbrelAiStatus().then(setWhimbrel, () => {});
       aiSettings().then(setAi, () => {});
       retentionSettings().then((r) => setRetention(r.settings), () => {});
       appStatus().then((s) => setVersion(s.version), () => {});
@@ -45,9 +48,11 @@ export function StatusPage(props: { onSection: (id: SettingsSectionId) => void; 
     return () => clearInterval(timer);
   }, []);
 
+  const planLines = planStatusLines(sync, whimbrel, locale);
   return (
     <div className="stack status-page">
       <StatusRow title={t("Sync")} lines={syncLines(sync, devices, status, now, locale)} onOpen={() => onSection("devices")} />
+      {planLines.length > 0 && <StatusRow title={t("Plan")} lines={planLines} onOpen={() => onSection("plan")} />}
       <StatusRow title={t("AI")} lines={aiLines(ai)} onOpen={() => onSection("ai")} />
       <StatusRow title={t("Storage")} lines={storageLines(status, retention)} onOpen={() => onSection("capture")} />
       <StatusRow title={t("Updates")} lines={updateLines(version, ready, check)} onOpen={() => onSection("general")} />

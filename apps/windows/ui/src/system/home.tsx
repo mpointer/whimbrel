@@ -48,12 +48,16 @@ export interface WAskBarProps {
   describedBy?: string;
   /** Under the field: the filter chips. */
   below?: ReactNode;
+  /** Ctrl+Enter (or Cmd+Enter) in the field does this instead of the button's action. */
+  onAltSubmit?: () => void;
+  /** A second control beside the submit button (the redesigned header's Ask, when the submit button searches). */
+  secondary?: ReactNode;
   variant?: WAskVariant;
 }
 
 /** The search and ask bar. `field` is a boxed field with a button; `prompt` is a command line: a prompt mark, the text
  *  and a return mark, with the same button for the keyboard-less. */
-export function WAskBar({ value, onChange, onSubmit, placeholder, label, submitLabel, hint, modelLabel, inputRef, describedBy, below, variant = "field" }: WAskBarProps) {
+export function WAskBar({ value, onChange, onSubmit, placeholder, label, submitLabel, hint, modelLabel, inputRef, describedBy, below, onAltSubmit, secondary, variant = "field" }: WAskBarProps) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     onSubmit();
@@ -69,12 +73,21 @@ export function WAskBar({ value, onChange, onSubmit, placeholder, label, submitL
         ) : (
           <WIcon name="search" />
         )}
-        <input ref={inputRef} type="search" value={value} aria-label={label} aria-describedby={describedBy} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+        <input ref={inputRef} type="search" value={value} aria-label={label} aria-describedby={describedBy} placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (onAltSubmit && e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              onAltSubmit();
+            }
+          }}
+        />
         {empty && hint ? <span className="w-kbd">{hint}</span> : null}
         {modelLabel ? <span className="w-ask-model">{modelLabel}</span> : null}
         <WButton type="submit" variant={variant === "prompt" ? "quiet" : "primary"} disabled={empty}>
           {submitLabel}
         </WButton>
+        {secondary}
       </form>
       {below ? <div className="w-ask-below">{below}</div> : null}
     </div>

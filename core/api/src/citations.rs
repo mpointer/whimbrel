@@ -36,6 +36,7 @@ fn card(store: &Store, r: &ContextItemRef) -> CitationCard {
         ContextItemRef::Episode { id } => ("episode", id, "Activity"),
         ContextItemRef::Thread { id } => ("thread", id, "Activity"),
         ContextItemRef::Snapshot { id } => ("snapshot", id, "Slide"),
+        ContextItemRef::McpItem { id } => ("mcp_item", id, "Added"),
     };
     let mut c = CitationCard {
         kind: kind.into(),
@@ -77,6 +78,10 @@ fn card(store: &Store, r: &ContextItemRef) -> CitationCard {
         ContextItemRef::Thread { id } => store.get_thread(id).ok().flatten().map(|t| {
             c.title = t.subject.filter(|s| !s.is_empty()).unwrap_or_else(|| "Earlier work".into());
             c.ts_unix_ms = Some(t.last_activity_ts_unix_ms);
+        }),
+        // Added items stay on the computer that received them: a phone never holds one.
+        ContextItemRef::McpItem { id } => store.export_mcp_item_row(id).ok().flatten().map(|a| {
+            c.title = a.title.filter(|t| !t.is_empty()).unwrap_or_else(|| "Added item".into());
         }),
     };
     if hit.is_none() {

@@ -24,8 +24,8 @@ import {
 import type { EncryptionCardView, NoteAction } from "../generated/types";
 import { useL10n } from "../l10n";
 import { SetupModel } from "../launch/setupModel";
-import { SetupView } from "../launch/SetupView";
-import { badgeLabel, cardBody, EncryptFlow, noteActionMessage, noteLines, SpeedCheck, speedLines } from "./encryptionCardModel";
+import { SetupView, type SetupWords } from "../launch/SetupView";
+import { badgeLabel, cardBody, EncryptFlow, noteActionMessage, noteLines, SpeedCheck, speedLines, type EncryptFlowWords } from "./encryptionCardModel";
 
 export function EncryptionCard() {
   const { t } = useL10n();
@@ -36,7 +36,7 @@ export function EncryptionCard() {
   }, [load]);
   if (!view) return null;
   return (
-    <section className="card stack-sm" aria-labelledby="encryption-heading">
+    <section className="card stack-sm" aria-labelledby="encryption-heading" data-settings-anchor="capture.encryption">
       <div className="section-head">
         <h2 id="encryption-heading" className="section-label">
           {t("Database encryption")}
@@ -118,17 +118,35 @@ export function NotesList({ view, reload }: { view: EncryptionCardView; reload: 
   );
 }
 
-function EncryptSection({ view, reload }: { view: EncryptionCardView; reload: () => void }) {
+/** Every sentence the encrypt flow can show that names what is encrypted. The old card passes none and shows its own
+ *  ("the memory database"); the redesigned Library encryption card passes its own, in its own t() keys. */
+export interface EncryptSectionWords extends EncryptFlowWords {
+  /** "Whimbrel will finish encrypting ... the next time it starts." */
+  atNextLaunch: string;
+  /** The setup's Continue button and the Settings button that starts the flow. */
+  continueTitle: string;
+  startButton: string;
+  setup: SetupWords;
+}
+
+/** The multi-step encrypt flow (precheck, recovery setup, encrypt at next launch). Exported so the redesigned
+ *  Library encryption card can place the same flow in its own card, with its own words. */
+export function EncryptSection({ view, reload, words }: { view: EncryptionCardView; reload: () => void; words?: EncryptSectionWords }) {
   const { t } = useL10n();
   const flow = useMemo(
     () =>
-      new EncryptFlow({
-        precheck: encryptionPrecheckForSetup,
-        continueSetup: () => setupContinue("settings"),
-        encrypt: encryptionEncrypt,
-        reusesKey: () => setupReusesKey("settings"),
-        discard: () => setupStartOver("settings"),
-      }),
+      new EncryptFlow(
+        {
+          precheck: encryptionPrecheckForSetup,
+          continueSetup: () => setupContinue("settings"),
+          encrypt: encryptionEncrypt,
+          reusesKey: () => setupReusesKey("settings"),
+          discard: () => setupStartOver("settings"),
+        },
+        words,
+      ),
+    // The words are fixed per card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
   const phase = useSyncExternalStore(flow.subscribe, flow.getState, flow.getState);
@@ -158,7 +176,7 @@ function EncryptSection({ view, reload }: { view: EncryptionCardView; reload: ()
   if (view.pendingNextLaunch || phase.kind === "atNextLaunch") {
     return (
       <div className="stack-sm">
-        <p className="small">{t("Whimbrel will finish encrypting the memory database the next time it starts.")}</p>
+        <p className="small">{words?.atNextLaunch ?? t("Whimbrel will finish encrypting the memory database the next time it starts.")}</p>
         <div className="toolbar">
           <button className="mode mode--active" onClick={() => void restartApp().catch(() => {})}>
             {t("Restart Whimbrel")}
@@ -175,7 +193,9 @@ function EncryptSection({ view, reload }: { view: EncryptionCardView; reload: ()
       return (
         <SetupView
           model={setup}
-          continueTitle={t("Encrypt the memory database")}
+          continueTitle={words?.continueTitle ?? t("Encrypt the memory database")}
+          words={words?.setup}
+          embedded={!!words}
           continuing={phase.kind === "finishing"}
           onContinue={() => void flow.finish().then(() => setup.clear())}
           onCancel={() => {
@@ -201,7 +221,7 @@ function EncryptSection({ view, reload }: { view: EncryptionCardView; reload: ()
           {phase.kind === "idle" && phase.message && <p className="small setup-error">{phase.message}</p>}
           <div className="toolbar">
             <button className="mode mode--active" onClick={() => void flow.start()}>
-              {t("Encrypt the database…")}
+              {words?.startButton ?? t("Encrypt the database…")}
             </button>
           </div>
         </div>

@@ -576,7 +576,7 @@ pub fn whimbrel_default() -> Skin {
     ];
     Skin {
         id: "whimbrel".into(),
-        name: "Whimbrel".into(),
+        name: "Classic".into(),
         author: "Whimbrel".into(),
         palettes: vec!["default".into(), "slate".into(), "sepia".into()],
         typography: Typography {

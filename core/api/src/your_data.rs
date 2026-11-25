@@ -40,7 +40,24 @@ pub struct ExportAllReport {
     pub conversations: usize,
     pub routines: usize,
     pub topics_written: usize,
+    /// Items local MCP clients added (`mcp_items.jsonl`).
+    #[serde(default)]
+    pub mcp_items: usize,
 }
+
+/// Every `items` kind and the file Your data export writes it to (held to `memory::ITEM_KINDS` by
+/// `mcp_item_coverage.rs`).
+pub(crate) const YOUR_DATA_ITEM_KINDS: [(&str, memory::mcp_items::Coverage); 6] = {
+    use memory::mcp_items::Coverage::{Covered, NotApplicable};
+    [
+        ("capture", Covered("captures.jsonl")),
+        ("transcript", NotApplicable("written inside meetings/")),
+        ("email", Covered("emails.jsonl")),
+        ("calendar_event", Covered("calendar.jsonl")),
+        ("snapshot", Covered("snapshots.jsonl")),
+        ("mcp_item", Covered("mcp_items.jsonl")),
+    ]
+};
 
 fn db(_: rusqlite::Error) -> ApiError {
     ApiError::ProviderFailure
@@ -315,6 +332,34 @@ pub(crate) fn meeting_markdown(store: &Store, m: &memory::Meeting) -> ApiResult<
     Ok((md, lines))
 }
 
+/// Added items, with their provenance (`memory::mcp_items::McpExportRow`), one JSON object per line.
+fn write_mcp_items(store: &Store, w: &mut Writer, dir: &Path, file: &str) -> ApiResult<usize> {
+    let path = inside(dir, file)?;
+    let f = private_file(&path).map_err(ioe)?;
+    let mut out = BufWriter::new(f);
+    let mut after = 0i64;
+    let mut rows = 0usize;
+    let mut bytes = 0u64;
+    loop {
+        let page = store.export_mcp_items_page(after, PAGE).map_err(db)?;
+        if page.is_empty() {
+            break;
+        }
+        for row in &page {
+            let line = serde_json::to_string(row).map_err(|_| ApiError::ProviderFailure)?;
+            out.write_all(line.as_bytes()).map_err(ioe)?;
+            out.write_all(b"\n").map_err(ioe)?;
+            bytes += line.len() as u64 + 1;
+            rows += 1;
+            after = row.id;
+        }
+    }
+    out.flush().map_err(ioe)?;
+    w.files += 1;
+    w.bytes += bytes;
+    Ok(rows)
+}
+
 fn write_items(store: &Store, w: &mut Writer, dir: &Path, kind: &str, file: &str) -> ApiResult<usize> {
     let path = inside(dir, file)?;
     let f = private_file(&path).map_err(ioe)?;
@@ -372,21 +417,28 @@ pub fn export_all(store: &Store, root: &Path, now_unix_ms: i64) -> ApiResult<Exp
     }
 
     // Items by kind, one JSON lines file each.
-    report.captures = write_items(store, &mut w, &folder, "capture", "captures.jsonl")?;
-    report.emails = write_items(store, &mut w, &folder, "email", "emails.jsonl")?;
-    report.calendar_events = write_items(store, &mut w, &folder, "calendar_event", "calendar.jsonl")?;
-    report.snapshots = write_items(store, &mut w, &folder, "snapshot", "snapshots.jsonl")?;
+    for (kind, coverage) in YOUR_DATA_ITEM_KINDS {
+        let memory::mcp_items::Coverage::Covered(file) = coverage else { continue };
+        if kind == memory::MCP_ITEM_KIND {
+            report.mcp_items = write_mcp_items(store, &mut w, &folder, file)?;
+            continue;
+        }
+        let n = write_items(store, &mut w, &folder, kind, file)?;
+        match kind {
+            "capture" => report.captures = n,
+            "email" => report.emails = n,
+            "calendar_event" => report.calendar_events = n,
+            "snapshot" => report.snapshots = n,
+            _ => {}
+        }
+    }
 
     // Conversations with their exchanges.
     {
         let mut text = String::new();
         for summary in store.list_conversations().map_err(db)? {
-            if let Some(c) = store.get_conversation(summary.id).map_err(db)? {
-                let value = serde_json::json!({
-                    "id": c.id, "title": c.title, "starred": c.starred,
-                    "created_at_unix_ms": c.created_at_unix_ms, "updated_at_unix_ms": c.updated_at_unix_ms,
-                    "exchanges": c.exchanges,
-                });
+            // `find_filter_json` is not exported, as `scope_kind` is not: it holds only a date range and an app id.
+            if let Some(value) = store.get_conversation_export(summary.id).map_err(db)? {
                 text.push_str(&value.to_string());
                 text.push('\n');
                 report.conversations += 1;
@@ -420,7 +472,8 @@ pub fn export_all(store: &Store, root: &Path, now_unix_ms: i64) -> ApiResult<Exp
          - `meetings/`: one Markdown file per meeting with its summary, decisions, action items, open questions, notes and transcript.\n\
          - `captures.jsonl`: screen text, one JSON object per line (time, app, window title, URL, text).\n\
          - `emails.jsonl`, `calendar.jsonl`, `snapshots.jsonl`: the same shape for email, calendar events and slide text.\n\
-         - `conversations.jsonl`: your Ask conversations with their answers and citations.\n\
+         - `mcp_items.jsonl`: items a client such as Claude added through MCP, one JSON object per line (what it was, its source, the client that added it, time, title, text, link and people).\n\
+         - `conversations.jsonl`: your Ask conversations with their answers, their citations and, for an answer with numbered sources, the sources it cited (number, kind and id), which provider answered, whether it was answered on this computer and how many items were left out.\n\
          - `routines.json`: your routines and their recent runs.\n\
          - `topics/`: Connected Topics as Obsidian notes, when you have any.\n\n\
          Audio recordings are not copied; they stay in the recordings folder Whimbrel names in Settings.\n",
@@ -515,6 +568,88 @@ mod tests {
         store
     }
 
+    fn added(store: &Store, token: i64, label: &str, id: &str, text: &str) {
+        let item = memory::mcp_items::NewMcpItem {
+            label: label.into(),
+            external_id: id.into(),
+            kind: "document".into(),
+            ts: "2026-11-21T14:03:00Z".into(),
+            title: Some("Plan".into()),
+            text: text.into(),
+            url: None,
+            people: vec![memory::mcp_items::McpPerson { name: Some("Ana".into()), email: Some("ana@contoso.com".into()), role: None }],
+        };
+        { let live: &memory::Store = store; while live.list_mcp_client_tokens().unwrap().len() < 12 { live.insert_mcp_client_token(&memory::NewMcpClientToken { name: "t".into(), token_hash: "h".into(), token_salt: "s".into(), scopes: vec!["write".into()] }).unwrap(); } }
+        let w = memory::mcp_items::McpWriter { token_id: token, client_name: format!("Client {token}") };
+        let clock = memory::mcp_items::WriteClock { now_unix_ms: 1_795_269_780_000, day_start_unix_ms: 1_795_219_200_000 };
+        assert_eq!(store.upsert_mcp_items(&w, &[item], &Default::default(), clock).unwrap().accepted, 1);
+    }
+
+    #[test]
+    fn your_data_export_writes_every_added_item_with_provenance() {
+        let store = seeded();
+        added(&store, 1, "sharepoint-work", "d1", "added text one");
+        added(&store, 1, "teams-work", "d2", "added text two");
+        added(&store, 7, "sharepoint-work", "d1", "added text three");
+        let dir = tempfile::tempdir().unwrap();
+        let report = export_all(&store, dir.path(), 1_795_269_780_000).unwrap();
+        assert_eq!(report.mcp_items, 3);
+        let folder = std::path::PathBuf::from(&report.folder);
+        let text = fs::read_to_string(folder.join("mcp_items.jsonl")).unwrap();
+        let rows: Vec<serde_json::Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(rows.len(), 3);
+        for r in &rows {
+            assert_eq!(r["declared_kind"], "document");
+            assert!(!r["source_label"].as_str().unwrap().starts_with("mcp:"), "{r}");
+            assert!(r["client"].as_str().unwrap().starts_with("Client "));
+            assert_eq!(r["ts"], "2026-11-21T14:03:00Z");
+            assert_eq!(r["people"][0]["email"], "ana@contoso.com");
+        }
+        assert_eq!(rows.iter().map(|r| r["source_label"].as_str().unwrap()).collect::<Vec<_>>(), vec!["sharepoint-work", "teams-work", "sharepoint-work"]);
+        let readme = fs::read_to_string(folder.join("README.md")).unwrap();
+        assert!(readme.contains("- `mcp_items.jsonl`: items a client such as Claude added through MCP, one JSON object per line (what it was, its source, the client that added it, time, title, text, link and people)."), "{readme}");
+    }
+
+    #[test]
+    fn added_items_are_in_no_other_export_file() {
+        let store = seeded();
+        added(&store, 1, "teams-work", "d1", "quokkacanary added text");
+        let dir = tempfile::tempdir().unwrap();
+        let report = export_all(&store, dir.path(), 1_795_269_780_000).unwrap();
+        let folder = std::path::PathBuf::from(&report.folder);
+        let mut holding = Vec::new();
+        for entry in walk(&folder) {
+            if fs::read_to_string(&entry).unwrap_or_default().contains("quokkacanary") {
+                holding.push(entry.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+        assert_eq!(holding, vec!["mcp_items.jsonl".to_string()]);
+    }
+
+    fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for e in fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn data_counts_counts_added_items() {
+        let store = seeded();
+        assert_eq!(store.data_counts().unwrap().mcp_items, 0);
+        added(&store, 1, "teams-work", "d1", "x");
+        added(&store, 2, "teams-work", "d1", "y");
+        assert_eq!(store.data_counts().unwrap().mcp_items, 2);
+        let old: memory::DataCounts = serde_json::from_str(r#"{"captures":1,"transcriptLines":0,"snapshots":0,"emails":0,"calendarEvents":0,"meetings":0,"episodes":0,"threads":0,"conversations":0,"routines":0,"routineRuns":0,"topics":0,"entities":0,"usageRows":0,"liveAlerts":0}"#).unwrap();
+        assert_eq!(old.mcp_items, 0, "an older payload without the field still decodes");
+    }
+
     #[test]
     fn counts_cover_every_kind() {
         let store = seeded();
@@ -551,6 +686,42 @@ mod tests {
         assert!(folder.join("routines.json").exists() && folder.join("conversations.jsonl").exists());
         assert!(!folder.join("topics").exists());
         assert!(report.files >= 7 && report.bytes > 0);
+    }
+
+    /// Finding: an exchange saved with numbered sources keeps what it holds in the export: the saved sources
+    /// (number, kind, id), the provider, whether it was answered on this computer and the left-out count.
+    #[test]
+    fn the_export_holds_the_saved_sources_of_a_new_page_answer_and_leaves_old_exchanges_alone() {
+        let store = seeded();
+        let conv = store.insert_conversation("Pricing", 1).unwrap();
+        store.append_conversation_exchange(conv, "old question", "old answer", "[]", Some("m"), 10).unwrap();
+        let sources = [memory::cards::SavedSource { n: 2, kind: "capture".into(), id: 7 }, memory::cards::SavedSource { n: 1, kind: "transcript".into(), id: 9 }];
+        store
+            .append_conversation_exchange_sourced(&memory::cards::NewSourcedExchange {
+                conversation_id: conv,
+                query: "new question",
+                answer: "new answer [2] [1]",
+                sources: &sources,
+                model: Some("gemma"),
+                provider: Some("ollama"),
+                answered_locally: true,
+                left_out: 3,
+                now_unix_ms: 20,
+            })
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let report = export_all(&store, dir.path(), 1_700_000_000_000).unwrap();
+        let text = fs::read_to_string(Path::new(&report.folder).join("conversations.jsonl")).unwrap();
+        let line: serde_json::Value = text.lines().map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()).find(|v| v["title"] == "Pricing").unwrap();
+        let ex = line["exchanges"].as_array().unwrap();
+        assert_eq!(ex.len(), 2);
+        // The old exchange is exactly what it was: no new keys.
+        let keys: std::collections::BTreeSet<&str> = ex[0].as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, ["answer", "citations_json", "created_at_unix_ms", "id", "model", "query"].into_iter().collect());
+        // The new one holds its cited sources, in the order saved, and the three fields.
+        assert_eq!(ex[1]["sources"], serde_json::json!([{"n": 2, "kind": "capture", "id": 7}, {"n": 1, "kind": "transcript", "id": 9}]));
+        assert_eq!((ex[1]["provider"].as_str(), ex[1]["answered_locally"].as_bool(), ex[1]["left_out"].as_i64()), (Some("ollama"), Some(true), Some(3)));
+        assert_eq!(ex[1]["citations_json"], "[]");
     }
 
     #[test]

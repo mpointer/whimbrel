@@ -80,6 +80,9 @@ pub enum ClientItemKind {
     Step,
     /// `topic_extraction` row (local id: its `source_key`).
     Extraction,
+    /// `items` row of kind `mcp_item` (local id: `items.id`): an item a local MCP client added. Never
+    /// synced: no tombstone. Forgotten here under a keyed hash (`mcp_items::mcp_forget_id`).
+    McpItem,
 }
 
 impl ClientItemKind {
@@ -93,6 +96,7 @@ impl ClientItemKind {
             Self::Conversation => "conversation",
             Self::Step => "step",
             Self::Extraction => "extraction",
+            Self::McpItem => "mcp_item",
         }
     }
 
@@ -106,6 +110,7 @@ impl ClientItemKind {
             "conversation" => Self::Conversation,
             "step" => Self::Step,
             "extraction" => Self::Extraction,
+            "mcp_item" => Self::McpItem,
             _ => return None,
         })
     }
@@ -319,6 +324,15 @@ pub(crate) fn identity(conn: &Connection, kind: ClientItemKind, local_id: &str) 
         ClientItemKind::Conversation => {
             conn.query_row(
                 "SELECT 1 FROM conversation WHERE id = ?1",
+                [row_id(local_id)?],
+                |_| Ok(()),
+            )?;
+            Ok(None)
+        }
+        // Never on another device: no identity there (the forgotten record is the keyed hash).
+        ClientItemKind::McpItem => {
+            conn.query_row(
+                "SELECT 1 FROM items WHERE id = ?1 AND kind = 'mcp_item'",
                 [row_id(local_id)?],
                 |_| Ok(()),
             )?;
@@ -592,7 +606,8 @@ fn delete_local(
             }
             ids.len()
         }
-        ClientItemKind::Conversation => 0,
+        // Never synced: no peer names one.
+        ClientItemKind::Conversation | ClientItemKind::McpItem => 0,
         ClientItemKind::Step => {
             let mut removed = 0;
             for key in local_topic_keys(conn, "topic_step", "key", opaque_id)? {
@@ -1068,6 +1083,18 @@ impl Store {
         kind: ClientItemKind,
         local_id: &str,
     ) -> rusqlite::Result<TombstoneOutcome> {
+        if kind == ClientItemKind::McpItem {
+            // Local only: the keyed record keeps the next `add_items` of it out; nothing is queued.
+            let (source, ext): (String, String) = tx.query_row(
+                "SELECT source, external_id FROM items WHERE id = ?1 AND kind = 'mcp_item'",
+                [row_id(local_id)?],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            let label = crate::mcp_items::label_of_source(&source).unwrap_or_default();
+            let opaque_id = crate::mcp_items::mcp_forget_id(tx, label, &ext)?;
+            record_forgotten(tx, kind.as_str(), &opaque_id, now_unix_ms())?;
+            return Ok(TombstoneOutcome::LocalOnly);
+        }
         let Some(opaque_id) = identity(tx, kind, local_id)? else {
             return Ok(TombstoneOutcome::LocalOnly);
         };
@@ -1710,6 +1737,19 @@ mod tests {
             Err(rusqlite::Error::QueryReturnedNoRows)
         ));
         assert!(s.enqueue_client_item_forgotten(ClientItemKind::Email, "not-a-number").is_err());
+    }
+
+    #[test]
+    fn client_deleting_a_conversation_drops_its_topic_link() {
+        let s = store("dev-a");
+        let c = s.insert_conversation("q", 1).unwrap();
+        s.set_conversation_topic(c, Some(1), true).unwrap();
+        s.delete_client_item(ClientItemKind::Conversation, &c.to_string()).unwrap();
+        let n: i64 = s
+            .conn
+            .query_row("SELECT COUNT(*) FROM topic_conversation WHERE conversation_id = ?1", [c], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[test]

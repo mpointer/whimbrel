@@ -13,6 +13,11 @@ name: Quick checks
 #   exempt), placeholders and plural forms match the English. The Apple source-vs-catalog
 #   check needs xcodebuild, so it runs in release-integrity.yml (macOS) and
 #   rust-tests.yml (iOS).
+# * Paywall check: app and core code may branch on a plan value only in the files that
+#   decode, fetch or render the server's answer (scripts/check-paywalls.py, allowlist in
+#   scripts/paywall-allow.txt), so no feature that runs on the device is kept behind a plan
+#   in the client. Its self-test plants a gate and expects it to fail. The publish review
+#   scan's self-test (scripts/test_public_review.py) runs here too.
 #
 # No paths-ignore: the name check covers docs and Markdown too. The l10n steps take
 # seconds, so running them on docs-only changes costs nothing extra.
@@ -36,7 +41,8 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
     # public mirror and for a pull request from a fork, so outside code never runs on it.
-    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
+    # With the repository variable MAC_BIG_CI set to on, either Mac runner takes it (label mac-pool; an internal runbook covers it).
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MAC_BIG_CI == 'on' && '["self-hosted","mac-pool"]' || '["self-hosted","macOS"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -49,3 +55,11 @@ jobs:
       - name: Catalog check
         if: ${{ !cancelled() }}
         run: python3 -I scripts/l10n/translate.py check
+      - name: Paywall check
+        if: ${{ !cancelled() }}
+        run: python3 -I scripts/check-paywalls.py
+      - name: Paywall check and publish review self-tests
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -I -m unittest discover -s scripts -p test_check_paywalls.py -v
+          python3 -I -m unittest discover -s scripts -p test_public_review.py -v

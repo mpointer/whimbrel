@@ -8,6 +8,9 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 
+use memory::cards::{SavedSource, SourceCard};
+use memory::find::FindFilter;
+
 use crate::budget::{apply_budgets, check_provider};
 use crate::envelope::{ApiError, ApiResult};
 use crate::exclusion::{ExclusionOutcome, RequestOrigin};
@@ -99,6 +102,13 @@ pub fn answer_detailed(
 pub fn question_names_excluded_client(store: &memory::Store, query: &str, history: &[llm::ChatTurn]) -> bool {
     let filter = crate::exclusion::context_filter(store);
     request_carries(store, &filter, query, history, &RequestOrigin::AskBar)
+}
+
+/// [`question_names_excluded_client`] for a question asked with `scope`: the filter's person is part of what the
+/// question names (asking about a person is asking about them), as the Ask's own routing counts it.
+pub fn question_names_excluded_client_scoped(store: &memory::Store, query: &str, history: &[llm::ChatTurn], scope: &AskScope) -> bool {
+    let filter = crate::exclusion::context_filter(store);
+    request_carries(store, &filter, &scope.carry_text(query), history, &RequestOrigin::AskBar)
 }
 
 /// [`answer_from`] through `filter`, read once by the caller (fix round 3).
@@ -335,46 +345,120 @@ pub(crate) fn answer_with_filter_by(
     chain: impl FnOnce() -> Vec<llm::ChainLink>,
     local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
 ) -> ApiResult<(llm::ChatAnswer, ExclusionOutcome, AnsweredBy)> {
-    let carries = request_carries(store, &filter, query, history, origin);
+    answer_scoped_by(store, filter, query, origin, context_limit, history, routing, chain, local_chain, &AskScope::default())
+        .map(|(answer, outcome, by, _, _)| (answer, outcome, by))
+}
 
+/// How a sourced Ask is bounded and where it may run.
+#[derive(Debug, Clone, Default)]
+pub struct AskScope {
+    /// Date, app and person bounds on every retrieval source. Empty means no bound: retrieval is then
+    /// exactly the unbounded call's.
+    pub filter: FindFilter,
+    /// Answer on this computer or fail: the call never reaches a hosted model, whatever the routing
+    /// says. A question that names an excluded client is answered locally either way.
+    pub require_local: bool,
+}
+
+impl AskScope {
+    /// The words that decide whether a request carries an excluded client: the question, and the person
+    /// the filter names (asking about one is asking about them). The question alone when no person is set.
+    fn carry_text<'a>(&self, query: &'a str) -> std::borrow::Cow<'a, str> {
+        match self.filter.clone().normalized().person {
+            Some(p) => std::borrow::Cow::Owned(format!("{query}\n{}", p.name)),
+            None => std::borrow::Cow::Borrowed(query),
+        }
+    }
+}
+
+/// The chain a blocking Ask walks, and whether it was chosen because the request carries an excluded
+/// client. The one place the blocking route is decided: [`answer_scoped_by`] and the route preview both call it.
+pub(crate) struct BlockingPlan {
+    pub(crate) chain: Vec<llm::ChainLink>,
+    /// The request carries an excluded client, so only on-device links were considered.
+    pub(crate) rerouted: bool,
+}
+
+/// The spend cap, then the links this request may use: on-device only for a request that carries an
+/// excluded client (refused when none), or when `require_local`; routing's own chain otherwise. Links over
+/// their monthly budget are dropped; `Err` when none is left.
+pub(crate) fn plan_blocking(
+    store: &memory::Store,
+    routing: &RoutingConfig,
+    carries: bool,
+    require_local: bool,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
+) -> ApiResult<BlockingPlan> {
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms())?;
-
-    let instructions = llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language);
-    let policy = routing.google_data_policy();
     if carries {
         let chain = apply_budgets(store, local_chain(), false, now_unix_ms())?;
         if chain.is_empty() {
             return Err(crate::exclusion::refused());
         }
+        return Ok(BlockingPlan { chain, rerouted: true });
+    }
+    // In local-only mode the routing's own chain is already on-device links only (and ignores the "use the
+    // local model" switch, as every Ask does in that mode), so `require_local` changes nothing there.
+    let links = if require_local && !routing.sensitive { local_chain() } else { chain() };
+    Ok(BlockingPlan { chain: apply_budgets(store, links, false, now_unix_ms())?, rerouted: false })
+}
+
+/// [`answer_with_filter_by`] bounded by `scope`, and it also returns the references of the items in the
+/// context of the link that answered, in prompt order: number `n` is `refs[n - 1]`, and the date range
+/// the retrieval used.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn answer_scoped_by(
+    store: &memory::Store,
+    filter: llm::ContextFilter,
+    query: &str,
+    origin: &RequestOrigin,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    scope: &AskScope,
+) -> ApiResult<(llm::ChatAnswer, ExclusionOutcome, AnsweredBy, Vec<llm::ContextItemRef>, Option<UsedRange>)> {
+    let carries = request_carries(store, &filter, &scope.carry_text(query), history, origin);
+
+    let plan = plan_blocking(store, routing, carries, scope.require_local, chain, local_chain)?;
+    // The person the filter names is resolved once for this Ask, whichever contexts it reads.
+    let bound = store.scope_ctx(&scope.filter).map_err(read_failed)?;
+
+    let instructions = llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language);
+    let policy = routing.google_data_policy();
+    if plan.rerouted {
+        let chain = plan.chain;
         let open = llm::ContextFilter::none();
-        let (context, label) = assemble_ask_context(store, query, context_limit, &open);
-        let (answer, entry) = llm::try_chain_with_failures(&chain, |entry| {
+        let (context, label, range) = assemble_ask_context_scoped(store, query, context_limit, &open, &bound)?;
+        let ((answer, refs), entry) = llm::try_chain_with_failures(&chain, |entry| {
             // Limited Use applies on this computer too (an Ollama host off loopback).
             let may_receive = llm::limited_use::link_may_receive_google_data(entry, policy);
             let context = llm::limited_use::filter_context_in(store, &context, may_receive);
             let (history, history_google) = history_for_link(store, history, may_receive);
             let answer = llm::answer_with_citations(entry.client.as_ref(), &history, query, &context, &instructions, label.as_deref())?;
             record_answer_provenance(store, &answer.text, history_google || context.iter().any(|c| c.is_google_user_data()));
-            Ok(answer)
+            Ok((answer, context.iter().map(llm::ContextItem::citation_ref).collect::<Vec<_>>()))
         })
         .map_err(crate::chain_failed)?;
         crate::util::log_link_usage(store, entry, "ask", answer.token_usage);
         mark_local_only(store, &answer.text);
-        return Ok((answer, ExclusionOutcome::LocalOnly, AnsweredBy::of(entry)));
+        return Ok((answer, ExclusionOutcome::LocalOnly, AnsweredBy::of(entry), refs, range));
     }
 
-    let chain = apply_budgets(store, chain(), false, now_unix_ms())?;
+    let chain = plan.chain;
     let hosted = crate::exclusion::chain_is_hosted(&chain);
     // Hosted links answer from memory without excluded material; on-device links from all of it.
     let open = llm::ContextFilter::none();
-    let (hosted_context, label) = assemble_ask_context(store, query, context_limit, if hosted { &filter } else { &open });
+    let (hosted_context, label, range) = assemble_ask_context_scoped(store, query, context_limit, if hosted { &filter } else { &open }, &bound)?;
     let local_context = if hosted && filter.is_active() && chain.iter().any(|l| !llm::is_hosted(l.provider, &l.model)) {
-        Some(assemble_ask_context(store, query, context_limit, &open).0)
+        Some(assemble_ask_context_scoped(store, query, context_limit, &open, &bound)?.0)
     } else {
         None
     };
-    let (answer, entry) = llm::try_chain_with_failures(&chain, |entry| {
+    let ((answer, refs), entry) = llm::try_chain_with_failures(&chain, |entry| {
         let context = match &local_context {
             Some(local) if !llm::is_hosted(entry.provider, &entry.model) => local,
             _ => &hosted_context,
@@ -387,7 +471,7 @@ pub(crate) fn answer_with_filter_by(
         let answer = llm::answer_with_citations(entry.client.as_ref(), &history, query, &context, &instructions, label.as_deref())?;
         // The answer inherits the taint of the context and the turns this link received.
         record_answer_provenance(store, &answer.text, history_google || context.iter().any(|c| c.is_google_user_data()));
-        Ok(answer)
+        Ok((answer, context.iter().map(llm::ContextItem::citation_ref).collect::<Vec<_>>()))
     })
     .map_err(crate::chain_failed)?;
     crate::util::log_link_usage(store, entry, "ask", answer.token_usage);
@@ -397,11 +481,11 @@ pub(crate) fn answer_with_filter_by(
     let used = local_context.as_ref().filter(|_| !answered_hosted).unwrap_or(&hosted_context);
     if !answered_hosted && filter.is_active() && (filter.is_closed() || used.iter().any(|i| !filter.keeps(i))) {
         mark_local_only(store, &answer.text);
-        return Ok((answer, ExclusionOutcome::LocalOnly, AnsweredBy::of(entry)));
+        return Ok((answer, ExclusionOutcome::LocalOnly, AnsweredBy::of(entry), refs, range));
     }
     mark_clean(store, clean_stamp(&filter, store, used, [], &[query], history), &answer.text);
     let outcome = ExclusionOutcome::after_hosted(answered_hosted, &filter);
-    Ok((answer, outcome, AnsweredBy::of(entry)))
+    Ok((answer, outcome, AnsweredBy::of(entry), refs, range))
 }
 
 /// Limited Use: `history` as one link may receive it, and whether the turns kept hold
@@ -438,34 +522,137 @@ pub(crate) fn record_answer_provenance(store: &memory::Store, answer: &str, goog
     let _ = store.record_answer_provenance(answer, google, now_unix_ms());
 }
 
-/// Shared phase-A logic for both the blocking [`answer`] and the streaming
-/// [`prepare_ask`]: date-scoped ("today"/"yesterday") or generic context retrieval, through
-/// `filter` (open for a prompt that stays on this computer).
+/// [`assemble_ask_context_scoped`] with no bound (the tests' shorthand).
+#[cfg(test)]
 fn assemble_ask_context(
     store: &memory::Store,
     query: &str,
     context_limit: usize,
     filter: &llm::ContextFilter,
 ) -> (Vec<llm::ContextItem>, Option<String>) {
-    match llm::detect_date_scope(query) {
+    let bound = store.scope_ctx(&FindFilter::default()).unwrap();
+    let (items, label, _) = assemble_ask_context_scoped(store, query, context_limit, filter, &bound).unwrap();
+    (items, label)
+}
+
+/// The date range an Ask's retrieval was bounded by: the filter's own, or the window of a "today" or
+/// "yesterday" question. `None` for no date bound. A side is `None` when the filter leaves it open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct UsedRange {
+    /// Inclusive.
+    pub start_unix_ms: Option<i64>,
+    /// Exclusive.
+    pub end_unix_ms: Option<i64>,
+}
+
+/// Shared phase-A logic for both the blocking [`answer`] and the streaming
+/// [`prepare_ask`]: date-scoped ("today"/"yesterday") or generic context retrieval, through
+/// `filter` (open for a prompt that stays on this computer). With a non-empty `scope` every source is
+/// bounded by it. A date filter wins over the question's own day: with one set, retrieval is the normal
+/// query path over the filter's range (the question's words still search), and the prompt's date label,
+/// when the question names a day, describes that range, not the day; without one, a "today" or
+/// "yesterday" question reads its window, narrowed by the app and person bounds. With no scope this is
+/// the unbounded retrieval, call for call. The last element is the range actually used.
+fn assemble_ask_context_scoped(
+    store: &memory::Store,
+    query: &str,
+    context_limit: usize,
+    filter: &llm::ContextFilter,
+    scope: &memory::find::ScopeCtx<'_>,
+) -> ApiResult<(Vec<llm::ContextItem>, Option<String>, Option<UsedRange>)> {
+    let now = now_unix_ms();
+    let day = llm::detect_date_scope(query);
+    if !scope.is_empty() {
+        let bound = scope.filter();
+        let dated = bound.start_unix_ms.is_some() || bound.end_unix_ms.is_some();
+        if let (Some(date_scope), false) = (day, dated) {
+            let (start, end) = llm::date_scope_bounds(date_scope, now);
+            let items =
+                llm::scoped::gather_and_assemble_context_for_window_scoped(store, now, start, end, context_limit, true, filter, scope).map_err(read_failed)?;
+            return Ok((items, Some(llm::format_date_scope_label(date_scope, start)), Some(UsedRange { start_unix_ms: Some(start), end_unix_ms: Some(end) })));
+        }
+        // The normal query path: over the filter's range when it has dates (which win over the question's day).
+        let items = llm::scoped::gather_and_assemble_context_scoped(store, query, now, context_limit, true, true, filter, scope).map_err(read_failed)?;
+        let label = day.filter(|_| dated).map(|_| llm::format_date_range_label(bound.start_unix_ms, bound.end_unix_ms));
+        let range = dated.then_some(UsedRange { start_unix_ms: bound.start_unix_ms, end_unix_ms: bound.end_unix_ms });
+        return Ok((items, label, range));
+    }
+    match day {
         Some(scope) => {
-            let (start, end) = llm::date_scope_bounds(scope, now_unix_ms());
-            let items = llm::gather_and_assemble_context_for_window(
+            let (start, end) = llm::date_scope_bounds(scope, now);
+            // Ask's dated window reads added items too; the routines' window does not.
+            let items = llm::gather_and_assemble_context_for_window_with_added(
                 store,
                 "",
-                now_unix_ms(),
+                now,
                 start,
                 end,
                 context_limit,
                 true,
                 filter,
             );
-            (items, Some(llm::format_date_scope_label(scope, start)))
+            Ok((items, Some(llm::format_date_scope_label(scope, start)), Some(UsedRange { start_unix_ms: Some(start), end_unix_ms: Some(end) })))
         }
-        None => (
-            llm::gather_and_assemble_context(store, query, now_unix_ms(), context_limit, true, true, filter),
+        None => Ok((
+            llm::gather_and_assemble_context(store, query, now, context_limit, true, true, filter),
             None,
-        ),
+            None,
+        )),
+    }
+}
+
+/// A scoped read that failed: a filter that does not validate is [`ApiError::InvalidFilter`]; any other
+/// error is a database failure ([`ApiError::StoreFailure`]). Never an answer from what could still be read.
+fn read_failed(e: rusqlite::Error) -> ApiError {
+    match e {
+        rusqlite::Error::InvalidParameterName(_) => ApiError::InvalidFilter,
+        _ => ApiError::StoreFailure,
+    }
+}
+
+/// A topic Ask's search limit starts at this many times its context limit...
+const SCOPE_POOL_START: usize = 4;
+/// ...doubles while too few of the topic's items are found, and stops at this many times: a
+/// bound on the work one topic Ask does (five retrievals at most) when memory is large and
+/// semantic search, which always fills its limit, never runs short.
+const SCOPE_POOL_MAX: usize = 64;
+
+/// [`assemble_ask_context`] over the items `scope` keeps (a topic Ask). Items outside the scope
+/// are dropped before packing, so they take no budget. The search limit widens from
+/// `SCOPE_POOL_START` to `SCOPE_POOL_MAX` times `context_limit` until `context_limit` items in
+/// scope are found or retrieval is exhausted (every search leg came back short); the result
+/// holds at most `context_limit` items, in retrieval order.
+fn assemble_ask_context_in_scope(
+    store: &memory::Store,
+    query: &str,
+    context_limit: usize,
+    filter: &llm::ContextFilter,
+    scope: llm::Scope<'_>,
+) -> (Vec<llm::ContextItem>, Option<String>) {
+    let window = llm::detect_date_scope(query).map(|scope| (scope, llm::date_scope_bounds(scope, now_unix_ms())));
+    let mut factor = SCOPE_POOL_START;
+    loop {
+        let limit = context_limit.saturating_mul(factor);
+        let found = match window {
+            Some((_, (start, end))) => llm::gather_and_assemble_context_for_window_in_scope(
+                store,
+                "",
+                now_unix_ms(),
+                start,
+                end,
+                limit,
+                true,
+                filter,
+                scope,
+            ),
+            None => llm::gather_and_assemble_context_in_scope(store, query, now_unix_ms(), limit, true, true, filter, scope),
+        };
+        if found.items.len() >= context_limit || found.exhausted || factor >= SCOPE_POOL_MAX {
+            let mut items = found.items;
+            items.truncate(context_limit);
+            return (items, window.map(|(scope, (start, _))| llm::format_date_scope_label(scope, start)));
+        }
+        factor *= 2;
     }
 }
 
@@ -515,6 +702,20 @@ pub(crate) fn prepared_asks() -> &'static Mutex<HashMap<String, PreparedAsk>> {
     PREPARED_ASKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many asks THIS thread has stashed. Tests run in parallel against the process-global
+    /// map, so its length is not a safe way to ask "did my call stash anything?"; this is.
+    static STASHED_ON_THIS_THREAD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Stashes a prepared ask for `finalize_ask` to pick up. The one place a prepare writes the map.
+pub(crate) fn stash_prepared(prepare_id: String, prepared: PreparedAsk) {
+    #[cfg(test)]
+    STASHED_ON_THIS_THREAD.with(|n| n.set(n.get() + 1));
+    prepared_asks().lock().unwrap().insert(prepare_id, prepared);
+}
+
 pub(crate) fn provider_for_streamed_answer(routing: &RoutingConfig) -> llm::Provider {
     if routing.sensitive {
         return llm::Provider::Ollama;
@@ -533,11 +734,15 @@ pub(crate) fn provider_for_streamed_answer(routing: &RoutingConfig) -> llm::Prov
 /// [`discard_ask`]) exactly once, and the exact prompt `answer_with_citations` would
 /// have sent, for the caller to stream against. Field order is the wire order. `exclusion`
 /// says what client exclusion did, for the shell to show locally (never in the prompt).
+/// `scope_empty` is true only from [`prepare_ask_in_topic`] when nothing in the topic matched
+/// (or Limited Use left nothing for the streamed provider):
+/// then nothing was stashed or sent, and `prepare_id` and `prompt` are empty.
 #[derive(Debug, Clone, Serialize)]
 pub struct PreparedAskData {
     pub prepare_id: String,
     pub prompt: String,
     pub exclusion: ExclusionOutcome,
+    pub scope_empty: bool,
 }
 
 /// #74: the assembly half of [`answer`], for a caller that wants to stream the actual
@@ -552,7 +757,7 @@ pub fn prepare_ask(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
 ) -> ApiResult<PreparedAskData> {
-    prepare_ask_with(store, query, RequestOrigin::AskBar, context_limit, history, routing, None)
+    prepare_ask_with(store, query, RequestOrigin::AskBar, context_limit, history, routing, None, None)
 }
 
 /// [`prepare_ask`] with this call's own Limited Use settings (`call`, read from this
@@ -566,7 +771,7 @@ pub fn prepare_ask_for(
     routing: &RoutingConfig,
     call: &crate::routing::LimitedUseSettings,
 ) -> ApiResult<PreparedAskData> {
-    prepare_ask_with(store, query, RequestOrigin::AskBar, context_limit, history, routing, Some(call))
+    prepare_ask_with(store, query, RequestOrigin::AskBar, context_limit, history, routing, Some(call), None)
 }
 
 /// [`prepare_ask`] for a question asked from `origin`. The shell streams against the routing's
@@ -581,9 +786,79 @@ pub fn prepare_ask_from(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
 ) -> ApiResult<PreparedAskData> {
-    prepare_ask_with(store, query, origin, context_limit, history, routing, None)
+    prepare_ask_with(store, query, origin, context_limit, history, routing, None, None)
 }
 
+/// [`prepare_ask`] over one topic's items (screen 5, call 1): asked from that topic's page
+/// (`RequestOrigin::TopicPage`), so an excluded client's topic is refused for a hosted stream
+/// and answered on this computer (call 4), with every exclusion, spend-cap and Limited Use step
+/// of [`prepare_ask`] in the same order. A topic with no live key (unknown, gone) is asked as
+/// from the Ask bar; a key that cannot be read is `Unreadable` (refused for a hosted stream).
+/// Retrieval keeps only items whose topic item is a non-removed member of `topic_id` (any
+/// member, not only items that prefer this topic; merges followed), dropped before packing, and
+/// widens its search until `context_limit` such items are found, retrieval is exhausted, or the
+/// bound is reached ([`assemble_ask_context_in_scope`]). When none are found, or Limited Use
+/// leaves none for the streamed provider (a topic of only Gmail threads), nothing is stashed or
+/// sent: `scope_empty` is true and `prepare_id` and `prompt` are empty (the shell says so and
+/// offers to ask everything). That return comes after the refusals and the Limited Use filter
+/// and before the spend-cap check, which records an event.
+pub fn prepare_ask_in_topic(
+    store: &memory::Store,
+    topic_id: i64,
+    query: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+) -> ApiResult<PreparedAskData> {
+    prepare_ask_in_topic_with(store, topic_id, query, context_limit, history, routing, None)
+}
+
+/// [`prepare_ask_in_topic`] with this call's own Limited Use settings (`call`, read from this
+/// call's routing JSON), as [`prepare_ask_for`] is to [`prepare_ask`].
+pub fn prepare_ask_in_topic_for(
+    store: &memory::Store,
+    topic_id: i64,
+    query: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    call: &crate::routing::LimitedUseSettings,
+) -> ApiResult<PreparedAskData> {
+    prepare_ask_in_topic_with(store, topic_id, query, context_limit, history, routing, Some(call))
+}
+
+fn prepare_ask_in_topic_with(
+    store: &memory::Store,
+    topic_id: i64,
+    query: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    call: Option<&crate::routing::LimitedUseSettings>,
+) -> ApiResult<PreparedAskData> {
+    let origin = match store.topic_key(topic_id) {
+        Ok(Some(key)) => RequestOrigin::TopicPage { key },
+        Ok(None) => RequestOrigin::AskBar,
+        Err(_) => RequestOrigin::Unreadable,
+    };
+    let in_topic = |item: &llm::ContextItem| item_in_topic(store, topic_id, item);
+    prepare_ask_with(store, query, origin, context_limit, history, routing, call, Some(&in_topic))
+}
+
+/// Whether `item` is filed under live topic `topic_id`: its citation's topic item (a transcript
+/// line is its meeting, a capture its episode) is a non-removed member of that topic, whichever
+/// topic it prefers. An item with no topic item, or a lookup that fails, is not in the topic.
+fn item_in_topic(store: &memory::Store, topic_id: i64, item: &llm::ContextItem) -> bool {
+    let (kind, id) = crate::conversations::kind_and_id(&item.citation_ref());
+    match store.topic_item_for_citation(kind, id) {
+        Ok(Some((item_kind, ref_id))) => store.item_in_topic(&item_kind, ref_id, topic_id).unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// The one streamed Ask prepare. `keep`, when given, scopes retrieval to the items it keeps
+/// ([`prepare_ask_in_topic`]); every other step is the same with or without it.
+#[allow(clippy::too_many_arguments)]
 fn prepare_ask_with(
     store: &memory::Store,
     query: &str,
@@ -592,29 +867,120 @@ fn prepare_ask_with(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
     call: Option<&crate::routing::LimitedUseSettings>,
+    keep: Option<&dyn Fn(&llm::ContextItem) -> bool>,
 ) -> ApiResult<PreparedAskData> {
-    crate::exclusion::refresh_published_gate(store);
-    let filter = crate::exclusion::context_filter(store);
+    prepare_ask_scoped_in(store, query, origin, context_limit, history, routing, call, &AskScope::default(), keep).map(|p| p.data)
+}
+
+/// What a streamed Ask does with this routing before anything is read, for a request that
+/// `carries` an excluded client or not. The one decision [`prepare_ask_scoped`] and the route preview share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamDecision {
+    /// Nothing streams. `reason` is `local_only_cloud_or_unknown_model` (local-only mode, and the Ollama
+    /// model is a cloud model or not stated) or `names_excluded_client_hosted_stream` (the request
+    /// carries an excluded client and the stream would leave this computer: the shell asks again on this computer).
+    Refuse { reason: &'static str },
+    /// The shell streams against `provider`; `hosted` says that stream leaves this computer.
+    Stream { provider: llm::Provider, hosted: bool },
+}
+
+pub(crate) fn stream_decision(routing: &RoutingConfig, carries: bool) -> StreamDecision {
     if crate::exclusion::local_only_mode_refuses(routing) {
-        return Err(crate::exclusion::refused());
+        return StreamDecision::Refuse { reason: "local_only_cloud_or_unknown_model" };
     }
-    let carries = request_carries(store, &filter, query, history, &origin);
     let hosted = crate::exclusion::streamed_is_hosted(routing);
     if carries && hosted {
-        return Err(crate::exclusion::refused());
+        return StreamDecision::Refuse { reason: "names_excluded_client_hosted_stream" };
     }
-    let open = llm::ContextFilter::none();
-    let (context, date_scope_label) = assemble_ask_context(store, query, context_limit, if hosted { &filter } else { &open });
+    StreamDecision::Stream { provider: provider_for_streamed_answer(routing), hosted }
+}
 
-    let cap_config = routing.spend_cap_config();
-    llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms())?;
+/// What [`prepare_ask_scoped`] hands back: the plain [`PreparedAskData`], the references of the prompt's
+/// items in order (number `n` is `refs[n - 1]`), the provider streamed against, and whether that stream
+/// stays on this computer.
+pub(crate) struct PreparedScoped {
+    pub(crate) data: PreparedAskData,
+    pub(crate) refs: Vec<llm::ContextItemRef>,
+    pub(crate) provider: llm::Provider,
+    pub(crate) local: bool,
+    pub(crate) range: Option<UsedRange>,
+}
+
+/// [`prepare_ask_with`] bounded by `scope`: its filter bounds retrieval, and `require_local` makes the
+/// routing local-only for this call, so a hosted provider or an Ollama cloud model is refused (the
+/// existing local-only refusal) rather than streamed to.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_ask_scoped(
+    store: &memory::Store,
+    query: &str,
+    origin: RequestOrigin,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    call: Option<&crate::routing::LimitedUseSettings>,
+    scope: &AskScope,
+) -> ApiResult<PreparedScoped> {
+    prepare_ask_scoped_in(store, query, origin, context_limit, history, routing, call, scope, None)
+}
+
+/// [`prepare_ask_scoped`] that can also keep only the items `keep` keeps (a topic Ask,
+/// [`prepare_ask_in_topic`]); every other step is the same with or without it. `keep` and a
+/// non-empty `scope.filter` are not combined: the topic Ask passes the default scope.
+#[allow(clippy::too_many_arguments)]
+fn prepare_ask_scoped_in(
+    store: &memory::Store,
+    query: &str,
+    origin: RequestOrigin,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    call: Option<&crate::routing::LimitedUseSettings>,
+    scope: &AskScope,
+    keep: Option<&dyn Fn(&llm::ContextItem) -> bool>,
+) -> ApiResult<PreparedScoped> {
+    crate::exclusion::refresh_published_gate(store);
+    let filter = crate::exclusion::context_filter(store);
+    let forced;
+    let routing = if scope.require_local {
+        forced = RoutingConfig { sensitive: true, ..routing.clone() };
+        &forced
+    } else {
+        routing
+    };
+    let carries = request_carries(store, &filter, &scope.carry_text(query), history, &origin);
+    let hosted = match stream_decision(routing, carries) {
+        StreamDecision::Refuse { .. } => return Err(crate::exclusion::refused()),
+        StreamDecision::Stream { hosted, .. } => hosted,
+    };
+    let open = llm::ContextFilter::none();
+    let retrieval_filter = if hosted { &filter } else { &open };
+    let (context, date_scope_label, range) = match keep {
+        None => {
+            let bound = store.scope_ctx(&scope.filter).map_err(read_failed)?;
+            assemble_ask_context_scoped(store, query, context_limit, retrieval_filter, &bound)?
+        }
+        Some(keep) => {
+            let (items, label) = assemble_ask_context_in_scope(store, query, context_limit, retrieval_filter, keep);
+            (items, label, None)
+        }
+    };
     // The shell streams against this one provider: pinned, no fallthrough.
     let provider = provider_for_streamed_answer(routing);
-    check_provider(store, provider, now_unix_ms())?;
     // Limited Use: the prompt (and the citable context) holds Gmail threads only when the
     // provider streamed against may receive Google user data.
     let may_receive_google = crate::routing::streamed_may_receive_google_data(provider, call);
     let context = llm::limited_use::filter_context_in(store, &context, may_receive_google);
+    if keep.is_some() && context.is_empty() {
+        // Nothing in scope to send (none matched, or Limited Use left none): no prompt is
+        // built, stashed or marked. A hosted stream still reports what the filter left out.
+        let exclusion = if hosted { ExclusionOutcome::after_hosted(true, &filter) } else { ExclusionOutcome::Allowed };
+        let data = PreparedAskData { prepare_id: String::new(), prompt: String::new(), exclusion, scope_empty: true };
+        return Ok(PreparedScoped { data, refs: Vec::new(), provider, local: !hosted, range });
+    }
+
+    let cap_config = routing.spend_cap_config();
+    llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms())?;
+    check_provider(store, provider, now_unix_ms())?;
     // Earlier answers built from Google data follow the same rule.
     let (history, history_google) = history_for_link(store, history, may_receive_google);
 
@@ -634,11 +1000,12 @@ fn prepare_ask_with(
     };
     let prepare_id = llm::streaming::new_run_id();
     let clean_keys = clean_keys_for(store, &filter, exclusion, &context, [], &[query], &history);
-    prepared_asks().lock().unwrap().insert(
+    let refs: Vec<llm::ContextItemRef> = context.iter().map(llm::ContextItem::citation_ref).collect();
+    stash_prepared(
         prepare_id.clone(),
         PreparedAsk { context, provider, exclusion, clean_keys, history_google: Some(history_google) },
     );
-    Ok(PreparedAskData { prepare_id, prompt, exclusion })
+    Ok(PreparedScoped { data: PreparedAskData { prepare_id, prompt, exclusion, scope_empty: false }, refs, provider, local: !hosted, range })
 }
 
 /// A prompt built for a stream on this computer: when it carries an excluded client's
@@ -756,7 +1123,7 @@ pub(crate) fn prepare_meeting_ask_with(
     let prepare_id = llm::streaming::new_run_id();
     let meeting_ref = memory::topics::exclusion::input_ref("meeting", meeting_id);
     let clean_keys = clean_keys_for(store, &filter, exclusion, &context, [meeting_ref], &[query], history);
-    prepared_asks().lock().unwrap().insert(
+    stash_prepared(
         prepare_id.clone(),
         PreparedAsk { context, provider, exclusion, clean_keys, history_google: Some(google) },
     );
@@ -1065,6 +1432,17 @@ pub fn finalize_ask(
     // The guard is dropped at the end of this statement — nothing below runs while the
     // map is locked (ADR 0001).
     let prepared = prepared_asks().lock().unwrap().remove(prepare_id);
+    finalize_prepared(store, prepared, final_text, model, usage)
+}
+
+/// [`finalize_ask`] over a prepare already taken out of the stash.
+fn finalize_prepared(
+    store: &memory::Store,
+    prepared: Option<PreparedAsk>,
+    final_text: &str,
+    model: &str,
+    usage: llm::TokenUsage,
+) -> FinalizedAsk {
     let citations = match &prepared {
         Some(prepared) => llm::extract_citations(final_text, &prepared.context),
         None => Vec::new(),
@@ -1092,6 +1470,408 @@ pub fn finalize_ask(
 /// (the only other remover) never runs on those paths. A no-op for an unknown id.
 pub fn discard_ask(prepare_id: &str) {
     prepared_asks().lock().unwrap().remove(prepare_id);
+}
+
+// ---- numbered sources (screen 5) -------------------------------------------------------------
+
+/// One item the model saw, by its number in the prompt (`[n]`), with its card read from the live row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NumberedSource {
+    pub n: usize,
+    pub card: SourceCard,
+    /// The row could not be read just now (a database error), which is not the same as gone: `card.found`
+    /// is false either way, but an unreadable source may well exist, and a page must not say it is "no
+    /// longer on this device".
+    pub unreadable: bool,
+}
+
+fn ref_key(r: &llm::ContextItemRef) -> (String, i64) {
+    match *r {
+        llm::ContextItemRef::Capture { id } => ("capture".into(), id),
+        llm::ContextItemRef::Transcript { id } => ("transcript".into(), id),
+        llm::ContextItemRef::RoutineRun { id } => ("routine_run".into(), id),
+        llm::ContextItemRef::Episode { id } => ("episode".into(), id),
+        llm::ContextItemRef::Thread { id } => ("thread".into(), id),
+        llm::ContextItemRef::Snapshot { id } => ("snapshot".into(), id),
+        llm::ContextItemRef::McpItem { id } => ("mcp_item".into(), id),
+    }
+}
+
+/// The cards for the prompt's items, numbered from 1 in prompt order, read from the live rows now. A row
+/// gone since the prompt was built comes back with `found: false` and no text. A read that FAILS marks
+/// every card `unreadable` (and `found: false`, no text), so it is never mistaken for a deleted row.
+pub fn numbered_sources(store: &memory::Store, refs: &[llm::ContextItemRef]) -> Vec<NumberedSource> {
+    let keys: Vec<(String, i64)> = refs.iter().map(ref_key).collect();
+    let (cards, unreadable) = match store.resolve_cards(&keys) {
+        Ok(cards) => (cards, false),
+        Err(_) => (keys.iter().map(|(k, id)| SourceCard { kind: k.clone(), id: *id, ..Default::default() }).collect(), true),
+    };
+    cards.into_iter().enumerate().map(|(i, card)| NumberedSource { n: i + 1, card, unreadable }).collect()
+}
+
+/// The sources an answer cited, as they are saved: number, kind and id only.
+pub fn saved_sources(refs: &[llm::ContextItemRef], cited: &[usize]) -> Vec<SavedSource> {
+    cited
+        .iter()
+        .filter_map(|n| refs.get(n.checked_sub(1)?).map(|r| (*n, ref_key(r))))
+        .map(|(n, (kind, id))| SavedSource { n: n as i64, kind, id })
+        .collect()
+}
+
+/// [`DetailedAnswer`] with the numbered list the model saw and which numbers the answer cited.
+#[derive(Debug, Clone, Serialize)]
+pub struct SourcedAnswer {
+    #[serde(flatten)]
+    pub detailed: DetailedAnswer,
+    /// Every item in the prompt of the link that answered, by number.
+    pub sources: Vec<NumberedSource>,
+    /// The numbers the answer cites, in first-cited order. A number outside the list is dropped.
+    pub cited: Vec<usize>,
+    /// The cited ones as the conversation saves them (`{n, kind, id}`).
+    pub cited_sources: Vec<SavedSource>,
+    /// The answer was made on this computer: an on-device link, or a question rerouted for an excluded
+    /// client. False for an Ollama cloud model, which `answered_by.local` counts as local. Save this one.
+    pub answered_locally: bool,
+    /// The date range the retrieval used: the filter's own (a date filter wins over a "yesterday" in the
+    /// question), or the window of a "today" or "yesterday" question. Null for no date bound.
+    pub date_range: Option<UsedRange>,
+}
+
+/// [`answer_detailed`] bounded by `scope`, returning the numbered context. `scope.filter` bounds every
+/// retrieval source; `scope.require_local` keeps the call on this computer (it fails with the existing
+/// provider failure when no on-device link can answer). Exclusion runs first, as for every Ask.
+pub fn answer_sourced(
+    store: &memory::Store,
+    query: &str,
+    ollama_model: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    scope: &AskScope,
+) -> ApiResult<SourcedAnswer> {
+    let scope = &checked_scope(scope)?;
+    let filter = crate::exclusion::context_filter(store);
+    let (answer, exclusion, answered_by, refs, date_range) = answer_scoped_by(
+        store,
+        filter,
+        query,
+        &RequestOrigin::AskBar,
+        context_limit,
+        history,
+        routing,
+        || build_chain_for(llm::TaskKind::Chat, ollama_model, routing, &crate::exclusion::current_gate(store)),
+        || build_local_chain(ollama_model, routing),
+        scope,
+    )?;
+    let cited = llm::cited_numbers(&answer.text, refs.len());
+    let answered_locally =
+        exclusion == ExclusionOutcome::LocalOnly || llm::Provider::parse(&answered_by.provider).map_or(answered_by.local, |p| !llm::is_hosted(p, &answered_by.model));
+    Ok(SourcedAnswer {
+        answered_locally,
+        sources: numbered_sources(store, &refs),
+        cited_sources: saved_sources(&refs, &cited),
+        cited,
+        date_range,
+        detailed: DetailedAnswer { answer, exclusion, answered_by },
+    })
+}
+
+/// [`PreparedAskData`] with the numbered list the prompt holds.
+#[derive(Debug, Clone, Serialize)]
+pub struct PreparedAskSourced {
+    #[serde(flatten)]
+    pub data: PreparedAskData,
+    pub sources: Vec<NumberedSource>,
+    /// The provider the shell streams against.
+    pub provider: String,
+    /// The stream stays on this computer. Saved with the answer.
+    pub answered_locally: bool,
+    /// The date range the retrieval used (see [`SourcedAnswer::date_range`]).
+    pub date_range: Option<UsedRange>,
+}
+
+/// `scope` with its filter validated and normalized, or the refusal for one that could widen the Ask
+/// ([`FindFilter::validated`]). A filter that does not validate is an error, never an unbounded search:
+/// it is [`ApiError::InvalidFilter`] (nothing is read or sent).
+fn checked_scope(scope: &AskScope) -> ApiResult<AskScope> {
+    let filter = scope.filter.clone().validated().map_err(|_| ApiError::InvalidFilter)?;
+    Ok(AskScope { filter, require_local: scope.require_local })
+}
+
+/// [`prepare_ask_for`] bounded by `scope`. With `scope.require_local` the routing is local-only for this
+/// call: a hosted provider, an Ollama cloud model, or an Ollama model the routing does not name is refused
+/// with the existing local-only refusal. Core cannot stop a shell from streaming the prompt somewhere else;
+/// a shell that said "on this computer" must stream it to its on-device model only.
+pub fn prepare_ask_sourced(
+    store: &memory::Store,
+    query: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    call: &crate::routing::LimitedUseSettings,
+    scope: &AskScope,
+) -> ApiResult<PreparedAskSourced> {
+    let scope = &checked_scope(scope)?;
+    let p = prepare_ask_scoped(store, query, RequestOrigin::AskBar, context_limit, history, routing, Some(call), scope)?;
+    Ok(PreparedAskSourced {
+        sources: numbered_sources(store, &p.refs),
+        provider: p.provider.as_str().to_string(),
+        answered_locally: p.local,
+        date_range: p.range,
+        data: p.data,
+    })
+}
+
+/// [`FinalizedAsk`] with the numbers the answer cited.
+#[derive(Debug, Clone, Serialize)]
+pub struct FinalizedAskSourced {
+    pub citations: Vec<llm::ContextItemRef>,
+    pub exclusion: ExclusionOutcome,
+    /// The cited numbers, first-cited order, within the list the prepare returned.
+    pub cited: Vec<usize>,
+    /// The cited items as the conversation saves them (`{n, kind, id}`).
+    pub cited_sources: Vec<SavedSource>,
+    /// How many retrieved items exclusion left out of the prompt (0 unless a hosted model answered).
+    pub left_out: i64,
+}
+
+/// [`finalize_ask`] that also returns the cited numbers, taken against the list the same prepare
+/// returned (kept with the prepared state). An unknown or already finalized id cites nothing.
+pub fn finalize_ask_sourced(
+    store: &memory::Store,
+    prepare_id: &str,
+    final_text: &str,
+    model: &str,
+    usage: llm::TokenUsage,
+) -> FinalizedAskSourced {
+    let prepared = prepared_asks().lock().unwrap().remove(prepare_id);
+    let refs: Vec<llm::ContextItemRef> = prepared.as_ref().map(|p| p.context.iter().map(llm::ContextItem::citation_ref).collect()).unwrap_or_default();
+    let finalized = finalize_prepared(store, prepared, final_text, model, usage);
+    let cited = llm::cited_numbers(final_text, refs.len());
+    let left_out = match finalized.exclusion {
+        ExclusionOutcome::FilteredHosted { left_out } => left_out as i64,
+        _ => 0,
+    };
+    FinalizedAskSourced { cited_sources: saved_sources(&refs, &cited), cited, citations: finalized.citations, exclusion: finalized.exclusion, left_out }
+}
+
+// ---- where an Ask would be answered ("the button's name is a promise") ------------------------
+
+/// Which call a preview is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteMode {
+    /// `prepare_ask_sourced` and a stream by the shell: pinned to the routing's provider.
+    Stream,
+    /// `answer_sourced`: the provider chain, which falls through on a failure.
+    Blocking,
+}
+
+/// Where an Ask would be answered, from the same decisions the call makes.
+///
+/// `destination`: `local` (this computer), `hosted` (it leaves this computer), `refused` (the call
+/// would fail: see `reason`) or `unknown` (it cannot be known before sending). `local` is `true` only for
+/// `local`. `provider` and `model` are the first link, or the provider the shell streams against.
+///
+/// `require_local` says to pass `require_local` to the Ask call (and to any blocking fallback of a stream):
+/// set for every `local` answer, so the call never falls through to a hosted model.
+/// `may_fall_back` (hosted only): a failure can move the answer to another provider in the chain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RoutePreview {
+    pub destination: &'static str,
+    pub local: bool,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub reason: &'static str,
+    pub require_local: bool,
+    pub may_fall_back: bool,
+}
+
+impl RoutePreview {
+    fn new(destination: &'static str, reason: &'static str) -> Self {
+        RoutePreview { destination, local: destination == "local", provider: None, model: None, reason, require_local: destination == "local", may_fall_back: false }
+    }
+    fn with(mut self, provider: &str, model: &str) -> Self {
+        self.provider = Some(provider.to_string());
+        self.model = Some(model.to_string()).filter(|m| !m.is_empty());
+        self
+    }
+}
+
+/// The preview of a call whose filter does not validate: `refused`, reason `invalid_filter`. What
+/// [`ask_route_preview`] says for such a filter, for a caller that could not even build the filter.
+pub fn invalid_filter_preview() -> RoutePreview {
+    RoutePreview::new("refused", "invalid_filter")
+}
+
+/// Whether previewing a call could rescan the store for excluded clients' material: some client is
+/// excluded and the setting reads. With none excluded (or an unreadable setting, which fails closed with no
+/// scan) a preview is a handful of cheap reads, safe on the store a page is waiting on; otherwise it may
+/// take as long as the exclusion cache needs to rebuild, so a shell runs it where a slow read belongs and
+/// shows [`unchecked_preview`] if that lane is not free in time.
+pub fn route_preview_may_rescan(store: &memory::Store) -> bool {
+    if store.exclusion_unreadable() {
+        return false;
+    }
+    !matches!(store.excluded_terms(), Ok(terms) if terms.is_empty())
+}
+
+/// What a shell shows when the preview needed a rescan it could not start in time: `unknown`, so the button
+/// promises nothing (plain "Ask") and the call is made without `require_local`, as the preview of a call
+/// that cannot be known in advance always is. Reason `excluded_client_check_pending`.
+pub fn unchecked_preview() -> RoutePreview {
+    RoutePreview::new("unknown", "excluded_client_check_pending")
+}
+
+/// Where `query` (with `history`) would be answered under `routing`, for a call of `mode`, without
+/// sending anything or changing any state. See [`RoutePreview`], and the truth table in the report
+/// of this feature: a question that names an excluded client reroutes to this computer; local-only
+/// mode, a missing key or model, a spent spend cap or monthly budget are known now; whether Ollama is
+/// running is the shell's to know (a local answer then falls to the bundled model, still local).
+pub fn ask_route_preview(
+    store: &memory::Store,
+    query: &str,
+    history: &[llm::ChatTurn],
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    scope: &AskScope,
+    mode: RouteMode,
+) -> RoutePreview {
+    // The Ask itself refuses a filter that does not validate: say so rather than name a destination.
+    let Ok(scope) = checked_scope(scope) else { return RoutePreview::new("refused", "invalid_filter") };
+    let scope = &scope;
+    let filter = crate::exclusion::context_filter(store);
+    let carries = request_carries(store, &filter, &scope.carry_text(query), history, &RequestOrigin::AskBar);
+    let preview = match mode {
+        RouteMode::Blocking => preview_blocking(store, ollama_model, routing, scope, carries),
+        RouteMode::Stream => preview_stream(store, ollama_model, routing, scope, carries),
+    };
+    // Planning records a refusal's reason for the failing call to take; a preview fails nothing.
+    llm::take_last_chain_failures();
+    preview
+}
+
+/// A blocking call's route. A `local` answer is asked for with `require_local`, and the call then walks the
+/// on-device chain only (which can be empty where the routing's own local-only chain is not), so a local
+/// result is judged again as that call, and the preview says `refused` when it would fail.
+fn preview_blocking(store: &memory::Store, ollama_model: &str, routing: &RoutingConfig, scope: &AskScope, carries: bool) -> RoutePreview {
+    let first = blocking_outcome(store, ollama_model, routing, scope.require_local, carries);
+    if first.destination != "local" || scope.require_local {
+        return first;
+    }
+    let forced = blocking_outcome(store, ollama_model, routing, true, carries);
+    match forced.destination {
+        "local" => RoutePreview { provider: forced.provider, model: forced.model, ..first },
+        _ => forced,
+    }
+}
+
+/// [`preview_blocking`]'s decision for a call with this `require_local`.
+fn blocking_outcome(store: &memory::Store, ollama_model: &str, routing: &RoutingConfig, require_local: bool, carries: bool) -> RoutePreview {
+    let scope = &AskScope { require_local, ..Default::default() };
+    let plan = plan_blocking(
+        store,
+        routing,
+        carries,
+        scope.require_local,
+        || build_chain_for(llm::TaskKind::Chat, ollama_model, routing, &crate::exclusion::current_gate(store)),
+        || build_local_chain(ollama_model, routing),
+    );
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(ApiError::SpendCap(_)) => return RoutePreview::new("refused", "spend_cap"),
+        Err(ApiError::BudgetSpent(b)) => return RoutePreview::new("refused", "budget_spent").with(b.provider.as_str(), ""),
+        Err(_) if carries => return RoutePreview::new("refused", "excluded_client_no_local_model"),
+        Err(_) => return RoutePreview::new("refused", "no_provider"),
+    };
+    let Some(first) = plan.chain.first() else {
+        return RoutePreview::new("refused", if scope.require_local || routing.sensitive { "local_only_no_local_model" } else { "no_provider" });
+    };
+    if !llm::is_hosted(first.provider, &first.model) {
+        let reason = if plan.rerouted {
+            "names_excluded_client"
+        } else if scope.require_local {
+            "required_local"
+        } else if routing.sensitive {
+            "local_only_mode"
+        } else {
+            "first_link_is_local"
+        };
+        return RoutePreview::new("local", reason).with(first.provider.as_str(), &first.model);
+    }
+    let mut preview = RoutePreview::new("hosted", "first_link_is_hosted").with(first.provider.as_str(), &first.model);
+    preview.may_fall_back = plan.chain.len() > 1;
+    preview
+}
+
+/// A streamed call's route. A `local` answer is asked for with `require_local` (see [`RoutePreview`]), and
+/// the call then forces local-only routing, which can refuse what the routing as given would stream (an
+/// Ollama model the routing does not name, or a cloud one). So a local result is judged again on exactly the
+/// routing the real call will run, and the preview says `refused` when that call would.
+fn preview_stream(store: &memory::Store, ollama_model: &str, routing: &RoutingConfig, scope: &AskScope, carries: bool) -> RoutePreview {
+    let first = stream_outcome(store, ollama_model, routing, scope.require_local, carries);
+    if first.destination != "local" {
+        return first;
+    }
+    let local_routing = RoutingConfig { sensitive: true, ..routing.clone() };
+    let forced = stream_outcome(store, ollama_model, &local_routing, true, carries);
+    match forced.destination {
+        // What the call will do: the same on-device stream. Keep the reason that explains why it is local.
+        "local" => RoutePreview { provider: forced.provider, model: forced.model, ..first },
+        // Never `hosted` or `unknown` for a call that is told to stay local: that call refuses or fails.
+        "refused" => forced,
+        _ => RoutePreview::new("refused", "local_only_cloud_or_unknown_model"),
+    }
+}
+
+/// [`preview_stream`]'s decision on `routing` as given; `forced` says the call is already told to stay local.
+fn stream_outcome(store: &memory::Store, ollama_model: &str, routing: &RoutingConfig, forced: bool, carries: bool) -> RoutePreview {
+    let local_routing = RoutingConfig { sensitive: true, ..routing.clone() };
+    let eff = if forced { &local_routing } else { routing };
+    let (provider, hosted, rerouted) = match stream_decision(eff, carries) {
+        StreamDecision::Stream { provider, hosted } => (provider, hosted, false),
+        StreamDecision::Refuse { reason: "names_excluded_client_hosted_stream" } => match stream_decision(&local_routing, carries) {
+            StreamDecision::Stream { provider, hosted } => (provider, hosted, true),
+            StreamDecision::Refuse { .. } => return RoutePreview::new("refused", "excluded_client_no_local_model"),
+        },
+        StreamDecision::Refuse { reason } => return RoutePreview::new("refused", reason),
+    };
+    let routing = if forced || rerouted { &local_routing } else { routing };
+    if llm::check_spend_cap(store, &routing.spend_cap_config(), None, Some("ask"), now_unix_ms()).is_err() {
+        return RoutePreview::new("refused", "spend_cap");
+    }
+    let model = streamed_model(routing, ollama_model, provider);
+    if check_provider(store, provider, now_unix_ms()).is_err() {
+        // The shell then answers on the blocking chain, which picks the next provider and does not say which.
+        return RoutePreview::new("unknown", "budget_spent_falls_back_to_blocking").with(provider.as_str(), &model);
+    }
+    if hosted {
+        let mut preview = RoutePreview::new("hosted", "preferred_provider").with(provider.as_str(), &model);
+        preview.may_fall_back = true;
+        return preview;
+    }
+    let reason = if rerouted {
+        "names_excluded_client"
+    } else if forced {
+        "required_local"
+    } else if routing.sensitive {
+        "local_only_mode"
+    } else {
+        "preferred_is_local"
+    };
+    RoutePreview::new("local", reason).with(provider.as_str(), &model)
+}
+
+/// The model a stream against `provider` runs, as far as the routing says.
+fn streamed_model(routing: &RoutingConfig, ollama_model: &str, provider: llm::Provider) -> String {
+    let preferred = (routing.preferred_provider == provider.as_str()).then_some(routing.preferred_model.as_str()).filter(|m| !m.is_empty());
+    match provider {
+        llm::Provider::Ollama => [routing.ollama_model.as_str(), ollama_model, preferred.unwrap_or("")].into_iter().find(|m| !m.is_empty()).unwrap_or("").to_string(),
+        llm::Provider::Whimbrel => preferred.unwrap_or("").to_string(),
+        llm::Provider::OpenRouter => preferred.unwrap_or(&routing.openrouter_model).to_string(),
+        llm::Provider::Local => crate::local_model::MODEL_ID.to_string(),
+        p => crate::model_defaults::resolve(p, Some(&routing.preferred_model), &crate::model_defaults::cached()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1168,6 +1948,23 @@ pub(crate) fn generate_conversation_title_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A topic Ask keeps only its topic's items: an added item is never a topic item in v1, so a
+    /// topic scope drops it, even one whose text names the topic.
+    #[test]
+    fn a_topic_scope_drops_added_items() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::test_store::open(&dir.path().join("m.db"), dir.path());
+        let topic = store.create_seed_topic("Birch", &[], None).unwrap();
+        let id = crate::test_store::add_mcp_item(&store, "a", "Birch roadmap", "roadmap for Birch", None);
+        let hit = store.search_mcp_items("roadmap", false, 5).unwrap().into_iter().find(|h| h.id == id).unwrap();
+        assert!(!item_in_topic(&store, topic.topic_id, &llm::ContextItem::McpItem(hit)));
+        let keep = |i: &llm::ContextItem| item_in_topic(&store, topic.topic_id, i);
+        let (items, _) = assemble_ask_context_in_scope(&store, "roadmap", 10, &llm::ContextFilter::none(), &keep);
+        assert!(items.iter().all(|i| !matches!(i, llm::ContextItem::McpItem(_))));
+        let (open, _, _) = assemble_ask_context_scoped(&store, "roadmap", 10, &llm::ContextFilter::none(), &store.scope_ctx(&Default::default()).unwrap()).unwrap();
+        assert!(open.iter().any(|i| matches!(i, llm::ContextItem::McpItem(_))), "unscoped, the item is found");
+    }
 
     /// Main's Limited Use tests walk a given chain over a given context; here the chain goes
     /// through the exclusion-aware [`answer_with_filter`] (which assembles the same context
@@ -1366,10 +2163,10 @@ mod tests {
         let _serial = serialize_prepared_asks();
         let store = memory::Store::open_in_memory().unwrap();
         let id = meeting_with_transcript(&store, &[]);
-        let before = prepared_asks().lock().unwrap().len();
+        let before = stashed_on_this_thread();
         assert!(matches!(prepare_meeting_ask(&store, id, "q", &[], &RoutingConfig::default()), Err(MeetingAskError::NoTranscript)));
         assert!(matches!(prepare_meeting_ask(&store, 9_999, "q", &[], &RoutingConfig::default()), Err(MeetingAskError::NoTranscript)));
-        assert_eq!(prepared_asks().lock().unwrap().len(), before);
+        assert_eq!(stashed_on_this_thread(), before, "a refused ask must stash nothing");
     }
 
     #[test]
@@ -1378,9 +2175,9 @@ mod tests {
         let store = memory::Store::open_in_memory().unwrap();
         let huge = "x".repeat(llm::meeting_ask::context_budget_chars(llm::Provider::Ollama) + 1);
         let id = meeting_with_transcript(&store, &[huge.as_str()]);
-        let before = prepared_asks().lock().unwrap().len();
+        let before = stashed_on_this_thread();
         assert!(matches!(prepare_meeting_ask(&store, id, "q", &[], &RoutingConfig::default()), Err(MeetingAskError::NoTranscript)));
-        assert_eq!(prepared_asks().lock().unwrap().len(), before);
+        assert_eq!(stashed_on_this_thread(), before, "a refused ask must stash nothing");
     }
 
     #[test]
@@ -1389,10 +2186,10 @@ mod tests {
         let store = memory::Store::open_in_memory().unwrap();
         let id = meeting_with_transcript(&store, &["hello"]);
         let routing = tripped_cap_routing(&store);
-        let before = prepared_asks().lock().unwrap().len();
+        let before = stashed_on_this_thread();
         let result = prepare_meeting_ask(&store, id, "q", &[], &routing);
         assert!(matches!(result, Err(MeetingAskError::Api(ApiError::SpendCap(_)))));
-        assert_eq!(prepared_asks().lock().unwrap().len(), before);
+        assert_eq!(stashed_on_this_thread(), before, "a refused ask must stash nothing");
     }
 
     fn tripped_cap_routing(store: &memory::Store) -> RoutingConfig {
@@ -1429,9 +2226,24 @@ mod tests {
 
     /// `PREPARED_ASKS` is process-global and tests run in parallel, so the tests that
     /// read or write it take this lock. Poison-tolerant, so one failure doesn't fail the rest.
+    fn stashed_on_this_thread() -> usize {
+        STASHED_ON_THIS_THREAD.with(|n| n.get())
+    }
+
     fn serialize_prepared_asks() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: Mutex<()> = Mutex::new(());
         LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The control for the "stashes nothing" tests: the per-thread counter they read does move
+    /// when an ask is stashed, so a flat counter means something.
+    #[test]
+    fn a_stashed_ask_moves_the_per_thread_counter() {
+        let store = store_with_capture_text("the quarterly roadmap review");
+        let before = stashed_on_this_thread();
+        let prepared = prepare_ask(&store, "roadmap", 5, &[], &RoutingConfig::default()).unwrap();
+        assert_eq!(stashed_on_this_thread(), before + 1);
+        discard_ask(&prepared.prepare_id);
     }
 
     #[test]
@@ -1439,10 +2251,10 @@ mod tests {
         let _serial = serialize_prepared_asks();
         let store = store_with_capture_text("the quarterly roadmap review");
         let routing = tripped_cap_routing(&store);
-        let before = prepared_asks().lock().unwrap().len();
+        let before = stashed_on_this_thread();
         let result = prepare_ask(&store, "roadmap", 5, &[], &routing);
         assert!(matches!(result, Err(ApiError::SpendCap(_))));
-        assert_eq!(prepared_asks().lock().unwrap().len(), before);
+        assert_eq!(stashed_on_this_thread(), before, "a refused ask must stash nothing");
     }
 
     /// Mirrors `finalize_ask_extracts_citations_matching_the_prepared_context` and
@@ -1504,10 +2316,11 @@ mod tests {
             prepare_id: "id".into(),
             prompt: "p".into(),
             exclusion: ExclusionOutcome::FilteredHosted { left_out: 2 },
+            scope_empty: false,
         };
         assert_eq!(
             serde_json::to_string(&data).unwrap(),
-            r#"{"prepare_id":"id","prompt":"p","exclusion":{"kind":"filtered_hosted","left_out":2}}"#
+            r#"{"prepare_id":"id","prompt":"p","exclusion":{"kind":"filtered_hosted","left_out":2},"scope_empty":false}"#
         );
     }
 
@@ -1571,11 +2384,11 @@ mod tests {
             global_daily_cap_cents: Some(0),
             ..RoutingConfig::default()
         };
-        let before = prepared_asks().lock().unwrap().len();
+        let before = stashed_on_this_thread();
         let result = prepare_ask(&store, "roadmap", 5, &[], &routing);
         let Err(ApiError::BudgetSpent(spent)) = result else { panic!("{result:?}") };
         assert_eq!(spent.provider, llm::Provider::Anthropic);
-        assert_eq!(prepared_asks().lock().unwrap().len(), before);
+        assert_eq!(stashed_on_this_thread(), before, "a refused ask must stash nothing");
 
         // Streaming another provider is untouched by anthropic's spent budget (still set),
         // and by its own unspent one.
@@ -2126,5 +2939,1160 @@ mod tests {
         let r = gather_findings(&store, &cap, &local[0], "list the action items", &parts);
         assert_eq!(r.unwrap().len(), 2);
         assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    // ---- Topic-scoped Ask (screen 5, calls 1 and 4) -------------------------------------
+
+    /// A file-backed store (topic filings are written through a raw connection) holding two
+    /// meetings that both mention the roadmap; only `filed` is filed under topic Birch.
+    struct TopicFx {
+        _dir: tempfile::TempDir,
+        store: memory::Store,
+        c: rusqlite::Connection,
+        birch: i64,
+        filed: i64,
+        unfiled: i64,
+    }
+
+    fn topic_fx() -> TopicFx {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let store = crate::test_store::open(&path, dir.path());
+        let c = crate::test_store::raw(&path);
+        let filed = titled_meeting(&store, "Planning", 3_600_000, "the birchtree roadmap is due in March");
+        let unfiled = titled_meeting(&store, "Review", 7_200_000, "the oakleaf roadmap slipped a quarter");
+        let birch = store.create_seed_topic("Birch", &[], None).unwrap().topic_id;
+        file_under(&c, birch, "meeting", filed);
+        TopicFx { _dir: dir, store, c, birch, filed, unfiled }
+    }
+
+    /// `prepare_ask_in_topic_for` decides Gmail by this call's own Limited Use settings, as
+    /// `prepare_ask_for` does: an Ollama call whose streamed model is local keeps a topic's Gmail
+    /// thread; one streaming a cloud model (or naming none) has it filtered.
+    #[test]
+    fn a_topic_ask_for_honours_the_calls_limited_use_settings() {
+        let _serial = serialize_prepared_asks();
+        let fx = topic_fx();
+        fx.store
+            .upsert_email_items(&[memory::NewEmailItem {
+                device_id: "dev-1".into(),
+                external_id: "m-1".into(),
+                ts_unix_ms: now_unix_ms() - 1_000,
+                from: "Priya <priya@x.com>".into(),
+                to: "me@x.com".into(),
+                subject: "Roadmap".into(),
+                body_text: "GMAILSECRET the roadmap budget is 40k".into(),
+                gmail_thread_id: "thread-1".into(),
+                account_email: "me@x.com".into(),
+                ..Default::default()
+            }])
+            .unwrap();
+        while fx.store.run_thread_state_sync_job(now_unix_ms()).unwrap() {}
+        let email: i64 = fx.c.query_row("SELECT id FROM items WHERE kind = 'email'", [], |r| r.get(0)).unwrap();
+        file_under(&fx.c, fx.birch, "email", email);
+        let prompt_for = |json: &str| {
+            let routing = RoutingConfig::from_json(Some(json));
+            let call = crate::routing::LimitedUseSettings::from_routing_json_str(Some(json));
+            let data = prepare_ask_in_topic_for(&fx.store, fx.birch, "roadmap", 10, &[], &routing, &call).unwrap();
+            discard_ask(&data.prepare_id);
+            data.prompt
+        };
+        let local = r#"{"preferred_provider":"ollama","streamed_ollama_model":"gemma4:12b"}"#;
+        let cloud = r#"{"preferred_provider":"ollama","streamed_ollama_model":"gpt-oss:120b-cloud"}"#;
+        let p = prompt_for(local);
+        assert!(p.contains("GMAILSECRET") && p.contains("birchtree"), "{p}");
+        let p = prompt_for(cloud);
+        assert!(!p.contains("GMAILSECRET") && p.contains("birchtree"), "{p}");
+        assert!(!prompt_for(r#"{"preferred_provider":"ollama"}"#).contains("GMAILSECRET"), "unknown model fails closed");
+    }
+
+    /// A completed meeting titled `title` with one transcript line (not from Google Calendar).
+    fn titled_meeting(store: &memory::Store, title: &str, ago_ms: i64, line: &str) -> i64 {
+        let id = store
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: now_unix_ms() - ago_ms,
+                end_unix_ms: Some(now_unix_ms() - ago_ms + 60_000),
+                title: title.into(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Calendar,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap();
+        store
+            .insert_transcript_segments(&[memory::NewTranscriptSegment { meeting_id: id, start_cs: 0, speaker_label: "Ben".into(), text: line.into() }])
+            .unwrap();
+        store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap();
+        id
+    }
+
+    fn file_under(c: &rusqlite::Connection, topic: i64, kind: &str, ref_id: i64) {
+        c.execute(
+            "INSERT INTO topic_source (kind, ref_id, ts_unix_ms, indexed_at_unix_ms) VALUES (?1, ?2, 1, 1)",
+            rusqlite::params![kind, ref_id],
+        )
+        .unwrap();
+        let sid = c.last_insert_rowid();
+        c.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')", rusqlite::params![topic, sid])
+            .unwrap();
+    }
+
+    /// The meeting each stashed transcript line of `prepare_id` belongs to.
+    fn stashed_meetings(c: &rusqlite::Connection, prepare_id: &str) -> Vec<i64> {
+        let asks = prepared_asks().lock().unwrap();
+        let context = &asks.get(prepare_id).expect("stashed").context;
+        context
+            .iter()
+            .map(|item| match item.citation_ref() {
+                llm::ContextItemRef::Transcript { id } => c
+                    .query_row("SELECT thread_id FROM items WHERE id = ?1", [id], |r| r.get(0))
+                    .unwrap(),
+                other => panic!("only transcript lines here: {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_topic_ask_cites_only_that_topics_items() {
+        let _serial = serialize_prepared_asks();
+        let fx = topic_fx();
+        let routing = RoutingConfig::default();
+        // Control: the whole of memory answers from both meetings.
+        let all = prepare_ask(&fx.store, "roadmap", 5, &[], &routing).unwrap();
+        assert!(all.prompt.contains("birchtree") && all.prompt.contains("oakleaf"), "{}", all.prompt);
+        let mut both = stashed_meetings(&fx.c, &all.prepare_id);
+        both.sort();
+        assert_eq!(both, vec![fx.filed, fx.unfiled]);
+        discard_ask(&all.prepare_id);
+
+        let scoped = prepare_ask_in_topic(&fx.store, fx.birch, "roadmap", 5, &[], &routing).unwrap();
+        assert!(!scoped.scope_empty);
+        assert!(scoped.prompt.contains("birchtree"), "{}", scoped.prompt);
+        assert!(!scoped.prompt.contains("oakleaf"), "the other meeting is not in the topic:\n{}", scoped.prompt);
+        assert_eq!(stashed_meetings(&fx.c, &scoped.prepare_id), vec![fx.filed]);
+        assert_eq!(scoped.exclusion, ExclusionOutcome::Allowed);
+        let finalized = finalize_ask(&fx.store, &scoped.prepare_id, "March [1].", "m", llm::TokenUsage::default());
+        assert_eq!(finalized.citations.len(), 1);
+    }
+
+    #[test]
+    fn a_topic_with_nothing_matching_sends_nothing() {
+        let _serial = serialize_prepared_asks();
+        let fx = topic_fx();
+        let empty = fx.store.create_seed_topic("Cedar", &[], None).unwrap().topic_id;
+        // Over the spend cap too: an empty scope returns before the cap check (which records an
+        // event), so the answer is "nothing in this topic", not a cap error.
+        let routing = tripped_cap_routing(&fx.store);
+        let events = |c: &rusqlite::Connection| -> i64 { c.query_row("SELECT COUNT(*) FROM spend_cap_event", [], |r| r.get(0)).unwrap() };
+        let before = events(&fx.c);
+        for topic in [empty, 999_999] {
+            let data = prepare_ask_in_topic(&fx.store, topic, "roadmap", 5, &[], &routing).unwrap();
+            assert!(data.scope_empty, "topic {topic}");
+            assert_eq!((data.prepare_id.as_str(), data.prompt.as_str()), ("", ""));
+            assert_eq!(data.exclusion, ExclusionOutcome::Allowed);
+            assert!(!prepared_asks().lock().unwrap().contains_key(""), "nothing is stashed");
+        }
+        assert_eq!(events(&fx.c), before, "no spend-cap event is recorded for an ask that sends nothing");
+        // A topic with members that do match still meets the cap.
+        assert!(matches!(prepare_ask_in_topic(&fx.store, fx.birch, "roadmap", 5, &[], &routing), Err(ApiError::SpendCap(_))));
+    }
+
+    /// A topic whose only matches are Gmail threads, asked against a provider that may not
+    /// receive Google data: Limited Use empties the context, so the topic is reported empty
+    /// (nothing stashed, no prompt) and no spend-cap event is recorded, even over the cap.
+    #[test]
+    fn a_gmail_only_topic_for_a_provider_without_google_data_is_scope_empty() {
+        let _serial = serialize_prepared_asks();
+        let fx = topic_fx();
+        fx.store
+            .upsert_email_items(&[memory::NewEmailItem {
+                device_id: "dev-1".into(),
+                external_id: "m-1".into(),
+                ts_unix_ms: now_unix_ms() - 1_000,
+                from: "Priya <priya@x.com>".into(),
+                to: "me@x.com".into(),
+                subject: "Pricing".into(),
+                body_text: "GMAILSECRET the pricing budget is 40k".into(),
+                gmail_thread_id: "thread-1".into(),
+                account_email: "me@x.com".into(),
+                ..Default::default()
+            }])
+            .unwrap();
+        while fx.store.run_thread_state_sync_job(now_unix_ms()).unwrap() {}
+        let email: i64 = fx.c.query_row("SELECT id FROM items WHERE kind = 'email'", [], |r| r.get(0)).unwrap();
+        let mail = fx.store.create_seed_topic("Mailonly", &[], None).unwrap().topic_id;
+        file_under(&fx.c, mail, "email", email);
+        let tripped = tripped_cap_routing(&fx.store);
+        let events = |c: &rusqlite::Connection| -> i64 { c.query_row("SELECT COUNT(*) FROM spend_cap_event", [], |r| r.get(0)).unwrap() };
+        let before = events(&fx.c);
+        let ask = |json: &str| {
+            let mut routing = RoutingConfig::from_json(Some(json));
+            routing.global_daily_cap_cents = tripped.global_daily_cap_cents;
+            let call = crate::routing::LimitedUseSettings::from_routing_json_str(Some(json));
+            prepare_ask_in_topic_for(&fx.store, mail, "pricing budget", 10, &[], &routing, &call)
+        };
+        let cloud = r#"{"preferred_provider":"ollama","streamed_ollama_model":"gpt-oss:120b-cloud"}"#;
+        let data = ask(cloud).unwrap();
+        assert!(data.scope_empty, "Limited Use left nothing in the topic");
+        assert_eq!((data.prepare_id.as_str(), data.prompt.as_str()), ("", ""));
+        assert!(!prepared_asks().lock().unwrap().contains_key(""), "nothing is stashed");
+        assert_eq!(events(&fx.c), before, "no spend-cap event for an ask that sends nothing");
+        // Control: a local model may read the thread, so the same topic meets the cap.
+        let local = r#"{"preferred_provider":"ollama","streamed_ollama_model":"gemma4:12b"}"#;
+        assert!(matches!(ask(local), Err(ApiError::SpendCap(_))));
+    }
+
+    #[test]
+    fn a_follow_up_after_a_local_answer_stays_local() {
+        let _serial = serialize_prepared_asks();
+        let fx = topic_fx();
+        let acme = fx.store.create_seed_topic("Acme", &[], None).unwrap();
+        fx.store
+            .set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        let hosted = RoutingConfig { preferred_provider: "anthropic".into(), anthropic_key: Some("k".into()), ..RoutingConfig::default() };
+
+        // Today: a first question naming the client is refused for a hosted stream.
+        assert!(prepare_ask(&fx.store, "What did Acme decide about the roadmap?", 5, &[], &hosted).is_err());
+        assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+
+        // The earlier exchange was answered on this computer from the client's material.
+        let local_answer = "They moved the launch to May.";
+        mark_local_only(&fx.store, local_answer);
+        let history = [
+            llm::ChatTurn { role: llm::ChatRole::User, text: "what was decided?".into() },
+            llm::ChatTurn { role: llm::ChatRole::Assistant, text: local_answer.into() },
+        ];
+        // Control: without that history the follow-up goes hosted in either scope.
+        let open = prepare_ask_in_topic(&fx.store, fx.birch, "and the roadmap?", 5, &[], &hosted).unwrap();
+        assert!(!open.scope_empty && !open.prompt.is_empty());
+        discard_ask(&open.prepare_id);
+
+        let everything = prepare_ask(&fx.store, "and the roadmap?", 5, &history, &hosted);
+        assert!(everything.is_err(), "Everything: the follow-up is refused for a hosted stream");
+        assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+        let topic = prepare_ask_in_topic(&fx.store, fx.birch, "and the roadmap?", 5, &history, &hosted);
+        assert!(topic.is_err(), "a topic: the follow-up is refused for a hosted stream");
+        assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+        // Both refusals are the exclusion refusal the shell answers locally on.
+        let (Err(a), Err(b)) = (everything, topic) else { unreachable!() };
+        assert_eq!(format!("{a:?}"), format!("{b:?}"));
+        assert_eq!(format!("{a:?}"), format!("{:?}", crate::exclusion::refused()));
+
+        // On this computer the topic follow-up is answered, and marked local-only.
+        let local = prepare_ask_in_topic(&fx.store, fx.birch, "and the roadmap?", 5, &history, &RoutingConfig::default()).unwrap();
+        assert!(local.prompt.contains("birchtree"));
+        assert_eq!(local.exclusion, ExclusionOutcome::LocalOnly);
+        discard_ask(&local.prepare_id);
+    }
+
+    #[test]
+    fn existing_prepares_report_scope_not_empty() {
+        let _serial = serialize_prepared_asks();
+        let store = store_with_capture_text("the quarterly roadmap review");
+        let routing = RoutingConfig::default();
+        let data = prepare_ask(&store, "roadmap", 5, &[], &routing).unwrap();
+        assert!(!data.scope_empty);
+        discard_ask(&data.prepare_id);
+        // Nothing retrieved at all is still not an empty scope: the whole of memory was asked.
+        let none = prepare_ask(&store, "zzzunmatched", 5, &[], &routing).unwrap();
+        assert!(!none.scope_empty && !none.prepare_id.is_empty());
+        discard_ask(&none.prepare_id);
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["scope_empty"], serde_json::json!(false));
+    }
+
+    /// Spec call 4: a topic page of an excluded client is asked from that page, so a hosted
+    /// stream is refused with the exclusion refusal (the shell then answers on this computer),
+    /// never reported as an empty topic.
+    #[test]
+    fn a_hosted_topic_ask_on_an_excluded_clients_topic_is_refused() {
+        let _serial = serialize_prepared_asks();
+        let fx = topic_fx();
+        let acme = fx.store.create_seed_topic("Acme", &[], None).unwrap();
+        let acme_meeting = titled_meeting(&fx.store, "Sync", 5_400_000, "the pinecone roadmap moved");
+        file_under(&fx.c, acme.topic_id, "meeting", acme_meeting);
+        fx.store
+            .set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        let hosted = RoutingConfig { preferred_provider: "anthropic".into(), anthropic_key: Some("k".into()), ..RoutingConfig::default() };
+
+        let refused = prepare_ask_in_topic(&fx.store, acme.topic_id, "and the roadmap?", 5, &[], &hosted);
+        let Err(e) = refused else { panic!("not refused: {refused:?}") };
+        assert_eq!(format!("{e:?}"), format!("{:?}", crate::exclusion::refused()));
+        assert_eq!(crate::last_provider_failure(), Some(llm::ProviderFailureKind::ExcludedClient));
+        // Another topic still goes hosted.
+        let other = prepare_ask_in_topic(&fx.store, fx.birch, "and the roadmap?", 5, &[], &hosted).unwrap();
+        assert!(!other.scope_empty && other.prompt.contains("birchtree"));
+        discard_ask(&other.prepare_id);
+        // On this computer the client's topic is answered, marked local-only.
+        let local = prepare_ask_in_topic(&fx.store, acme.topic_id, "and the roadmap?", 5, &[], &RoutingConfig::default()).unwrap();
+        assert!(local.prompt.contains("pinecone"));
+        assert_eq!(local.exclusion, ExclusionOutcome::LocalOnly);
+        discard_ask(&local.prepare_id);
+    }
+
+    /// An item filed under two topics is in both: a topic ask keeps it even where that topic is
+    /// not the item's preferred one.
+    #[test]
+    fn a_topic_ask_keeps_an_item_filed_under_another_preferred_topic_too() {
+        let _serial = serialize_prepared_asks();
+        let fx = topic_fx();
+        let umber = fx.store.create_seed_topic("Umber", &[], None).unwrap().topic_id;
+        let sid: i64 = fx
+            .c
+            .query_row("SELECT id FROM topic_source WHERE kind = 'meeting' AND ref_id = ?1", [fx.filed], |r| r.get(0))
+            .unwrap();
+        fx.c.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'user')", rusqlite::params![umber, sid])
+            .unwrap();
+        assert_eq!(fx.store.live_topic_of_item("meeting", fx.filed).unwrap(), Some(umber), "Umber is preferred");
+        for topic in [fx.birch, umber] {
+            let data = prepare_ask_in_topic(&fx.store, topic, "roadmap", 5, &[], &RoutingConfig::default()).unwrap();
+            assert!(!data.scope_empty, "topic {topic}");
+            assert_eq!(stashed_meetings(&fx.c, &data.prepare_id), vec![fx.filed], "topic {topic}");
+            discard_ask(&data.prepare_id);
+        }
+    }
+
+    /// Review finding: one long meeting outside the topic whose lines all outrank the topic's
+    /// (more of them than 4x the limit, together over the context budget) must not starve the
+    /// topic: its own matching lines still reach the context.
+    #[test]
+    fn a_topic_ask_is_not_starved_by_a_long_meeting_outside_the_topic() {
+        let _serial = serialize_prepared_asks();
+        let fx = topic_fx();
+        let filler = "x".repeat(300);
+        let long = store_meeting_lines(&fx.store, "All hands", 600_000, 40, |i| format!("roadmap point {i} {filler}"));
+        assert!(40 * (filler.len() + 20) > llm::CONTEXT_BUDGET_CHARS, "the long meeting alone fills the budget");
+        let cedar = fx.store.create_seed_topic("Cedar", &[], None).unwrap().topic_id;
+        let old = store_meeting_lines(&fx.store, "Cedar sync", 20 * 86_400_000, 2, |i| format!("cedar roadmap item {i} {filler}"));
+        file_under(&fx.c, cedar, "meeting", old);
+
+        let all = prepare_ask(&fx.store, "roadmap", 5, &[], &RoutingConfig::default()).unwrap();
+        let reached = stashed_meetings(&fx.c, &all.prepare_id);
+        assert!(reached.contains(&long) && !reached.contains(&old), "control: the long meeting fills the whole of memory's context");
+        discard_ask(&all.prepare_id);
+
+        let data = prepare_ask_in_topic(&fx.store, cedar, "roadmap", 5, &[], &RoutingConfig::default()).unwrap();
+        assert!(!data.scope_empty, "the topic has matching lines");
+        let meetings = stashed_meetings(&fx.c, &data.prepare_id);
+        assert_eq!(meetings, vec![old, old], "both of the topic's lines, and only them");
+        assert!(data.prompt.contains("cedar roadmap item 0") && data.prompt.contains("cedar roadmap item 1"));
+        discard_ask(&data.prepare_id);
+    }
+
+    /// A completed meeting `ago_ms` ago with `n` transcript lines, each a second apart.
+    fn store_meeting_lines(store: &memory::Store, title: &str, ago_ms: i64, n: i64, line: impl Fn(i64) -> String) -> i64 {
+        let id = titled_meeting(store, title, ago_ms, &line(0));
+        let rest: Vec<memory::NewTranscriptSegment> = (1..n)
+            .map(|i| memory::NewTranscriptSegment { meeting_id: id, start_cs: i * 100, speaker_label: "Ben".into(), text: line(i) })
+            .collect();
+        store.insert_transcript_segments(&rest).unwrap();
+        id
+    }
+}
+
+#[cfg(test)]
+mod sourced_tests {
+    // The sourced Ask calls: the numbers the model saw, retrieval bounded by date, app and person, the
+    // route preview, and "on this computer or fail". Fixtures use a recording transport behind the real
+    // routing, so what a link is sent is what the test reads.
+
+    use std::sync::{Arc, Mutex};
+
+    use memory::find::{FindFilter, PersonFilter};
+    use memory::topics::client_controls::ClientControl;
+
+    use crate::ask::{self, AskScope, RouteMode};
+    use crate::routing::{with_test_transport, RoutingConfig};
+
+    const R0: i64 = 1_000_000;
+    const R1: i64 = 2_000_000;
+    const CANARY: &str = "zebracanary";
+
+    #[derive(Clone, Default)]
+    struct Log(Arc<Mutex<Vec<String>>>);
+
+    impl Log {
+        fn prompts(&self) -> Vec<String> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    struct Recorder {
+        log: Log,
+        reply: String,
+    }
+
+    impl llm::LlmClient for Recorder {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            self.log.0.lock().unwrap().push(prompt.to_string());
+            Ok(llm::Completion { text: self.reply.clone(), token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    /// Runs `f` with every link routing builds made of a recorder: hosted links record into `hosted`, on-device
+    /// links into `local`, each replying `reply`.
+    fn recording<R>(hosted: &Log, local: &Log, reply: &str, f: impl FnOnce() -> R) -> R {
+        let (h, l, reply) = (hosted.clone(), local.clone(), reply.to_string());
+        with_test_transport(
+            move |provider, model| -> Box<dyn llm::LlmClient> {
+                let log = if llm::is_hosted(provider, model) { h.clone() } else { l.clone() };
+                Box::new(Recorder { log, reply: reply.clone() })
+            },
+            f,
+        )
+    }
+
+    struct Fx {
+        _dir: tempfile::TempDir,
+        s: memory::Store,
+        c: rusqlite::Connection,
+    }
+
+    fn capture(s: &memory::Store, n: i64, ts: i64, app: &str, title: &str, text: &str) -> i64 {
+        s.insert_capture_item(&memory::NewCaptureItem {
+            device_id: "mac-1".into(),
+            ts_unix_ms: ts,
+            app_bundle_id: app.into(),
+            window_title: title.into(),
+            url: None,
+            text: text.into(),
+            hash: n,
+            source: "ax".into(),
+        })
+        .unwrap()
+        .unwrap()
+    }
+
+    fn meeting(s: &memory::Store, start: i64, title: &str, attendees: &[&str], lines: &[&str]) -> i64 {
+        let id = s
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "mac-1".into(),
+                start_unix_ms: start,
+                end_unix_ms: Some(start + 60_000),
+                title: title.into(),
+                attendees: attendees.iter().map(|a| a.to_string()).collect(),
+                trigger: memory::MeetingTrigger::Manual,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap();
+        let segs: Vec<memory::NewTranscriptSegment> = lines
+            .iter()
+            .enumerate()
+            .map(|(i, t)| memory::NewTranscriptSegment { meeting_id: id, start_cs: i as i64 * 100, speaker_label: "Speaker 1".into(), text: t.to_string() })
+            .collect();
+        s.insert_transcript_segments(&segs).unwrap();
+        // Not from Google Calendar: Limited Use has its own tests.
+        s.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap();
+        id
+    }
+
+    fn email(c: &rusqlite::Connection, ext: &str, thread: &str, from: &str, ts: i64, body: &str) {
+        c.execute(
+            "INSERT OR IGNORE INTO threads (source, external_thread_id, account_email, subject, message_count, last_activity_ts_unix_ms, last_message_from, status, summarize_status, created_at_unix_ms, updated_at_unix_ms) \
+             VALUES ('gmail', ?1, 'me@x.com', ?2, 1, ?3, ?4, 'waiting_on_me', 'pending_summary', 1, 1)",
+            rusqlite::params![thread, format!("Subject {thread}"), ts, from],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) VALUES ('d', 'email', 'gmail', ?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                ts,
+                serde_json::to_string(&[from, "me@x.com"]).unwrap(),
+                format!("Subject {thread}"),
+                body,
+                serde_json::json!({"gmail_thread_id": thread, "account_email": "me@x.com"}).to_string(),
+                ext
+            ],
+        )
+        .unwrap();
+    }
+
+    /// One of every kind inside `[R0, R1)` and one outside, each holding "pricing".
+    fn world() -> Fx {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("w.db");
+        let s = crate::test_store::open(&path, dir.path());
+        let c = crate::test_store::raw(&path);
+        capture(&s, 1, 1_500_000, "com.slack", "in slack", "pricing review alpha");
+        capture(&s, 2, 500_000, "com.slack", "before", "pricing review before");
+        capture(&s, 3, 2_500_000, "com.slack", "after", "pricing review after");
+        capture(&s, 4, 1_600_000, "com.notes", "in notes", "pricing review notes");
+        capture(&s, 5, 1_700_000, "com.slack", "sam", "lunch with Sam Okafor about pricing");
+        let m_in = meeting(&s, 1_200_000, "Planning", &["Sam Okafor"], &["pricing starts here"]);
+        meeting(&s, 5_000_000, "Later", &["Sam Okafor"], &["pricing later"]);
+        meeting(&s, 1_300_000, "Standup", &["Ana"], &["pricing in the standup"]);
+        for (m, ts, text) in [(m_in, 1_200_500, "pricing slide in"), (m_in + 1, 5_000_500, "pricing slide out")] {
+            s.insert_meeting_snapshot(&memory::NewMeetingSnapshot { meeting_id: m, captured_unix_ms: ts, file_path: format!("/s/{ts}.png"), width: 1, height: 1, ocr_text: text.into() })
+                .unwrap();
+        }
+        s.upsert_person("name:sam", "Sam Okafor", Some("sam@x.com")).unwrap();
+        email(&c, "e1", "t-in", "sam@x.com", 1_700_000, "pricing mail in");
+        email(&c, "e2", "t-out", "sam@x.com", 9_000_000, "pricing mail out");
+        email(&c, "e3", "t-other", "zed@x.com", 1_750_000, "pricing mail other");
+        for (app, end, text) in [("com.slack", 1_800_000, "pricing episode in"), ("com.slack", 9_800_000, "pricing episode out"), ("com.notes", 1_810_000, "pricing episode notes")] {
+            c.execute(
+                "INSERT INTO episodes (device_id, app_bundle_id, window_title, start_ts_unix_ms, end_ts_unix_ms, start_item_id, end_item_id, item_count, summary, status, created_at_unix_ms, updated_at_unix_ms) \
+                 VALUES ('d', ?1, 'Window', ?2, ?3, 1, 2, 2, ?4, 'summarized', 1, 1)",
+                rusqlite::params![app, end - 1_000, end, text],
+            )
+            .unwrap();
+        }
+        c.execute("INSERT INTO routine (id, name, template, schedule_hhmm, created_at_unix_ms) VALUES (1, 'Focus', 'focus_time', '09:00', 1)", []).unwrap();
+        for (ts, text) in [(1_900_000, "pricing run in"), (9_900_000, "pricing run out")] {
+            c.execute("INSERT INTO routine_run (routine_id, ran_at_unix_ms, status, output_summary, output_json) VALUES (1, ?1, 'success', ?2, '{}')", rusqlite::params![ts, text]).unwrap();
+        }
+        Fx { _dir: dir, s, c }
+    }
+
+    fn range() -> FindFilter {
+        FindFilter { start_unix_ms: Some(R0), end_unix_ms: Some(R1), ..Default::default() }
+    }
+
+    /// The Ollama model streamed against is on this computer's own host, so Gmail text may ride (Limited Use).
+    fn loopback() -> crate::routing::LimitedUseSettings {
+        crate::routing::LimitedUseSettings { streamed_ollama_model: Some("gemma-test".into()), ..Default::default() }
+    }
+
+    fn scope(filter: FindFilter) -> AskScope {
+        AskScope { filter, require_local: false }
+    }
+
+    fn local_routing() -> RoutingConfig {
+        RoutingConfig::default()
+    }
+
+    fn hosted_routing() -> RoutingConfig {
+        RoutingConfig { preferred_provider: "anthropic".into(), anthropic_key: Some("k".into()), ollama_model: "gemma-test".into(), ..RoutingConfig::default() }
+    }
+
+    fn prepare(fx: &Fx, q: &str, routing: &RoutingConfig, scope: &AskScope) -> ask::PreparedAskSourced {
+        let r = ask::prepare_ask_sourced(&fx.s, q, 20, &[], routing, &loopback(), scope).unwrap();
+        ask::discard_ask(&r.data.prepare_id);
+        r
+    }
+
+    /// The `[n] (label) text` lines of a prompt, as the model read them.
+    fn numbered_lines(prompt: &str) -> Vec<(usize, String)> {
+        prompt
+            .lines()
+            .filter_map(|l| {
+                let rest = l.strip_prefix('[')?;
+                let (n, text) = rest.split_once("] ")?;
+                Some((n.parse().ok()?, text.to_string()))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_numbers_in_the_prompt_are_the_numbers_of_the_sources_returned_with_it() {
+        let fx = world();
+        let p = ask::prepare_ask_sourced(&fx.s, "pricing review", 20, &[], &local_routing(), &loopback(), &AskScope::default()).unwrap();
+        let lines = numbered_lines(&p.data.prompt);
+        assert!(lines.len() >= 5, "{}", p.data.prompt);
+        assert_eq!(lines.len(), p.sources.len());
+        for (line, src) in lines.iter().zip(&p.sources) {
+            assert_eq!(line.0, src.n, "the number the model saw");
+            assert!(src.card.found);
+            if src.card.kind == "thread" {
+                // The prompt shows the thread's summary and its matching message; the card shows the stored summary, when there is one.
+                assert!(line.1.contains(&src.card.title), "{} / {:?}", line.1, src.card);
+                continue;
+            }
+            let words = src.card.text.as_deref().expect("a found row has its text");
+            let first_words: String = words.split_whitespace().take(3).collect::<Vec<_>>().join(" ");
+            assert!(line.1.contains(&first_words), "[{}] {} is not the card {:?}", line.0, line.1, src.card);
+            assert!(src.card.found);
+        }
+        // Citing: first-cited order, repeats once, out of range dropped, only the numbers of this list.
+        let f = ask::finalize_ask_sourced(&fx.s, &p.data.prepare_id, &format!("A [2] and [1], again [2]. Bad [{}] [0] [999].", lines.len() + 1), "m", llm::TokenUsage::default());
+        assert_eq!(f.cited, vec![2, 1]);
+        assert_eq!(f.cited_sources.iter().map(|s| s.n).collect::<Vec<_>>(), vec![2, 1]);
+        assert_eq!((f.cited_sources[0].kind.as_str(), f.cited_sources[0].id), (p.sources[1].card.kind.as_str(), p.sources[1].card.id));
+        assert_eq!(f.citations.len(), 2);
+        // Once finalized the id is spent: nothing is cited.
+        let again = ask::finalize_ask_sourced(&fx.s, &p.data.prepare_id, "[1]", "m", llm::TokenUsage::default());
+        assert!(again.cited.is_empty() && again.cited_sources.is_empty());
+    }
+
+    #[test]
+    fn the_blocking_answer_numbers_the_context_of_the_link_that_answered() {
+        let fx = world();
+        let (hosted, local) = (Log::default(), Log::default());
+        let a = recording(&hosted, &local, "It is [2] and also [1][2]. Not [77].", || {
+            ask::answer_sourced(&fx.s, "pricing review", "gemma-test", 20, &[], &local_routing(), &AskScope::default()).unwrap()
+        });
+        assert_eq!(local.prompts().len(), 1);
+        let lines = numbered_lines(&local.prompts()[0]);
+        assert_eq!(lines.len(), a.sources.len());
+        assert_eq!(a.cited, vec![2, 1]);
+        assert_eq!(a.cited_sources.len(), 2);
+        assert_eq!(a.detailed.answer.citations.len(), 2, "the old citations field is unchanged");
+        assert!(a.answered_locally);
+        let json = serde_json::to_value(&a).unwrap();
+        for key in ["text", "citations", "token_usage", "exclusion", "answered_by", "sources", "cited", "cited_sources", "answered_locally"] {
+            assert!(json.get(key).is_some(), "{key} in {json}");
+        }
+    }
+
+    /// Pin (1): with no filter, the sourced calls retrieve what the old calls retrieve, into the same prompt bytes.
+    #[test]
+    fn no_filter_retrieves_exactly_what_the_old_calls_do() {
+        let fx = world();
+        let (h1, l1, h2, l2) = (Log::default(), Log::default(), Log::default(), Log::default());
+        for q in ["pricing review", "what did Sam say about pricing today"] {
+            let old = recording(&h1, &l1, "ok", || ask::answer_detailed(&fx.s, q, "gemma-test", 20, &[], &local_routing()).unwrap());
+            let new = recording(&h2, &l2, "ok", || ask::answer_sourced(&fx.s, q, "gemma-test", 20, &[], &local_routing(), &AskScope::default()).unwrap());
+            assert_eq!(l1.prompts().last(), l2.prompts().last(), "the blocking prompt for {q:?}");
+            assert_eq!(old.answer.text, new.detailed.answer.text);
+            // The streamed pair.
+            let routing = local_routing();
+            let a = ask::prepare_ask_for(&fx.s, q, 20, &[], &routing, &crate::routing::LimitedUseSettings::default()).unwrap();
+            let b = ask::prepare_ask_sourced(&fx.s, q, 20, &[], &routing, &crate::routing::LimitedUseSettings::default(), &AskScope::default()).unwrap();
+            assert_eq!(a.prompt, b.data.prompt, "the streamed prompt for {q:?}");
+            ask::discard_ask(&a.prepare_id);
+            ask::discard_ask(&b.data.prepare_id);
+        }
+    }
+
+    /// Pin (2): with a date filter nothing outside the range reaches the prompt, for every kind.
+    #[test]
+    fn a_date_filter_keeps_every_kind_inside_the_range() {
+        let fx = world();
+        let p = prepare(&fx, "pricing review", &local_routing(), &scope(range()));
+        let kinds: std::collections::HashSet<&str> = p.sources.iter().map(|s| s.card.kind.as_str()).collect();
+        for k in ["capture", "transcript", "snapshot", "thread", "episode", "routine_run"] {
+            assert!(kinds.contains(k), "{k} missing: {kinds:?}");
+        }
+        for s in &p.sources {
+            let ts = s.card.ts_unix_ms.unwrap();
+            assert!((R0..R1).contains(&ts), "[{}] {} at {ts} is outside the range", s.n, s.card.kind);
+        }
+        for line in numbered_lines(&p.data.prompt) {
+            for outside in ["before", "after", "later", "out"] {
+                assert!(!line.1.split_whitespace().any(|w| w == outside), "an outside item reached the prompt: {}", line.1);
+            }
+        }
+        // The question's own window ("today") is narrowed by the filter, which wins: a range from long ago holds nothing from today.
+        let old = FindFilter { start_unix_ms: Some(1), end_unix_ms: Some(10), ..Default::default() };
+        let p = prepare(&fx, "what happened today", &local_routing(), &scope(old));
+        assert!(p.sources.is_empty(), "{:?}", p.sources);
+    }
+
+    /// Pin (3): with an app filter only captures of that app.
+    #[test]
+    fn an_app_filter_keeps_only_that_apps_captures() {
+        let fx = world();
+        let f = FindFilter { app_bundle_id: Some("com.notes".into()), ..Default::default() };
+        let p = prepare(&fx, "pricing review", &local_routing(), &scope(f));
+        assert!(!p.sources.is_empty());
+        for s in &p.sources {
+            assert_eq!(s.card.kind, "capture", "{:?}", s.card);
+            assert_eq!(s.card.app_bundle_id.as_deref(), Some("com.notes"));
+        }
+    }
+
+    /// Pin (4): with a person filter, per the table.
+    #[test]
+    fn a_person_filter_follows_the_table() {
+        let fx = world();
+        let f = FindFilter { person: Some(PersonFilter { name: "Sam Okafor".into(), person_key: Some("name:sam".into()) }), ..range() };
+        let p = prepare(&fx, "pricing", &local_routing(), &scope(f));
+        let by_kind = |k: &str| p.sources.iter().filter(|s| s.card.kind == k).collect::<Vec<_>>();
+        // Lines of the meeting Sam attended, not the standup or the later meeting.
+        let lines: Vec<&str> = by_kind("transcript").iter().map(|s| s.card.text.as_deref().unwrap()).collect();
+        assert_eq!(lines, vec!["pricing starts here"]);
+        assert_eq!(by_kind("snapshot").len(), 1);
+        // Mail from the address on record, not Zed's.
+        assert_eq!(by_kind("thread").iter().map(|s| s.card.title.as_str()).collect::<Vec<_>>(), vec!["Subject t-in"]);
+        // Episodes and runs are hidden; captures are the ones that mention the name as a phrase.
+        assert!(by_kind("episode").is_empty() && by_kind("routine_run").is_empty());
+        let caps: Vec<&str> = by_kind("capture").iter().map(|s| s.card.text.as_deref().unwrap()).collect();
+        assert_eq!(caps, vec!["lunch with Sam Okafor about pricing"]);
+    }
+
+    /// The excluded client's material, filed under it and never naming it.
+    fn excluded_fixture() -> Fx {
+        let fx = world();
+        let acme = fx.s.create_seed_topic("Acme", &["Roadrunner Co".to_string()], None).unwrap();
+        // A capture that names the client by its alias, and a meeting filed under it that never names it.
+        capture(&fx.s, 99, 1_450_000, "com.slack", "client", &format!("pricing {CANARY} secret numbers for Roadrunner Co"));
+        let m = meeting(&fx.s, 1_460_000, "Quarterly sync", &["Sam Okafor"], &[&format!("pricing {CANARY} in the client meeting")]);
+        fx.c.execute("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, indexed_at_unix_ms) VALUES ('meeting', ?1, 1, 1)", rusqlite::params![m]).unwrap();
+        let sid = fx.c.last_insert_rowid();
+        fx.c.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')", rusqlite::params![acme.topic_id, sid]).unwrap();
+        fx.s.set_client_control(&acme.key, &ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        fx
+    }
+
+    /// Pin (5): an excluded client's rows never reach a hosted model, whatever the filters.
+    #[test]
+    fn an_excluded_clients_rows_never_reach_a_hosted_model_whatever_the_filters() {
+        let fx = excluded_fixture();
+        let filters = [
+            FindFilter::default(),
+            range(),
+            FindFilter { app_bundle_id: Some("com.slack".into()), ..Default::default() },
+            FindFilter { person: Some(PersonFilter { name: "Sam Okafor".into(), person_key: None }), ..range() },
+            FindFilter { start_unix_ms: Some(0), end_unix_ms: Some(i64::MAX), ..Default::default() },
+        ];
+        for f in filters {
+            let (hosted, local) = (Log::default(), Log::default());
+            let a = recording(&hosted, &local, "An answer.", || ask::answer_sourced(&fx.s, "pricing", "gemma-test", 20, &[], &hosted_routing(), &scope(f.clone())).unwrap());
+            assert_eq!(hosted.prompts().len(), 1, "{f:?}");
+            assert!(!hosted.prompts()[0].contains(CANARY), "{f:?}: {}", hosted.prompts()[0]);
+            assert!(a.sources.iter().all(|s| s.card.text.as_deref().is_none_or(|t| !t.contains(CANARY))), "{f:?}");
+            // The streamed prompt too.
+            let p = ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &hosted_routing(), &crate::routing::LimitedUseSettings::default(), &scope(f.clone())).unwrap();
+            assert!(!p.data.prompt.contains(CANARY), "{f:?}");
+            assert!(p.sources.iter().all(|s| s.card.text.as_deref().is_none_or(|t| !t.contains(CANARY))));
+            ask::discard_ask(&p.data.prepare_id);
+        }
+        // On this computer the same filters read all of memory: the filter never loosens, and never tightens, what stays local.
+        let p = prepare(&fx, "pricing", &local_routing(), &scope(range()));
+        assert!(p.data.prompt.contains(CANARY));
+    }
+
+    #[test]
+    fn require_local_never_reaches_a_hosted_model_and_fails_when_nothing_local_can_answer() {
+        let fx = world();
+        let local_only = AskScope { require_local: true, ..Default::default() };
+        // Blocking: a hosted preferred provider, but the call is held to on-device links.
+        let (hosted, local) = (Log::default(), Log::default());
+        recording(&hosted, &local, "on device", || {
+            let a = ask::answer_sourced(&fx.s, "pricing", "gemma-test", 20, &[], &hosted_routing(), &local_only).unwrap();
+            assert!(a.detailed.answered_by.local);
+        });
+        assert_eq!((hosted.prompts().len(), local.prompts().len()), (0, 1));
+        // No on-device link (Ollama turned off, no bundled model): the existing provider failure, nothing sent.
+        let (hosted, local) = (Log::default(), Log::default());
+        let no_local = RoutingConfig { use_local_model: false, ..hosted_routing() };
+        let r = recording(&hosted, &local, "x", || ask::answer_sourced(&fx.s, "pricing", "gemma-test", 20, &[], &no_local, &local_only));
+        assert!(matches!(r, Err(crate::ApiError::ProviderFailure)), "{r:?}");
+        assert_eq!((hosted.prompts().len(), local.prompts().len()), (0, 0));
+        // Streaming: routing is local-only for this call, so the stream goes to Ollama.
+        let p = ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &hosted_routing(), &crate::routing::LimitedUseSettings::default(), &local_only).unwrap();
+        assert_eq!((p.provider.as_str(), p.answered_locally), ("ollama", true));
+        ask::discard_ask(&p.data.prepare_id);
+        // ... and is refused, as local-only mode is, when the routing names no Ollama model (core cannot know it is local).
+        let nameless = RoutingConfig { ollama_model: String::new(), ..hosted_routing() };
+        assert!(ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &nameless, &crate::routing::LimitedUseSettings::default(), &local_only).is_err());
+        let cloud = RoutingConfig { ollama_model: "gpt-oss:120b-cloud".into(), ..hosted_routing() };
+        assert!(ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &cloud, &crate::routing::LimitedUseSettings::default(), &local_only).is_err());
+        // Without require_local the same routing streams to the hosted provider.
+        let p = ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &hosted_routing(), &crate::routing::LimitedUseSettings::default(), &AskScope::default()).unwrap();
+        assert_eq!((p.provider.as_str(), p.answered_locally), ("anthropic", false));
+        ask::discard_ask(&p.data.prepare_id);
+    }
+
+    fn preview(fx: &Fx, q: &str, routing: &RoutingConfig, scope: &AskScope, mode: RouteMode) -> ask::RoutePreview {
+        ask::ask_route_preview(&fx.s, q, &[], "gemma-test", routing, scope, mode)
+    }
+
+    /// Every branch of the route preview, for both calls.
+    #[test]
+    fn the_route_preview_says_where_the_call_would_answer() {
+        let fx = world();
+        let none = AskScope::default();
+        let local = AskScope { require_local: true, ..Default::default() };
+
+        // Preferred hosted, a key held: hosted, naming the provider; the call goes there.
+        for mode in [RouteMode::Blocking, RouteMode::Stream] {
+            let p = preview(&fx, "pricing", &hosted_routing(), &none, mode);
+            assert_eq!((p.destination, p.local, p.provider.as_deref(), p.reason, p.require_local), ("hosted", false, Some("anthropic"), if mode == RouteMode::Blocking { "first_link_is_hosted" } else { "preferred_provider" }, false), "{mode:?}");
+            assert!(p.may_fall_back || mode == RouteMode::Blocking && false || mode == RouteMode::Stream);
+        }
+        // Preferred local (the default): local, and the call is told to stay there. A stream that is told
+        // to stay local forces local-only routing, which refuses an Ollama model the routing does not name, so
+        // the preview of a stream says so rather than promise a local answer the call then refuses.
+        let p = preview(&fx, "pricing", &local_routing(), &none, RouteMode::Blocking);
+        assert_eq!((p.destination, p.local, p.provider.as_deref(), p.require_local), ("local", true, Some("ollama"), true));
+        let named = RoutingConfig { ollama_model: "gemma-test".into(), ..local_routing() };
+        let p = preview(&fx, "pricing", &named, &none, RouteMode::Stream);
+        assert_eq!((p.destination, p.local, p.provider.as_deref(), p.require_local), ("local", true, Some("ollama"), true));
+        let p = preview(&fx, "pricing", &local_routing(), &none, RouteMode::Stream);
+        assert_eq!((p.destination, p.reason, p.require_local), ("refused", "local_only_cloud_or_unknown_model", false));
+        // Local-only mode: local (blocking) or, with no Ollama model named, refused (streaming fails closed).
+        let sensitive = RoutingConfig { sensitive: true, ..hosted_routing() };
+        assert_eq!(preview(&fx, "pricing", &sensitive, &none, RouteMode::Blocking).reason, "local_only_mode");
+        assert_eq!(preview(&fx, "pricing", &sensitive, &none, RouteMode::Stream).destination, "local");
+        let unnamed = RoutingConfig { ollama_model: String::new(), ..sensitive.clone() };
+        let p = preview(&fx, "pricing", &unnamed, &none, RouteMode::Stream);
+        assert_eq!((p.destination, p.reason), ("refused", "local_only_cloud_or_unknown_model"));
+        // Required local overrides a hosted preference.
+        for mode in [RouteMode::Blocking, RouteMode::Stream] {
+            let p = preview(&fx, "pricing", &hosted_routing(), &local, mode);
+            assert_eq!((p.destination, p.reason, p.provider.as_deref()), ("local", "required_local", Some("ollama")), "{mode:?}");
+        }
+        // Nothing configured at all: no key, no local model.
+        let nothing = RoutingConfig { use_local_model: false, preferred_provider: "anthropic".into(), ..RoutingConfig::default() };
+        let p = preview(&fx, "pricing", &nothing, &none, RouteMode::Blocking);
+        assert_eq!((p.destination, p.reason), ("refused", "no_provider"));
+        // A spent monthly budget: blocking skips to the next provider (here none is left); a stream falls back to blocking.
+        fx.s.log_usage(&memory::NewUsageLogEntry {
+            user_id: None,
+            provider: "anthropic".into(),
+            model: "m".into(),
+            route: Some("ask".into()),
+            input_tokens: None,
+            output_tokens: None,
+            estimated_cost_cents: 500,
+            cache_hit: false,
+            trace_id: "t".into(),
+            ts_unix_ms: crate::util::now_unix_ms(),
+        })
+        .unwrap();
+        fx.s.set_provider_budgets(&[("anthropic".to_string(), 500)]).unwrap();
+        let rich = RoutingConfig { user_daily_cap_cents: Some(100_000), global_daily_cap_cents: Some(100_000), ..hosted_routing() };
+        let stream = preview(&fx, "pricing", &rich, &none, RouteMode::Stream);
+        assert_eq!((stream.destination, stream.reason, stream.provider.as_deref()), ("unknown", "budget_spent_falls_back_to_blocking", Some("anthropic")));
+        let blocking = preview(&fx, "pricing", &rich, &none, RouteMode::Blocking);
+        assert_eq!((blocking.destination, blocking.provider.as_deref()), ("local", Some("ollama")), "the chain skips the spent provider: {blocking:?}");
+        assert_eq!(preview(&fx, "pricing", &RoutingConfig { use_local_model: false, ..rich.clone() }, &none, RouteMode::Blocking).reason, "budget_spent");
+        fx.s.set_provider_budgets(&[]).unwrap();
+        // A spent spend cap.
+        let tripped = RoutingConfig { user_daily_cap_cents: Some(1), ..hosted_routing() };
+        fx.s.log_usage(&memory::NewUsageLogEntry {
+            user_id: None,
+            provider: "openai".into(),
+            model: "m".into(),
+            route: Some("ask".into()),
+            input_tokens: None,
+            output_tokens: None,
+            estimated_cost_cents: 50,
+            cache_hit: false,
+            trace_id: "t2".into(),
+            ts_unix_ms: crate::util::now_unix_ms(),
+        })
+        .unwrap();
+        for mode in [RouteMode::Blocking, RouteMode::Stream] {
+            assert_eq!(preview(&fx, "pricing", &tripped, &none, mode).reason, "spend_cap", "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_question_naming_an_excluded_client_is_previewed_local_and_answered_local() {
+        let fx = excluded_fixture();
+        let none = AskScope::default();
+        for mode in [RouteMode::Blocking, RouteMode::Stream] {
+            let p = preview(&fx, "what did Acme say about pricing?", &hosted_routing(), &none, mode);
+            assert_eq!((p.destination, p.reason, p.require_local, p.provider.as_deref()), ("local", "names_excluded_client", true, Some("ollama")), "{mode:?}");
+            // The same question without the client's name is previewed hosted.
+            assert_eq!(preview(&fx, "what about pricing?", &hosted_routing(), &none, mode).destination, "hosted");
+            // No on-device model: refused, never hosted.
+            let no_local = RoutingConfig { use_local_model: false, ollama_model: String::new(), ..hosted_routing() };
+            assert_eq!(preview(&fx, "what did Acme say?", &no_local, &none, mode).reason, "excluded_client_no_local_model", "{mode:?}");
+        }
+        // Previewing recorded no refusal for a later failure to take.
+        assert!(crate::last_provider_failure().is_none());
+        // The filter's person names the client: asking about them is asking about the client.
+        let direct = ask::ask_route_preview(&fx.s, "what did Acme say about pricing?", &[], "gemma-test", &hosted_routing(), &none, RouteMode::Blocking);
+        assert_eq!((direct.destination, direct.reason), ("local", "names_excluded_client"));
+        let about_acme = AskScope { filter: FindFilter { person: Some(PersonFilter { name: "Acme".into(), person_key: None }), ..Default::default() }, require_local: false };
+        assert_eq!(preview(&fx, "what about pricing?", &hosted_routing(), &about_acme, RouteMode::Blocking).reason, "names_excluded_client");
+        // The call does what the preview said.
+        let (hosted, local) = (Log::default(), Log::default());
+        let a = recording(&hosted, &local, "An answer.", || ask::answer_sourced(&fx.s, "what did Acme say about pricing?", "gemma-test", 20, &[], &hosted_routing(), &none).unwrap());
+        assert_eq!((hosted.prompts().len(), local.prompts().len()), (0, 1));
+        assert!(a.detailed.answered_by.local);
+        // A stream of it is refused (the shell asks again on this computer), as for every Ask.
+        assert!(ask::prepare_ask_sourced(&fx.s, "what did Acme say?", 20, &[], &hosted_routing(), &crate::routing::LimitedUseSettings::default(), &none).is_err());
+    }
+
+    /// Finding: the date filter wins over a "yesterday" in the question, and the label and the range returned say so.
+    #[test]
+    fn a_date_filter_wins_over_a_day_word_and_the_range_used_is_returned() {
+        use chrono::TimeZone;
+        let fx = world();
+        // The filter is a range long ago; the question says "yesterday". The filter's range is read, by the
+        // question's words, not an empty window.
+        let p = ask::prepare_ask_sourced(&fx.s, "what happened yesterday with pricing", 20, &[], &local_routing(), &loopback(), &scope(range())).unwrap();
+        ask::discard_ask(&p.data.prepare_id);
+        assert!(!p.sources.is_empty(), "the filter's range holds matches: {}", p.data.prompt);
+        for s in &p.sources {
+            assert!((R0..R1).contains(&s.card.ts_unix_ms.unwrap()), "[{}] {} is outside the range", s.n, s.card.kind);
+        }
+        assert_eq!(p.date_range, Some(ask::UsedRange { start_unix_ms: Some(R0), end_unix_ms: Some(R1) }));
+        let day = |ms: i64| chrono::Local.timestamp_millis_opt(ms).single().unwrap().format("%B %-d, %Y").to_string();
+        let want = if day(R0) == day(R1 - 1) { day(R0) } else { format!("the period from {} to {}", day(R0), day(R1 - 1)) };
+        assert!(p.data.prompt.contains(&format!("The question is about {want}.")), "the label names the range used: {}", p.data.prompt);
+        assert!(!p.data.prompt.contains("yesterday,"), "no stale 'yesterday' label: {}", p.data.prompt);
+        // The blocking call says the same.
+        let (hosted, local) = (Log::default(), Log::default());
+        let a = recording(&hosted, &local, "Fine.", || ask::answer_sourced(&fx.s, "what happened yesterday with pricing", "gemma-test", 20, &[], &local_routing(), &scope(range())).unwrap());
+        assert_eq!(a.date_range, p.date_range);
+        assert!(local.prompts()[0].contains(&want));
+        // A date filter and no day word: no label, the same range.
+        let p = prepare(&fx, "pricing", &local_routing(), &scope(range()));
+        assert!(!p.data.prompt.contains("The question is about"));
+        assert_eq!(p.date_range, Some(ask::UsedRange { start_unix_ms: Some(R0), end_unix_ms: Some(R1) }));
+        // No date filter: the question's window, labelled as before, and reported.
+        let app = FindFilter { app_bundle_id: Some("com.slack".into()), ..Default::default() };
+        let p = prepare(&fx, "what happened yesterday", &local_routing(), &scope(app));
+        let r = p.date_range.expect("a yesterday question reads a window");
+        assert!(r.start_unix_ms.unwrap() < r.end_unix_ms.unwrap() && p.data.prompt.contains("The question is about yesterday, "));
+        // No scope at all: no range, unless the question names a day.
+        assert_eq!(prepare(&fx, "pricing", &local_routing(), &AskScope::default()).date_range, None);
+    }
+
+    /// Finding: a failed read of the source cards is not "no longer on this device".
+    #[test]
+    fn a_failed_card_read_is_not_a_deleted_row() {
+        let fx = world();
+        let refs = vec![llm::ContextItemRef::Capture { id: 1 }, llm::ContextItemRef::Capture { id: 2 }];
+        let ok = ask::numbered_sources(&fx.s, &refs);
+        assert!(ok.iter().all(|s| s.card.found && !s.unreadable));
+        // A row that is gone: not found, but readable.
+        let gone = ask::numbered_sources(&fx.s, &[llm::ContextItemRef::Capture { id: 9_999 }]);
+        assert!(!gone[0].card.found && !gone[0].unreadable);
+        // A database error: every card is unreadable, none is dressed as deleted.
+        fx.c.execute("DROP TABLE items", []).unwrap();
+        let failed = ask::numbered_sources(&fx.s, &refs);
+        assert_eq!(failed.len(), 2);
+        assert!(failed.iter().all(|s| s.unreadable && !s.card.found && s.card.text.is_none()), "{failed:?}");
+        assert_eq!(failed[1].n, 2);
+        assert_eq!(serde_json::to_value(&failed[0]).unwrap()["unreadable"], true);
+    }
+
+    /// Finding: a filter that does not validate is an error from every sourced call, never a wider Ask.
+    #[test]
+    fn a_filter_that_does_not_validate_is_refused_by_every_sourced_call() {
+        let fx = world();
+        let bad = [
+            FindFilter { app_bundle_id: Some(" ".into()), ..Default::default() },
+            FindFilter { person: Some(PersonFilter { name: " ".into(), person_key: None }), ..Default::default() },
+            FindFilter { start_unix_ms: Some(5), end_unix_ms: Some(5), ..Default::default() },
+        ];
+        for f in bad {
+            let sc = scope(f);
+            assert!(ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &local_routing(), &loopback(), &sc).is_err());
+            assert!(ask::answer_sourced(&fx.s, "pricing", "gemma-test", 20, &[], &local_routing(), &sc).is_err());
+            for mode in [RouteMode::Blocking, RouteMode::Stream] {
+                let p = preview(&fx, "pricing", &local_routing(), &sc, mode);
+                assert_eq!((p.destination, p.reason), ("refused", "invalid_filter"));
+            }
+        }
+    }
+
+    /// The rule the Ask button's name rests on, over a generated matrix of routings: a preview of `local` is a
+    /// call told to stay local that does not refuse for a reason knowable in advance and never reaches a hosted
+    /// model; a preview of `hosted` is a call that goes to the first link it names; a `refused` one fails.
+    #[test]
+    fn the_preview_and_the_real_call_agree_over_every_routing() {
+        let fx = excluded_fixture();
+        fx.s.log_usage(&memory::NewUsageLogEntry {
+            user_id: None,
+            provider: "anthropic".into(),
+            model: "m".into(),
+            route: Some("ask".into()),
+            input_tokens: None,
+            output_tokens: None,
+            estimated_cost_cents: 500,
+            cache_hit: false,
+            trace_id: "t".into(),
+            ts_unix_ms: crate::util::now_unix_ms(),
+        })
+        .unwrap();
+        let (mut checked, mut seen) = (0, std::collections::BTreeSet::new());
+        for preferred in ["anthropic", "openai", "ollama"] {
+            for anthropic_key in [false, true] {
+                for openai_key in [false, true] {
+                    for local_only in [false, true] {
+                        for ollama_model in ["", "gemma-test", "gpt-oss:120b-cloud"] {
+                            for use_local_model in [false, true] {
+                                for budget_spent in [false, true] {
+                                    for named in [false, true] {
+                                        fx.s.set_provider_budgets(&if budget_spent { vec![("anthropic".to_string(), 500)] } else { vec![] }).unwrap();
+                                        let routing = RoutingConfig {
+                                            preferred_provider: preferred.into(),
+                                            anthropic_key: anthropic_key.then(|| "k".to_string()),
+                                            openai_key: openai_key.then(|| "k".to_string()),
+                                            sensitive: local_only,
+                                            ollama_model: ollama_model.into(),
+                                            use_local_model,
+                                            user_daily_cap_cents: Some(100_000),
+                                            global_daily_cap_cents: Some(100_000),
+                                            ..RoutingConfig::default()
+                                        };
+                                        let q = if named { "what did Acme say about pricing?" } else { "what about pricing?" };
+                                        let label = format!("{preferred} ak={anthropic_key} ok={openai_key} local_only={local_only} model={ollama_model:?} bundled={use_local_model} spent={budget_spent} named={named}");
+                                        // Streaming: prepare_ask_sourced is the real call.
+                                        let p = preview(&fx, q, &routing, &AskScope::default(), RouteMode::Stream);
+                                        let told = AskScope { require_local: p.require_local, ..Default::default() };
+                                        let real = ask::prepare_ask_sourced(&fx.s, q, 20, &[], &routing, &loopback(), &told);
+                                        if let Ok(r) = &real {
+                                            ask::discard_ask(&r.data.prepare_id);
+                                        }
+                                        seen.insert(("stream", p.destination));
+                                        match p.destination {
+                                            "local" => {
+                                                let r = real.as_ref().unwrap_or_else(|e| panic!("stream previewed local but refused ({e:?}): {label}"));
+                                                assert!(r.answered_locally && r.provider == "ollama", "stream previewed local but would stream to {} (locally: {}): {label}", r.provider, r.answered_locally);
+                                            }
+                                            "hosted" => {
+                                                let r = real.as_ref().unwrap_or_else(|e| panic!("stream previewed hosted but failed ({e:?}): {label}"));
+                                                assert!(!r.answered_locally && Some(r.provider.as_str()) == p.provider.as_deref(), "stream previewed {:?} but streams to {}: {label}", p.provider, r.provider);
+                                            }
+                                            "refused" => {
+                                                // Nothing can be promised on this computer: a call told to stay local fails.
+                                                let must_stay = AskScope { require_local: true, ..Default::default() };
+                                                let r = ask::prepare_ask_sourced(&fx.s, q, 20, &[], &routing, &loopback(), &must_stay);
+                                                if let Ok(r) = &r {
+                                                    ask::discard_ask(&r.data.prepare_id);
+                                                }
+                                                assert!(r.is_err(), "stream previewed refused ({}) but a call told to stay local proceeds: {label}", p.reason);
+                                            }
+                                            "unknown" => {
+                                                // The button promised nothing, and the shell asks with `require_local` false. The call may do
+                                                // only what an unknown preview allows: hand back to the blocking path (the spent budget that
+                                                // made it unknown), or stream to the provider the preview names; and a question that names an
+                                                // excluded client never streams to a hosted model, whatever the label said.
+                                                assert!(!p.require_local && !p.local, "an unknown preview asks for nothing and promises nothing: {label}");
+                                                match &real {
+                                                    Err(crate::ApiError::BudgetSpent(_)) => {}
+                                                    Err(e) => panic!("stream previewed unknown ({}) but failed another way ({e:?}): {label}", p.reason),
+                                                    Ok(r) => {
+                                                        assert!(Some(r.provider.as_str()) == p.provider.as_deref(), "stream previewed unknown for {:?} but streams to {}: {label}", p.provider, r.provider);
+                                                        assert!(!named || r.answered_locally, "a question naming an excluded client streams to a hosted model after an unknown preview: {label}");
+                                                    }
+                                                }
+                                            }
+                                            other => panic!("a stream preview is local, hosted, refused or unknown, not {other:?}: {label}"),
+                                        }
+                                        // Blocking: answer_sourced, through recording links, is the real call.
+                                        let p = preview(&fx, q, &routing, &AskScope::default(), RouteMode::Blocking);
+                                        let told = AskScope { require_local: p.require_local, ..Default::default() };
+                                        let (hosted, local) = (Log::default(), Log::default());
+                                        let real = recording(&hosted, &local, "Fine.", || ask::answer_sourced(&fx.s, q, "gemma-test", 20, &[], &routing, &told));
+                                        seen.insert(("blocking", p.destination));
+                                        match p.destination {
+                                            "local" => {
+                                                let a = real.as_ref().unwrap_or_else(|e| panic!("blocking previewed local but failed ({e:?}): {label}"));
+                                                assert!(hosted.prompts().is_empty() && a.answered_locally, "blocking previewed local but reached a hosted link: {label}");
+                                            }
+                                            "hosted" => {
+                                                let a = real.as_ref().unwrap_or_else(|e| panic!("blocking previewed hosted but failed ({e:?}): {label}"));
+                                                assert_eq!(Some(a.detailed.answered_by.provider.as_str()), p.provider.as_deref(), "blocking previewed hosted but another link answered: {label}");
+                                                assert!(local.prompts().is_empty() || p.may_fall_back, "{label}");
+                                            }
+                                            "refused" => {
+                                                let must_stay = AskScope { require_local: true, ..Default::default() };
+                                                let r = recording(&hosted, &local, "Fine.", || ask::answer_sourced(&fx.s, q, "gemma-test", 20, &[], &routing, &must_stay));
+                                                assert!(r.is_err(), "blocking previewed refused ({}) but a call told to stay local answers: {label}", p.reason);
+                                            }
+                                            other => panic!("a blocking preview is local, hosted or refused, not {other:?}: {label}"),
+                                        }
+                                        checked += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        fx.s.set_provider_budgets(&[]).unwrap();
+        assert_eq!(checked, 3 * 2 * 2 * 2 * 3 * 2 * 2 * 2);
+        for want in [("stream", "local"), ("stream", "hosted"), ("stream", "refused"), ("stream", "unknown"), ("blocking", "local"), ("blocking", "hosted"), ("blocking", "refused")] {
+            assert!(seen.contains(&want), "the matrix never reached {want:?}: {seen:?}");
+        }
+    }
+
+    /// Finding: a scoped read that fails is a failed Ask, not a thinner prompt that says nothing was found.
+    #[test]
+    fn a_failed_scoped_read_fails_the_sourced_ask_and_leaves_the_unfiltered_ask_alone() {
+        let fx = world();
+        let f = range();
+        // Before the failure both read fine.
+        let ok = ask::prepare_ask_sourced(&fx.s, "pricing review", 20, &[], &local_routing(), &loopback(), &scope(f.clone())).unwrap();
+        ask::discard_ask(&ok.data.prepare_id);
+        // Only the scoped episodes read touches this table: its error must not be swallowed.
+        fx.c.execute("DROP TABLE episodes", []).unwrap();
+        let r = ask::prepare_ask_sourced(&fx.s, "pricing review", 20, &[], &local_routing(), &loopback(), &scope(f.clone()));
+        assert!(matches!(r, Err(crate::ApiError::StoreFailure)), "{:?}", r.map(|p| p.data.prompt));
+        // The blocking call fails the same way and sends nothing to any link.
+        let (hosted, local) = (Log::default(), Log::default());
+        let r = recording(&hosted, &local, "Nothing found.", || ask::answer_sourced(&fx.s, "pricing review", "gemma-test", 20, &[], &local_routing(), &scope(f.clone())));
+        assert!(matches!(r, Err(crate::ApiError::StoreFailure)), "{:?}", r.map(|a| a.detailed.answer.text));
+        assert_eq!((hosted.prompts().len(), local.prompts().len()), (0, 0), "no prompt was built from a partial read");
+        // A person filter reads through the same door (episodes are hidden under a person, so it reads the
+        // threads), and so does a question about a day, which reads a window.
+        fx.c.execute("DROP TABLE threads", []).unwrap();
+        let sam = FindFilter { person: Some(PersonFilter { name: "Sam Okafor".into(), person_key: None }), ..range() };
+        assert!(matches!(ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &local_routing(), &loopback(), &scope(sam)), Err(crate::ApiError::StoreFailure)));
+        let sam_today = FindFilter { person: Some(PersonFilter { name: "Sam Okafor".into(), person_key: None }), ..Default::default() };
+        assert!(matches!(ask::prepare_ask_sourced(&fx.s, "what happened yesterday", 20, &[], &local_routing(), &loopback(), &scope(sam_today)), Err(crate::ApiError::StoreFailure)));
+        // The unfiltered call is the old call: it reads what it did and answers.
+        let (hosted, local) = (Log::default(), Log::default());
+        let a = recording(&hosted, &local, "An answer.", || ask::answer_sourced(&fx.s, "pricing review", "gemma-test", 20, &[], &local_routing(), &AskScope::default()));
+        assert!(a.is_ok() && local.prompts().len() == 1);
+        let p = ask::prepare_ask_sourced(&fx.s, "pricing review", 20, &[], &local_routing(), &loopback(), &AskScope::default()).unwrap();
+        ask::discard_ask(&p.data.prepare_id);
+        // The envelopes: an invalid filter has its own kind; a store failure is the C layer's bare NULL.
+        let invalid: crate::ApiResult<()> = Err(crate::ApiError::InvalidFilter);
+        assert_eq!(crate::envelope::envelope_json(&invalid).unwrap(), r#"{"ok":false,"error":{"kind":"invalid_filter"}}"#);
+        let failed: crate::ApiResult<()> = Err(crate::ApiError::StoreFailure);
+        assert!(crate::envelope::envelope_json(&failed).is_none());
+    }
+
+    /// Finding: an invalid filter is `InvalidFilter` from every sourced call, not "not found".
+    #[test]
+    fn an_invalid_filter_is_its_own_error() {
+        let fx = world();
+        let sc = scope(FindFilter { app_bundle_id: Some(" ".into()), ..Default::default() });
+        assert!(matches!(ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &local_routing(), &loopback(), &sc), Err(crate::ApiError::InvalidFilter)));
+        assert!(matches!(ask::answer_sourced(&fx.s, "pricing", "gemma-test", 20, &[], &local_routing(), &sc), Err(crate::ApiError::InvalidFilter)));
+        let p = ask::invalid_filter_preview();
+        assert_eq!((p.destination, p.reason, p.local, p.require_local), ("refused", "invalid_filter", false, false));
+    }
+
+    /// Finding: the person the filter names is resolved once for an Ask, however many sources and contexts read it,
+    /// including the hosted and the on-device contexts of one blocking call.
+    #[test]
+    fn an_ask_resolves_its_person_once() {
+        let fx = excluded_fixture();
+        let sam = FindFilter { person: Some(PersonFilter { name: "Sam Okafor".into(), person_key: Some("name:sam".into()) }), ..range() };
+        let builds = || memory::find::person_context_builds(&fx.s);
+        let before = builds();
+        // A hosted link first with an on-device link behind it, and a client excluded: the call reads a context
+        // for each kind of link.
+        let (hosted, local) = (Log::default(), Log::default());
+        let routing = hosted_routing();
+        recording(&hosted, &local, "Fine.", || ask::answer_sourced(&fx.s, "pricing", "gemma-test", 20, &[], &routing, &scope(sam.clone())).unwrap());
+        assert_eq!(hosted.prompts().len(), 1);
+        assert_eq!(builds() - before, 1, "one person context for the blocking Ask");
+        let p = ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &routing, &crate::routing::LimitedUseSettings::default(), &scope(sam.clone())).unwrap();
+        ask::discard_ask(&p.data.prepare_id);
+        assert_eq!(builds() - before, 2, "and one for the streamed one");
+        // A question about a day reads through the window path, with the same one context.
+        let day = FindFilter { person: sam.person.clone(), ..Default::default() };
+        let p = ask::prepare_ask_sourced(&fx.s, "what happened yesterday", 20, &[], &routing, &crate::routing::LimitedUseSettings::default(), &scope(day)).unwrap();
+        ask::discard_ask(&p.data.prepare_id);
+        assert_eq!(builds() - before, 3);
+        // No person, no context.
+        let p = ask::prepare_ask_sourced(&fx.s, "pricing", 20, &[], &routing, &crate::routing::LimitedUseSettings::default(), &scope(range())).unwrap();
+        ask::discard_ask(&p.data.prepare_id);
+        assert_eq!(builds() - before, 3);
+    }
+
+    /// Finding: the preview rescans only when some client is excluded, which is when a shell must keep it off the
+    /// store a page is waiting on.
+    #[test]
+    fn a_preview_may_rescan_only_when_a_client_is_excluded() {
+        assert!(!ask::route_preview_may_rescan(&world().s), "nothing excluded: a few cheap reads");
+        assert!(ask::route_preview_may_rescan(&excluded_fixture().s), "a client is excluded: the exclusion cache may rebuild");
+        let p = ask::unchecked_preview();
+        assert_eq!((p.destination, p.reason, p.local, p.require_local, p.provider, p.may_fall_back), ("unknown", "excluded_client_check_pending", false, false, None, false));
+    }
+
+    #[test]
+    fn a_preview_for_a_streamed_call_that_is_pinned_local_by_a_cloud_model_is_hosted() {
+        let fx = world();
+        let cloud = RoutingConfig { ollama_model: "gpt-oss:120b-cloud".into(), ..RoutingConfig::default() };
+        let p = preview(&fx, "pricing", &cloud, &AskScope::default(), RouteMode::Stream);
+        assert_eq!((p.destination, p.provider.as_deref()), ("hosted", Some("ollama")));
     }
 }

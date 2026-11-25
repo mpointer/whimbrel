@@ -19,15 +19,17 @@ struct ProfileSettingsPane: View {
 
             Toggle("Use my profile in summaries and answers", isOn: Binding(get: { profile.enabled }, set: { profile.enabled = $0 }))
                 .accessibilityIdentifier("profile-enabled")
+                .settingsAnchor("profile.use")
             Toggle("Suggest additions from my meetings", isOn: Binding(get: { profile.suggestEnabled }, set: { profile.suggestEnabled = $0 }))
                 .accessibilityIdentifier("profile-suggest-enabled")
+                .settingsAnchor("profile.suggest")
 
             Divider().overlay(Color.whimbrelBorder)
             field("Name", text: Binding(get: { profile.name }, set: { profile.name = $0 }))
             field("Role", text: Binding(get: { profile.role }, set: { profile.role = $0 }))
             field("Organization", text: Binding(get: { profile.organization }, set: { profile.organization = $0 }))
             VStack(alignment: .leading, spacing: Spacing.xs) {
-                Text("About me and my work").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                Text("About me and my work").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("profile.about")
                 TextEditor(text: Binding(get: { profile.about }, set: { profile.about = $0 }))
                     .font(.whimbrelBody(.body))
                     .frame(minHeight: 100)
@@ -62,7 +64,7 @@ struct ProfileSettingsPane: View {
 
     private var factsSection: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            Text("Learned facts").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Learned facts").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("profile.facts")
             ForEach(profile.facts) { fact in
                 HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
                     TextField("Fact", text: Binding(

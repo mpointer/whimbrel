@@ -37,13 +37,15 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
     # public mirror and for a pull request from a fork, so outside code never runs on it.
-    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
+    # With the repository variable MAC_BIG_CI set to on, either Mac runner takes it (label mac-pool; an internal runbook covers it).
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MAC_BIG_CI == 'on' && '["self-hosted","mac-pool"]' || '["self-hosted","macOS"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 5
     outputs:
       version_only: ${{ steps.filter.outputs.version_only }}
       run_core: ${{ steps.filter.outputs.run_core }}
+      run_windows: ${{ steps.filter.outputs.run_windows }}
       run_windows_app: ${{ steps.filter.outputs.run_windows_app }}
       run_ios: ${{ steps.filter.outputs.run_ios }}
       run_android_app: ${{ steps.filter.outputs.run_android_app }}
@@ -84,8 +86,20 @@ jobs:
           else
             echo "run_core=false" >> "$GITHUB_OUTPUT"
           fi
-          # The Windows app (apps/windows) path-depends on core/, so either one runs it.
-          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE '^(apps/windows/|core/|\.github/workflows/)' <<<"$changed"; }; then
+          # The two Windows jobs share one PC, so they run only for what Windows builds or reads.
+          # A change to another workflow file (release-integrity.yml, website.yml) no longer
+          # runs them; only this file does. Mac, iOS, Android, website and docs changes skip them.
+          # windows (core/): core/skins' tests read skins/ and themes/.
+          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE '^(core/|skins/|themes/|\.github/workflows/rust-tests\.yml$)' <<<"$changed"; }; then
+            echo "run_windows=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_windows=false" >> "$GITHUB_OUTPUT"
+          fi
+          # windows-app: apps/windows path-depends on core/, and its build and tests also read
+          # skins/, themes/, l10n/languages.json, VERSION, mcp-servers/ (the bundled connectors),
+          # server/src/aiProxy.ts (the price table), the Mac Today layouts and the Mac benchmark clip.
+          windows_app_paths='^(apps/windows/|core/|skins/|themes/|l10n/|mcp-servers/|VERSION$|server/src/aiProxy\.ts$|apps/macos/Whimbrel/UI/Today/Archetypes/|apps/macos/Whimbrel/Support/engine-benchmark\.wav$|\.github/workflows/rust-tests\.yml$)'
+          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE "$windows_app_paths" <<<"$changed"; }; then
             echo "run_windows_app=true" >> "$GITHUB_OUTPUT"
           else
             echo "run_windows_app=false" >> "$GITHUB_OUTPUT"
@@ -224,7 +238,7 @@ jobs:
   test:
     needs: changes
     if: needs.changes.outputs.run_core == 'true' && github.event_name != 'pull_request' && github.event_name != 'schedule' && github.repository == 'mpointer/kestrel'
-    runs-on: [self-hosted, macOS]
+    runs-on: ${{ fromJSON(vars.MAC_BIG_CI == 'on' && '["self-hosted","mac-pool"]' || '["self-hosted","macOS"]') }}
     # 45, not 30, since the SQLCipher step was added (X4 Task 13; not yet measured).
     timeout-minutes: 45
     steps:
@@ -310,33 +324,61 @@ jobs:
   # apps/windows/scripts/install-actions-runner.ps1). While the PC is off or asleep
   # this job waits.
   # PRs and manual runs only: a squash merge to main lands the exact tree its PR already
-  # ran here, and this one PC takes 25-40 min per run.
+  # ran here.
+  #
+  # One heavy Windows job at a time. Both runner instances share one PC, and two Rust jobs
+  # side by side each took twice as long: on 2026-11-23 two `windows` jobs ran together and
+  # both were cut off at 60 min. With the repository variable WINDOWS_HEAVY set to on, this
+  # job, windows-app and release-windows.yml ask for the label kestrel-windows-heavy, which
+  # only one runner instance has, so GitHub queues them one after another. Unset (or no
+  # runner has the label yet), they go to either instance as before. Add the label first,
+  # then set the variable: a job asking for a label no online runner has just waits.
+  # Not a concurrency group: a group keeps one pending job and cancels the older one.
   windows:
     needs: changes
-    if: needs.changes.outputs.run_core == 'true' && github.repository == 'mpointer/kestrel' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'workflow_dispatch')
-    runs-on: [self-hosted, Windows, X64, kestrel-windows]
-    # About 12 min alone; with both runner instances on the PC busy, a run took 21 min.
-    # With many PRs queued (2026-11-13) runs were cut off at 40 min mid-compile.
-    timeout-minutes: 60
+    if: needs.changes.outputs.run_windows == 'true' && github.repository == 'mpointer/kestrel' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'workflow_dispatch')
+    runs-on: ${{ fromJSON(vars.WINDOWS_HEAVY == 'on' && '["self-hosted","Windows","X64","kestrel-windows","kestrel-windows-heavy"]' || '["self-hosted","Windows","X64","kestrel-windows"]') }}
+    # 90. Measured over the last 25 runs (2026-11-22..23, every attempt): alone the job took
+    # 26-57 min, two side by side were cut off at 60. The memory and api suites now run once
+    # (with SQLCipher) instead of twice, and the build directory persists, which takes about
+    # 12 min off a typical run and about 22 min off the slowest. That leaves about 35 min
+    # alone; 90 still covers two jobs side by side (about 2x) until the heavy label is on.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      # Tests make temp folders (tempfile .tmp*, whimbrel-*). On Windows a folder whose SQLite file is still open
+      # when the test ends (a store closing on another thread) cannot be deleted, so thousands were left in the
+      # PC user's %TEMP% every day. The runner empties RUNNER_TEMP at the start and end of every job, so the
+      # tests use a folder inside it and whatever they leave goes with the job.
+      - name: Temp folder inside the job's temp directory
+        shell: powershell
+        run: |
+          $t = Join-Path $env:RUNNER_TEMP 'tmp'
+          New-Item -ItemType Directory -Force $t | Out-Null
+          "TMP=$t", "TEMP=$t" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "TMP=$t"
       # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
-      # RUSTUP_HOME in the runner's .env) rather than a toolchain action.
+      # RUSTUP_HOME in the runner's .env) rather than a toolchain action. cargo-nextest is
+      # optional: when the PC has it (cargo install cargo-nextest --locked), the test steps
+      # use it to run test binaries side by side; otherwise they use cargo test.
       - name: Rust toolchain (preinstalled on this runner)
+        shell: powershell
         run: |
           rustup show active-toolchain
           cargo --version
-      # cache-bin: false. With the default (true), the save step on main prunes
-      # CARGO_HOME/bin to cargo-installed binaries, which deletes rustup and leaves
-      # every proxy dangling. A self-hosted runner keeps CARGO_HOME between runs.
-      # save-if: false. These jobs only restore. Saving on main took about 6 minutes
-      # to compress and upload core/target (928 MB on Windows), so they keep
-      # restoring the last cache main saved and cargo rebuilds whatever changed.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core
-          save-if: false
-          cache-bin: false
+          if (Get-Command cargo-nextest -ErrorAction SilentlyContinue) { cargo nextest --version } else { Write-Host "cargo-nextest not installed; the tests run with cargo test" }
+      # One build directory for the whole job, beside the runner's _work and kept between runs
+      # (checkout cleans core/target, and no Windows rust-cache was ever saved: every run
+      # compiled the workspace from scratch). Plain and SQLCipher builds share it: cargo keeps
+      # each feature set's output apart, and the dependencies both use compile once. It is
+      # t-sqlc, where the SQLCipher steps already built, so its vendored OpenSSL is reused.
+      - name: Build directory for this runner instance
+        shell: powershell
+        run: |
+          $root = Split-Path -Parent (Split-Path -Parent $env:RUNNER_TEMP)
+          $target = Join-Path $root 't-sqlc'
+          "CARGO_TARGET_DIR=$target" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "CARGO_TARGET_DIR=$target"
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
@@ -345,20 +387,63 @@ jobs:
       - name: Install the MCP echo-server test fixture
         working-directory: core/mcp-host/tests/fixtures
         run: npm ci
-      - name: Re-download sherpa-onnx libraries the cache left out
+      - name: Re-download sherpa-onnx libraries the build directory lacks
         # See the same step in test-linux: when the downloaded sherpa-onnx libraries are
         # missing, drop the build script's cached output so it runs again and downloads them.
         shell: powershell
         run: |
-          $libs = Get-ChildItem -Path core/target/sherpa-onnx-prebuilt -Recurse -Filter '*sherpa-onnx-c-api*' -ErrorAction SilentlyContinue
+          $t = $env:CARGO_TARGET_DIR
+          $libs = Get-ChildItem -Path "$t/sherpa-onnx-prebuilt" -Recurse -Filter '*sherpa-onnx-c-api*' -ErrorAction SilentlyContinue
           if (-not $libs) {
-            Write-Host "No usable sherpa-onnx libraries in core/target; forcing the build script to download them"
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue core/target/sherpa-onnx-prebuilt
-            Get-ChildItem -Path core/target/*/build, core/target/*/.fingerprint -Directory -Filter 'sherpa-onnx-sys-*' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+            Write-Host "No usable sherpa-onnx libraries in $t; forcing the build script to download them"
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$t/sherpa-onnx-prebuilt"
+            Get-ChildItem -Path "$t/*/build", "$t/*/.fingerprint" -Directory -Filter 'sherpa-onnx-sys-*' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
           }
+      # memory and api are left out here: their suites run once, below, on the encrypted store
+      # (SQLCipher), the store the Windows app ships. Before, they ran here too on a plain store,
+      # about 22 of this step's minutes for the same tests. The plain store (phones) is still
+      # tested by the nightly Linux run and the Mac run after merge.
       - name: Test pure-Rust crates
         working-directory: core
-        run: cargo test --workspace --exclude transcribe --exclude diarize --exclude ffi --exclude sync-engine --exclude cloud-runner
+        shell: powershell
+        run: |
+          $pkgs = '--workspace', '--exclude', 'memory', '--exclude', 'api', '--exclude', 'transcribe', '--exclude', 'diarize', '--exclude', 'ffi', '--exclude', 'sync-engine', '--exclude', 'cloud-runner'
+          if (Get-Command cargo-nextest -ErrorAction SilentlyContinue) {
+            cargo nextest run @pkgs
+            if ($LASTEXITCODE -ne 0) { throw "tests failed" }
+            # nextest doesn't run doctests.
+            cargo test --doc @pkgs
+            if ($LASTEXITCODE -ne 0) { throw "doctests failed" }
+          } else {
+            cargo test @pkgs
+            if ($LASTEXITCODE -ne 0) { throw "tests failed" }
+          }
+      # The tests that exist only without SQLCipher (cfg(not(feature = "sqlcipher"))): a build
+      # without it must refuse a keyed open and the encryption migration must fail closed. Plus
+      # memory's and api's doctests and api's examples, which the --lib --tests runs below leave out.
+      # The list check fails the step if a rename leaves the filter matching fewer tests than expected.
+      - name: Test memory and api without SQLCipher (the plain-build-only tests and doctests)
+        working-directory: core
+        shell: powershell
+        run: |
+          $runs = @(
+            @{ args = @('-p', 'memory', '--lib', '--test', 'keyed_open'); filter = @('cipher_version_missing', 'without_feature'); min = 2 },
+            @{ args = @('-p', 'api', '--lib', '--test', 'encrypt_migration'); filter = @('without_sqlcipher'); min = 2 }
+          )
+          foreach ($r in $runs) {
+            $a = $r.args; $f = $r.filter
+            $listed = @(cargo test @a -- --list @f | Where-Object { $_ -match ': test$' })
+            if ($LASTEXITCODE -ne 0) { throw "cargo test $a --list failed" }
+            $listed | ForEach-Object { Write-Host $_ }
+            if ($listed.Count -lt $r.min) { throw "expected at least $($r.min) plain-build-only tests in $a, found $($listed.Count)" }
+            cargo test @a -- @f
+            if ($LASTEXITCODE -ne 0) { throw "cargo test $a failed" }
+          }
+          cargo test -p memory -p api --doc
+          if ($LASTEXITCODE -ne 0) { throw "memory and api doctests failed" }
+          # api's examples, which the workspace run used to compile.
+          cargo build -p api --examples
+          if ($LASTEXITCODE -ne 0) { throw "api examples failed to build" }
       - name: Build native-dependent crates (compile-only, no test)
         working-directory: core
         run: cargo build -p transcribe -p diarize -p ffi
@@ -372,10 +457,9 @@ jobs:
         run: cargo build -p sync-engine -p cloud-runner
       # X4 encryption at rest (issue #816): SQLCipher on vendored OpenSSL. Building OpenSSL needs
       # Strawberry Perl (PERL) and NASM on the runner; on FEYNMAN both are in the runner tasks'
-      # user environment (2026-11-14). Its own target directory beside the runner's _work, kept
-      # between runs (checkout cleans the workspace), so OpenSSL compiles once, not every run,
-      # and the feature switch doesn't rebuild core/target.
-      - name: SQLCipher toolchain and build directory
+      # user environment (2026-11-14). The build directory is kept between runs, so OpenSSL
+      # compiles once, not every run.
+      - name: SQLCipher toolchain
         shell: powershell
         run: |
           if (-not $env:PERL -or -not (Test-Path $env:PERL)) { throw "PERL is not set to Strawberry Perl on this runner (issue #816)" }
@@ -383,33 +467,36 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "this Perl can't build OpenSSL" }
           if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) { throw "nasm is not on PATH on this runner (issue #816)" }
           nasm -v
-          $root = Split-Path -Parent (Split-Path -Parent $env:RUNNER_TEMP)
-          "SQLCIPHER_TARGET=$(Join-Path $root 't-sqlc')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-      - name: Test memory with SQLCipher (keyed open, vendored OpenSSL)
+      # The full memory and api suites on the encrypted store (keyed open, Delete everything,
+      # the encryption migration, keyed launch decisions), per package (-p), never --workspace:
+      # core/phone-tests' libsql `core` feature would be unified in and shadow SQLCipher.
+      # api's sqlcipher feature turns on memory's, so one run covers both crates' tests.
+      - name: Test memory and api with SQLCipher
         working-directory: core
         shell: powershell
         run: |
-          $env:CARGO_TARGET_DIR = $env:SQLCIPHER_TARGET
-          cargo test -p memory --features sqlcipher --lib --tests
-          if ($LASTEXITCODE -ne 0) { throw "memory sqlcipher tests failed" }
+          $sel = '-p', 'memory', '-p', 'api', '--features', 'memory/sqlcipher,api/sqlcipher', '--lib', '--tests'
+          if (Get-Command cargo-nextest -ErrorAction SilentlyContinue) {
+            cargo nextest run @sel
+          } else {
+            cargo test @sel
+          }
+          if ($LASTEXITCODE -ne 0) { throw "memory and api sqlcipher tests failed" }
+      - name: Build ffi with SQLCipher
+        working-directory: core
+        shell: powershell
+        run: |
           cargo build -p ffi --features sqlcipher
           if ($LASTEXITCODE -ne 0) { throw "ffi sqlcipher build failed" }
-      # The encrypted api suite (Delete everything, the encryption migration, keyed launch decisions).
-      - name: Test api with SQLCipher
-        working-directory: core
-        shell: powershell
-        run: |
-          $env:CARGO_TARGET_DIR = $env:SQLCIPHER_TARGET
-          cargo test -p api --features sqlcipher --lib --tests
-          if ($LASTEXITCODE -ne 0) { throw "api sqlcipher tests failed" }
 
   # The Tauri shell and its React UI (apps/windows). Nothing else in CI builds them.
   # Runs on the same self-hosted PC as `windows`. The UI builds first because the
   # Tauri crate embeds ui/dist at compile time. CARGO_TARGET_DIR is short and outside
   # the checkout: whisper.cpp's MSBuild step fails past 260 characters, and a
   # persistent target on this runner keeps rebuilds incremental without rust-cache.
-  # Each runner instance on the PC has its own (C:\ar\t-win, C:\ar2\t-win), so two of
-  # these jobs build at once instead of waiting on cargo's lock.
+  # Each runner instance on the PC has its own (C:\ar\t-win, C:\ar2\t-win), so two
+  # instances never wait on each other's cargo lock. With WINDOWS_HEAVY on, only the
+  # instance with the kestrel-windows-heavy label takes this job (see the windows job).
   # Build from src-tauri/ so its .cargo/config.toml (+crt-static) applies.
   windows-app:
     # Runs after the windows job (pass, fail or skipped): FEYNMAN is the only
@@ -417,9 +504,9 @@ jobs:
     # time out with no runner before it starts.
     needs: [changes, windows]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.run_windows_app == 'true' && github.repository == 'mpointer/kestrel' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'workflow_dispatch') }}
-    runs-on: [self-hosted, Windows, X64, kestrel-windows]
-    # About 14 min alone; with both runner instances on the PC busy, a warm run took 26 min.
-    # With many PRs queued (2026-11-13) runs were cut off at 40 min.
+    runs-on: ${{ fromJSON(vars.WINDOWS_HEAVY == 'on' && '["self-hosted","Windows","X64","kestrel-windows","kestrel-windows-heavy"]' || '["self-hosted","Windows","X64","kestrel-windows"]') }}
+    # 60. Measured over the last 25 runs (2026-11-22..23, every attempt): 13-26 min alone,
+    # up to 34 min beside another Windows job. 60 is almost 2x the worst case seen.
     timeout-minutes: 60
     steps:
       # The runner's own directory is the parent of _work (RUNNER_TEMP is _work\_temp). The skin
@@ -435,6 +522,17 @@ jobs:
           "CARGO_TARGET_DIR=$target", "MATRIX_PORT=$port" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           Write-Host "CARGO_TARGET_DIR=$target MATRIX_PORT=$port"
       - uses: actions/checkout@v4
+      # Tests make temp folders (tempfile .tmp*, whimbrel-*). On Windows a folder whose SQLite file is still open
+      # when the test ends (a store closing on another thread) cannot be deleted, so thousands were left in the
+      # PC user's %TEMP% every day. The runner empties RUNNER_TEMP at the start and end of every job, so the
+      # tests use a folder inside it and whatever they leave goes with the job.
+      - name: Temp folder inside the job's temp directory
+        shell: powershell
+        run: |
+          $t = Join-Path $env:RUNNER_TEMP 'tmp'
+          New-Item -ItemType Directory -Force $t | Out-Null
+          "TMP=$t", "TEMP=$t" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "TMP=$t"
       # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
       # RUSTUP_HOME in the runner's .env) rather than a toolchain action.
       - name: Rust toolchain (preinstalled on this runner)
@@ -539,7 +637,8 @@ jobs:
     if: needs.changes.outputs.run_android_app == 'true' && github.event_name != 'push'
     # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
     # public mirror and for a pull request from a fork, so outside code never runs on it.
-    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
+    # With the repository variable MAC_BIG_CI set to on, either Mac runner takes it (label mac-pool; an internal runbook covers it).
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MAC_BIG_CI == 'on' && '["self-hosted","mac-pool"]' || '["self-hosted","macOS"]') || 'ubuntu-latest' }}
     timeout-minutes: 40
     steps:
       # The Mac already has the SDK, NDK 27.2.12479018, CMake 3.22.1 and JDK 17; the hosted
@@ -599,7 +698,9 @@ jobs:
   ios:
     needs: changes
     if: needs.changes.outputs.run_ios == 'true' && github.event_name != 'pull_request' && github.event_name != 'schedule' && github.repository == 'mpointer/kestrel'
-    runs-on: [self-hosted, macOS]
+    # Either Mac when MAC_BIG_CI is on. The test step below finds its simulator by name,
+    # so each Mac needs one named "Whimbrel CI" (an internal runbook covers it).
+    runs-on: ${{ fromJSON(vars.MAC_BIG_CI == 'on' && '["self-hosted","mac-pool"]' || '["self-hosted","macOS"]') }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -639,10 +740,22 @@ jobs:
           python3 -I scripts/l10n/translate.py check --apple "$RUNNER_TEMP/loc"/en.xcloc apps/mobile/ios/Whimbrel/Localizable.xcstrings
           python3 -I scripts/l10n/translate.py check --apple "$RUNNER_TEMP/loc"/en.xcloc apps/mobile/ios/Whimbrel/InfoPlist.xcstrings
       # Unit tests (WhimbrelTests: the enrollment model, with a fake backend and the
-      # in-memory Keychain, so no signing is needed). This runner is Mike's MacBook, so
-      # the simulator is the one set aside for CI, never the one Mike uses.
+      # in-memory Keychain, so no signing is needed). One runner is Mike's MacBook, so
+      # the simulator is the one set aside for CI, never the one Mike uses: the one named
+      # "Whimbrel CI" in the runner's account. The MacBook's older CI simulator has
+      # another name, so it is found by its id when the name is absent.
       - name: Test iOS app on a simulator
         run: |
-          udid=057DA530-5C3E-42C7-B8F2-4A98AFAB3E7E
+          udid=$(xcrun simctl list devices available -j | python3 -I -c '
+          import json, sys
+          devices = [d for group in json.load(sys.stdin)["devices"].values() for d in group]
+          named = [d["udid"] for d in devices if d["name"] == "Whimbrel CI"]
+          older = [d["udid"] for d in devices if d["udid"] == "057DA530-5C3E-42C7-B8F2-4A98AFAB3E7E"]
+          print((named or older or [""])[0])')
+          if [ -z "$udid" ]; then
+            echo "No simulator named \"Whimbrel CI\" in this runner's account. Create one: xcrun simctl create \"Whimbrel CI\" \"iPhone 18 Pro\"" >&2
+            exit 1
+          fi
+          echo "simulator: $udid"
           xcodebuild test -project apps/mobile/ios/Whimbrel.xcodeproj -scheme Whimbrel \
             -destination "id=$udid" CODE_SIGNING_ALLOWED=NO

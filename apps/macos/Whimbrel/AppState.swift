@@ -28,7 +28,14 @@ struct SummaryFailures: Equatable {
 /// runs with partial permission grants and reports which capabilities are inactive and why.
 @MainActor
 final class AppState: ObservableObject {
-    @Published private(set) var activityCaptureEnabled = false
+    @Published private(set) var activityCaptureEnabled = false {
+        // Read only by the redesign's memory rule (`WMemoryHold`). The write is behind the switch, so with it off this observer
+        // reads one flag and does nothing else; nothing else changes.
+        didSet { if redesignEnabled, activityCaptureEnabled, !oldValue { memoryOnSince = Date() } }
+    }
+    /// When work memory was last switched on, or when the app launched. A memory that is on and not saving is called a problem
+    /// only once this is a few seconds old (`WMemoryHold`), so the moment after launch, a turn-on or a timed pause is not alarmed.
+    private(set) var memoryOnSince = Date()
     /// Redesign flag only: when a timed pause of capture ends, device-local and never synced. Nil unless a timed
     /// pause is in effect; with the flag off it is never set or read (docs/ui-redesign/screens/home.md).
     @Published private(set) var captureResumeAt: Date? = RedesignFlag.isOn()
@@ -145,6 +152,24 @@ final class AppState: ObservableObject {
     private var isStartingMeeting = false {
         didSet { syncRecordingGate() }
     }
+    /// A detected or calendar start turns its audio on before its meeting row exists (see
+    /// `startCapture(for:)`). True from that moment until the start finishes. While it is set and the
+    /// row is not there yet, a Stop has nothing to end but must still stop the audio (`StartStopRules`).
+    private var audioStartedAhead = false
+    /// The audio start `startCapture(for:)` launched, so a stop that arrives while it is still opening
+    /// the streams can wait for it to settle (`finishStartingCapture`).
+    private var pendingAudioStart: Task<Void, Never>?
+    /// Whether that task got as far as starting the audio (a Stop can arrive before it runs).
+    private var audioStartBegan = false
+    /// A Stop arrived during the start: the audio is already off, and the start finishes through the
+    /// normal end of a meeting once its row lands. `startStopReason` is the end reason it carries.
+    private var startStopRequested = false
+    private var startStopReason: MeetingEndDetector.EndReason?
+    /// Set when the completion of a stopped start has waited for the audio start to settle.
+    private var startAudioSettled = false
+    /// True only while a stopped start publishes its row id, so the live-meeting side effects (the
+    /// in-meeting bar, live transcript) are not started for a recording that is already over.
+    private var endingStoppedStart = false
     private var recordingGateTimer: Timer?
     /// Set once by `TimelineView.swift`'s `.onAppear` (which has real access to
     /// `@Environment(\.openWindow)`) — used by the meeting-alert panel's "Start
@@ -170,6 +195,57 @@ final class AppState: ObservableObject {
         selectedTopicId = id
         selectedTab = .topics
         openTimeline?()
+    }
+    /// The conversation the Conversations tab shows; nil shows the list (redesign flag only).
+    @Published var selectedConversationId: Int64?
+
+    /// Sends a conversation's id once its generated title replaced the placeholder, so an open page shows it.
+    let conversationTitleUpdated = PassthroughSubject<Int64, Never>()
+
+    /// A conversation not stored yet, shown on the Conversations tab (redesign flag only): New conversation, or a
+    /// question asked on the Conversations tab or a topic page. Its row is made once its first answer is in, so a
+    /// page left empty, or a first question that fails, leaves nothing behind.
+    struct ConversationDraft: Identifiable, Equatable {
+        let id = UUID()
+        let scope: CoreConversationScope
+        /// Asked as soon as the page is ready; nil for an empty page.
+        let question: String?
+    }
+
+    /// The unsaved conversation the Conversations tab shows; it wins over `selectedConversationId`.
+    @Published var conversationDraft: ConversationDraft?
+
+    /// Shows conversation `id` on the Conversations tab (Continue as a conversation, a row in the list).
+    func openConversation(id: Int64) {
+        conversationDraft = nil
+        selectedConversationId = id
+        selectedTab = .conversations
+        openTimeline?()
+    }
+
+    /// Opens a new conversation asking about `scope`, asking `question` first when there is one (redesign flag
+    /// only). Nothing is stored until an answer is in.
+    func startConversation(scope: CoreConversationScope, question: String?) {
+        let text = question?.trimmingCharacters(in: .whitespacesAndNewlines)
+        conversationDraft = ConversationDraft(scope: scope, question: text?.isEmpty == false ? text : nil)
+        selectedTab = .conversations
+        openTimeline?()
+    }
+
+    /// The Conversations tab shows its list again.
+    func showConversationList() {
+        conversationDraft = nil
+        selectedConversationId = nil
+    }
+
+    /// Today's answer under the Ask bar (redesign flag only). Here, not in the view, so the answer stays while
+    /// another section is shown, until it is cleared, replaced, or the app quits. Made on first use.
+    private(set) lazy var todayAnswer = TodayAnswerModel(appState: self)
+
+    /// A question asked from Today's Ask bar with the redesign flag on: answered under the bar.
+    func askOnToday(_ query: String) {
+        selectedTab = .today
+        todayAnswer.ask(query)
     }
     /// Set by the ⌘F and ⌘N menu commands and cleared by Library once it acts on them.
     /// Flags rather than events, so a request made before Library is on screen still
@@ -626,6 +702,13 @@ final class AppState: ObservableObject {
     /// A question typed in the in-meeting window, for the meeting's own ask on the live screen to take.
     @Published private(set) var liveAskHandoff = LiveAskHandoff()
     var isStartingMeetingNow: Bool { isStartingMeeting }
+    /// Whether the menu offers End Meeting for a start still waiting on its meeting row, with its audio
+    /// already on. A Stop there stops the audio at once; the meeting is saved when its row lands.
+    /// A Stop arrived and the meeting is still being saved: the menu shows a disabled "Saving…".
+    var isStopPendingForRow: Bool { isStartingMeeting && startStopRequested }
+    var canStopStartingRecording: Bool {
+        StartStopRules.canOfferStop(isStarting: isStartingMeeting, audioStartedAhead: audioStartedAhead, stopRequested: startStopRequested)
+    }
     /// The in-meeting window's ask: the answer opens in the main window.
     func askLiveMeeting(_ text: String) {
         openTimeline?()
@@ -711,7 +794,7 @@ final class AppState: ObservableObject {
     let recordingRefusal = RecordingRefusal()
     /// The Start and capture controls' state (disabled with a caption without a store).
     var recordingControls: RecordingControls { RecordingControls(storeOpen: recordingGate.storeOpen) }
-    /// The hidden redesign switch (`RedesignFlag`), read where a window is built; false unless set by hand.
+    /// The redesign switch (`RedesignFlag`), read where a window is built; always on. The old branches go in the clean-up.
     var redesignEnabled: Bool { RedesignFlag.isOn() }
     /// A second connection for calls that hold the store across an LLM request (the slow
     /// lane). Used only on `CoreMemoryStore.slowLaneQueue`, so Ollama never blocks
@@ -964,8 +1047,10 @@ final class AppState: ObservableObject {
                     self.liveQuestionWatcher = nil
                 }
                 // Flag on: the recording pause and the level start with a live meeting row, and end with it.
-                if id != nil { self.recordingDidStart() } else if self.recordingPause != nil { self.finishRecordingPause(audioPath: nil) }
-                if let id, self.liveTranscriptionWanted {
+                if id != nil {
+                    if !self.endingStoppedStart { self.recordingDidStart() }
+                } else if self.recordingPause != nil { self.finishRecordingPause(audioPath: nil) }
+                if let id, self.liveTranscriptionWanted, !self.endingStoppedStart {
                     self.liveTranscript.start(meetingId: id)
                 } else {
                     self.liveTranscript.stop()
@@ -1040,7 +1125,10 @@ final class AppState: ObservableObject {
             if hasMeeting {
                 self.endActiveMeetingIfNeeded(reason: reason)
             } else {
-                self.stopRowlessRecording()
+                // The audio is running, so it is live whatever the mic and system flags say right now.
+                self.carryOutStop(StartStopRules.stopAction(
+                    hasRow: false, isStarting: self.isStartingMeeting, audioStartedAhead: self.audioStartedAhead,
+                    stopRequested: self.startStopRequested, audioLive: true), reason: reason)
             }
             self.postRecordingNotice(StatusMenuCopy.forcedStop(durationCap: stop == .durationCap, saved: hasMeeting))
         }
@@ -1670,18 +1758,67 @@ final class AppState: ObservableObject {
     /// insert still in flight it waits for that. Independent of activity capture
     /// (FR-MTG-14) -- this never touches `activityCaptureEnabled`/`screenText`.
     /// `reason` is set only by `MeetingEndDetector`; a manual End passes none.
+    ///
+    /// With a start still waiting on its meeting row and its audio already on (a detected or calendar
+    /// start), the audio stops at once and the meeting is finished through the normal end when the row
+    /// lands (`requestStopDuringStart`); a second Stop meanwhile does nothing.
     func endActiveMeetingIfNeeded(reason: MeetingEndDetector.EndReason? = nil) {
-        if activeMeetingId != nil {
-            endMeeting(reason: reason)
-        } else if !isStartingMeeting, audio.systemAudioActive || audio.micActive || meetingEndDetector.isRunning {
-            stopRowlessRecording()
+        carryOutStop(StartStopRules.stopAction(
+            hasRow: activeMeetingId != nil, isStarting: isStartingMeeting, audioStartedAhead: audioStartedAhead,
+            stopRequested: startStopRequested,
+            audioLive: audio.systemAudioActive || audio.micActive || meetingEndDetector.isRunning), reason: reason)
+    }
+
+    private func carryOutStop(_ action: StartStopRules.StopAction, reason: MeetingEndDetector.EndReason?) {
+        switch action {
+        case .endMeeting: endMeeting(reason: reason)
+        case .stopAudioAndEndWhenRowLands: requestStopDuringStart(reason: reason)
+        case .stopRowlessRecording: stopRowlessRecording()
+        case .nothing: break
         }
     }
 
-    /// Stops a recording that has no meeting row (its insert failed, or is still in flight)
-    /// and clears its state. Bumping the generation abandons an in-flight start, so its row
-    /// completes instead of going live. The audio stays on disk; the launch re-link can't
-    /// match it (no row), so retention's orphan sweep is what eventually removes it.
+    /// A Stop during a start whose audio runs ahead of its row. The audio goes off now (microphone and
+    /// system audio, so the indicators and meters go off with it); `captureGeneration` is NOT bumped, so
+    /// the start is not abandoned. `finishStartingCapture` sees the request, and once the row lands it
+    /// attaches the audio captured so far and ends the meeting through `endMeeting`, the same end a
+    /// short meeting gets. `isStartingMeeting` stays true meanwhile, so nothing else starts.
+    private func requestStopDuringStart(reason: MeetingEndDetector.EndReason?) {
+        startStopRequested = true
+        startStopReason = reason
+        audio.stop()
+        objectWillChange.send()  // the menu reads plain vars
+    }
+
+    /// Resets the in-flight start's stop bookkeeping; every exit of a start calls it.
+    private func clearStartInFlight() {
+        audioStartedAhead = false
+        pendingAudioStart = nil
+        audioStartBegan = false
+        startStopRequested = false
+        startStopReason = nil
+        startAudioSettled = false
+        objectWillChange.send()
+    }
+
+    /// The detected-call and calendar bookkeeping a normal end does, for a stopped start that ended with
+    /// no meeting to end (nothing was recorded, so its row was deleted or its reopen undone).
+    private func tellStoppedStartEnded(_ meeting: QualifyingMeeting, inheritedEvent: MeetingContinuation.CalendarEvent?,
+                                       reason: MeetingEndDetector.EndReason?) {
+        // As endMeeting does. This start's completion has already landed and nothing after it compares
+        // the old generation; the bump only retires a "Keep together" offered for this start.
+        captureGeneration += 1
+        meetingAlertPanel.hideKeepTogether()
+        if let bundleID = meeting.appBundleID { meetingHeuristicDetector.meetingEnded(bundleID: bundleID) }
+        let eventId = (meeting.source == .calendar || meeting.source == .googleCalendar) ? meeting.id : inheritedEvent?.id
+        if let eventId { meetingTrigger.meetingEnded(eventId: eventId, reason: reason) }
+    }
+
+    /// Stops a recording that has no meeting row because its insert failed, and clears its state.
+    /// Bumping the generation abandons any start still in flight. The audio stays on disk; the launch
+    /// re-link can't match it (no row), so retention's orphan sweep is what eventually removes it.
+    /// Never used for a start still waiting on its row: that is `requestStopDuringStart`, which keeps
+    /// the audio and the meeting.
     private func stopRowlessRecording() {
         captureGeneration += 1
         finishRecordingPause(audioPath: audio.systemAudioFileURL?.path ?? audio.micAudioFileURL?.path)
@@ -1751,7 +1888,7 @@ final class AppState: ObservableObject {
     /// The meeting row could not be written, so nothing starts: the refusal shows in the window and
     /// as a notification, as for a start with no store.
     private func refuseStartWithoutRow() {
-        recordingGate.notify(EncryptionCopy.recordingNotSaved)
+        recordingGate.notify(LibraryCopyRedesign.forSkin(EncryptionCopy.recordingNotSaved))
     }
 
     /// Mirrors `finishStartingCapture(for:insertedMeetingId:generation:)`'s exact
@@ -3358,11 +3495,20 @@ final class AppState: ObservableObject {
         let thisGeneration = captureGeneration
         // Start recording immediately rather than waiting on the DB round-trip below —
         // `insertMeeting` shares a serial queue with meeting-summary generation, which
-        // can run for minutes on a long transcript, and audio.start() has no dependency
-        // on the meeting row or its id. If a stop lands before the row lands, endMeeting()
-        // already calls audio.stop() unconditionally on any captureGeneration bump, so
-        // this doesn't leave an orphaned recording running.
-        Task { await audio.start() }
+        // can run for minutes on a long transcript, and the audio has no dependency
+        // on the meeting row or its id. A Stop that lands before the row lands is
+        // `requestStopDuringStart`: it stops this audio at once and the start finishes
+        // through the normal end when the row lands (`finishStartingCapture`). A stop
+        // that came before the audio began keeps it from starting at all.
+        audioStartedAhead = true
+        startStopRequested = false
+        startAudioSettled = false
+        audioStartBegan = false
+        pendingAudioStart = Task {
+            guard !startStopRequested else { return }
+            audioStartBegan = true
+            await audio.start()
+        }
         let startMs = Int64(meeting.startDate.timeIntervalSince1970 * 1000)
         // The new part starts now, even for a calendar meeting whose row keeps the scheduled start.
         let partStartMs = Int64(Date().timeIntervalSince1970 * 1000)
@@ -3432,6 +3578,7 @@ final class AppState: ObservableObject {
                                  newMeeting: CoreNewMeeting, continueKey: String?, generation: Int) {
         guard generation == captureGeneration, let store = coreStore else {
             isStartingMeeting = false
+            clearStartInFlight()
             PendingRecordingStarts.shared.end()
             return
         }
@@ -3485,8 +3632,44 @@ final class AppState: ObservableObject {
                                        continuing previous: MeetingContinuation.Previous? = nil,
                                        calendarEvent inheritedEvent: MeetingContinuation.CalendarEvent? = nil,
                                        partStartMs: Int64, generation: Int) {
+        // A Stop arrived during the start: the audio is off already. Let the audio start settle (it may
+        // still have been opening its streams), close anything it opened late, then come back here with
+        // `isStartingMeeting` still set so nothing else starts meanwhile.
+        if StartStopRules.mustSettleAudioFirst(stopRequested: startStopRequested, alreadySettled: startAudioSettled) {
+            let settling = pendingAudioStart
+            Task { @MainActor in
+                // Bounded: a start that never returns must not keep every later start blocked.
+                let once = OneShot()
+                await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                    Task { @MainActor in
+                        await settling?.value
+                        once.fire { done.resume() }
+                    }
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: StartStopRules.settleTimeoutNanoseconds)
+                        once.fire { done.resume() }
+                    }
+                }
+                self.audio.stop()
+                // The audio never started: the service still holds the last recording's paths, which must not
+                // be attached to this meeting.
+                if !self.audioStartBegan { self.audio.forgetLastRecording() }
+                self.startAudioSettled = true
+                self.finishStartingCapture(for: meeting, insertedMeetingId: insertedMeetingId, partIndex: partIndex, continuing: previous,
+                                           calendarEvent: inheritedEvent, partStartMs: partStartMs, generation: generation)
+            }
+            return
+        }
+        let stopped = startStopRequested
+        let stopReason = startStopReason
         isStartingMeeting = false
-        guard generation == captureGeneration else {
+        clearStartInFlight()
+        // What this completion does, from what is true now (`StartStopRules.finishAction`): the guards below
+        // are the existing abandon and refuse rules; a stop that waited for its row adds the one new action.
+        let insertLanded: Bool
+        if case .proceed = RecordingStartInsert.outcome(insertedMeetingId: insertedMeetingId) { insertLanded = true } else { insertLanded = false }
+        let finish = StartStopRules.finishAction(generationCurrent: generation == captureGeneration, stopRequested: stopped, insertLanded: insertLanded)
+        guard finish != .abandon else {
             if let previous, let store = coreStore {
                 // Lost after reopening: put the earlier meeting back exactly as it was.
                 let id = previous.meeting.id
@@ -3498,10 +3681,38 @@ final class AppState: ObservableObject {
         }
         // No row, no recording (audio was started ahead of the insert to lose no speech): stop it and
         // refuse, instead of recording on with nothing to save it under.
-        guard case .proceed = RecordingStartInsert.outcome(insertedMeetingId: insertedMeetingId) else {
+        guard finish != .refuse else {
             stopRowlessRecording()
+            // A stopped call is over: tell the detector, as the normal end would.
+            if stopped, let bundleID = meeting.appBundleID { meetingHeuristicDetector.meetingEnded(bundleID: bundleID) }
             refuseStartWithoutRow()
             return
+        }
+        if finish == .endThroughNormalEnd {
+            let audioURL = [audio.systemAudioFileURL, audio.micAudioFileURL].compactMap { $0 }.first { FileManager.default.fileExists(atPath: $0.path) }
+            switch StartStopRules.stoppedStartOutcome(continued: previous != nil, audioFileExists: audioURL != nil) {
+            case .endNormally:
+                break
+            case .deleteEmptyNewMeeting:
+                if let id = insertedMeetingId, let store = coreStore {
+                    CoreMemoryStore.accessQueue.async {
+                        MeetingSplit.discard(store: store, meetingId: id)
+                        DispatchQueue.main.async { MeetingLifecycle.postMeetingsChanged([id]) }
+                    }
+                }
+                tellStoppedStartEnded(meeting, inheritedEvent: inheritedEvent, reason: stopReason)
+                return
+            case .undoReopenOfContinued:
+                if let previous, let store = coreStore {
+                    let id = previous.meeting.id
+                    CoreMemoryStore.accessQueue.async {
+                        store.undoMeetingReopen(meetingId: id, partIndex: partIndex ?? 0)
+                        DispatchQueue.main.async { MeetingLifecycle.postMeetingsChanged([id]) }
+                    }
+                }
+                tellStoppedStartEnded(meeting, inheritedEvent: inheritedEvent, reason: stopReason)
+                return
+            }
         }
         if let previous, let store = coreStore {
             // The start won: drop the continued meeting's leftover live rows. Queued before
@@ -3510,7 +3721,9 @@ final class AppState: ObservableObject {
             CoreMemoryStore.accessQueue.async { store.clearLiveSegments(meetingId: id) }
         }
         let title = previous?.meeting.title ?? meeting.title
+        endingStoppedStart = stopped
         activeMeetingId = insertedMeetingId
+        endingStoppedStart = false
         activeMeetingStartedAt = insertedMeetingId == nil ? nil : previous.map { Date(timeIntervalSince1970: TimeInterval($0.meeting.startUnixMs) / 1000) }
             ?? Date(timeIntervalSince1970: TimeInterval(partStartMs) / 1000)
         activeMeetingTitle = title
@@ -3524,6 +3737,13 @@ final class AppState: ObservableObject {
         meetingNotes = previous.map {
             MeetingContinuation.notes(stored: $0.meeting.notes, lastEnded: lastEndedMeetingNotes, meetingId: $0.meeting.id)
         } ?? ""
+        // A Stop was waiting for this row: no snapshots, participant count, check-in or end detector for a
+        // recording that is already over. The normal end attaches the audio captured so far, completes the
+        // meeting and its part, tells the detected-call and calendar bookkeeping, and transcribes.
+        if finish == .endThroughNormalEnd {
+            endMeeting(reason: stopReason)
+            return
+        }
         // Heuristically-detected meetings only — a calendar meeting already has a real
         // attendee list, and a manual meeting has no app/browser context to poll at all.
         // `isGoogleMeet` comes from the detected meeting's own conference link, which

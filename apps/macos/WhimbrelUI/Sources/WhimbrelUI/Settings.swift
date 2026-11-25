@@ -2,63 +2,81 @@ import SwiftUI
 
 // MARK: Settings row
 
-/// A label, an optional description and a control slot. The convenience initializers cover the four
-/// variants: toggle, value with chevron, button and destructive.
+/// A label, an optional description and a control slot. The convenience initializers cover the variants: toggle (switch
+/// or checkbox), value with chevron, button and destructive.
+///
+/// Every row can be unavailable (`isEnabled: false`) with a `disabledReason` shown under the description, and can be
+/// `highlighted` for the brief flash after a search jump. The row reflows: when the label would be squeezed, the
+/// control drops under it.
 public struct WSettingsRow<Control: View>: View {
     @Environment(\.wTheme) private var theme
     @Environment(\.wTextScale) private var k
     let label: String
     let detail: String?
     let rowAction: (() -> Void)?
+    let isEnabled: Bool
+    let disabledReason: String?
+    let highlighted: Bool
+    var controlSpeaksLabel = false
+    var leadingControl = false
     let control: Control
 
-    public init(label: String, description: String? = nil, rowAction: (() -> Void)? = nil, @ViewBuilder control: () -> Control) {
+    public init(
+        label: String, description: String? = nil, rowAction: (() -> Void)? = nil,
+        isEnabled: Bool = true, disabledReason: String? = nil, highlighted: Bool = false,
+        @ViewBuilder control: () -> Control
+    ) {
         self.label = label
         self.detail = description
         self.rowAction = rowAction
+        self.isEnabled = isEnabled
+        self.disabledReason = disabledReason
+        self.highlighted = highlighted
         self.control = control()
     }
 
     public var body: some View {
-        let inner = HStack(alignment: .center, spacing: theme.space(16)) {
-            VStack(alignment: .leading, spacing: theme.space(2)) {
-                Text(label).wFont(.body).foregroundStyle(theme.textPrimary)
-                if let detail {
-                    Text(detail).wFont(.secondary).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: theme.space(8))
-            control
-        }
-        .padding(.horizontal, theme.space(14))
-        .padding(.vertical, theme.space(10))
-        .frame(minHeight: 44 * k)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        let inner = WSettingsRowFrame(
+            label: label, detail: detail, isEnabled: isEnabled, disabledReason: disabledReason, highlighted: highlighted,
+            controlSpeaksLabel: controlSpeaksLabel, leading: leadingControl
+        ) { control }
 
         if let rowAction {
-            Button(action: rowAction) { inner }
+            // Not `.disabled`: that would dim the reason line too. A disabled row ignores the press and dims only its control.
+            Button { if isEnabled { rowAction() } } label: { inner }
                 .buttonStyle(.plain)
+                .wFocusRing(radius: 0)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(label)
-                .accessibilityHint(detail ?? "")
+                .accessibilityHint([detail, disabledReason].compactMap { $0 }.joined(separator: " "))
         } else {
-            inner.accessibilityElement(children: .contain)
+            inner
         }
     }
 }
 
 public struct WSettingsToggleControl: View {
     @Environment(\.wTheme) private var theme
+    @Environment(\.wTextScale) private var k
     let label: String
     let isOn: Bool
+    let style: WToggleStyle
     let onChange: (Bool) -> Void
+
+    init(label: String, isOn: Bool, style: WToggleStyle = .switch, onChange: @escaping (Bool) -> Void) {
+        self.label = label
+        self.isOn = isOn
+        self.style = style
+        self.onChange = onChange
+    }
+
     public var body: some View {
-        Toggle(label, isOn: Binding(get: { isOn }, set: onChange))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .tint(theme.accentPrimary)
-            .accessibilityLabel(label)
+        switch style {
+        case .switch:
+            WSwitch(label: label, isOn: isOn, onChange: onChange)
+        case .checkbox:
+            WCheckbox(label, isOn: isOn, showsLabel: false, onChange: onChange)
+        }
     }
 }
 
@@ -74,24 +92,32 @@ public struct WSettingsValueControl: View {
 }
 
 extension WSettingsRow where Control == WSettingsToggleControl {
-    public init(label: String, description: String? = nil, isOn: Bool, onChange: @escaping (Bool) -> Void) {
-        self.init(label: label, description: description) {
-            WSettingsToggleControl(label: label, isOn: isOn, onChange: onChange)
+    /// A toggle row. `style: .checkbox` draws a checkbox before the label (a list of independent choices);
+    /// the switch stays on the trailing edge (a setting that turns something on).
+    public init(
+        label: String, description: String? = nil, isOn: Bool, style: WToggleStyle = .switch,
+        isEnabled: Bool = true, disabledReason: String? = nil, highlighted: Bool = false,
+        onChange: @escaping (Bool) -> Void
+    ) {
+        self.init(label: label, description: description, isEnabled: isEnabled, disabledReason: disabledReason, highlighted: highlighted) {
+            WSettingsToggleControl(label: label, isOn: isOn, style: style, onChange: onChange)
         }
+        self.controlSpeaksLabel = true
+        self.leadingControl = style == .checkbox
     }
 }
 
 extension WSettingsRow where Control == WSettingsValueControl {
-    public init(label: String, description: String? = nil, value: String, action: @escaping () -> Void) {
-        self.init(label: label, description: description, rowAction: action) {
+    public init(label: String, description: String? = nil, value: String, isEnabled: Bool = true, disabledReason: String? = nil, highlighted: Bool = false, action: @escaping () -> Void) {
+        self.init(label: label, description: description, rowAction: action, isEnabled: isEnabled, disabledReason: disabledReason, highlighted: highlighted) {
             WSettingsValueControl(value: value)
         }
     }
 }
 
 extension WSettingsRow where Control == WButton {
-    public init(label: String, description: String? = nil, buttonTitle: String, destructive: Bool = false, action: @escaping () -> Void) {
-        self.init(label: label, description: description) {
+    public init(label: String, description: String? = nil, buttonTitle: String, destructive: Bool = false, isEnabled: Bool = true, disabledReason: String? = nil, highlighted: Bool = false, action: @escaping () -> Void) {
+        self.init(label: label, description: description, isEnabled: isEnabled, disabledReason: disabledReason, highlighted: highlighted) {
             WButton(buttonTitle, kind: destructive ? .destructive : .secondary, action: action)
         }
     }
@@ -173,10 +199,11 @@ public struct WErrorState: View {
     @Environment(\.wTheme) private var theme
     @Environment(\.wStrings) private var strings
     let title: String
-    let help: String
+    /// A line under the title; nil or empty draws nothing.
+    let help: String?
     let onRetry: () -> Void
 
-    public init(title: String, help: String, onRetry: @escaping () -> Void) {
+    public init(title: String, help: String? = nil, onRetry: @escaping () -> Void) {
         self.title = title
         self.help = help
         self.onRetry = onRetry
@@ -186,7 +213,9 @@ public struct WErrorState: View {
         VStack(spacing: theme.space(8)) {
             WGlyph(name: "exclamationmark.triangle", size: 26, weight: .regular).foregroundStyle(theme.error)
             Text(title).wFont(.subtitle).foregroundStyle(theme.textPrimary).accessibilityAddTraits(.isHeader)
-            Text(help).wFont(.body).foregroundStyle(theme.textSecondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            if let help, !help.isEmpty {
+                Text(help).wFont(.body).foregroundStyle(theme.textSecondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            }
             WButton(strings.tryAgain, glyph: "arrow.clockwise", kind: .secondary, action: onRetry).padding(.top, theme.space(4))
         }
         .padding(theme.space(24))

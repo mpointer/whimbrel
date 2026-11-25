@@ -195,7 +195,7 @@ struct MeetingsListView: View {
                 HStack {
                     if let importMessage {
                         Text(importMessage)
-                            .font(.whimbrelBody(.caption))
+                            .restyledFont(.caption)
                             .foregroundStyle(Color.whimbrelTextSecondary)
                     }
                     Spacer()
@@ -209,7 +209,7 @@ struct MeetingsListView: View {
                 ForEach(groups, id: \.title) { group in
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                         Text(group.title)
-                            .font(.whimbrelBody(.callout).bold())
+                            .restyledFont(.calloutStrong)
                             .foregroundStyle(Color.whimbrelTextSecondary)
                             .padding(.horizontal, Spacing.md)
                         ForEach(group.ids, id: \.self) { id in
@@ -221,7 +221,7 @@ struct MeetingsListView: View {
                 }
                 if hasLoaded, !meetings.isEmpty { listFooter }
                 if groups.isEmpty, !hasLoaded {
-                    ProgressView().frame(maxWidth: .infinity, minHeight: 240)
+                    RestyledProgress().frame(maxWidth: .infinity, minHeight: 240)
                 } else if groups.isEmpty {
                     WhimbrelEmptyState(systemImage: SkinStore.shared.selected.icons[.meetings], title: searchText.isEmpty ? String(localized: "No meetings yet") : String(localized: "No matches"), message: searchText.isEmpty ? String(localized: "Recorded meetings appear here. You can also bring in transcripts from Granola, Otter or files.") : String(localized: "Try a different search."), actionTitle: searchText.isEmpty ? String(localized: "Import Transcripts…") : nil, action: searchText.isEmpty ? importTranscripts : nil)
                 }
@@ -231,6 +231,7 @@ struct MeetingsListView: View {
             .frame(maxWidth: .infinity)
         }
         .searchable(text: $searchText, prompt: "Search meetings")
+        .restyledScreen(redesign: appState.redesignEnabled)
     }
 
     private var hasMore: Bool {
@@ -245,7 +246,7 @@ struct MeetingsListView: View {
         VStack(spacing: Spacing.xs) {
             if let text = MeetingsListPaging.footer(loaded: meetings.count, total: totalMeetings, hasMore: more) {
                 Text(text)
-                    .font(.whimbrelBody(.caption))
+                    .restyledFont(.caption)
                     .foregroundStyle(Color.whimbrelTextSecondary)
             }
             if more {
@@ -253,7 +254,7 @@ struct MeetingsListView: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Button(String(localized: "Show older meetings"), action: loadMore)
-                        .buttonStyle(.whimbrelQuiet)
+                        .restyledButton(.quiet)
                 }
             }
         }
@@ -305,7 +306,7 @@ struct MeetingsListView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
                         Button { selectedMeetingId = nil } label: { Label("Meetings", systemImage: "chevron.left") }
-                            .buttonStyle(.whimbrelQuiet)
+                            .restyledButton(.quiet)
                             .keyboardShortcut("[", modifiers: .command)
                         Spacer()
                         MeetingOptionsMenu(meeting: meeting, appState: appState, onForgotten: {
@@ -404,13 +405,13 @@ struct AlsoRecordedRow: View {
 
     var body: some View {
         HStack(spacing: Spacing.xs) {
-            Text("Also recorded on").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+            Text("Also recorded on").restyledFont(.caption).foregroundStyle(Color.whimbrelTextSecondary)
             ForEach(copies) { copy in
                 Button(copy.deviceId == ownDeviceId ? "this Mac" : "device \(copy.deviceId.prefix(6))") {
                     openWindow(id: "meeting-detail", value: copy.id)
                 }
                 .buttonStyle(.link)
-                .font(.whimbrelBody(.caption))
+                .restyledFont(.caption)
                 .help(copy.title)
             }
         }

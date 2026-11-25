@@ -594,6 +594,224 @@ char *whimbrel_llm_answer_detailed(
  * a non-UTF-8 query or a malformed history. Free with whimbrel_core_free_string. */
 char *whimbrel_ask_names_excluded_client(StoreHandle *handle, const char *query, const char *history_json);
 
+/* ---- Screen 5: memory search and Ask (additive; no existing call changes) ----------------------
+ *
+ * FILTER (filter_json, here and below). NULL, "" or "{}" is no filter.
+ *   {"start_unix_ms"?: int (inclusive), "end_unix_ms"?: int (exclusive), "app_bundle_id"?: string,
+ *    "person"?: {"name": string, "person_key"?: string}}
+ * A filter is never silently widened (fail closed). These are refused, by every call below that takes a
+ * filter: malformed JSON; a JSON value that is not an object (an array is never read as the fields in
+ * order); ANY key not listed (a misspelt or camelCase "startUnixMs" would otherwise parse to an empty
+ * filter and search everything), in the filter or in "person"; an "app_bundle_id" that is present but
+ * blank; a "person" whose "name" is blank; and a range whose start is not before its end. The refusal is a
+ * bare NULL from whimbrel_memory_find (plain JSON, no envelope). whimbrel_llm_answer_sourced and
+ * whimbrel_llm_prepare_ask_sourced return {"ok":false,"error":{"kind":"invalid_filter"}} instead, and
+ * whimbrel_ask_route_preview returns the preview {"destination":"refused","reason":"invalid_filter"}.
+ * Leave a key out to leave a bound off. A blank "person_key" counts as absent.
+ * What each kind does with each part (one table, in core):
+ *   dates   captures: capture time; meetings: overlapping the range when the meeting has an end time,
+ *           else its start; slides: meeting start; transcript lines: the line's own time (meeting start
+ *           plus offset), whenever the meeting began; email threads: last activity; episodes: when they
+ *           ended; automation runs: when they ran.
+ *   app     captures only. Every other kind is hidden (so are mentions of a person from other apps).
+ *   person  meetings: attended by (an attendee, trimmed, equals the name ignoring case, Unicode aware: the
+ *           whole string, over every meeting); lines: spoken by the person (the meeting names that
+ *           speaker) or in a meeting they attended; slides: in a meeting they attended; email threads:
+ *           a message whose sender or ANY recipient has the address on record for the person
+ *           (person.email, or a person_key that is an address; equal, ignoring case, never a part of a
+ *           longer address), else one whose sender or any recipient has a display name that holds the
+ *           person's name as a run of whole words ("Ed" matches "Ed Smith", never "Edward"), else no
+ *           results; episodes and runs: hidden; captures: listed apart as "mentions", those holding the
+ *           name as a phrase. Under an app filter a person adds no kind: only captures show.
+ * A transcript line's card carries "via": "speaker" or "attendee" under a person filter.
+ *
+ * SOURCE CARD (every "card" below): read from the live row each time, never stored. Keys that do not
+ * apply are absent.
+ *   {"kind": "capture"|"transcript"|"snapshot"|"thread"|"episode"|"routine_run"|"meeting",
+ *    "id": int, "found": bool, "ts_unix_ms"?: int, "title": string, "text"?: string (stored text, cut to
+ *    600 characters with an ellipsis; absent when found is false), "app_bundle_id"?, "device_id"?,
+ *    "meeting_id"?, "meeting_title"?, "meeting_start_unix_ms"?, "speaker_label"? (the name the meeting
+ *    gives the speaker, else the stored label), "speaker_is_guess"?, "start_cs"? (line offset into its
+ *    meeting), "sender"? (a thread's last sender), "via"?}
+ * "snapshot" is a slide, "thread" an email thread. ts_unix_ms: a line's absolute time; a slide's and a
+ * meeting's: the meeting start; a thread's: last activity; an episode's: its end. A card whose row is
+ * gone is {"kind","id","found":false,"title":""} with no text and no other key.
+ */
+
+/* Memory search, one page. order is "time" (newest first) or "rank" (best first); NULL means time.
+ * offset and limit page the results (limit 1..200; a larger limit is 200 and an offset beyond one million
+ * is one million; neither can wrap: a negative count, which arrives as a huge unsigned one, is a bare NULL).
+ * Returns JSON
+ *   {"results": [card], "mentions": [card], "total": int, "mentions_total": int,
+ *    "counts": {kind: int, ..., "mentions"?: int}, "semantic_used": bool, "semantic_available": bool,
+ *    "more": bool, "capped": bool, "meaning_catching_up": bool}
+ * "meaning_catching_up": meaning search ran while the embedding sweep still has rows to embed, so the same
+ * words can find more once it is done; search again then and replace the page.
+ * Keyword search and, when the search model is installed, meaning search run and are merged and
+ * de-duplicated by (kind, id), the filter applied inside each query before its limit. A query's
+ * candidates are the best 400 rows of each kind and method; "capped" says a list reached that (counted
+ * from the rows the query read, before de-duplication), so more may exist; "total" and "counts" are of the candidates. Order "rank" fuses each list's ranks
+ * (reciprocal rank fusion); ties break by time, kind, id, so offset is a stable cursor for a store that
+ * has not changed. "mentions" are paged with the same offset and limit, newest first.
+ * An EMPTY query with a filter lists by time, exactly and without the 400 cap: the captures in the
+ * range (and app), or with a person the meetings they attended (as "meeting" cards) and the mentions.
+ * This is what Home's memory block "Open" calls. An empty query with no filter returns an empty page.
+ * Person filter, email: by the address on record for the person, ignoring case, against the sender and every
+ * recipient. With none on record, a name of two or more words matches a sender or recipient whose display name
+ * holds those words in a row ("Ed Smith" matches "Ed Smith" and, because a display name with exactly one comma
+ * also reads First Last, "Smith, Ed"; never "Edward Smith"). A name of ONE word ("Ed", "Will", "May") matches
+ * email by address only: with no address on record it matches no email. No address and no name match is no
+ * email results, not a guess.
+ * Bare NULL on a NULL handle, a non-UTF-8 argument, a bad filter, an order that is neither, or a DB error. */
+char *whimbrel_memory_find(
+    StoreHandle *handle, const char *query, const char *filter_json, const char *order, size_t offset,
+    size_t limit);
+
+/* whimbrel_llm_answer_detailed, bounded by filter_json and able to refuse to leave this computer.
+ * Same arguments, routing, spend cap, budgets and exclusion behaviour as the original, plus:
+ *   filter_json   bounds every retrieval source. The date filter wins over the question's own
+ *                 "today"/"yesterday": with a start or an end set, retrieval is the normal search over
+ *                 the filter's range (the question's words still search) and, when the question names a
+ *                 day, the prompt's date line describes that range, not the day. With no date filter
+ *                 the question's day window is read as before, narrowed by app and person. With no
+ *                 filter the retrieval, the
+ *                 prompt and the answer are exactly whimbrel_llm_answer_detailed's. Client exclusion runs
+ *                 first and a filter never loosens it. A person filter that names an excluded client
+ *                 counts as naming the client.
+ *   require_local true: answer on this computer or fail. Only on-device links are used; with none, the
+ *                 envelope is {"ok":false,"error":{"kind":"provider_failure"}} and nothing is sent.
+ * Envelope data is the detailed answer's ("text","citations","token_usage","exclusion","answered_by")
+ * plus
+ *   "sources":       [{"n": 1.., "card": card}]  every item in the prompt of the link that answered, by
+ *                    the number the model saw ([n] in the answer);
+ *   "cited":         [n]  the numbers the answer cites, first-cited order, no repeats, out of range dropped;
+ *   "cited_sources": [{"n","kind","id"}]  the cited ones as whimbrel_conversations_append_exchange_sourced
+ *                    saves them;
+ *   "answered_locally": bool  made on this computer (an on-device link, or a question rerouted for an
+ *                    excluded client; false for an Ollama cloud model, which answered_by.local counts as
+ *                    local). Save this one;
+ *   "date_range":    {"start_unix_ms": int|null, "end_unix_ms": int|null} | null  the range the retrieval
+ *                    actually used: the filter's own, or the window of a "today"/"yesterday" question;
+ *                    null for no date bound. A side is null when the filter left it open. The page's
+ *                    "From your work memory, Nov 9 to Nov 15" line is this.
+ * Every "sources" entry also carries "unreadable": bool. True when the database could not be read just
+ * now (then "card".found is false too): that is not a deleted row, and a page must not say "no longer on
+ * this device". A card with "found": false and "unreadable": false is a row that is gone.
+ * Errors, all in the envelope: a filter that does not validate (malformed JSON, a JSON value that is not an
+ * object, a key the filter does not have, a blank app or person name, a range whose start is not before its end)
+ * is {"ok":false,"error":{"kind":"invalid_filter"}} and nothing is read or sent. A scoped read that FAILS part
+ * way (a database error such as a busy file) fails the call rather than answering from what could still be
+ * read: through this C call that is a bare NULL, like any internal failure, and a UI says the question could not
+ * be answered, not that the AI provider was unreachable. The kinds spend_cap, budget_spent and provider_failure
+ * are unchanged. "invalid_filter" is new and additive: no existing call returns it.
+ *
+ * MARKS: a UI draws a mark for "[n]" in the answer ONLY when n is in "cited". The core's reading of the answer
+ * is the one place that says which bracketed numbers are citations (see below); a UI never draws a mark of its
+ * own for a number "cited" does not hold, so the two cannot disagree. "cited" is present in this call's data,
+ * in whimbrel_llm_finalize_ask_sourced's, and (per exchange) in whimbrel_conversations_get_sourced's.
+ *
+ * CITED NUMBERS ("cited", here and from whimbrel_llm_finalize_ask_sourced): a citation is "[", one or more
+ * ASCII digits, "]" anywhere in the answer EXCEPT (1) inside a fenced code block (a line of up to three
+ * spaces then three or more backticks whose info string holds no backtick, or three or more tildes,
+ * opens it; a later line of the same character, at least as long, with only whitespace after, closes it;
+ * unclosed it runs to the end), (2) inside inline code (a run of N backticks opens a span that the next
+ * run of exactly N backticks closes within the same paragraph; with no closer the backticks are text),
+ * (3) when the "]" is immediately followed by "(" (a Markdown link, "[1](https://...)"). "[1][2]" and
+ * "[1] (x)" are citations. A number outside 1..list length is dropped; repeats collapse. The older
+ * "citations" array keeps its simpler reading (every [n]). */
+char *whimbrel_llm_answer_sourced(
+    StoreHandle *handle, const char *query, const char *model, size_t context_limit, const char *history_json,
+    const char *routing_config_json, const char *filter_json, bool require_local);
+
+/* whimbrel_llm_prepare_ask, bounded as whimbrel_llm_answer_sourced. Envelope data is the original's
+ * ("prepare_id","prompt","exclusion") plus
+ *   "sources":          [{"n","card"}]  the numbered list the prompt holds, in prompt order;
+ *   "provider":         the provider the shell streams against ("ollama", "anthropic", ...);
+ *   "answered_locally": bool  that stream stays on this computer (save it with the answer);
+ *   "date_range":       as whimbrel_llm_answer_sourced; every "sources" entry has "unreadable" too.
+ * require_local true makes the routing local-only for this call: a hosted provider, an Ollama cloud
+ * model, or an Ollama model the routing does not name ("ollama_model" in routing_config_json) is refused
+ * with the existing local-only refusal ({"kind":"provider_failure","reason":"excluded_client"}), and
+ * the stream goes to Ollama. Core cannot stop a shell from streaming the prompt somewhere else: a shell
+ * that said "on this Mac" must stream it to its on-device model only, and pass require_local on any
+ * blocking fallback too. Pass the prepare_id to whimbrel_llm_finalize_ask_sourced or
+ * whimbrel_llm_discard_ask exactly once. */
+char *whimbrel_llm_prepare_ask_sourced(
+    StoreHandle *handle, const char *query, size_t context_limit, const char *history_json,
+    const char *routing_config_json, const char *filter_json, bool require_local);
+
+/* whimbrel_llm_finalize_ask, plus the cited numbers, taken against the list the same prepare returned
+ * (kept with the prepared state). Plain JSON, not an envelope:
+ *   {"citations": [{"kind","id"}], "exclusion": {...}, "cited": [n], "cited_sources": [{"n","kind","id"}],
+ *    "left_out": int}
+ * left_out is how many retrieved items exclusion left out of a hosted prompt. An unknown or already
+ * finalized prepare_id cites nothing. Arguments as whimbrel_llm_finalize_ask. */
+char *whimbrel_llm_finalize_ask_sourced(
+    StoreHandle *handle, const char *prepare_id, const char *final_text, const char *model, int64_t input_tokens,
+    int64_t output_tokens);
+
+/* Where an Ask would be answered, without sending anything. mode is "stream" (what
+ * whimbrel_llm_prepare_ask_sourced plus a shell stream does: pinned to the routing's provider) or
+ * "blocking" (whimbrel_llm_answer_sourced: the provider chain, which falls through on failure). Other
+ * arguments as the sourced Ask (model is the Ollama model for blocking; NULL means none). Envelope data:
+ *   {"destination": "local"|"hosted"|"refused"|"unknown", "local": bool, "provider"?: string,
+ *    "model"?: string, "reason": string, "require_local": bool, "may_fall_back": bool}
+ *   local      this computer; "local" is true only here. Pass require_local to the Ask call (and to any
+ *              blocking fallback of a stream): then it never falls through to a hosted model.
+ *   hosted     leaves this computer, naming the first link or streamed provider; may_fall_back: a failure
+ *              can move the answer to another provider in the chain (a stream's shell falls back to
+ *              the blocking chain). The button may name the provider; the "Asking..." line names the one
+ *              that answered.
+ *   refused    the call would fail: spend_cap, budget_spent, no_provider, local_only_no_local_model,
+ *              excluded_client_no_local_model, local_only_cloud_or_unknown_model, invalid_filter. A call
+ *              that would answer on this computer only without require_local is refused too: a "local"
+ *              answer is always asked for with require_local, so the preview judges the call as it will
+ *              be made (a stream whose routing does not name its Ollama model, for one).
+ *   unknown    not knowable before sending: budget_spent_falls_back_to_blocking (a stream's provider is
+ *              over its monthly budget; the shell answers on the blocking chain, which picks the next
+ *              provider and does not say which), or excluded_client_check_pending (a shell that previews
+ *              on a lane that may be busy gave up waiting for the check of excluded clients). The
+ *              button says only "Ask", and the call is made without require_local.
+ * Reasons for local: names_excluded_client (the question or the person filter names an excluded client:
+ * rerouted to this computer), required_local, local_only_mode, preferred_is_local / first_link_is_local.
+ * Whether Ollama is running is the shell's to know: a local answer then falls to the bundled model, still
+ * local. Planning leaves no refusal reason behind. A filter that does not validate is NOT a bare NULL here: it is
+ * the preview {"destination":"refused","reason":"invalid_filter"}. Bare NULL on a bad mode or history. */
+char *whimbrel_ask_route_preview(
+    StoreHandle *handle, const char *query, const char *model, const char *history_json,
+    const char *routing_config_json, const char *filter_json, bool require_local, const char *mode);
+
+/* Appends one answered exchange with the sources it cited. sources_json is [{"n","kind","id"}] (the
+ * answer's "cited_sources"; entries with an unknown kind or n below 1 are dropped); NULL is none.
+ * Nothing but ids is saved about a source: no text, no title. model and provider (nullable) are the model
+ * and provider ids that answered, answered_locally says it was made on this computer, left_out is the
+ * exclusion count. The conversation's exclusion handling is the original's (an answer made from an
+ * excluded client's material is stored local-only; an exchange for a deleted conversation is dropped).
+ * Local to this device, never synced. Returns true on success, false on a NULL handle, a malformed
+ * sources_json or a DB error. whimbrel_conversations_append_exchange is unchanged. */
+bool whimbrel_conversations_append_exchange_sourced(
+    StoreHandle *handle, int64_t conversation_id, const char *query, const char *answer, const char *sources_json,
+    const char *model, const char *provider, bool answered_locally, int64_t left_out);
+
+/* A conversation, oldest exchange first, with each exchange's cited sources re-read from the live
+ * rows (found:false and no text once the row is gone). NULL if it does not exist. JSON
+ *   {"id","title","starred","created_at_unix_ms","updated_at_unix_ms","exchanges": [
+ *     {"id","query","answer","created_at_unix_ms","model": string|null,
+ *      "legacy": bool, "citations_json"?: string, "provider": string|null,
+ *      "answered_locally": bool|null, "left_out": int|null,
+ *      "cited": [n], "sources": [{"n", "card": card, "unreadable": bool}]}]}
+ * "cited" is the numbers the saved answer cited, first-cited order: the "n" of each of "sources" (the saved list
+ * IS the cited ones; empty for a legacy exchange). A UI draws a mark for "[n]" in "answer" only when n is in
+ * "cited". It can hold fewer numbers than the live answer cited: saving drops an entry with an unknown kind or
+ * an n below 1. "unreadable" is as in whimbrel_llm_answer_sourced: true when the cards could not be read just
+ * now (the exchange still comes back, its text intact); not the same as a row that is gone.
+ * legacy true: saved before numbered sources (by the Mac's SavedCitation or Windows' ContextEntry):
+ * "citations_json" is its saved JSON, untouched, to draw today's chips from; "sources" is empty;
+ * provider, answered_locally and left_out are null. legacy false: "sources" holds the saved cited
+ * numbers with live cards. whimbrel_conversations_get returns the same conversation as before (a new
+ * exchange has citations_json "[]"). */
+char *whimbrel_conversations_get_sourced(StoreHandle *handle, int64_t conversation_id);
+
 /* Live question: decides whether lines[index] is a question for the user. lines_json is
  * [{"id","channel","start_cs","text"}]; names_json is ["Mike", ...]. Envelope data is
  * {"is_for_user","confidence","quote","asker","restatement"} or null when the model says no
@@ -682,6 +900,14 @@ char *whimbrel_skin_image_fetch(const char *url);
  * caller must eventually pass prepare_id to whimbrel_llm_finalize_ask exactly once. */
 char *whimbrel_llm_prepare_ask(
     StoreHandle *handle, const char *query, size_t context_limit, const char *history_json,
+    const char *routing_config_json);
+
+/* Topic-scoped counterpart of whimbrel_llm_prepare_ask: retrieval keeps only items in topic
+ * topic_id. Same arguments, envelope and prepare_id contract; the success data adds
+ * scope_empty, true when nothing in the topic matched (then nothing was stashed or sent and
+ * prepare_id and prompt are empty). NULL on a null handle or malformed arguments. */
+char *whimbrel_llm_prepare_ask_in_topic(
+    StoreHandle *handle, int64_t topic_id, const char *query, size_t context_limit, const char *history_json,
     const char *routing_config_json);
 
 /* Meeting-scoped counterpart of whimbrel_llm_prepare_ask: builds the prompt from ONE
@@ -1346,6 +1572,89 @@ bool whimbrel_conversations_set_starred(StoreHandle *handle, int64_t conversatio
  * and was deleted. */
 bool whimbrel_conversations_delete(StoreHandle *handle, int64_t conversation_id);
 
+/* What a conversation's Ask answers from. scope_json is {"kind":"everything"},
+ * {"kind":"topic","id":N} or {"kind":"meeting","id":N}. Returns true on success, false on a
+ * null/invalid handle, null or malformed scope_json, or a DB error. */
+bool whimbrel_conversation_set_scope(StoreHandle *handle, int64_t conversation_id, const char *scope_json);
+
+/* A conversation's scope as JSON ({"kind":"everything"} for a new or unknown conversation).
+ * NULL on a null/invalid handle or a DB error. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_conversation_scope(StoreHandle *handle, int64_t conversation_id);
+
+/* whimbrel_conversations_create for a Find conversation: made with the filters it was asked under
+ * (filter_json in whimbrel_conversation_set_find_filter's shape; a person is never kept) in the same
+ * write. Same JSON as whimbrel_conversations_create. NULL on a null/invalid handle, a null or
+ * malformed argument, or a DB error. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_conversations_create_with_find_filter(StoreHandle *handle, const char *first_query, const char *filter_json);
+
+/* Keeps the Find filters an everything conversation was asked under. filter_json is
+ * {"start_unix_ms":N,"end_unix_ms":N,"app_bundle_id":"...","people_left_out":bool}, any field
+ * optional; a person is never kept. An empty filter clears them. Returns false on a null/invalid
+ * handle, null or malformed JSON, a missing conversation, one scoped to a topic or meeting, or a
+ * DB error. */
+bool whimbrel_conversation_set_find_filter(StoreHandle *handle, int64_t conversation_id, const char *filter_json);
+
+/* The Find filters an everything conversation was asked under, in
+ * whimbrel_conversation_set_find_filter's shape. NULL when there are none (or the conversation is
+ * scoped to a topic or meeting), on a null/invalid handle or a DB error. Caller frees with
+ * whimbrel_core_free_string. */
+char *whimbrel_conversation_find_filter(StoreHandle *handle, int64_t conversation_id);
+
+/* The scope a conversation's next question is asked with, in whimbrel_conversation_scope's
+ * JSON shape: a topic followed through merges to the topic it became, and a topic or meeting
+ * that no longer exists reads as {"kind":"everything"}. The stored scope is unchanged. NULL on
+ * a null/invalid handle or a DB error (never a wider scope). Caller frees with
+ * whimbrel_core_free_string. */
+char *whimbrel_conversation_resolved_scope(StoreHandle *handle, int64_t conversation_id);
+
+/* Links a conversation to a topic, or clears the link when topic_id is negative. by_user
+ * records that the user chose it (auto-attach never overrides that, removal included).
+ * Returns true on success. */
+bool whimbrel_conversation_set_topic(StoreHandle *handle, int64_t conversation_id, int64_t topic_id, bool by_user);
+
+/* A conversation's topic link as JSON {"topic": {"topic_id","key","name"} | null,
+ * "set_by_user": bool}. NULL on a null/invalid handle or a DB error. Caller frees with
+ * whimbrel_core_free_string. */
+char *whimbrel_conversation_topic(StoreHandle *handle, int64_t conversation_id);
+
+/* Attaches a conversation to the topic most of its cited items belong to, unless the user
+ * already chose. Returns the linked TopicRef JSON {"topic_id","key","name"}, or the JSON text
+ * null when none. NULL on a null/invalid handle, an unknown conversation, or a DB error.
+ * An exchange's cited items are its saved sources ({"n","kind","id"}) when it has them, else its
+ * citations_json. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_conversation_auto_topic(StoreHandle *handle, int64_t conversation_id);
+
+/* Whether a saved Ask exchange touches an excluded client's material, so its generated title
+ * must never go to a hosted model. scope_json is {"kind":"everything"}, {"kind":"topic","id":N}
+ * or {"kind":"meeting","id":N}; cited_json is [{"n","kind","id"}] (the exchange's saved
+ * sources). Checks the question, the answer, the scope and each cited row now. Fails closed:
+ * true on a null/invalid handle, a null or malformed argument, or anything it cannot read.
+ * False only when no client is excluded or nothing in the exchange touches one. */
+bool whimbrel_conversation_exchange_touches_excluded_client(StoreHandle *handle, const char *scope_json, const char *query, const char *answer, const char *cited_json);
+
+/* The ids of a conversation's exchanges answered on this computer from an excluded client's
+ * material: a JSON array of integers, oldest first. NULL on a null/invalid handle or a DB
+ * error. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_conversation_local_only_exchanges(StoreHandle *handle, int64_t conversation_id);
+
+/* The live topics a conversation's stored citations belong to, each once in first-cited order:
+ * a JSON array of TopicRef {"topic_id","key","name"}. Reads saved sources and legacy
+ * citations_json alike. NULL on a null/invalid handle, an unknown conversation, or a DB error.
+ * Caller frees with whimbrel_core_free_string. */
+char *whimbrel_conversation_cited_topics(StoreHandle *handle, int64_t conversation_id);
+
+/* Conversations linked to a topic: a JSON array of {"id","title","starred",
+ * "updated_at_unix_ms"}. NULL on a null/invalid handle or a DB error. Caller frees with
+ * whimbrel_core_free_string. */
+char *whimbrel_topic_conversations(StoreHandle *handle, int64_t topic_id);
+
+/* Every conversation as a Conversations list row, starred first and then most recently updated:
+ * a JSON array of {"id","title","starred","updated_at_unix_ms","topic","latest_answer_line"}.
+ * "topic" is a TopicRef {"topic_id","key","name"} or null (none, or gone); "latest_answer_line"
+ * is the first line of the latest answer, or null before any answer. NULL on a null/invalid
+ * handle or a DB error. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_conversation_rows(StoreHandle *handle);
+
 /* FR-CHAT-6: generates a short title for a conversation's first exchange, in the
  * background. Same spend-cap-check + provider-chain shape as whimbrel_llm_daily_digest.
  * Returns {"ok":true,"data":{"title": "..."}} on success, a provider_failure/spend_cap
@@ -1862,8 +2171,11 @@ bool whimbrel_mcp_disconnect(McpHostHandle *handle, int64_t connector_id);
 /* Generates a new named, scoped MCP client token. scopes_json is a JSON array
  * of strings (e.g. ["memory","meetings"]). Returns JSON {"id":N,"token":"kmcp_N.<secret>"}
  * on success — the token string is the ONLY time the plaintext secret is ever
- * exposed; store it nowhere, show it to the user once. NULL on any failure. */
-char *whimbrel_mcp_generate_client_token(StoreHandle *handle, const char *name, const char *scopes_json);
+ * exposed; store it nowhere, show it to the user once. NULL on any failure,
+ * including a blank name, an unknown scope, or no scope that opens anything.
+ * write_confirmed must be true when scopes include "write": the user confirmed
+ * the Write dialog. */
+char *whimbrel_mcp_generate_client_token(StoreHandle *handle, const char *name, const char *scopes_json, bool write_confirmed);
 
 /* Lists all MCP client tokens (metadata only — id/name/scopes/timestamps,
  * never the secret or its hash/salt). Returns a JSON array, NULL on failure. */
@@ -1871,6 +2183,33 @@ char *whimbrel_mcp_list_client_tokens(StoreHandle *handle);
 
 /* Revokes one MCP client token by id. Returns whether the update succeeded. */
 bool whimbrel_mcp_revoke_client_token(StoreHandle *handle, int64_t id);
+
+/* Bridge phase 2, for Settings (phase 3 builds the UI on these). A client's
+ * sources as a JSON array of {label, count, last_write_unix_ms, cursor, blocked}
+ * (no item text). NULL on a null handle or a DB error. Caller frees with
+ * whimbrel_core_free_string. */
+char *whimbrel_mcp_client_sources(StoreHandle *handle, int64_t token_id);
+
+/* Deletes everything a client added to one source and clears its cursor; with
+ * block, new items from it are refused (without, a block set earlier is lifted).
+ * Returns how many items were deleted, -1 on a null handle, a null label or a
+ * DB error. */
+int64_t whimbrel_mcp_delete_client_source(StoreHandle *handle, int64_t token_id, const char *label, bool block);
+
+/* Stops (blocked true) or starts again accepting new items from one of a
+ * client's sources. False on a null handle, a null label or a DB error. */
+bool whimbrel_mcp_set_client_source_blocked(StoreHandle *handle, int64_t token_id, const char *label, bool blocked);
+
+/* Revokes a client and, with delete_items, deletes everything it added, in one
+ * transaction (all or nothing, so a failed call can be made again). Returns how
+ * many items were deleted (0 when not asked), -1 on a null handle or a DB
+ * error. */
+int64_t whimbrel_mcp_revoke_client_token_with_items(StoreHandle *handle, int64_t id, bool delete_items);
+
+/* What is left of each limit for a client at now_unix_ms, as JSON
+ * {hourly_left_fifths, daily_left, stored, paused_until_unix_ms}. NULL on a
+ * null handle or a DB error. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_mcp_client_limit_state(StoreHandle *handle, int64_t token_id, int64_t now_unix_ms);
 
 /* Streaming inference (docs/adr/0001, docs/adr/0002). Deliberately takes NO StoreHandle —
  * this runs on its own process-lifetime Tokio runtime, entirely separate from any

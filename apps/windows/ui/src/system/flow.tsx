@@ -4,6 +4,8 @@
 import { Children, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type SyntheticEvent } from "react";
 import { t } from "../l10n";
 import { WButton } from "./controls";
+import { menuKeyDown } from "./menuKeys";
+import { DIALOG_FOCUSABLE, dialogEnterAction, trapTabTarget } from "./settingsLogic";
 import { WIcon, type WIconName } from "./WIcon";
 import "./system.css";
 
@@ -321,18 +323,32 @@ export interface WSegmentedProps<V extends string> {
   value: V;
   options: readonly { value: V; label: string }[];
   onChange: (value: V) => void;
+  /** Locked: the choice stays visible and nothing changes. Say why beside it. */
+  disabled?: boolean;
+  /** Manual activation, for a choice that must not change by accident (one that turns a safeguard off): the arrow keys
+   *  only move focus along the buttons and do not wrap; Space or Return chooses the one focused. Left out, the arrows
+   *  choose as they move. */
+  manual?: boolean;
+  /** Ids of the elements that describe the group (the row's description, the reason it is locked, its error). */
+  describedBy?: string;
 }
 
-/** Two or three exclusive choices side by side. One tab stop; the arrow keys move and choose. */
-export function WSegmented<V extends string>({ label, value, options, onChange }: WSegmentedProps<V>) {
+/** Two to four exclusive choices side by side. One tab stop; the arrow keys move and choose (or, with `manual`, only
+ *  move, and Space or Return chooses). */
+export function WSegmented<V extends string>({ label, value, options, onChange, disabled, manual, describedBy }: WSegmentedProps<V>) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const move = (from: number, step: number) => {
+    if (manual) {
+      const to = Math.min(options.length - 1, Math.max(0, from + step));
+      refs.current[to]?.focus();
+      return;
+    }
     const next = (from + step + options.length) % options.length;
     onChange(options[next].value);
     refs.current[next]?.focus();
   };
   return (
-    <div className="w-segmented" role="radiogroup" aria-label={label}>
+    <div className="w-segmented" role="radiogroup" aria-label={label} aria-describedby={describedBy}>
       {options.map((o, i) => (
         <button
           key={o.value}
@@ -342,6 +358,7 @@ export function WSegmented<V extends string>({ label, value, options, onChange }
           type="button"
           role="radio"
           aria-checked={o.value === value}
+          disabled={disabled}
           tabIndex={o.value === value ? 0 : -1}
           className={o.value === value ? "w-segment w-segment-on" : "w-segment"}
           onClick={() => onChange(o.value)}
@@ -387,7 +404,7 @@ export function WDialog({ title, body, children, onCancel, details, focusDialog 
     const before = document.activeElement as HTMLElement | null;
     const target = focusDialog
       ? box.current
-      : (box.current?.querySelector<HTMLElement>("[data-initial]") ?? box.current?.querySelector<HTMLElement>("button"));
+      : (box.current?.querySelector<HTMLElement>("[data-initial]") ?? box.current?.querySelector<HTMLElement>(".w-dialog-actions button:not(:disabled)") ?? box.current?.querySelector<HTMLElement>("button"));
     target?.focus({ preventScroll: true });
     return () => before?.focus?.();
   }, []);
@@ -397,20 +414,19 @@ export function WDialog({ title, body, children, onCancel, details, focusDialog 
       e.stopPropagation();
       onCancel();
     } else if (e.key === "Tab") {
-      const items = [...(box.current?.querySelectorAll<HTMLElement>("button:not(:disabled)") ?? [])];
-      if (items.length === 0) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (document.activeElement === box.current) {
-        // The dialog itself has focus (`focusDialog`): Tab goes to its first button, Shift+Tab to its last.
+      // Every control in the dialog is in the trap: buttons, fields, selects, checkboxes and links.
+      const items = [...(box.current?.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE) ?? [])];
+      const target = trapTabTarget(items, document.activeElement, box.current, e.shiftKey);
+      if (target) {
         e.preventDefault();
-        (e.shiftKey ? last : first).focus();
-      } else if (e.shiftKey && document.activeElement === first) {
+        target.focus();
+      }
+    } else if (e.key === "Enter") {
+      // Return in a box does nothing, here or anywhere above: it must not press a button the person has not chosen.
+      const el = e.target as HTMLElement;
+      if (dialogEnterAction({ tag: el.tagName ?? "", type: (el as HTMLInputElement).type, role: el.getAttribute?.("role") ?? undefined }) === "swallow") {
         e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
+        e.stopPropagation();
       }
     }
   };
@@ -458,6 +474,7 @@ export function WMoreMenu({ items, disabled }: { items: readonly WMoreMenuItem[]
   useEffect(() => {
     if (open) first.current?.focus();
   }, [open]);
+  // Focus goes back to the trigger when the menu closes, whether by Escape or by choosing an item.
   const close = (refocus: boolean) => {
     setOpen(false);
     if (refocus) box.current?.querySelector<HTMLElement>("button")?.focus();
@@ -481,7 +498,7 @@ export function WMoreMenu({ items, disabled }: { items: readonly WMoreMenuItem[]
         {t("More options")}
       </WButton>
       {open ? (
-        <ul className="w-more-menu" role="menu">
+        <ul className="w-more-menu" role="menu" onKeyDown={menuKeyDown}>
           {items.map((item, i) => (
             <li key={item.key} role="none">
               <button
@@ -491,7 +508,7 @@ export function WMoreMenu({ items, disabled }: { items: readonly WMoreMenuItem[]
                 className="w-more-item"
                 disabled={item.disabled}
                 onClick={() => {
-                  close(false);
+                  close(true);
                   item.onPress();
                 }}
               >

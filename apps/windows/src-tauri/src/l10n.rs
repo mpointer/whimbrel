@@ -195,6 +195,31 @@ mod tests {
         assert_eq!(tr(key, &[]), "Open Whimbrel");
     }
 
+    /// Windows cuts a tray tooltip at 127 characters, from the end. In every language this build ships, the longest tooltip the
+    /// redesign can make (a recording, a sync problem, then a memory state) must fit. The keys are in arrays, not `tr()` calls.
+    #[test]
+    fn every_redesigned_tooltip_fits_in_every_language() {
+        let recordings = ["Recording since {time}", "Recording paused", "Recording problem"];
+        let memories = [
+            "Memory on",
+            "Memory off",
+            "Memory stopped",
+            "Memory paused",
+            "Memory paused until {time}",
+            "Memory paused until tomorrow at {time}",
+            "Memory on, some windows not read",
+        ];
+        let time = [("time", "12:59 PM")];
+        for lang in SHIPPED.iter() {
+            for recording in recordings {
+                for memory in memories {
+                    let tip = [tr_in(&CATALOG, lang, recording, &time), tr_in(&CATALOG, lang, "Sync error", &[]), tr_in(&CATALOG, lang, memory, &time)].join(" \u{b7} ");
+                    assert!(tip.chars().count() <= 127, "{lang}: {} characters: {tip}", tip.chars().count());
+                }
+            }
+        }
+    }
+
     // 2026-10-30 14:05 UTC.
     const AT: i64 = 1_793_369_100_000;
 

@@ -30,7 +30,7 @@ struct WhimbrelApp: App {
         let router = ReminderRouter()
         let scheduler = NotificationScheduler(router: router)
         let coordinator = ReminderCoordinator(sync: sync, enrollment: enrollment, scheduler: scheduler,
-                                              settings: ReminderSettingsStore(defaults: .standard), plan: PlanCache(defaults: .standard))
+                                              settings: ReminderSettingsStore(defaults: .standard), state: ReminderStateStore(defaults: .standard))
         let previousWipe = enrollment.onWipe
         enrollment.onWipe = {
             previousWipe?()
@@ -44,7 +44,6 @@ struct WhimbrelApp: App {
         if !Self.isDemo {
             ReminderBackgroundRefresh.register(sync: sync, coordinator: coordinator)
             ReminderBackgroundRefresh.schedule()
-            Task { await coordinator.refreshPlanIfDue(force: true) }
             CoreMemoryStore.refreshModelDefaultsIfDue()
         }
     }

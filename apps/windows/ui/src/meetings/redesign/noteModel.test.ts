@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActionItemView, NoteSourcesView } from "../../generated/types";
-import { buildNote, clockToCs, hasWhimbrelLines, lineSpeaker, nearestLineId, noteState, offerSources, offsetClock, resolveTarget, sourceName } from "./noteModel";
+import { buildNote, clockToCs, hasWhimbrelLines, holdMargin, lineSpeaker, marginShown, nearestLineId, noteState, offerSources, offsetClock, resolveTarget, sourceName } from "./noteModel";
 
 const src = (segmentId: number, startCs: number, speaker = "Jo", text = "words") => ({ segmentId, startCs, speaker, text });
 const item = (id: number, text: string, source = "generated"): ActionItemView => ({ id, text, source, completed: false });
@@ -140,5 +140,48 @@ describe("the page's state", () => {
     expect(offerSources(none, true, true)).toBe(true);
     expect(offerSources(none, false, true)).toBe(false);
     expect(offerSources(none, true, false)).toBe(false);
+  });
+});
+
+describe("the right margin", () => {
+  const none = buildNote({ decisions: [], decisionsAreEdited: false, openQuestions: [], openQuestionsAreEdited: false, items: [], sources: null });
+  const sourced = buildNote({
+    decisions: ["A"],
+    decisionsAreEdited: false,
+    openQuestions: [],
+    openQuestionsAreEdited: false,
+    items: [],
+    sources: { decisions: [{ text: "A", source: src(1, 100) }], openQuestions: [], actionItems: [] },
+  });
+  it("folds away when there is nothing to put in it: no sources and no Whimbrel line (a meeting with no transcript and no summary)", () => {
+    expect(marginShown(none, false)).toBe(false);
+  });
+  it("stays for a note with sources", () => {
+    expect(marginShown(sourced, true)).toBe(true);
+  });
+  it("stays where it holds its line and the Regenerate offer: Whimbrel wrote lines and none has a source", () => {
+    const plain = buildNote({ decisions: ["a"], decisionsAreEdited: false, openQuestions: [], openQuestionsAreEdited: false, items: [], sources: null });
+    expect(offerSources(plain, true, true)).toBe(true);
+    expect(marginShown(plain, true)).toBe(true);
+  });
+});
+
+
+describe("the margin while editing", () => {
+  it("follows the note when nobody is editing", () => {
+    expect(holdMargin(null, false, true)).toEqual({ shown: true, held: null });
+    expect(holdMargin(true, false, false)).toEqual({ shown: false, held: null });
+  });
+  it("takes the answer when Edit begins and keeps it, whatever typing does to the note", () => {
+    const begin = holdMargin(null, true, true);
+    expect(begin).toEqual({ shown: true, held: true });
+    // The person types over every Whimbrel line: the live answer becomes false, the column stays.
+    expect(holdMargin(begin.held, true, false)).toEqual({ shown: true, held: true });
+    // And a folded margin stays folded when typing would have made it show.
+    const folded = holdMargin(null, true, false);
+    expect(holdMargin(folded.held, true, true)).toEqual({ shown: false, held: false });
+  });
+  it("is released when Edit ends", () => {
+    expect(holdMargin(true, false, false).shown).toBe(false);
   });
 });

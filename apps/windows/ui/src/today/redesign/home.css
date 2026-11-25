@@ -56,6 +56,11 @@
   background: var(--color-background-card);
   box-shadow: var(--w-shadow-3);
 }
+/* The Dates menu is short and fixed (three choices and the range), so it is never cut: Apply is always in view. */
+.th-menu.th-menu-dates {
+  max-height: none;
+  overflow: visible;
+}
 .th-menu .w-menu-item {
   color: var(--color-text-primary);
   font-weight: 400;
@@ -205,4 +210,45 @@
 /* The reused "This week" list: a topic chip keeps its own width in the column. */
 .th-section .schedule-main > * {
   align-self: flex-start;
+}
+
+/* ---- The recap as formatted text (RecapMarkdown): Thread type roles and tokens only ---- */
+.th-md {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.th-md p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.th-md strong {
+  font-weight: 600;
+}
+.th-md ul,
+.th-md ol {
+  margin: 0;
+  padding-inline-start: var(--w-space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xs);
+}
+.th-md ul {
+  list-style: disc;
+}
+.th-md ol {
+  list-style: decimal;
+}
+.th-md .th-md-heading {
+  margin: var(--w-space-xs) 0 0;
+  font-size: var(--w-text-body-size);
+  line-height: var(--w-text-body-line);
+  font-weight: var(--w-text-body-strong-weight);
+}
+/* A link in the recap is plain text; its address follows it in brackets and may break anywhere so a long one never runs past the card. */
+.th-md .th-md-addr {
+  overflow-wrap: anywhere;
+  user-select: text;
 }

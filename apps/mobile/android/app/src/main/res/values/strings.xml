@@ -138,8 +138,6 @@
     <string name="settings_theme_selected">Selected</string>
     <string name="reminders_channel_name">Reminders</string>
     <string name="reminders_section">Reminders</string>
-    <string name="reminders_need_cloud">Reminders come with Cloud.</string>
-    <string name="reminders_upgrade">Upgrade in Whimbrel on your computer.</string>
     <string name="reminders_meeting_toggle">Meeting reminders</string>
     <string name="reminders_lead_label">Remind me</string>
     <string name="reminders_digest_toggle">Steps due today</string>

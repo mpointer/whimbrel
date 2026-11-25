@@ -22,7 +22,8 @@ jobs:
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
     # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
     # public mirror and for a pull request from a fork, so outside code never runs on it.
-    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
+    # With the repository variable MAC_BIG_CI set to on, either Mac runner takes it (label mac-pool; an internal runbook covers it).
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MAC_BIG_CI == 'on' && '["self-hosted","mac-pool"]' || '["self-hosted","macOS"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       run_connectors: ${{ steps.connectors.outputs.run }}
@@ -61,7 +62,8 @@ jobs:
     if: ${{ !cancelled() && needs.check-version.outputs.run_connectors == 'true' }}
     # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
     # public mirror and for a pull request from a fork, so outside code never runs on it.
-    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
+    # With the repository variable MAC_BIG_CI set to on, either Mac runner takes it (label mac-pool; an internal runbook covers it).
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MAC_BIG_CI == 'on' && '["self-hosted","mac-pool"]' || '["self-hosted","macOS"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -93,13 +95,16 @@ jobs:
   # A pure version-bump commit (apps/macos/scripts/release-prepare.sh) only ever
   # touches these 5 files -- no source changed, so the swift-tests macOS runner
   # below is redundant with the CI run the fix itself already had.
-  # Not on a pull request (#ci-minutes): its outputs feed only swift-tests, which never
-  # runs on one, so on a PR this was a billed minute that decided nothing.
+  # On a pull request only when MAC_BIG_CI is on (#ci-minutes): its outputs feed only
+  # swift-tests, which runs on a PR only then. The PR condition also requires the private
+  # repo and a same-repo, non-draft PR, so a PR run always lands on the mac-big runner
+  # and never bills a hosted minute.
   changes:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || (vars.MAC_BIG_CI == 'on' && github.repository == 'mpointer/kestrel' && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository)
     # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
     # public mirror and for a pull request from a fork, so outside code never runs on it.
-    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
+    # With the repository variable MAC_BIG_CI set to on, either Mac runner takes it (label mac-pool; an internal runbook covers it).
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MAC_BIG_CI == 'on' && '["self-hosted","mac-pool"]' || '["self-hosted","macOS"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 5
@@ -136,8 +141,8 @@ jobs:
           # swift-tests builds the Mac app, which links core/ and bundles the
           # connectors, so it runs only when one of those (or these workflows)
           # changed. An empty or failed diff runs it.
-          # This job no longer runs on pull requests, so the PR-only path list (which left
-          # out core/) is gone; pushes and manual runs always included core/.
+          # One path list for every event, core/ included (a PR runs this only when
+          # MAC_BIG_CI is on, and then swift-tests runs for core/ changes too).
           macos_paths='^(apps/macos/|core/|mcp-servers/|scripts/l10n/|l10n/|\.github/workflows/)'
           if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE "$macos_paths" <<<"$changed"; }; then
             echo "run_macos=true" >> "$GITHUB_OUTPUT"
@@ -151,23 +156,37 @@ jobs:
   # run_macos above). The Rust cache covers the core/ build its prebuild
   # script runs.
   #
-  # Deliberately NOT moved to the self-hosted runner (whimbrel-mbp-runner):
-  # this job's test host is Whimbrel.app under its real bundle id
-  # (com.mpointer.kestrel), so on a dev's own Mac it shares that Mac's real
-  # UserDefaults/Application Support with the actual installed app. The M3.0
-  # Task 9 migration shim clears legacy connected-account keys on every
-  # host-app launch, so every CI run here would wipe the real connected
-  # Google/Microsoft account settings. Needs isolation (a separate macOS
-  # user account, or a distinct CI bundle id) before this can self-host.
+  # Isolation: this job's test host is Whimbrel.app under its real bundle id, so on
+  # a dev's own login it shares that account's real UserDefaults/Application Support
+  # with the installed app. The M3.0 Task 9 migration shim clears legacy
+  # connected-account keys on every host-app launch, so a run in Mike's own account
+  # can wipe the real connected Google/Microsoft account settings. The mac-big runner
+  # runs under a separate macOS user account, which is the isolation this needs.
   swift-tests:
     needs: changes
-    # On Mike's MacBook, so never on a PR. Run it on a branch with workflow_dispatch. The mirror
-    # has no runner, so the job would queue there forever.
-    if: needs.changes.outputs.run_macos == 'true' && github.event_name != 'pull_request' && github.repository == 'mpointer/kestrel'
-    runs-on: [self-hosted, macOS]
-    timeout-minutes: 40
+    # Pushes and manual runs (workflow_dispatch on a branch) as before. On a pull request
+    # only when MAC_BIG_CI is on, and only a ready, same-repo PR (never a fork's code).
+    # The mirror has no runner, so the job would queue there forever.
+    if: needs.changes.outputs.run_macos == 'true' && github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || (vars.MAC_BIG_CI == 'on' && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository))
+    # A pull request run always goes to mac-big, even if the variable flips to off between
+    # queueing and a re-run, so a PR's code never runs in Mike's own account.
+    # Keep this on mac-big, never the shared mac-pool label: this Mac's runner also carries
+    # mac-pool, and it runs in Mike's own account.
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || vars.MAC_BIG_CI == 'on') && '["self-hosted","mac-big"]' || '["self-hosted","macOS"]') }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      # The WhimbrelUI package (the Thread screens and their rules) has its own tests, run with
+      # `swift test`. They need no app build, no Rust and no signing, so they run first and fail fast.
+      # Same gating as the rest of this job (pushes to main, tags and manual runs; a pull request only
+      # when MAC_BIG_CI is on), so a PR never bills a Mac minute that is skipped today. Debug, then
+      # release with testing enabled, which is how the package is compiled inside the app.
+      - name: WhimbrelUI package tests (debug)
+        working-directory: apps/macos/WhimbrelUI
+        run: swift test
+      - name: WhimbrelUI package tests (release)
+        working-directory: apps/macos/WhimbrelUI
+        run: swift test -c release -Xswiftc -enable-testing
       # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
       # RUSTUP_HOME in the runner's .env) rather than a toolchain action.
       - name: Rust toolchain (preinstalled on this runner)
@@ -215,6 +234,10 @@ jobs:
           scripts/l10n/export-apple.sh macos "$RUNNER_TEMP/loc"
           python3 -I scripts/l10n/translate.py check --apple "$RUNNER_TEMP/loc"/en.xcloc apps/macos/Whimbrel/Localizable.xcstrings
           python3 -I scripts/l10n/translate.py check --apple "$RUNNER_TEMP/loc"/en.xcloc apps/macos/Whimbrel/InfoPlist.xcstrings
+      # The three CODE_SIGN settings at the END of the command are what "no signing credentials required" means: without
+      # them Xcode signs the test bundle with whatever development certificate the runner's keychain has, and a runner with
+      # no screen fails there (errSecInternalComponent). They were once in the middle of this long line and were lost in a
+      # merge (#981); keep them last, and add new test classes before them.
       - name: Run UpdateCheckerTests and the meeting detector tests (no signing credentials required)
         working-directory: apps/macos
-        run: xcodebuild test -project Whimbrel.xcodeproj -scheme Whimbrel -destination 'platform=macOS' -only-testing:WhimbrelTests/UpdateCheckerTests -only-testing:WhimbrelTests/SingleInstanceGuardTests -only-testing:WhimbrelTests/SyncNowModelTests -only-testing:WhimbrelTests/ScreenTextCaptureServiceTests -only-testing:WhimbrelTests/CalendarSyncHorizonTests -only-testing:WhimbrelTests/MeetingEndDetectorTests -only-testing:WhimbrelTests/MeetingHeuristicDetectorTests -only-testing:WhimbrelTests/RoutingSettingsTests -only-testing:WhimbrelTests/MediaRetentionCopyTests -only-testing:WhimbrelTests/MeetingDetailViewLogicTests -only-testing:WhimbrelTests/AwayOutcomeLabelTests -only-testing:WhimbrelTests/CoreLLMErrorDecodingTests -only-testing:WhimbrelTests/EpisodeOptionsMenuTests -only-testing:WhimbrelTests/ReadLogicTests -only-testing:WhimbrelTests/StatusMenuCopyTests -only-testing:WhimbrelTests/AppLanguageTests -only-testing:WhimbrelTests/FirstRunTests -only-testing:WhimbrelTests/ChromiumAccessibilityTests -only-testing:WhimbrelTests/RecordingNoticeTests -only-testing:WhimbrelTests/TranscriptionEngineTests -only-testing:WhimbrelTests/AwayModeSettingsTests -only-testing:WhimbrelTests/TextRecognizerTests -only-testing:WhimbrelTests/MeetingOptionsMenuTests -only-testing:WhimbrelTests/MeetingPartTranscriptionTests -only-testing:WhimbrelTests/StreamHealthTests -only-testing:WhimbrelTests/AccessQueueWaitProbeTests -only-testing:WhimbrelTests/ReplyPrioritySettingsTests -only-testing:WhimbrelTests/KeychainAccessTests -only-testing:WhimbrelTests/DbKeyStoreTests -only-testing:WhimbrelTests/KeyedStoreFFITests -only-testing:WhimbrelTests/McpServerStdinKeyTests -only-testing:WhimbrelTests/EncryptionSetupModelTests -only-testing:WhimbrelTests/EncryptionRecoveryModelTests -only-testing:WhimbrelTests/EncryptionKeyUnavailableModelTests -only-testing:WhimbrelTests/EncryptionSettingsModelTests -only-testing:WhimbrelTests/EncryptionCopyTests -only-testing:WhimbrelTests/EncryptionSecretHygieneTests -only-testing:WhimbrelTests/EncryptionSetupFFITests -only-testing:WhimbrelTests/LaunchCoordinatorTests -only-testing:WhimbrelTests/LaunchCoordinatorFFITests -only-testing:WhimbrelTests/AppLaunchTests -only-testing:WhimbrelTests/LaunchPresenterTests -only-testing:WhimbrelTests/EncryptionSettingsLiveTests -only-testing:WhimbrelTests/EncryptionPrintPageTests -only-testing:WhimbrelTests/NoStoreModeTests -only-testing:WhimbrelTests/ClientControlsModelTests -only-testing:WhimbrelTests/TopicsPaneTests -only-testing:WhimbrelTests/MeetingSnapshotServiceTests -only-testing:WhimbrelTests/AskHelpersBridgeTests -only-testing:WhimbrelTests/ThemeLoaderTests -only-testing:WhimbrelTests/ThemeStoreTests -only-testing:WhimbrelTests/ColorTokenUsageTests -only-testing:WhimbrelTests/ThemeBundleTests -only-testing:WhimbrelTests/SkinLoaderTests -only-testing:WhimbrelTests/SkinStoreTests -only-testing:WhimbrelTests/SkinGalleryTests -only-testing:WhimbrelTests/SkinDesignSystemTests -only-testing:WhimbrelTests/TodayLogicTests -only-testing:WhimbrelTests/TodayChromeTests -only-testing:WhimbrelTests/ArchetypeTerminalTests -only-testing:WhimbrelTests/ArchetypeGlassTests -only-testing:WhimbrelTests/ArchetypeFieldTests -only-testing:WhimbrelTests/ArchetypeAlmanacTests -only-testing:WhimbrelTests/ArchetypeReferenceTests -only-testing:WhimbrelTests/SkinImageryTests -only-testing:WhimbrelTests/SkinMatrixTests -only-testing:WhimbrelTests/TodayRowsTests -only-testing:WhimbrelTests/MeetingCardModelTests -only-testing:WhimbrelTests/SnapshotsStripCopyTests -only-testing:WhimbrelTests/ActiveMeetingViewTests -only-testing:WhimbrelTests/ProfileSettingsTests -only-testing:WhimbrelTests/ProfileSuggestionsModelTests -only-testing:WhimbrelTests/RoutineHostTests -only-testing:WhimbrelTests/RoutineSyncFieldsTests -only-testing:WhimbrelTests/MeetingTitleCheckSettingsTests -only-testing:WhimbrelTests/MeetingPrepSettingsTests -only-testing:WhimbrelTests/MeetingPrepDecodeTests -only-testing:WhimbrelTests/MeetingPageLogicTests -only-testing:WhimbrelTests/LiveTranscriptLogicTests -only-testing:WhimbrelTests/LiveAudioReaderTests -only-testing:WhimbrelTests/LiveTranscriptSettingsTests -only-testing:WhimbrelTests/UserSkinStoreTests -only-testing:WhimbrelTests/PaletteRepairTests -only-testing:WhimbrelTests/SkinChatSessionTests -only-testing:WhimbrelTests/SkinChatViewTests -only-testing:WhimbrelTests/SkinImageryPlacementTests -only-testing:WhimbrelTests/SkinPackageTests -only-testing:WhimbrelTests/JoinTargetTests -only-testing:WhimbrelTests/ZoomJoinURLTests -only-testing:WhimbrelTests/MeetingSplitTests -only-testing:WhimbrelTests/LocalModelTests -only-testing:WhimbrelTests/MeetingAskFormattingTests -only-testing:WhimbrelTests/LiveQuestionWatcherTests -only-testing:WhimbrelTests/LiveAlertDeliveryTests -only-testing:WhimbrelTests/LiveAlertsSectionTests -only-testing:WhimbrelTests/CallAutoStartTests -only-testing:WhimbrelTests/MeetingMergeTests -only-testing:WhimbrelTests/MeetingContinuationTests -only-testing:WhimbrelTests/SpeakerNamesTests -only-testing:WhimbrelTests/ProviderBudgetTests -only-testing:WhimbrelTests/MeetingTrimTests -only-testing:WhimbrelTests/StillInMeetingTests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -only-testing:WhimbrelTests/ImportTests -only-testing:WhimbrelTests/SnapshotFrameFilterTests -only-testing:WhimbrelTests/ContentSyncBackoffTests -only-testing:WhimbrelTests/ZoomMeetingReaderTests -only-testing:WhimbrelTests/ZoomLeaverTests -only-testing:WhimbrelTests/AwayModeCoordinatorTests -only-testing:WhimbrelTests/AXNodeSnapshotTests -only-testing:WhimbrelTests/DeviceDisplayNameTests -only-testing:WhimbrelTests/SyncStallRecoveryTests -only-testing:WhimbrelTests/CloudRoutineModelTests -only-testing:WhimbrelTests/LiveNotesMergeTests -only-testing:WhimbrelTests/RedesignOnboardingAdapterTests -only-testing:WhimbrelTests/RedesignHomeAdapterTests -only-testing:WhimbrelTests/HomeElementPairsTests -only-testing:WhimbrelTests/LiveMeetingRedesignTests -only-testing:WhimbrelTests/LiveAskHandoffTests -only-testing:WhimbrelTests/MeetingNoteRedesignTests -only-testing:WhimbrelTests/PlusAiPromptTests
+        run: xcodebuild test -project Whimbrel.xcodeproj -scheme Whimbrel -destination 'platform=macOS' -only-testing:WhimbrelTests/UpdateCheckerTests -only-testing:WhimbrelTests/SingleInstanceGuardTests -only-testing:WhimbrelTests/SyncNowModelTests -only-testing:WhimbrelTests/ScreenTextCaptureServiceTests -only-testing:WhimbrelTests/CalendarSyncHorizonTests -only-testing:WhimbrelTests/MeetingEndDetectorTests -only-testing:WhimbrelTests/MeetingHeuristicDetectorTests -only-testing:WhimbrelTests/RoutingSettingsTests -only-testing:WhimbrelTests/MediaRetentionCopyTests -only-testing:WhimbrelTests/MeetingDetailViewLogicTests -only-testing:WhimbrelTests/AwayOutcomeLabelTests -only-testing:WhimbrelTests/CoreLLMErrorDecodingTests -only-testing:WhimbrelTests/EpisodeOptionsMenuTests -only-testing:WhimbrelTests/ReadLogicTests -only-testing:WhimbrelTests/StatusMenuCopyTests -only-testing:WhimbrelTests/AppLanguageTests -only-testing:WhimbrelTests/FirstRunTests -only-testing:WhimbrelTests/ChromiumAccessibilityTests -only-testing:WhimbrelTests/RecordingNoticeTests -only-testing:WhimbrelTests/TranscriptionEngineTests -only-testing:WhimbrelTests/AwayModeSettingsTests -only-testing:WhimbrelTests/TextRecognizerTests -only-testing:WhimbrelTests/MeetingOptionsMenuTests -only-testing:WhimbrelTests/MeetingPartTranscriptionTests -only-testing:WhimbrelTests/StreamHealthTests -only-testing:WhimbrelTests/AccessQueueWaitProbeTests -only-testing:WhimbrelTests/ReplyPrioritySettingsTests -only-testing:WhimbrelTests/KeychainAccessTests -only-testing:WhimbrelTests/DbKeyStoreTests -only-testing:WhimbrelTests/KeyedStoreFFITests -only-testing:WhimbrelTests/McpServerStdinKeyTests -only-testing:WhimbrelTests/EncryptionSetupModelTests -only-testing:WhimbrelTests/EncryptionRecoveryModelTests -only-testing:WhimbrelTests/EncryptionKeyUnavailableModelTests -only-testing:WhimbrelTests/EncryptionSettingsModelTests -only-testing:WhimbrelTests/EncryptionCopyTests -only-testing:WhimbrelTests/EncryptionSecretHygieneTests -only-testing:WhimbrelTests/EncryptionSetupFFITests -only-testing:WhimbrelTests/LaunchCoordinatorTests -only-testing:WhimbrelTests/LaunchCoordinatorFFITests -only-testing:WhimbrelTests/AppLaunchTests -only-testing:WhimbrelTests/LaunchPresenterTests -only-testing:WhimbrelTests/EncryptionSettingsLiveTests -only-testing:WhimbrelTests/EncryptionPrintPageTests -only-testing:WhimbrelTests/NoStoreModeTests -only-testing:WhimbrelTests/ClientControlsModelTests -only-testing:WhimbrelTests/TopicsPaneTests -only-testing:WhimbrelTests/MeetingSnapshotServiceTests -only-testing:WhimbrelTests/AskHelpersBridgeTests -only-testing:WhimbrelTests/ThemeLoaderTests -only-testing:WhimbrelTests/ThemeStoreTests -only-testing:WhimbrelTests/ColorTokenUsageTests -only-testing:WhimbrelTests/ThemeBundleTests -only-testing:WhimbrelTests/SkinLoaderTests -only-testing:WhimbrelTests/SkinStoreTests -only-testing:WhimbrelTests/SkinGalleryTests -only-testing:WhimbrelTests/SkinDesignSystemTests -only-testing:WhimbrelTests/TodayLogicTests -only-testing:WhimbrelTests/TodayChromeTests -only-testing:WhimbrelTests/ArchetypeTerminalTests -only-testing:WhimbrelTests/ArchetypeGlassTests -only-testing:WhimbrelTests/ArchetypeFieldTests -only-testing:WhimbrelTests/ArchetypeAlmanacTests -only-testing:WhimbrelTests/ArchetypeReferenceTests -only-testing:WhimbrelTests/SkinImageryTests -only-testing:WhimbrelTests/SkinMatrixTests -only-testing:WhimbrelTests/TodayRowsTests -only-testing:WhimbrelTests/MeetingCardModelTests -only-testing:WhimbrelTests/SnapshotsStripCopyTests -only-testing:WhimbrelTests/ActiveMeetingViewTests -only-testing:WhimbrelTests/ProfileSettingsTests -only-testing:WhimbrelTests/ProfileSuggestionsModelTests -only-testing:WhimbrelTests/RoutineHostTests -only-testing:WhimbrelTests/RoutineSyncFieldsTests -only-testing:WhimbrelTests/MeetingTitleCheckSettingsTests -only-testing:WhimbrelTests/MeetingPrepSettingsTests -only-testing:WhimbrelTests/MeetingPrepDecodeTests -only-testing:WhimbrelTests/MeetingPageLogicTests -only-testing:WhimbrelTests/LiveTranscriptLogicTests -only-testing:WhimbrelTests/LiveAudioReaderTests -only-testing:WhimbrelTests/LiveTranscriptSettingsTests -only-testing:WhimbrelTests/UserSkinStoreTests -only-testing:WhimbrelTests/PaletteRepairTests -only-testing:WhimbrelTests/SkinChatSessionTests -only-testing:WhimbrelTests/SkinChatViewTests -only-testing:WhimbrelTests/SkinImageryPlacementTests -only-testing:WhimbrelTests/SkinPackageTests -only-testing:WhimbrelTests/JoinTargetTests -only-testing:WhimbrelTests/ZoomJoinURLTests -only-testing:WhimbrelTests/MeetingSplitTests -only-testing:WhimbrelTests/LocalModelTests -only-testing:WhimbrelTests/MeetingAskFormattingTests -only-testing:WhimbrelTests/LiveQuestionWatcherTests -only-testing:WhimbrelTests/LiveAlertDeliveryTests -only-testing:WhimbrelTests/LiveAlertsSectionTests -only-testing:WhimbrelTests/CallAutoStartTests -only-testing:WhimbrelTests/MeetingMergeTests -only-testing:WhimbrelTests/MeetingContinuationTests -only-testing:WhimbrelTests/SpeakerNamesTests -only-testing:WhimbrelTests/ProviderBudgetTests -only-testing:WhimbrelTests/MeetingTrimTests -only-testing:WhimbrelTests/StillInMeetingTests -only-testing:WhimbrelTests/ImportTests -only-testing:WhimbrelTests/SnapshotFrameFilterTests -only-testing:WhimbrelTests/ContentSyncBackoffTests -only-testing:WhimbrelTests/ZoomMeetingReaderTests -only-testing:WhimbrelTests/ZoomLeaverTests -only-testing:WhimbrelTests/AwayModeCoordinatorTests -only-testing:WhimbrelTests/AXNodeSnapshotTests -only-testing:WhimbrelTests/DeviceDisplayNameTests -only-testing:WhimbrelTests/SyncStallRecoveryTests -only-testing:WhimbrelTests/CloudRoutineModelTests -only-testing:WhimbrelTests/LiveNotesMergeTests -only-testing:WhimbrelTests/RedesignOnboardingAdapterTests -only-testing:WhimbrelTests/RedesignHomeAdapterTests -only-testing:WhimbrelTests/HomeElementPairsTests -only-testing:WhimbrelTests/LiveMeetingRedesignTests -only-testing:WhimbrelTests/LiveAskHandoffTests -only-testing:WhimbrelTests/MeetingNoteRedesignTests -only-testing:WhimbrelTests/FindRedesignTests -only-testing:WhimbrelTests/PlusAiPromptTests -only-testing:WhimbrelTests/MenuBarRedesignTests -only-testing:WhimbrelTests/AlertPanelRedesignTests -only-testing:WhimbrelTests/McpClientScopesTests -only-testing:WhimbrelTests/PlanControlsTests -only-testing:WhimbrelTests/SettingsSearchTests -only-testing:WhimbrelTests/PhoneCardStateTests -only-testing:WhimbrelTests/LocalOnlyLineTests -only-testing:WhimbrelTests/SettingsRedesignTests -only-testing:WhimbrelTests/SettingsRedesignMemoryTests -only-testing:WhimbrelTests/SettingsRedesignMeetingsAITests -only-testing:WhimbrelTests/SettingsRedesignSyncConnectorsTests -only-testing:WhimbrelTests/StartStopRulesTests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""

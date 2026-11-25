@@ -5,6 +5,9 @@ import { describeError, isCommandError } from "../errors";
 import type { LibraryTarget, StepActionInput, TopicListItemView, TopicPageView, TopicStepView } from "../generated/types";
 import { useL10n } from "../l10n";
 import { Detail, type Selection } from "../library/Detail";
+import { useRedesign } from "../redesign";
+import { WEmptyState, WNoticeBox } from "../system";
+import { TopicConversations } from "../conversations/TopicConversations";
 import type { ClientReviewFlag } from "../clientControls";
 import { ClientRetentionDialog, ClientReviewBanner, ClientReviewDialog, ClientSection } from "./ClientControls";
 import { ClientRetentionReviewModel, ClientReviewModel, tauriClientControls, type ReviewMode } from "./clientControlsModel";
@@ -47,6 +50,8 @@ function readCollapsed(): boolean {
  */
 export function TopicsView({ request }: { request?: { seq: number; topicId: number } | null }) {
   const { t, locale } = useL10n();
+  // The redesign switch: with it off the tab is drawn exactly as before. On, the same layout and words in the Thread look (step 10).
+  const redesign = useRedesign();
   const [list, setList] = useState<TopicListItemView[] | null>(null);
   const [selected, setSelected] = useState<number | null>(request?.topicId ?? null);
   const [page, setPage] = useState<TopicPageView | null>(null);
@@ -156,24 +161,42 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
   // an empty list. It counts the suggestions waiting in Settings → Topics.
   if (list && list.length === 0) {
     return (
-      <section className="card empty-state topics-empty">
+      <section className={redesign ? "empty-state topics-empty rt" : "card empty-state topics-empty"}>
         {dialogs}
-        {error && <p role="alert">{error}</p>}
-        <h2 className="section-label">{t("No topics yet")}</h2>
-        <p className="muted">
-          {suggested > 0
-            ? t("Suggested topics waiting: {n}. Add the ones you care about in Settings.", { n: String(suggested) })
-            : t("Name the customers, products and projects you care about in Settings.")}
-        </p>
-        <button type="button" className="mode mode--active" onClick={() => void emit("open-settings", "topics")}>
-          {t("Open Topics settings")}
-        </button>
+        {error && (redesign ? <WNoticeBox tone="error">{error}</WNoticeBox> : <p role="alert">{error}</p>)}
+        {redesign ? (
+          <WEmptyState
+            icon="topics"
+            title={t("No topics yet")}
+            help={
+              suggested > 0
+                ? t("Suggested topics waiting: {n}. Add the ones you care about in Settings.", { n: String(suggested) })
+                : t("Name the customers, products and projects you care about in Settings.")
+            }
+            actionLabel={t("Open Topics settings")}
+            actionKind="primary"
+            titleLevel={2}
+            onAction={() => void emit("open-settings", "topics")}
+          />
+        ) : (
+          <>
+            <h2 className="section-label">{t("No topics yet")}</h2>
+            <p className="muted">
+              {suggested > 0
+                ? t("Suggested topics waiting: {n}. Add the ones you care about in Settings.", { n: String(suggested) })
+                : t("Name the customers, products and projects you care about in Settings.")}
+            </p>
+            <button type="button" className="mode mode--active" onClick={() => void emit("open-settings", "topics")}>
+              {t("Open Topics settings")}
+            </button>
+          </>
+        )}
       </section>
     );
   }
 
   return (
-    <div className="topics">
+    <div className={redesign ? "topics rt" : "topics"}>
       {dialogs}
       <nav className="topics-list" aria-label={t("Topics")}>
         {TOPIC_GROUPS.map((group) => {
@@ -205,7 +228,7 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
       </nav>
       <section className="topics-page">
         {banner}
-        {error && <p role="alert">{error}</p>}
+        {error && (redesign ? <WNoticeBox tone="error">{error}</WNoticeBox> : <p role="alert">{error}</p>)}
         {page ? (
           <TopicPage
             key={page.topic.topicId}
@@ -247,6 +270,8 @@ function TopicPage({
   act: Act;
 }) {
   const { t, locale } = useL10n();
+  // The redesign switch: with it off the page is drawn exactly as before.
+  const redesign = useRedesign();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [role, setRole] = useState(page.role);
   const [allRecent, setAllRecent] = useState(false);
@@ -282,6 +307,8 @@ function TopicPage({
           {!collapsed && <p>{line}</p>}
         </div>
       )}
+
+      {redesign ? <TopicConversations topicId={page.topic.topicId} name={page.topic.name} /> : null}
 
       <Section title={t("Your role")}>
         <input

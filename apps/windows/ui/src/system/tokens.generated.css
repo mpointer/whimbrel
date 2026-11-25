@@ -196,6 +196,7 @@
   --color-selection: #d9ecee;
   --color-highlight: #e2f1ee;
   --color-text-on-accent: #ffffff;
+  --w-control-border: #7e8ca0;
   color-scheme: light;
 }
 /* Thread's shape and fonts, on the variables a skin sets (skin.ts), so Thread behaves like any other skin. */
@@ -231,6 +232,7 @@
     --color-selection: #1e3438;
     --color-highlight: #21403f;
     --color-text-on-accent: #06252a;
+    --w-control-border: #5f6d7e;
     color-scheme: dark;
   }
 }
@@ -250,6 +252,7 @@
   --color-selection: #1e3438;
   --color-highlight: #21403f;
   --color-text-on-accent: #06252a;
+  --w-control-border: #5f6d7e;
   color-scheme: dark;
 }
 @media (prefers-contrast: more) {
@@ -269,6 +272,7 @@
     --color-selection: #bfe3e6;
     --color-highlight: #ffe08a;
     --color-text-on-accent: #ffffff;
+    --w-control-border: #000000;
   }
 }
 @media (prefers-contrast: more) and (prefers-color-scheme: dark) {
@@ -288,6 +292,7 @@
     --color-selection: #0e4a50;
     --color-highlight: #5c4a00;
     --color-text-on-accent: #000000;
+    --w-control-border: #ffffff;
   }
 }
 .w-thread.w-mode-hc-light {
@@ -306,6 +311,7 @@
   --color-selection: #bfe3e6;
   --color-highlight: #ffe08a;
   --color-text-on-accent: #ffffff;
+  --w-control-border: #000000;
   color-scheme: light;
 }
 .w-thread.w-mode-hc-dark {
@@ -324,5 +330,24 @@
   --color-selection: #0e4a50;
   --color-highlight: #5c4a00;
   --color-text-on-accent: #000000;
+  --w-control-border: #ffffff;
   color-scheme: dark;
+}
+
+/* The app applies Thread as a skin: its 15 colors are inline variables on the root and the root says which palette
+   (data-palette) and which variant (data-theme) is showing. The Thread-only colors follow that, so they are there for
+   exactly that palette and for no other: any other palette falls back to its own border. */
+:root[data-palette="thread"][data-theme="light"] {
+  --w-control-border: #7e8ca0;
+}
+:root[data-palette="thread"][data-theme="dark"] {
+  --w-control-border: #5f6d7e;
+}
+@media (prefers-contrast: more) {
+  :root[data-palette="thread"][data-theme="light"] {
+    --w-control-border: #000000;
+  }
+  :root[data-palette="thread"][data-theme="dark"] {
+    --w-control-border: #ffffff;
+  }
 }

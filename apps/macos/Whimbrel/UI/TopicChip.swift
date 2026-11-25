@@ -31,7 +31,7 @@ private struct TopicChipButton: View {
     var body: some View {
         Button(action: action) {
             Label(topic.name, systemImage: "tag")
-                .font(.whimbrelBody(.caption))
+                .restyledFont(.caption)
                 .foregroundStyle(Color.whimbrelTextPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -87,7 +87,7 @@ struct TopicPageLink: View {
     var body: some View {
         Button { appState.openTopic(topic.topicId) } label: {
             Label("Open topic page: \(topic.name)", systemImage: "tag")
-                .font(.whimbrelBody(.callout))
+                .restyledFont(.callout)
                 .foregroundStyle(Color.whimbrelLink)
         }
         .buttonStyle(.plain)

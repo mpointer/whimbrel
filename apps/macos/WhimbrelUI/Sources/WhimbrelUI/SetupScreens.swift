@@ -552,7 +552,7 @@ struct WTextArea: View {
                 .padding(theme.space(6))
                 .frame(minHeight: 96 * k, maxHeight: 140 * k)
                 .background(shape.fill(theme.backgroundCard))
-                .overlay(shape.wBorder(theme.border, style: theme.borderStroke.widened(theme.isHighContrast ? 1.5 : 1)))
+                .overlay(shape.wBorder(theme.controlBorder, style: theme.borderStroke.widened(theme.isHighContrast ? 1.5 : 1)))
                 .overlay { if focused { shape.strokeBorder(theme.focus, lineWidth: 2.5).padding(-1).allowsHitTesting(false) } }
                 .frame(maxWidth: 420 * k)
                 .accessibilityLabel(label)

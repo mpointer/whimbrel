@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingRecordingView } from "../../generated/types";
-import { announcementFor, audioIsArriving, clockOffsetCs, liveControls, liveScreenActive, liveStateOf, pauseToggle, recordedMs, recordedSeconds } from "./liveModel";
+import { announcementFor, audioIsArriving, clockOffsetCs, degradedShown, liveControls, liveScreenActive, liveStateOf, pauseToggle, recordedMs, recordedSeconds, statusPollMs } from "./liveModel";
 
 const idle: MeetingRecordingView = { state: "idle", paused: false, pausedTotalMs: 0, resuming: false };
 const recording = (extra: Partial<MeetingRecordingView> = {}): MeetingRecordingView => ({
@@ -41,6 +41,22 @@ describe("the state of the screen, row by row from the spec's table", () => {
   });
   it("a paused meeting stays paused even with an old degraded reason", () => {
     expect(liveStateOf(recording({ paused: true, degraded: "x" }))).toBe("paused");
+  });
+  it("a pause hides only the problems it causes: audio that is not delivered, never a headset, start or save problem", () => {
+    const mic = "The microphone isn't delivering audio, so this meeting records system audio only.";
+    const system = "System audio isn't reaching Whimbrel, so this meeting records your microphone only.";
+    const headset = "Your headset switched to call quality, so the meeting's audio may sound muffled.";
+    const start = "Whimbrel couldn't start recording.";
+    expect(degradedShown(null)).toBeNull();
+    expect(degradedShown(recording())).toBeNull();
+    // Not paused: every problem is shown.
+    for (const reason of [mic, system, headset, start]) expect(degradedShown(recording({ degraded: reason }))).toBe(reason);
+    // Paused: the two "not delivering" lines are the pause itself.
+    expect(degradedShown(recording({ paused: true, degraded: mic }))).toBeNull();
+    expect(degradedShown(recording({ paused: true, degraded: system }))).toBeNull();
+    // Paused: a problem the pause did not cause is still there.
+    expect(degradedShown(recording({ paused: true, degraded: headset }))).toBe(headset);
+    expect(degradedShown(recording({ paused: true, degraded: start }))).toBe(start);
   });
   it("another device's meeting is read only whatever the status says", () => {
     expect(liveStateOf(recording(), { readOnly: true })).toBe("readOnly");
@@ -104,8 +120,10 @@ describe("the marked moment's time is on the clock transcript lines use", () => 
 });
 
 describe("the controls", () => {
-  it("starting disables everything but still shows Stop", () => {
-    expect(liveControls("starting")).toEqual({ pause: "pause", pauseDisabled: true, stop: true, stopDisabled: true, markEnabled: false });
+  it("starting disables Pause and Mark but offers Stop, which cancels the start (meeting_record_stop)", () => {
+    expect(liveControls("starting")).toEqual({ pause: "pause", pauseDisabled: true, stop: true, stopDisabled: false, markEnabled: false });
+    // A command already running still holds the buttons.
+    expect(liveControls("starting", true)).toMatchObject({ stop: true, stopDisabled: true });
   });
   it("recording offers Pause, Stop and Mark; a busy command disables the buttons", () => {
     expect(liveControls("recording")).toMatchObject({ pause: "pause", pauseDisabled: false, stopDisabled: false, markEnabled: true });
@@ -114,8 +132,11 @@ describe("the controls", () => {
   it("paused offers Resume and Stop, and no Mark", () => {
     expect(liveControls("paused")).toMatchObject({ pause: "resume", pauseDisabled: false, stop: true, stopDisabled: false, markEnabled: false });
   });
-  it("resuming waits for audio but Stop stays available", () => {
+  it("resuming waits for capture to start again but Stop stays available", () => {
     expect(liveControls("resuming")).toMatchObject({ pause: "resume", pauseDisabled: true, stopDisabled: false });
+  });
+  it("Mark works while resuming: the moment is on the recording's clock, so a mark pressed then is kept, not dropped", () => {
+    expect(liveControls("resuming").markEnabled).toBe(true);
   });
   it("a problem keeps Stop", () => {
     expect(liveControls("problem")).toMatchObject({ stop: true, stopDisabled: false });
@@ -154,5 +175,15 @@ describe("the level meter's name", () => {
     expect(audioIsArriving(0)).toBe(false);
     expect(audioIsArriving(0.01)).toBe(false);
     expect(audioIsArriving(0.2)).toBe(true);
+  });
+});
+
+describe("how often the status is read", () => {
+  it("every 3 s as before, and quickly while a recording is starting or resuming, so the bar leaves Resuming as soon as capture is back", () => {
+    expect(statusPollMs("recording")).toBe(3_000);
+    expect(statusPollMs("paused")).toBe(3_000);
+    expect(statusPollMs("idle")).toBe(3_000);
+    expect(statusPollMs("resuming")).toBeLessThanOrEqual(500);
+    expect(statusPollMs("starting")).toBeLessThanOrEqual(500);
   });
 });

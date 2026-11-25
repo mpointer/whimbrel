@@ -2,10 +2,7 @@ import { useEffect, useState } from "react";
 import { emit } from "@tauri-apps/api/event";
 import {
   launchState,
-  meetingRecordPause,
-  meetingRecordResume,
   meetingRecordStop,
-  meetingRecordingStatus,
   nextMeetingPrep,
   popupOpenMain,
   popupOpenTopic,
@@ -17,34 +14,29 @@ import { NoStoreBanner } from "../launch/NoStoreBanner";
 import { useTopicLookup } from "../topics/TopicChip";
 import { timeLabel } from "../library/rows";
 import { elapsedLabel } from "../meetings/recordingModel";
-import type { MeetingRecordingView, NextMeetingView, TrayStatus } from "../generated/types";
+import type { NextMeetingView, TrayStatus } from "../generated/types";
 import { useL10n } from "../l10n";
 import { useRedesign } from "../redesign";
-import { PausePicker } from "../shell/redesign/PausePicker";
-import { recordedSeconds } from "../meetings/redesign/liveModel";
+import { RedesignedPopup } from "./RedesignedPopup";
+
+/** The tray's quick-glance popup: the redesigned one while the hidden switch is on, else the classic one. */
+export function PopupView() {
+  return useRedesign() ? <RedesignedPopup /> : <ClassicPopup />;
+}
 
 /** The tray's quick-glance popup (plan Task 10), with a running meeting recording (M3.3). */
-export function PopupView() {
+function ClassicPopup() {
   const { t, locale } = useL10n();
-  const redesign = useRedesign();
   // The next meeting and its topic (topics piece 2): the topic opens in the main window.
   const [next, setNext] = useState<NextMeetingView | null>(null);
   const [topic] = useTopicLookup(next ? [{ kind: "event", id: next.eventId, title: next.title }] : []);
   const [status, setStatus] = useState<TrayStatus | null>(null);
-  // The recording's own status, read only with the redesign on: recorded time leaves out paused time.
-  const [rec, setRec] = useState<{ view: MeetingRecordingView; readAt: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
   // Running without the memory database (no-store mode): the popup says so too.
   const [noStore, setNoStore] = useState(false);
 
   const load = () => {
-    if (redesign) {
-      meetingRecordingStatus().then(
-        (view) => setRec({ view, readAt: Date.now() }),
-        () => {},
-      );
-    }
     return trayStatus()
       .then(setStatus)
       .catch(() => {});
@@ -68,13 +60,6 @@ export function PopupView() {
   const recordingSince = status?.recordingStartedUnixMs;
   // The word "paused" shows whenever the shell says so, whichever look is on.
   const paused = status?.recordingPaused === true;
-  const pauseOrResume = () => {
-    setBusy(true);
-    (paused ? meetingRecordResume() : meetingRecordPause())
-      .then(load)
-      .catch(() => {})
-      .finally(() => setBusy(false));
-  };
 
   const toggle = () => {
     if (!status) return;
@@ -106,22 +91,8 @@ export function PopupView() {
             ) : (
               <span className="recording-dot" aria-hidden="true" />
             )}{" "}
-            {paused
-              ? t("Recording paused")
-              : redesign && rec
-                ? t("Recording · {time}", { time: elapsedLabel(0, recordedSeconds(rec.view, now, rec.readAt) * 1000) })
-                : t("Recording · {time}", { time: elapsedLabel(recordingSince, now) })}
+            {paused ? t("Recording paused") : t("Recording · {time}", { time: elapsedLabel(recordingSince, now) })}
           </span>
-          {redesign && rec?.view.degraded && !paused && (
-            <p role="status" className="muted small">
-              {rec.view.degraded}
-            </p>
-          )}
-          {redesign && (
-            <button className="mode" onClick={pauseOrResume} disabled={busy}>
-              {paused ? t("Resume") : t("Pause")}
-            </button>
-          )}
           <button className="mode" onClick={stopRecording} disabled={busy}>
             {t("Stop")}
           </button>
@@ -141,7 +112,6 @@ export function PopupView() {
         <input type="checkbox" checked={status?.captureEnabled ?? false} disabled={!status || busy} onChange={toggle} />
         {t("Capture screen text")}
       </label>
-      {redesign && status && <PausePicker status={status} now={now} onChanged={load} />}
       <div className="popup-actions">
         <button className="mode mode--active" onClick={() => void popupOpenMain()}>
           {t("Open Whimbrel")}

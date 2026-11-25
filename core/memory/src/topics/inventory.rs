@@ -174,6 +174,14 @@ impl Store {
                 None => None,
             },
             "step" => one("SELECT text FROM topic_step WHERE key = ?1", id.to_string().into())?,
+            // An added item: its title, else the start of its text.
+            "mcp_item" => match num() {
+                Some(n) => one(
+                    "SELECT coalesce(nullif(trim(title), ''), substr(body_text, 1, 120)) FROM items WHERE id = ?1 AND kind = 'mcp_item'",
+                    n.into(),
+                )?,
+                None => None,
+            },
             _ => None,
         };
         Ok(text.filter(|t| !t.trim().is_empty()))
@@ -217,6 +225,7 @@ impl Store {
                 row2("SELECT title, NULL FROM meeting WHERE id = ?1", n)
             }
             "email" | "calendar_event" => num.map_or(Ok(None), |n| row2("SELECT body_text, title FROM items WHERE id = ?1", n)),
+            "mcp_item" => num.map_or(Ok(None), |n| row2("SELECT body_text, title FROM items WHERE id = ?1 AND kind = 'mcp_item'", n)),
             "capture" => match id.strip_prefix("i:").and_then(|i| i.parse::<i64>().ok()) {
                 Some(n) => row2("SELECT body_text, title FROM items WHERE id = ?1", n),
                 None => num.map_or(Ok(None), |n| row2("SELECT text, window_title FROM capture_item WHERE id = ?1", n)),
@@ -529,6 +538,29 @@ impl Store {
                 }
             }
             truncated |= n >= limit;
+            // Added items read in their own page with their own limit, so a large sync naming the
+            // client never pushes its emails, events and slides out (review I3).
+            let mut stmt = self.conn.prepare(
+                "SELECT i.id, i.ts_unix_ms, COALESCE(i.title, ''), i.body_text \
+                 FROM items_fts f CROSS JOIN items i ON i.id = f.rowid \
+                 WHERE items_fts MATCH ?1 AND i.kind = 'mcp_item' \
+                 ORDER BY f.rowid DESC LIMIT ?2",
+            )?;
+            let mut rows = stmt.query(params![q, limit])?;
+            let mut n = 0i64;
+            while let Some(r) = rows.next()? {
+                n += 1;
+                let (id, ts): (i64, i64) = (r.get(0)?, r.get(1)?);
+                let text = format!("{}\n{}", r.get::<_, String>(2)?, r.get::<_, String>(3)?);
+                if confirm(&text) {
+                    push("mcp_item", id, ts);
+                }
+            }
+            truncated |= n >= limit;
+            // Added items named only outside their text: the adding client's name, label, link, people.
+            for (id, ts) in self.mcp_items_naming_outside_text_at(confirm, None)? {
+                push("mcp_item", id, ts);
+            }
             let mut stmt = self.conn.prepare(
                 "SELECT s.meeting_id, m.start_unix_ms, s.text FROM transcript_segment_fts f \
                  CROSS JOIN transcript_segment s ON s.id = f.rowid JOIN meeting m ON m.id = s.meeting_id \

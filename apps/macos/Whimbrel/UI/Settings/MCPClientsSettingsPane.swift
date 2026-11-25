@@ -31,6 +31,7 @@ struct MCPClientsSettingsPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             Text("MCP Clients")
+                .settingsAnchor("connectors.mcp")
                 .font(.whimbrelDisplay())
                 .foregroundStyle(Color.whimbrelTextPrimary)
             Text("Let a local MCP client — an AI assistant, for example — read your Whimbrel data through a scoped, revocable token. Each token is shown once, right after you create it, so save it somewhere safe.")

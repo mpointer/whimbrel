@@ -102,11 +102,25 @@ export function timeRange(startMs: number, endMs: number | null | undefined, loc
 
 // --- building -----------------------------------------------------------------------------------
 
-/** The Windows meta a recorded meeting already showed: recording now, or done without a summary yet. */
-export function statusLine(m: Pick<MeetingRow, "status" | "hasSummary">): string | null {
-  if (m.status === "recording") return t("Recording");
+/** The Windows meta a recorded meeting already showed: recording now (Paused while its recording is paused, as on the
+ *  Mac), or done without a summary yet. `pausedId` is `pausedMeetingId` of the recording status. */
+export function statusLine(m: Pick<MeetingRow, "id" | "status" | "hasSummary">, pausedId: number | null = null): string | null {
+  if (m.status === "recording") return pausedId != null && m.id === pausedId ? t("Paused") : t("Recording");
   if (m.status === "completed" && !m.hasSummary) return t("No summary yet");
   return null;
+}
+
+/** How the meeting started, for its row: Calendar or Detected. Anything else (a manual start, Away Mode's "away")
+ *  reads as Recorded once it has stopped, and shows nothing while it records, so a live row never says Recorded. */
+export function triggerLabel(m: Pick<MeetingRow, "trigger" | "status">): string | null {
+  switch (m.trigger) {
+    case "calendar":
+      return t("Calendar");
+    case "detected":
+      return t("Detected");
+    default:
+      return m.status === "recording" ? null : t("Recorded");
+  }
 }
 
 function chipsFor(prepKey: string | null | undefined, summary: boolean, actionItems: number, topic: TopicRefView | null | undefined): MeetingChip[] {
@@ -150,7 +164,13 @@ export function forEvent(e: ScheduleEvent, topic: TopicRefView | null | undefine
 }
 
 /** A recorded meeting: it always opens the meeting. A missing end (still recording) leaves the duration out. */
-export function forRecorded(m: MeetingRow, prepKey: string | null | undefined, topic: TopicRefView | null | undefined, locale: string): MeetingCardModel {
+export function forRecorded(
+  m: MeetingRow,
+  prepKey: string | null | undefined,
+  topic: TopicRefView | null | undefined,
+  locale: string,
+  pausedId: number | null = null,
+): MeetingCardModel {
   const attendees = m.attendeeCount ?? 0;
   return {
     title: m.title,
@@ -163,7 +183,7 @@ export function forRecorded(m: MeetingRow, prepKey: string | null | undefined, t
     chips: chipsFor(prepKey, m.hasSummary, m.actionItemCount ?? 0, topic),
     target: { kind: "meeting", id: m.id },
     hint: null,
-    statusLine: statusLine(m),
+    statusLine: statusLine(m, pausedId),
   };
 }
 
@@ -205,6 +225,8 @@ export function timeline(
   chips: { eventTopics: (TopicRefView | null)[]; held: ReadonlyMap<number, HeldChips> },
   now: number,
   locale: string,
+  /** The meeting whose recording is paused (`pausedMeetingId`), if any: its card says Paused. */
+  pausedId: number | null = null,
 ): TimelineEntry[] {
   const entries: TimelineEntry[] = events.map((e, i) => ({
     key: `event-${e.eventId}@${e.startUnixMs}`,
@@ -220,7 +242,7 @@ export function timeline(
       key: `held-${m.id}`,
       startMs: m.tsUnixMs,
       endMs: m.endUnixMs ?? m.tsUnixMs,
-      model: forRecorded(m, extra?.prepKey, extra?.topic, locale),
+      model: forRecorded(m, extra?.prepKey, extra?.topic, locale, pausedId),
       event: null,
       isNext: false,
     });

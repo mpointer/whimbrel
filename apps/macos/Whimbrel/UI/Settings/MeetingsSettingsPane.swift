@@ -6,7 +6,7 @@ private struct RecordingNoticeSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
-            Toggle("Remind me to tell people I'm recording", isOn: $settings.enabled)
+            Toggle("Remind me to tell people I'm recording", isOn: $settings.enabled).settingsAnchor("meetings.recordingNotice")
             if settings.enabled {
                 TextField(settings.text, text: $settings.customText, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
@@ -59,6 +59,7 @@ struct MeetingsSettingsPane: View {
             get: { appState.speakerNamesSettings.rememberVoices },
             set: { appState.speakerNamesSettings.rememberVoices = $0 }
         ))
+        .settingsAnchor("meetings.voices")
         .tint(Color.whimbrelAccentPrimary)
 
         Text("Whimbrel learns a voice when you confirm or fix a name. Voices stay on your devices and in your encrypted sync.")
@@ -117,6 +118,7 @@ struct MeetingsSettingsPane: View {
                 get: { appState.meetingTrigger.autoStartEnabled },
                 set: { appState.meetingTrigger.autoStartEnabled = $0 }
             ))
+            .settingsAnchor("meetings.autoStart")
             .tint(Color.whimbrelAccentPrimary)
 
             HStack {
@@ -142,6 +144,7 @@ struct MeetingsSettingsPane: View {
                 get: { appState.liveTranscriptSettings.enabled },
                 set: { appState.liveTranscriptSettings.enabled = $0 }
             ))
+            .settingsAnchor("meetings.liveTranscript")
             .tint(Color.whimbrelAccentPrimary)
 
             Text("Transcribes while you record so you can read along and ask questions during the call. Uses extra CPU while recording and pauses in Low Power Mode. The full transcript is still made after the meeting and replaces the live one. Question alerts also use it.")
@@ -180,6 +183,7 @@ struct MeetingsSettingsPane: View {
                 get: { appState.meetingTrigger.heuristicDetectionEnabled },
                 set: { appState.meetingTrigger.heuristicDetectionEnabled = $0 }
             ))
+            .settingsAnchor("meetings.heuristic")
             .tint(Color.whimbrelAccentPrimary)
 
             Text("Prompts when a known meeting app (Zoom, Teams, Slack, Webex, FaceTime) is running with the mic and system audio both active — for ad-hoc calls with nothing on your calendar. Uses the \"Auto-start\" setting above too. Doesn't cover a meeting joined from a browser tab (e.g. Meet) yet.")
@@ -227,6 +231,7 @@ struct MeetingsSettingsPane: View {
                 get: { appState.snapshotSettings.enabled },
                 set: { appState.snapshotSettings.enabled = $0 }
             ))
+            .settingsAnchor("meetings.snapshots")
             .tint(Color.whimbrelAccentPrimary)
 
             Text("Saves one image per slide shown in recorded meetings to the media folder (set in Retention). Needs Screen Recording permission."

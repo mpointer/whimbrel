@@ -1,0 +1,452 @@
+/* The restyle pass (step 10, docs/ui-redesign/screens/restyle.md): the screens that keep their layout while the redesign is on
+   (Topics, Automations, the Meetings list, the capture and the episode) draw their old controls in the Thread look.
+
+   Every rule is under `.w-shell .rt`: `.w-shell` is the redesigned shell and `.rt` is a class the screen's root carries only while
+   the redesign switch is on, so with the switch off nothing here matches. Same layout and words; only color, type, shape and focus
+   change. Colors come from the skin's tokens (--color-*) and the fixed Thread tokens (--w-color-*); sizes are rem type roles and
+   the spacing steps (--w-space-*); the edge of a control is Thread's 3:1 control line. There are no literal colors and no px type here. */
+
+.w-shell .rt {
+  --rt-line: var(--sx-border-width) var(--sx-border-style) var(--color-border);
+  --rt-control-line: var(--sx-border-width) var(--sx-border-style) var(--w-control-border, var(--color-border));
+  font-family: var(--sx-font-ui);
+  font-size: var(--w-text-body-size);
+  line-height: var(--w-text-body-line);
+  color: var(--color-text-primary);
+}
+
+/* ---- Text roles ---- */
+.w-shell .rt .display {
+  margin: 0 0 var(--w-space-md);
+  font-family: var(--sx-font-title);
+  font-size: var(--w-text-title-size);
+  line-height: var(--w-text-title-line);
+  font-weight: var(--w-text-title-weight);
+  font-style: normal;
+}
+.w-shell .rt .section-label {
+  margin: 0 0 var(--w-space-sm);
+  font-family: var(--sx-font-label);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  font-variant-caps: normal;
+  color: var(--color-text-secondary);
+}
+.w-shell .rt .muted {
+  color: var(--color-text-secondary);
+}
+.w-shell .rt .small {
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+}
+.w-shell .rt .mono {
+  font-family: var(--w-font-mono);
+  font-size: var(--w-text-secondary-size);
+}
+.w-shell .rt .row-title {
+  font-weight: 600;
+}
+.w-shell .rt .day {
+  margin: var(--w-space-lg) 0 var(--w-space-xs);
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  font-variant-caps: normal;
+  color: var(--color-text-secondary);
+}
+
+/* ---- Surfaces ---- */
+.w-shell .rt .card,
+.w-shell .rt.card {
+  background: var(--color-background-card);
+  border: var(--rt-line);
+  border-radius: var(--sx-radius-card);
+  padding: calc(var(--w-space-lg) * var(--sx-density));
+}
+.w-shell .rt .stack,
+.w-shell .rt.stack {
+  gap: var(--w-space-lg);
+}
+.w-shell .rt .stack-sm,
+.w-shell .rt .field {
+  gap: var(--w-space-xs);
+}
+.w-shell .rt .toolbar,
+.w-shell .rt .field-row {
+  gap: var(--w-space-sm);
+}
+.w-shell .rt.empty-state {
+  color: var(--color-text-secondary);
+}
+.w-shell .rt .capture-text {
+  font-family: var(--sx-font-ui);
+  font-size: var(--w-text-body-size);
+  line-height: var(--w-text-body-line);
+  color: var(--color-text-primary);
+}
+
+/* ---- Buttons: the Thread secondary button, and the primary one for .mode--active ---- */
+.w-shell .rt .mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--w-space-sm);
+  min-height: var(--w-target);
+  padding: 0 calc(var(--w-space-lg) * var(--sx-density));
+  border: var(--rt-control-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--w-duration-fast) var(--w-ease-standard);
+}
+.w-shell .rt .mode:hover {
+  background: var(--color-selection);
+  border-color: var(--w-control-border, var(--color-text-secondary));
+}
+.w-shell .rt .mode:active {
+  background: var(--color-highlight);
+}
+.w-shell .rt .mode.mode--active {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: var(--color-text-on-accent);
+}
+.w-shell .rt .mode.mode--active:hover {
+  background: var(--color-accent-primary);
+  filter: brightness(0.92);
+}
+.w-shell .rt .mode:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.w-shell .rt .link-button {
+  color: var(--color-link);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+.w-shell .rt .field > .link-button {
+  align-self: flex-start;
+  text-align: start;
+}
+.w-shell .rt .link-button:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* ---- Fields: input, select and textarea take the Thread field (the 3:1 edge) ---- */
+.w-shell .rt .input {
+  min-height: var(--w-target);
+  padding: var(--w-space-xs) var(--w-space-md);
+  border: var(--rt-control-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+.w-shell .rt .input:disabled {
+  background: var(--color-selection);
+  color: var(--color-text-secondary);
+}
+.w-shell .rt .input:focus-visible {
+  border-color: var(--color-accent-primary);
+}
+.w-shell .rt .input[type="search"] {
+  width: 100%;
+}
+.w-shell .rt .toggle {
+  min-height: var(--w-target);
+  gap: var(--w-space-sm);
+  margin-bottom: var(--w-space-xs);
+}
+.w-shell .rt input[type="checkbox"] {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  accent-color: var(--color-accent-primary);
+}
+
+/* ---- Focus: one ring, from the fixed focus color, on everything that takes it ---- */
+.w-shell .rt :is(button, input, select, textarea, summary, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--w-color-focus);
+  outline-offset: 2px;
+}
+.w-shell .rt :is(.meeting-item__hit, .run-head, .topic-row):focus-visible {
+  outline-offset: -2px;
+}
+
+/* ---- Chips ---- */
+.w-shell .rt .chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  padding: 0 var(--w-space-sm);
+  border: var(--rt-line);
+  border-radius: var(--w-radius-pill);
+  background: var(--color-background-page);
+  color: var(--color-text-primary);
+  font-size: var(--w-text-caption-size);
+  line-height: var(--w-text-caption-line);
+  font-weight: 600;
+}
+.w-shell .rt button.chip {
+  border: var(--rt-control-line);
+  cursor: pointer;
+}
+.w-shell .rt button.chip:hover:not(:disabled) {
+  background: var(--color-selection);
+  border-color: var(--color-accent-primary);
+}
+.w-shell .rt button.chip:disabled {
+  opacity: 0.55;
+}
+
+/* ---- Topics: the list beside the page ---- */
+.w-shell .rt.topics {
+  gap: var(--w-space-xl);
+  /* The page column may shrink below its content's natural width (the old 1fr could not), so a narrow window or large text never pushes
+     the page past the edge. The list keeps its own width range. */
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+}
+.w-shell .rt .topics-list ul {
+  margin: 0 0 var(--w-space-md);
+}
+.w-shell .rt .topic-row {
+  min-height: var(--w-target);
+  padding: var(--w-space-xs) var(--w-space-sm);
+  border: 0;
+  border-inline-start: 3px solid transparent;
+  border-radius: var(--sx-radius-control);
+  gap: var(--w-space-xxs);
+}
+.w-shell .rt .topic-row:hover {
+  background: var(--color-selection);
+}
+/* The chosen topic: a bar and heavier words as well as the fill, so it is not shown by color alone, and the bar is a border, which
+   forced colors keep. */
+.w-shell .rt .topic-row.topic-row--active {
+  background: var(--color-selection);
+  border-inline-start-color: var(--color-accent-primary);
+}
+.w-shell .rt .topic-row.topic-row--active .row-title {
+  font-weight: 700;
+}
+.w-shell .rt .topic-row .row-title {
+  max-width: 100%;
+}
+.w-shell .rt .topic-page {
+  gap: var(--w-space-lg);
+}
+.w-shell .rt .topic-steps,
+.w-shell .rt .topic-recent {
+  gap: var(--w-space-sm);
+}
+.w-shell .rt .topic-step {
+  padding: var(--w-space-sm) var(--w-space-md);
+  border: var(--rt-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+}
+.w-shell .rt .topic-step .toolbar {
+  margin: var(--w-space-xs) 0 0;
+}
+.w-shell .rt .topic-step-text--done {
+  color: var(--color-text-secondary);
+}
+.w-shell .rt .topic-overdue {
+  color: var(--color-error);
+  font-weight: 600;
+}
+.w-shell .rt .topic-chip {
+  font-size: var(--w-text-caption-size);
+}
+.w-shell .rt.topics-empty {
+  gap: var(--w-space-sm);
+}
+
+/* ---- Automations ---- */
+.w-shell .rt .approval-list,
+.w-shell .rt .routine-list,
+.w-shell .rt .run-list {
+  gap: var(--w-space-sm);
+}
+/* The rows may wrap their actions under the words when the room is short (a narrow window, large text), and a list column may shrink,
+   so a row never runs past the card it is in. At the usual widths nothing wraps. */
+.w-shell .rt .approval-list,
+.w-shell .rt .routine-list,
+.w-shell .rt .run-list {
+  grid-template-columns: minmax(0, 1fr);
+}
+.w-shell .rt .approval-row,
+.w-shell .rt .routine-row {
+  flex-wrap: wrap;
+}
+.w-shell .rt .approval-main,
+.w-shell .rt .routine-main {
+  flex: 1 1 14rem;
+  overflow-wrap: anywhere;
+}
+.w-shell .rt .approval-row {
+  gap: var(--w-space-lg);
+  padding: var(--w-space-md);
+  /* The page color, so the fields inside keep their 3:1 edge against what is around them (the highlight tint is 2.9:1 in light). */
+  background: var(--color-background-page);
+  border: var(--rt-line);
+  border-inline-start: 3px solid var(--color-accent-primary);
+  border-radius: var(--sx-radius-control);
+}
+.w-shell .rt .routine-row {
+  gap: var(--w-space-lg);
+  padding: var(--w-space-md);
+  border: var(--rt-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+}
+.w-shell .rt .routine-main p,
+.w-shell .rt .approval-main p {
+  margin: var(--w-space-xs) 0 0;
+}
+.w-shell .rt .routine-unavailable {
+  color: var(--color-warning);
+}
+.w-shell .rt .run-item {
+  padding: var(--w-space-sm) var(--w-space-md);
+  border: var(--rt-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-card);
+}
+.w-shell .rt .run-head {
+  min-height: var(--w-target);
+  align-items: center;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+.w-shell .rt .run-head:hover {
+  color: var(--color-accent-primary);
+}
+.w-shell .rt .run-outcome {
+  font-size: var(--w-text-caption-size);
+}
+
+/* ---- The Meetings list ---- */
+.w-shell .rt .meeting-rows > li {
+  border-bottom: var(--rt-line);
+}
+.w-shell .rt .meeting-row {
+  gap: var(--w-space-sm);
+  padding: var(--w-space-sm) var(--w-space-xs);
+  border-inline-start: 3px solid transparent;
+  border-radius: var(--sx-radius-control);
+}
+.w-shell .rt .meeting-row__start {
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  font-weight: 600;
+}
+.w-shell .rt .meeting-item__sub {
+  font-size: var(--w-text-secondary-size);
+  line-height: var(--w-text-secondary-line);
+  color: var(--color-text-secondary);
+}
+.w-shell .rt .meeting-row__title {
+  font-weight: 600;
+}
+.w-shell .rt .meeting-item--clickable:hover .meeting-item__hit::before {
+  background: var(--color-selection);
+  opacity: 1;
+}
+/* The open meeting: a bar, a fill and heavier words, never the old inset ring (a shadow, which forced colors drop). */
+.w-shell .rt .meeting-row--active,
+.w-shell .rt .meeting-item--active {
+  box-shadow: none;
+}
+.w-shell .rt .meeting-row.meeting-item--active {
+  background: var(--color-selection);
+  border-inline-start-color: var(--color-accent-primary);
+}
+.w-shell .rt .meeting-row.meeting-item--active .meeting-row__title {
+  font-weight: 700;
+}
+.w-shell .rt.meeting-list details {
+  margin: var(--w-space-sm) 0;
+}
+/* A list item, not a flex box, so the disclosure triangle stays (a flex summary has no marker); the padding centres one line in the target. */
+.w-shell .rt.meeting-list summary {
+  display: list-item;
+  min-height: var(--w-target);
+  padding-block: max(0px, calc((var(--w-target) - 1lh) / 2));
+  cursor: pointer;
+}
+.w-shell .rt .meeting-list-footer {
+  gap: var(--w-space-sm);
+}
+
+/* ---- The capture and the episode ---- */
+.w-shell .rt.detail {
+  gap: var(--w-space-md);
+}
+.w-shell .rt.detail > .mode {
+  align-self: flex-start;
+}
+.w-shell .rt .capture-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Forced colors (a Windows contrast theme): system colors, with borders instead of fills and shadows ---- */
+@media (forced-colors: active) {
+  .w-shell .rt :is(button, input, select, textarea, summary, a, [tabindex]):focus-visible {
+    outline-color: Highlight;
+  }
+  .w-shell .rt .mode,
+  .w-shell .rt .input,
+  .w-shell .rt .card,
+  .w-shell .rt.card,
+  .w-shell .rt .chip,
+  .w-shell .rt .routine-row,
+  .w-shell .rt .approval-row,
+  .w-shell .rt .run-item,
+  .w-shell .rt .topic-step {
+    border-color: CanvasText;
+  }
+  .w-shell .rt .mode,
+  .w-shell .rt .input {
+    border-color: ButtonText;
+  }
+  .w-shell .rt .mode.mode--active {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    forced-color-adjust: none;
+  }
+  .w-shell .rt .mode:disabled,
+  .w-shell .rt .input:disabled {
+    color: GrayText;
+    border-color: GrayText;
+    opacity: 1;
+  }
+  .w-shell .rt .link-button {
+    color: LinkText;
+  }
+  /* A row that is not chosen keeps its bar's room but draws it in the page color, so only the chosen row shows one. */
+  .w-shell .rt .topic-row,
+  .w-shell .rt .meeting-row {
+    border-inline-start-color: Canvas;
+  }
+  .w-shell .rt .topic-row.topic-row--active,
+  .w-shell .rt .meeting-row.meeting-item--active {
+    border-inline-start-color: Highlight;
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+  .w-shell .rt .approval-row {
+    border-inline-start-color: Highlight;
+  }
+}

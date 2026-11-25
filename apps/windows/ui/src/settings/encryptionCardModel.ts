@@ -214,6 +214,15 @@ export interface EncryptActions {
   discard?(): Promise<boolean>;
 }
 
+/** The two messages the flow itself can raise. The old card uses `refusalMessage` and `encryptMessage`; a redesigned card
+ *  passes its own words, so the flow's logic is the same and only the sentences differ. */
+export interface EncryptFlowWords {
+  refusal(r: SetupRefusal): string;
+  encrypt(o: EncryptOutcome): string | null;
+}
+
+const OLD_FLOW_WORDS: EncryptFlowWords = { refusal: refusalMessage, encrypt: encryptMessage };
+
 /** idle -> checking -> setting up -> (finishing) -> at next launch, or failed. A precheck answer
  *  that arrives after Cancel is ignored; a refusal goes back to idle with its message. */
 export class EncryptFlow {
@@ -224,7 +233,10 @@ export class EncryptFlow {
    *  after the precheck, never guessed from the notes. */
   reusesKey = false;
 
-  constructor(readonly actions: EncryptActions) {}
+  constructor(
+    readonly actions: EncryptActions,
+    private readonly words: EncryptFlowWords = OLD_FLOW_WORDS,
+  ) {}
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -247,7 +259,7 @@ export class EncryptFlow {
       refusal = "other";
     }
     if (run !== this.run) return;
-    if (refusal) return this.set({ kind: "idle", message: refusalMessage(refusal) });
+    if (refusal) return this.set({ kind: "idle", message: this.words.refusal(refusal) });
     let reuses: boolean | null = false;
     try {
       reuses = (await this.actions.reusesKey?.()) ?? false;
@@ -282,7 +294,7 @@ export class EncryptFlow {
       outcome = "failed";
     }
     if (run !== this.run) return;
-    const message = encryptMessage(outcome);
+    const message = this.words.encrypt(outcome);
     this.set(message === null ? { kind: "atNextLaunch" } : { kind: "failed", message });
   }
 

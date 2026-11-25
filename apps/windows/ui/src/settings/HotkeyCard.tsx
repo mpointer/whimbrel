@@ -62,7 +62,7 @@ export function HotkeyCard() {
   };
 
   return (
-    <section className="card about" aria-labelledby="hotkey-heading">
+    <section className="card about" aria-labelledby="hotkey-heading" data-settings-anchor="capture.hotkey">
       <h2 id="hotkey-heading" className="section-label">
         {t("Hotkey panel")}
       </h2>

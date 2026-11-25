@@ -1285,9 +1285,10 @@ button.link.transcript-speaker {
   background: var(--color-background-card);
 }
 
+/* The ring is drawn outside the 1px border, so the swatches sit where they do on every other card. */
 .skin-card--selected {
-  border: 2px solid var(--color-accent-primary);
-  padding: calc(var(--space-sm) - 1px);
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 0 0 1px var(--color-accent-primary);
 }
 
 .skin-card-pick {
@@ -1327,6 +1328,7 @@ button.link.transcript-speaker {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-xs);
+  margin-bottom: var(--space-md);
 }
 
 .skin-palette {
@@ -2436,4 +2438,19 @@ button.link:focus-visible {
   .print-page-footer {
     margin: 0;
   }
+}
+
+/* Settings search: the field above the section list, and a found row's brief highlight. */
+.settings-search {
+  width: 100%;
+  margin-bottom: 8px;
+}
+.settings-search-empty {
+  padding: 4px 8px;
+}
+.settings-found {
+  outline: 2px solid var(--color-accent-primary);
+  outline-offset: 4px;
+  border-radius: 6px;
+  transition: outline-color 0.3s;
 }

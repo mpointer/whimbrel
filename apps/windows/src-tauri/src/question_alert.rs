@@ -21,8 +21,6 @@ const SIZE: (f64, f64) = (380.0, 210.0);
 const MARGIN: f64 = 12.0;
 /// How often the watcher looks for queued notices: sync rounds are a minute apart.
 const POLL: Duration = Duration::from_secs(2);
-/// The meeting alert's height, to sit below it when both are up.
-const MEETING_ALERT_HEIGHT: f64 = 190.0;
 
 /// Opens the popup whenever notices are queued and it isn't up.
 pub fn watch(app: AppHandle, alerts: Arc<QuestionAlerts>) {
@@ -46,7 +44,8 @@ fn hide(app: &AppHandle) {
 }
 
 fn open(app: &AppHandle) -> tauri::Result<()> {
-    let (w, h) = SIZE;
+    let redesign = app.state::<AppState>().settings.lock().unwrap().redesign_enabled();
+    let (w, h) = crate::text_scale::size_for_look(SIZE, redesign);
     let popup = WebviewWindowBuilder::new(app, QUESTION_ALERT, WebviewUrl::App("index.html".into()))
         .title(tr("Question for you", &[]))
         .inner_size(w, h)
@@ -57,6 +56,11 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
         .focused(false)
         .visible(false)
         .build()?;
+    if redesign {
+        crate::text_scale::place_corner_alert(app, &popup, (w, h), MARGIN)?;
+        crate::text_scale::show_corner_alert(&popup)?;
+        return Ok(());
+    }
     if let Some(monitor) = popup.primary_monitor()? {
         let scale = monitor.scale_factor();
         let area = monitor.work_area();
@@ -66,7 +70,8 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
             (MARGIN * scale).round() as i32,
         );
         if app.get_webview_window(crate::alert::ALERT).is_some() {
-            y += ((MEETING_ALERT_HEIGHT + MARGIN) * scale).round() as i32;
+            // Below the meeting alert, whatever its height is for the look in use.
+            y += ((crate::alert::alert_height(app) + MARGIN) * scale).round() as i32;
         }
         popup.set_position(PhysicalPosition::new(x, y))?;
     }

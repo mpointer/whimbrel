@@ -33,7 +33,7 @@ struct RetentionSettingsPane: View {
 
             Divider()
 
-            Text("Retention").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Retention").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("capture.retention")
             Text("Each data class has its own retention window; hard-deletes rows older than it (propagates to the search indexes too).")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
@@ -98,7 +98,7 @@ struct RetentionSettingsPane: View {
 
             Divider()
 
-            Text("Media").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Media").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("capture.media")
             Text("Meeting audio and slide snapshots are kept in this folder, in Audio and Snapshots. Network shares work but are not recommended.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
@@ -288,7 +288,7 @@ struct RetentionSettingsPane: View {
     /// "Whimbrel uses X on this Mac", by part, the low-disk line, and Free up space.
     @ViewBuilder
     private var storageBlock: some View {
-        Text("Storage").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+        Text("Storage").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("capture.storage")
         if let footprint {
             Text(StorageCopy.total(footprint)).foregroundStyle(Color.whimbrelTextPrimary)
             Text(StorageCopy.parts(footprint))

@@ -5,6 +5,7 @@ import { nowLabel, nowMarkerIndex, timeline, type HeldChips, type TimelineEntry 
 import type { TopicRefView } from "../generated/types";
 import { prepLine, rowAction } from "./todayModel";
 import type { ScheduleState } from "./useSchedule";
+import { usePausedMeetingId } from "../meetings/usePausedMeetingId";
 
 function dotClass(entry: TimelineEntry): string {
   if (entry.model.isRunning) return "timeline-dot timeline-dot--running";
@@ -46,12 +47,14 @@ export function TodayTimeline({
   const { locale, t } = useL10n();
   const events = schedule?.events ?? [];
   const held = schedule?.earlierToday ?? [];
+  // A held meeting whose recording is paused says Paused on its card.
+  const pausedId = usePausedMeetingId(held.some((m) => m.status === "recording"));
 
   if (!schedule) return error ? <p role="alert">{error}</p> : null;
   // No calendar, or nothing today: the timeline has nothing to say.
   if (events.length === 0 && held.length === 0) return error ? <p role="alert">{error}</p> : null;
 
-  const entries = timeline(events, held, next, { eventTopics, held: heldChips }, now, locale);
+  const entries = timeline(events, held, next, { eventTopics, held: heldChips }, now, locale, pausedId);
   const marker = nowMarkerIndex(
     entries.map((e) => e.endMs),
     now,

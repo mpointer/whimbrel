@@ -221,7 +221,8 @@ struct WhimbrelCommands: Commands {
             Button("Join the Whimbrel Discord…") { NSWorkspace.shared.open(WhimbrelApp.discordURL) }
         }
         CommandMenu("Go") {
-            ForEach(WhimbrelTab.allCases) { tab in
+            // Flag off: today's six sections and keys. Flag on: Conversations too (⌘7). The flag is read when the menu is built.
+            ForEach(WhimbrelTab.visibleTabs(redesign: host.appState?.redesignEnabled == true)) { tab in
                 Button(tab.rawValue) {
                     host.appState?.openTimeline?()
                     host.appState?.selectedTab = tab
@@ -305,13 +306,24 @@ struct WhimbrelApp: App {
         MenuBarExtra {
             ThemedRoot {
                 WithAppState(host: host) { appState in
-                    VStack(spacing: 0) {
-                        NoStoreNoticeHost()
-                        LibraryMissingNoticeHost(coordinator: host.launch.coordinator)
-                        MenuBarContentView()
+                    // With the redesign switch on, the two notices move into the menu's Needs attention section.
+                    RedesignSwitch(enabled: appState.redesignEnabled) {
+                        MenuBarRedesignView(coordinator: host.launch.coordinator, sync: appState.contentSyncCoordinator)
+                    } old: {
+                        VStack(spacing: 0) {
+                            NoStoreNoticeHost()
+                            LibraryMissingNoticeHost(coordinator: host.launch.coordinator)
+                            MenuBarContentView()
+                        }
                     }
                         .environment(\.recordingControls, appState.recordingControls)
-                } pending: { LaunchMenuBarView(presenter: host.launch.presenter) }
+                } pending: {
+                    RedesignSwitch(enabled: RedesignFlag.isOn()) {
+                        LaunchMenuRedesignView(presenter: host.launch.presenter)
+                    } old: {
+                        LaunchMenuBarView(presenter: host.launch.presenter)
+                    }
+                }
             }
         } label: {
             if let appState = host.appState {

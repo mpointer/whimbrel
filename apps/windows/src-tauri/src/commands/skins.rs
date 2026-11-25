@@ -159,7 +159,7 @@ fn scrim_sample(path: &Path) -> Option<Vec<u8>> {
 }
 
 /// The palettes any skin may name: the plain themes first, then the bundled skins' own; the first of an id wins.
-/// The Thread palette is in the pool only while the hidden redesign flag is on (`settings::keys::REDESIGN_ENABLED`).
+/// The Thread palette is in the pool like any other (the old redesign flag no longer hides it; the clean-up removes the argument).
 pub fn palette_pool(dirs: &BundledDirs, redesign: bool) -> Vec<Palette> {
     let fallback = default_palette();
     let mut pool = load_palettes(&dirs.themes, &fallback);
@@ -172,7 +172,7 @@ pub fn palette_pool(dirs: &BundledDirs, redesign: bool) -> Vec<Palette> {
 }
 
 /// Every skin: the built-ins first (Whimbrel, then by name), then the user's by name. The built-in Thread skin is
-/// listed only when `redesign` (the hidden flag) is on; this is the one place the flag hides it.
+/// listed like the others (the old redesign flag no longer hides it; the clean-up removes the argument).
 pub fn list_skins(dirs: &BundledDirs, user: &UserSkinStore, redesign: bool) -> Vec<SkinDto> {
     let pool = palette_pool(dirs, redesign);
     // The built-ins carry no imagery.
@@ -200,15 +200,18 @@ fn bundled(app: &AppHandle) -> Result<BundledDirs, CommandError> {
     Ok(BundledDirs::under(&dir))
 }
 
-/// The hidden redesign switch (`redesign.enabled` in settings.json): off unless set to true by hand.
+/// The redesign switch: on for everyone (`Settings::redesign_enabled`). The old branches go in the clean-up.
 fn redesign_on(state: &AppState) -> bool {
     state.settings.lock().unwrap().redesign_enabled()
 }
 
 /// Whether the hidden redesign switch is on, for the page (`redesignEnabled()` in `ui/src/redesign.ts`).
+/// Read from the launch's handle on THE settings file (the one `AppState` gets later), so the page has
+/// an answer before the store opened too: a fresh install asks while the onboarding still waits, and
+/// `State<AppState>` failed then, which the page took as off until a restart.
 #[tauri::command]
-pub fn redesign_enabled(state: State<'_, AppState>) -> bool {
-    redesign_on(&state)
+pub fn redesign_enabled(launch: State<'_, crate::launch::app::LaunchState>) -> bool {
+    launch.settings.lock().unwrap_or_else(|p| p.into_inner()).redesign_enabled()
 }
 
 #[tauri::command]
@@ -652,32 +655,31 @@ mod tests {
     }
 
     #[test]
-    fn skins_list_returns_seven_builtins_first() {
-        let root = scratch("seven");
+    fn skins_list_returns_eight_builtins_first() {
+        let root = scratch("eight");
         let list = list_skins(&dirs(), &UserSkinStore::new(&root), false);
         let ids: Vec<&str> = list.iter().map(id_of).collect();
-        // Whimbrel, then the others by name, as the Mac's gallery orders them.
-        assert_eq!(ids, ["whimbrel", "almanac", "game-day", "high-contrast", "hypermodern", "reference", "retro-terminal"]);
+        // Whimbrel (shown as Classic), then the others by name, as the Mac's gallery orders them. Thread is one of them.
+        assert_eq!(ids, ["whimbrel", "almanac", "game-day", "high-contrast", "hypermodern", "reference", "retro-terminal", "thread"]);
+        assert_eq!(list[0].skin["name"], "Classic");
         assert!(list.iter().all(|d| d.built_in));
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn thread_is_listed_only_when_the_redesign_flag_is_on() {
+    fn thread_is_listed_whatever_the_old_redesign_flag_says() {
         let root = scratch("flag");
         let user = UserSkinStore::new(&root);
-        let off: Vec<String> = list_skins(&dirs(), &user, false).iter().map(|d| id_of(d).to_string()).collect();
-        assert!(!off.iter().any(|id| id == "thread"), "{off:?}");
-        assert_eq!(off.len(), 7);
-        let on = list_skins(&dirs(), &user, true);
-        let ids: Vec<&str> = on.iter().map(id_of).collect();
-        assert_eq!(ids, ["whimbrel", "almanac", "game-day", "high-contrast", "hypermodern", "reference", "retro-terminal", "thread"]);
-        assert!(on.iter().all(|d| d.built_in));
-        let thread = on.iter().find(|d| id_of(d) == "thread").unwrap();
-        assert_eq!(thread.palettes.iter().map(|p| p["id"].as_str().unwrap()).collect::<Vec<_>>(), ["thread"]);
-        // The flag off also keeps the palette out of what a skin may name.
-        assert!(!palette_pool(&dirs(), false).iter().any(|p| p.id == "thread"));
-        assert!(palette_pool(&dirs(), true).iter().any(|p| p.id == "thread"));
+        let expected = ["whimbrel", "almanac", "game-day", "high-contrast", "hypermodern", "reference", "retro-terminal", "thread"];
+        for flag in [false, true] {
+            let list = list_skins(&dirs(), &user, flag);
+            let ids: Vec<&str> = list.iter().map(id_of).collect();
+            assert_eq!(ids, expected, "flag {flag}");
+            assert!(list.iter().all(|d| d.built_in));
+            let thread = list.iter().find(|d| id_of(d) == "thread").unwrap();
+            assert_eq!(thread.palettes.iter().map(|p| p["id"].as_str().unwrap()).collect::<Vec<_>>(), ["thread"]);
+            assert!(palette_pool(&dirs(), flag).iter().any(|p| p.id == "thread"), "flag {flag}");
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -691,7 +693,7 @@ mod tests {
             .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/e2e/.generated/skins.json"));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let root = scratch("matrix");
-        // Flag on, so the browser matrix also draws Thread.
+        // The old flag is ignored, so the browser matrix draws Thread like every other skin.
         let list = list_skins(&dirs(), &UserSkinStore::new(&root), true);
         std::fs::write(path, serde_json::to_string(&list).unwrap()).unwrap();
         std::fs::remove_dir_all(root).unwrap();
@@ -712,7 +714,7 @@ mod tests {
     #[test]
     fn every_builtin_palette_resolves_and_passes_its_layout() {
         let root = scratch("pairs");
-        // Flag on: Thread's palette is checked against its layout too.
+        // Thread's palette is checked against its layout too.
         for d in list_skins(&dirs(), &UserSkinStore::new(&root), true) {
             let skin: Skin = serde_json::from_value(d.skin.clone()).unwrap();
             assert!(!d.palettes.is_empty(), "{} has no palettes", skin.id);
@@ -763,7 +765,7 @@ mod tests {
         skin.palettes = vec!["slate".into()];
         store.save(&skin, &[], &[]).unwrap();
         let list = list_skins(&dirs(), &store, false);
-        assert_eq!(list.len(), 8);
+        assert_eq!(list.len(), 9);
         let mine = list.last().unwrap();
         assert_eq!((id_of(mine), mine.built_in), (id.as_str(), false));
         // "slate" is a plain theme, found in the shared pool.

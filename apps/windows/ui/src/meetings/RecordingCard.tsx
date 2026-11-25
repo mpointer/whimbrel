@@ -3,7 +3,7 @@ import { meetingRecordStart, meetingRecordStop, meetingRecordingStatus } from ".
 import { describeError, isCommandError } from "../errors";
 import type { MeetingRecordingView } from "../generated/types";
 import { useL10n } from "../l10n";
-import { elapsedLabel, recordAction, recordButtonDisabled } from "./recordingModel";
+import { recordAction, recordButtonDisabled, recordingCardShown, recordingLine } from "./recordingModel";
 import { RecordingNoticeCard } from "./RecordingNoticeCard";
 import { useNoStore } from "../launch/noStore";
 import { RecordingOffCaption } from "../launch/NoStoreBanner";
@@ -12,8 +12,9 @@ function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
 }
 
-/** "Record now" (M3.3 Task 3): a manual meeting of everything this PC plays, plus the mic. */
-export function RecordingCard({ onChanged, hideNotice }: { onChanged?: () => void; hideNotice?: boolean } = {}) {
+/** "Record now" (M3.3 Task 3): a manual meeting of everything this PC plays, plus the mic. With `redesign` the shell's recording
+ *  bar shows the recording, so this card is drawn only while nothing records (`recordingCardShown`). */
+export function RecordingCard({ onChanged, hideNotice, redesign = false }: { onChanged?: () => void; hideNotice?: boolean; redesign?: boolean } = {}) {
   const [view, setView] = useState<MeetingRecordingView | null>(null);
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
@@ -51,17 +52,25 @@ export function RecordingCard({ onChanged, hideNotice }: { onChanged?: () => voi
   };
 
   const recording = view?.state === "recording" && view.startedUnixMs != null;
+  if (!recordingCardShown(view, redesign)) {
+    return error ? <p role="alert">{error}</p> : null;
+  }
   return (
-    <section className="card" aria-labelledby="record-heading">
+    <section className={redesign ? "card rt" : "card"} aria-labelledby="record-heading">
       <h2 id="record-heading" className="section-label">
         {t("Record a meeting")}
       </h2>
       {recording ? (
         <>
-          <p role="status" className="recording-line">
+          {/* The line ticks every second, so it is not a live region (one would be announced every second); the hidden region
+              beside it announces only the state. */}
+          <p className="recording-line">
             <span className="recording-dot" aria-hidden="true" />{" "}
-            {t("Recording · {elapsed}", { elapsed: elapsedLabel(view.startedUnixMs!, now) })}
+            {recordingLine(view.paused, view.startedUnixMs!, now)}
           </p>
+          <span className="w-visually-hidden" role="status">
+            {view.paused ? t("Recording paused") : t("Recording")}
+          </span>
           {!hideNotice && <RecordingNoticeCard meetingId={view.meetingId} />}
         </>
       ) : (

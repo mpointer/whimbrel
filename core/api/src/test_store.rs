@@ -48,3 +48,30 @@ pub(crate) fn raw(path: &Path) -> Connection {
     }
     c
 }
+
+/// Adds one item as a local MCP client would (`mcp_item`, token 1, label `outlook-work`), with `email`
+/// as its one person when given. Returns its `items.id`.
+pub(crate) fn add_mcp_item(store: &memory::Store, id: &str, title: &str, text: &str, email: Option<&str>) -> i64 {
+    use memory::mcp_items::{McpPerson, McpWriter, NewMcpItem, WriteClock};
+    let item = NewMcpItem {
+        label: "outlook-work".into(),
+        external_id: id.into(),
+        kind: "email".into(),
+        ts: "2026-11-21T14:03:00Z".into(),
+        title: Some(title.into()),
+        text: text.into(),
+        url: Some("https://outlook.office.com/mail/1".into()),
+        people: email
+            .map(|e| vec![McpPerson { name: Some("Ana Ruiz".into()), email: Some(e.into()), role: Some("from".into()) }])
+            .unwrap_or_default(),
+    };
+    { let live: &memory::Store = store; while live.list_mcp_client_tokens().unwrap().len() < 12 { live.insert_mcp_client_token(&memory::NewMcpClientToken { name: "t".into(), token_hash: "h".into(), token_salt: "s".into(), scopes: vec!["write".into()] }).unwrap(); } }
+    let w = McpWriter { token_id: 1, client_name: "Claude Code".into() };
+    let clock = WriteClock { now_unix_ms: 1_795_269_780_000, day_start_unix_ms: 1_795_219_200_000 };
+    let r = store.upsert_mcp_items(&w, &[item], &Default::default(), clock).expect("add_items");
+    assert_eq!(r.accepted, 1, "{r:?}");
+    store
+        .mcp_item_id(1, "outlook-work", id)
+        .unwrap()
+        .expect("added item row")
+}

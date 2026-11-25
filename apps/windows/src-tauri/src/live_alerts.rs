@@ -79,6 +79,13 @@ pub fn evidence(store: &memory::Store, citations: &[serde_json::Value]) -> Vec<E
             }),
             R::Snapshot { .. } => Some(Evidence { label: tr("A meeting slide", &[]), ts_unix_ms: None }),
             R::RoutineRun { .. } => Some(Evidence { label: tr("A routine result", &[]), ts_unix_ms: None }),
+            // An item a local Claude added: listed by its own title when it has one, else skipped.
+            R::McpItem { id } => store
+                .export_mcp_item_row(id)
+                .ok()
+                .flatten()
+                .and_then(|a| a.title.filter(|t| !t.trim().is_empty()))
+                .map(|label| Evidence { label, ts_unix_ms: None }),
         };
         let Some(entry) = entry else { continue };
         let minute = |e: &Evidence| e.ts_unix_ms.map(|ms| ms.div_euclid(60_000));

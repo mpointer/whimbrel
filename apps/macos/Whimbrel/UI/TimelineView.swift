@@ -162,6 +162,7 @@ enum ContextDisplayItem: Identifiable {
             case .episode: return "rectangle.stack"
             case .thread: return "envelope"
             case .snapshot: return "photo"
+            case .mcpItem: return "tray.and.arrow.down"
             }
         }
     }

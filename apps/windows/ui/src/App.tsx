@@ -10,6 +10,7 @@ import { SyncStoppedLine } from "./settings/SyncStoppedLine";
 import { bootstrapModels } from "./settings/modelBootstrap";
 import { ModelStatusLine } from "./settings/ModelStatusLine";
 import { SettingsView } from "./settings/SettingsView";
+import { RedesignedSettings } from "./settings/redesign/RedesignedSettings";
 import { DEFAULT_SECTION, toSection, type SettingsSectionId } from "./settings/settingsSections";
 import { AutomationsView } from "./automations/AutomationsView";
 import { waitingLabel } from "./automations/automationsModel";
@@ -17,7 +18,7 @@ import type { AskRequest } from "./chat/chatModel";
 import { LibraryView } from "./library/LibraryView";
 import { MeetingsView } from "./meetings/MeetingsView";
 import { TodayView } from "./today/TodayView";
-import { DEFAULT_TAB, tabs, type TabId } from "./tabs";
+import { DEFAULT_TAB, shownTab, tabs, type TabId } from "./tabs";
 import { t } from "./l10n";
 import { SkinHeader, TabIcon } from "./SkinIcon";
 import { TopicsView } from "./topics/TopicsView";
@@ -28,6 +29,13 @@ import { LibraryMissingBanner } from "./settings/LibraryMissingBanner";
 import { useRedesign } from "./redesign";
 import { RedesignedShell } from "./shell/redesign/RedesignedShell";
 import type { SearchRequest } from "./library/searchRequest";
+import { FindLibrary } from "./library/redesign/FindLibrary";
+import { requestFindWith } from "./library/redesign/findStore";
+import { ConversationsView } from "./conversations/ConversationsView";
+import { askTarget } from "./conversations/model";
+import { startConversation, topicShownNow, useConversationNav } from "./conversations/nav";
+import { askOnToday } from "./conversations/todayStore";
+import type { RoutePreviewView } from "./generated/types";
 import "./decoration.css";
 
 export function App() {
@@ -110,10 +118,17 @@ export function App() {
   }, []);
   // Missing models download in the background, with no prompt (Release 1 item 1.1).
   useEffect(bootstrapModels, []);
+  // Something asked for the Conversations section (Today's Continue, a meeting answer's Continue, a topic's Ask, Find opening a topic or meeting
+  // conversation): show it. Nothing asks while the switch is off.
+  const conversationRequest = useConversationNav().request;
+  useEffect(() => {
+    if (conversationRequest > 0) setActive("conversations");
+  }, [conversationRequest]);
   // The hidden redesign switch, asked after every hook above: with it off, nothing below differs from before.
   const redesign = useRedesign();
-  const allTabs = tabs();
-  const tab = allTabs.find((each) => each.id === active)!;
+  const allTabs = tabs(redesign);
+  // A section the switch hides (Conversations, with the switch turned off while it was open) falls back to the default one.
+  const tab = shownTab(allTabs, active);
 
   const content = (
     <>
@@ -127,16 +142,28 @@ export function App() {
       {/* Today writes its own heading: the greeting. The redesigned shell's header row carries every title. */}
       {!redesign && tab.id !== "today" && <h1 className="display">{tab.label}</h1>}
       {tab.id === "settings" ? (
-        <SettingsView
-          section={settingsSection}
-          onSection={setSettingsSection}
-          onRetentionSaved={() => setRetentionSaved((n) => n + 1)}
-          onOpenAutomations={() => setActive("automations")}
-        />
+        redesign ? (
+          <RedesignedSettings
+            section={settingsSection}
+            onSection={setSettingsSection}
+            onRetentionSaved={() => setRetentionSaved((n) => n + 1)}
+            onOpenAutomations={() => setActive("automations")}
+          />
+        ) : (
+          <SettingsView
+            section={settingsSection}
+            onSection={setSettingsSection}
+            onRetentionSaved={() => setRetentionSaved((n) => n + 1)}
+            onOpenAutomations={() => setActive("automations")}
+          />
+        )
       ) : tab.id === "today" ? (
         <TodayView
           onAsk={(prompt) => {
-            setAskRequest((r) => ({ id: (r?.id ?? 0) + 1, prompt }));
+            if (redesign) {
+              // The redesigned Library answers on its Find page, from the field's words.
+              requestFindWith(prompt, "ask");
+            } else setAskRequest((r) => ({ id: (r?.id ?? 0) + 1, prompt }));
             setActive("library");
           }}
           onOpenSettings={() => openSettings("ai")}
@@ -144,6 +171,8 @@ export function App() {
         />
       ) : tab.id === "meetings" ? (
         <MeetingsView open={openMeeting} onOpenSettings={() => openSettings("ai")} />
+      ) : tab.id === "library" && redesign ? (
+        <FindLibrary onOpenSettings={() => openSettings("ai")} />
       ) : tab.id === "library" ? (
         <LibraryView
           askRequest={askRequest}
@@ -154,6 +183,8 @@ export function App() {
         />
       ) : tab.id === "topics" ? (
         <TopicsView request={topicRequest} />
+      ) : tab.id === "conversations" && redesign ? (
+        <ConversationsView />
       ) : tab.id === "automations" ? (
         <AutomationsView onWaiting={setWaiting} />
       ) : (
@@ -164,24 +195,28 @@ export function App() {
     </>
   );
 
+  /** The shell's Ask control, screen 6 (the Mac's `WhimbrelTab.askTarget`): on Today the answer shows under the bar; on Conversations or on a topic's
+   *  page a new conversation asks about everything or that topic; anywhere else the Find page's own Ask, as before (false). Enter always searches. */
+  const askFromHeader = (query: string, shown: RoutePreviewView | null, filtered: boolean): boolean => {
+    const topic = topicShownNow();
+    const target = askTarget(tab.id, topic?.id ?? null, filtered);
+    if (target.kind === "library") return false;
+    if (target.kind === "today") void askOnToday(query, shown);
+    else startConversation(target.scope, query, target.scope.kind === "topic" ? (topic?.name ?? null) : null, shown);
+    return true;
+  };
+
   if (redesign) {
     return (
       <RedesignedShell
         tabs={allTabs}
-        active={active}
+        active={tab.id}
         onChoose={chooseTab}
         waiting={waiting}
         onWhatIsCaptured={() => openSettings("capture")}
         onOpenStatus={() => openSettings("status")}
-        onAsk={(prompt) => {
-          setAskRequest((r) => ({ id: (r?.id ?? 0) + 1, prompt }));
-          setActive("library");
-        }}
-        onSearch={(request) => {
-          setSearchRequest((r) => ({ ...request, id: (r?.id ?? 0) + 1 }));
-          setActive("library");
-        }}
-        onOpenAiSettings={() => openSettings("ai")}
+        onFind={() => setActive("library")}
+        onAsk={askFromHeader}
       >
         {content}
       </RedesignedShell>
@@ -198,9 +233,9 @@ export function App() {
               <button
                 role="tab"
                 id={`tab-${each.id}`}
-                aria-selected={each.id === active}
+                aria-selected={each.id === tab.id}
                 aria-controls="panel"
-                className={each.id === active ? "tab tab--active" : "tab"}
+                className={each.id === tab.id ? "tab tab--active" : "tab"}
                 onClick={() => chooseTab(each.id)}
               >
                 <TabIcon id={each.id} />

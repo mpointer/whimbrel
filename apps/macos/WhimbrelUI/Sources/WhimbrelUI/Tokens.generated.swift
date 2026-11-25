@@ -102,3 +102,8 @@ public enum WThreadPalette {
     public static let highContrastLight: [String: UInt32] = ["backgroundPage": 0xFFFFFF, "backgroundCard": 0xFFFFFF, "border": 0x000000, "textPrimary": 0x000000, "textSecondary": 0x1F2933, "accentPrimary": 0x004E57, "accentSecondary": 0x1F2933, "accentHighlight": 0x7A4300, "error": 0x8C0E08, "warning": 0x5E3600, "success": 0x0E5A26, "link": 0x003E8A, "selection": 0xBFE3E6, "highlight": 0xFFE08A, "textOnAccent": 0xFFFFFF]
     public static let highContrastDark: [String: UInt32] = ["backgroundPage": 0x000000, "backgroundCard": 0x000000, "border": 0xFFFFFF, "textPrimary": 0xFFFFFF, "textSecondary": 0xE2E8F0, "accentPrimary": 0x7FE7EF, "accentSecondary": 0xE2E8F0, "accentHighlight": 0xFFD36B, "error": 0xFFB3AD, "warning": 0xFFD08A, "success": 0xA6F0A6, "link": 0xB6D4FF, "selection": 0x0E4A50, "highlight": 0x5C4A00, "textOnAccent": 0x000000]
 }
+
+/// Thread colors that are not one of the 15 skinnable tokens (`threadOnly` in tokens.json).
+public enum WThreadOnly {
+    public static let controlBorder = WFixedColor(light: 0x7E8CA0, dark: 0x5F6D7E, highContrastLight: 0x000000, highContrastDark: 0xFFFFFF)
+}

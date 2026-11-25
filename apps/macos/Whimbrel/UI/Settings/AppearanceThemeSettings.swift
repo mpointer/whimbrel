@@ -9,7 +9,7 @@ struct AppearanceThemeSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
-            Text("Appearance").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Appearance").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("general.appearance")
             Picker("Appearance", selection: $appearance.choice) {
                 ForEach(AppearanceChoice.allCases) { Text($0.title).tag($0) }
             }
@@ -22,7 +22,7 @@ struct AppearanceThemeSettings: View {
                 Text(caption).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
             }
 
-            Text("Skin").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Skin").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary).settingsAnchor("general.skin")
                 .padding(.top, Spacing.sm)
             SkinGallery(skinChat: skinChat)
 

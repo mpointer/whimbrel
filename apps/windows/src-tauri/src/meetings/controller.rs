@@ -4,8 +4,8 @@
 //!
 //! [`Lifecycle`] is the pure part: the Mac's `isStartingMeeting` / `captureGeneration`
 //! race guards. A stop that lands while a start is still writing its row bumps the
-//! generation, and the start then completes its own row as an orphan instead of leaving
-//! a recording running that nothing can stop.
+//! generation, and the start then ends its own row instead of leaving a recording running
+//! that nothing can stop: the row is removed when nothing was recorded, else completed.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -419,8 +419,13 @@ impl MeetingController {
         let snapshots = (self.start_snapshots)(SnapshotMeeting { meeting_id, start_unix_ms: started, title: snapshot_title, root_pid });
         let finished = self.lifecycle.lock().unwrap().finish_start(generation, meeting_id, now, Active { audio, snapshots, clock: PauseClock::new(), spans: PausedSpans::default(), t0_unix_ms: audio_t0 });
         if let Err(active) = finished {
-            tracing::info!(meeting_id, "a stop arrived while the meeting was starting; completing it");
+            tracing::info!(meeting_id, "a stop arrived while the meeting was starting");
             let stopped = active.stop();
+            // The Mac's rule (`StartStopRules.stoppedStartOutcome`): a cancelled start that recorded
+            // nothing leaves no meeting behind; one that got audio is completed as before.
+            if cancelled_start_is_empty(&stopped.files, &stopped.transcribed) && self.discard_cancelled_start(meeting_id) {
+                return Ok(self.status());
+            }
             self.complete(meeting_id, stopped.files, stopped.transcribed);
         } else {
             tracing::info!(meeting_id, ?trigger, ?target, "meeting recording");
@@ -439,6 +444,34 @@ impl MeetingController {
             self.complete(meeting_id, files, transcribed);
         }
         Ok(self.status())
+    }
+
+    /// Removes the row of a start a stop cancelled before any audio was captured, as the Mac's
+    /// `MeetingSplit.discard` does: core's plain delete (`delete_meeting_returning_files`), then its files.
+    /// No tombstone: a `recording` row is never pushed (`unpushed_rows` selects a meeting only once it
+    /// is completed, and `complete_meeting` queues it), so no other device or server row can exist for it.
+    /// True when the row is gone. False when the delete failed, and the caller then completes the row
+    /// instead: an empty row is better than a lost recording.
+    fn discard_cancelled_start(&self, meeting_id: i64) -> bool {
+        let forgotten = self.store.call_blocking(move |s| s.delete_meeting_returning_files(meeting_id).map_err(|e| e.to_string()));
+        match forgotten {
+            Ok(Ok(deleted)) => {
+                if let Some(deleted) = deleted {
+                    api::retention::delete_all_meeting_files(&deleted, &self.recordings);
+                    super::pipeline::remove_paused_spans_for(&deleted.audio_paths, &self.recordings);
+                }
+                tracing::info!(meeting_id, "the start was cancelled before any audio was recorded; its meeting was removed");
+                true
+            }
+            Ok(Err(e)) => {
+                tracing::error!(meeting_id, error = %e, "could not remove the cancelled start's meeting; completing it instead");
+                false
+            }
+            Err(e) => {
+                tracing::error!(meeting_id, error = %e, "could not remove the cancelled start's meeting; completing it instead");
+                false
+            }
+        }
     }
 
     fn complete(&self, meeting_id: i64, files: RecordingFiles, transcribed: Accumulated) {
@@ -599,6 +632,13 @@ impl MeetingController {
             _ => None,
         }
     }
+}
+
+/// Whether a start a stop cancelled recorded nothing: no audio file (a stream that never delivered
+/// audio has its file removed at stop) and no transcript. The Mac's `audioFileExists` rule, with the
+/// transcript as a second guard: any doubt keeps the meeting.
+pub fn cancelled_start_is_empty(files: &RecordingFiles, transcribed: &Accumulated) -> bool {
+    files.audio_path().is_none() && transcribed.system.is_empty() && transcribed.mic.is_empty()
 }
 
 /// Each attempt's wait for another connection's lock while starting a recording. Shorter than the
@@ -762,11 +802,16 @@ mod tests {
     /// A controller recording into `recordings`; `seen` receives the stamp each start
     /// hands the recorder.
     fn controller_in(files: RecordingFiles, recordings: PathBuf, seen: Arc<Mutex<Option<String>>>) -> (MeetingController, StoreHandle) {
-        let store = StoreHandle::spawn(|| memory::Store::open_in_memory().map_err(|e| e.to_string())).unwrap();
         let start: StartAudio = Arc::new(move |_target, stamp, _meeting| {
             *seen.lock().unwrap() = Some(stamp.to_string());
             Box::new(FakeAudio { files: files.clone() })
         });
+        controller_with_start(start, recordings)
+    }
+
+    /// A controller recording into `recordings` with the given audio starter.
+    fn controller_with_start(start: StartAudio, recordings: PathBuf) -> (MeetingController, StoreHandle) {
+        let store = StoreHandle::spawn(|| memory::Store::open_in_memory().map_err(|e| e.to_string())).unwrap();
         // A pipeline with no models installed: `run_in_background` reports a failure and
         // leaves the row alone, which is what these tests want.
         let paths = crate::paths::Paths::under(std::env::temp_dir().join(format!("whimbrel-controller-{}", std::process::id())));
@@ -790,6 +835,115 @@ mod tests {
     /// A WAV of `audio_bytes` bytes after its 44-byte header, unfinalized like a crash's.
     fn wav(path: &Path, audio_bytes: usize) {
         std::fs::write(path, vec![0u8; 44 + audio_bytes]).unwrap();
+    }
+
+    /// A controller whose recorder presses Stop while it starts: the row is written and the audio is
+    /// being opened, but the start has not finished. `during` runs there, once, right after that Stop.
+    /// Returns the ids of the rows the starts wrote, in order.
+    fn controller_stopped_mid_start(
+        files: RecordingFiles,
+        recordings: PathBuf,
+        during: impl Fn(&MeetingController, &str) + Send + Sync + 'static,
+    ) -> (Arc<MeetingController>, StoreHandle, Arc<Mutex<Vec<i64>>>) {
+        let cell: Arc<std::sync::OnceLock<Arc<MeetingController>>> = Arc::default();
+        let ids: Arc<Mutex<Vec<i64>>> = Arc::default();
+        let first = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let start: StartAudio = {
+            let (cell, ids) = (cell.clone(), ids.clone());
+            Arc::new(move |_target, stamp, meeting| {
+                ids.lock().unwrap().push(meeting.meeting_id);
+                if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    let c = cell.get().expect("the controller is set before any start");
+                    c.stop().unwrap();
+                    let c: &MeetingController = c;
+                    during(c, stamp);
+                }
+                Box::new(FakeAudio { files: files.clone() })
+            })
+        };
+        let (c, store) = controller_with_start(start, recordings);
+        let c = Arc::new(c);
+        let _ = cell.set(c.clone());
+        (c, store, ids)
+    }
+
+    #[test]
+    fn a_cancelled_start_is_empty_only_with_no_audio_and_no_transcript() {
+        let none = RecordingFiles::default();
+        let system = RecordingFiles { system: Some(PathBuf::from(r"C:\rec\system-audio-S.wav")), ..Default::default() };
+        let mic = RecordingFiles { mic: Some(PathBuf::from(r"C:\rec\mic-audio-S.wav")), ..Default::default() };
+        let said = Accumulated {
+            mic: vec![transcribe::TranscriptSegment { start_cs: 0, end_cs: 100, text: "hello".into() }],
+            ..Default::default()
+        };
+        assert!(cancelled_start_is_empty(&none, &Accumulated::default()));
+        assert!(!cancelled_start_is_empty(&system, &Accumulated::default()), "system audio was captured");
+        assert!(!cancelled_start_is_empty(&mic, &Accumulated::default()), "microphone audio was captured");
+        assert!(!cancelled_start_is_empty(&none, &said), "words were transcribed");
+    }
+
+    #[test]
+    fn a_stop_during_a_start_that_recorded_nothing_leaves_no_meeting_and_no_file() {
+        let dir = scratch("cancel-empty");
+        let orphan_dir = dir.clone();
+        // The recorder had already created its (header-only) file when the Stop landed.
+        let (c, store, ids) = controller_stopped_mid_start(RecordingFiles::default(), dir.clone(), move |_, stamp| {
+            wav(&orphan_dir.join(format!("system-audio-{stamp}.wav")), 0);
+        });
+        // The device id every PC sets at launch; without it core withholds a meeting's file paths.
+        store.call_blocking(|s| s.set_own_device_id("this-pc")).unwrap();
+
+        let view = c.start_manual().unwrap();
+        assert_eq!((view.state, view.meeting_id), (RecordingState::Idle, None));
+        let id = ids.lock().unwrap()[0];
+        let (row, recent, forgotten) = store
+            .call_blocking(move |s| (s.get_meeting(id).unwrap(), s.recent_meetings(10).unwrap(), s.is_meeting_forgotten("this-pc", None, id).unwrap()))
+            .unwrap();
+        assert!(row.is_none(), "the cancelled start's row is gone");
+        assert!(recent.is_empty(), "and no other row was left");
+        assert!(!forgotten, "a row that never completed was never pushed, so it needs no tombstone");
+        let leftovers: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+        assert!(leftovers.is_empty(), "no audio file is left behind: {leftovers:?}");
+        assert!(!c.is_starting_or_recording(), "the controller is idle");
+        assert!(c.start_manual().is_ok(), "a new start is allowed");
+        c.stop().unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_stop_during_a_start_that_captured_audio_keeps_the_meeting() {
+        for files in [
+            RecordingFiles { system: Some(PathBuf::from(r"C:\rec\system-audio-S.wav")), ..Default::default() },
+            RecordingFiles { mic: Some(PathBuf::from(r"C:\rec\mic-audio-S.wav")), ..Default::default() },
+        ] {
+            let expected = files.audio_path().unwrap().to_string_lossy().into_owned();
+            let (c, store, ids) = controller_stopped_mid_start(files, PathBuf::from(r"C:\rec"), |_, _| {});
+            let view = c.start_manual().unwrap();
+            assert_eq!((view.state, view.meeting_id), (RecordingState::Idle, None));
+            let id = ids.lock().unwrap()[0];
+            let row = store.call_blocking(move |s| s.get_meeting(id).unwrap()).unwrap().expect("the recording's meeting is kept");
+            assert_eq!(row.status, MeetingStatus::Completed);
+            assert_eq!(row.audio_path.as_deref(), Some(expected.as_str()), "with the audio attached");
+            assert!(row.end_unix_ms.is_some());
+        }
+    }
+
+    #[test]
+    fn a_cancelled_start_never_touches_a_newer_start() {
+        // The Stop lands, and a new start begins before the cancelled one has finished opening its audio.
+        let (c, store, ids) = controller_stopped_mid_start(RecordingFiles::default(), PathBuf::from(r"C:\rec"), |c, _| {
+            c.start_manual().unwrap();
+        });
+        let view = c.start_manual().unwrap();
+        let ids = ids.lock().unwrap().clone();
+        assert_eq!(ids.len(), 2, "two starts wrote a row each");
+        assert_eq!((view.state, view.meeting_id), (RecordingState::Recording, Some(ids[1])), "the newer start is the recording");
+        let (cancelled, newer) = store
+            .call_blocking(move |s| (s.get_meeting(ids[0]).unwrap(), s.get_meeting(ids[1]).unwrap()))
+            .unwrap();
+        assert!(cancelled.is_none(), "only the cancelled start's row went");
+        assert_eq!(newer.expect("the newer row stays").status, MeetingStatus::Recording);
+        c.stop().unwrap();
     }
 
     #[test]

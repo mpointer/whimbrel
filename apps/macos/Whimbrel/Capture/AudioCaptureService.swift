@@ -91,7 +91,25 @@ final class AudioCaptureService: NSObject, ObservableObject {
     private var healthTimer: Timer?
     private var engineConfigObserver: NSObjectProtocol?
 
+    /// Who owns the service now (`AudioStartEpochs`): every `start()` and every `stop()` moves it on. A
+    /// `start()` that resumes after an await and finds it moved is stale, and must publish nothing: it
+    /// closes only what it opened itself and never turns the microphone on. The cases, with the epoch
+    /// each step sees:
+    ///  1. start1 (epoch 1) awaiting; stop() (2); start1 resumes: stale. It closes its own stream and file.
+    ///  2. start1 (1) awaiting; stop() (2); start2 begins (3); start1 resumes: stale, closes its own stream
+    ///     only, so start2's streams are untouched; start2 resumes: epoch 3 is current, so it publishes.
+    ///  3. start1 (1) awaiting; start2 begins with no stop (2); start1 resumes: stale (superseded), as in 2.
+    private var epochs = AudioStartEpochs()
+
+    /// A recording that never started has no files: drop the paths of the last one, so nothing reads
+    /// them as this recording's.
+    func forgetLastRecording() {
+        systemAudioFileURL = nil
+        micAudioFileURL = nil
+    }
+
     func start() async {
+        let epoch = epochs.begin()
         degradedReason = nil
         micDegradedReason = nil
         if isPaused { isPaused = false }
@@ -110,7 +128,10 @@ final class AudioCaptureService: NSObject, ObservableObject {
         lastNonSilentAt = Date()
         forcedStopReported = false
         let timestamp = SpikePaths.sessionTimestamp()
-        await startSystemAudio(timestamp: timestamp)
+        await startSystemAudio(timestamp: timestamp, epoch: epoch)
+        // Stopped, or superseded by a newer start, while the system stream opened: the microphone must not
+        // start, and startSystemAudio already published nothing.
+        guard epochs.owns(epoch) else { return }
         startMicrophone(timestamp: timestamp)
         healthTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -126,6 +147,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
     }
 
     func stop() {
+        epochs.stop()
         stopLevelSampling()
         if isPaused { isPaused = false }
         if isResuming { isResuming = false }
@@ -284,12 +306,14 @@ final class AudioCaptureService: NSObject, ObservableObject {
 
     // MARK: System audio (ScreenCaptureKit)
 
-    private func startSystemAudio(timestamp: String) async {
+    private func startSystemAudio(timestamp: String, epoch: Int) async {
         // Hoisted out of the `do` so the success path and the `catch` cleanup reference
         // the exact same URL binding rather than each recomputing one.
         let fileURL = SpikePaths.audioFile(name: "system-audio-\(timestamp).caf")
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            // Stale: nothing opened yet, nothing to undo.
+            guard epochs.owns(epoch) else { return }
             guard let display = content.displays.first else {
                 degradedReason = String(localized: "No display available for system audio capture.")
                 return
@@ -323,6 +347,17 @@ final class AudioCaptureService: NSObject, ObservableObject {
             systemConfig = config
             systemReopens = 0
             let newStream = try await openSystemStream(filter: filter, config: config)
+            // Stale: close this start's own stream and drop its own empty file. Its writer was never
+            // published, so no buffer reached it; a newer start's state is not touched.
+            guard epochs.owns(epoch) else {
+                // Detach its outputs first, so no late buffer from it reaches a newer start's writer.
+                try? newStream.removeStreamOutput(self, type: .audio)
+                try? newStream.removeStreamOutput(self, type: .screen)
+                try? await newStream.stopCapture()
+                try? FileManager.default.removeItem(at: fileURL)
+                if systemAudioFileURL == fileURL { systemAudioFileURL = nil }
+                return
+            }
 
             systemWriter = writer
             systemConverter = converter
@@ -333,6 +368,12 @@ final class AudioCaptureService: NSObject, ObservableObject {
             lastSystemBufferAt = Date()
             scheduleSystemAudioWatchdog(for: newStream, fileURL: fileURL)
         } catch {
+            // Stale: this start's failure says nothing about the service now.
+            guard epochs.owns(epoch) else {
+                try? FileManager.default.removeItem(at: fileURL)
+                if systemAudioFileURL == fileURL { systemAudioFileURL = nil }
+                return
+            }
             log.error("System audio capture unavailable: \(error.localizedDescription, privacy: .public)")
             systemAudioActive = false
             systemWriter = nil

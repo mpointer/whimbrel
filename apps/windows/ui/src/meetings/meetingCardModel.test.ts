@@ -12,6 +12,9 @@ import {
   nowLabel,
   nowMarkerIndex,
   peopleText,
+  spokenLabel,
+  statusLine,
+  triggerLabel,
   subtitle,
   timeRange,
   timeline,
@@ -141,6 +144,23 @@ describe("a recorded meeting's card", () => {
   it("is not running", () => {
     expect(forRecorded(meeting({ status: "recording", endUnixMs: null }), null, null, L).isRunning).toBe(false);
   });
+
+  it("says Paused, not Recording, for the meeting whose recording is paused", () => {
+    const live = meeting({ status: "recording", endUnixMs: null });
+    expect(statusLine(live, 42)).toBe("Paused");
+    expect(forRecorded(live, null, null, L, 42).statusLine).toBe("Paused");
+    // Another meeting's pause (or none) leaves this one's word alone.
+    expect(forRecorded(live, null, null, L, 7).statusLine).toBe("Recording");
+    expect(forRecorded(live, null, null, L, null).statusLine).toBe("Recording");
+    // A finished meeting never reads Paused, even with a stale id.
+    expect(forRecorded(meeting(), null, null, L, 42).statusLine).toBe("No summary yet");
+  });
+
+  it("the row's accessible name says Paused and not Recording while paused", () => {
+    const spoken = spokenLabel(forRecorded(meeting({ status: "recording", endUnixMs: null }), null, null, L, 42));
+    expect(spoken).toContain("Paused");
+    expect(spoken).not.toContain("Recording");
+  });
 });
 
 describe("chips open their own item", () => {
@@ -156,6 +176,12 @@ describe("chips open their own item", () => {
 
 describe("Today's timeline", () => {
   const none = { eventTopics: [], held: new Map<number, HeldChips>() };
+
+  it("a held meeting whose recording is paused says Paused on its card", () => {
+    const held = meeting({ id: 5, status: "recording", tsUnixMs: START - 120 * MIN, endUnixMs: null });
+    expect(timeline([], [held], null, none, NOW, L, 5)[0].model.statusLine).toBe("Paused");
+    expect(timeline([], [held], null, none, NOW, L)[0].model.statusLine).toBe("Recording");
+  });
 
   it("puts held meetings and events in start order, with the held meeting's chips", () => {
     const held = meeting({ id: 5, tsUnixMs: START - 120 * MIN, endUnixMs: START - 90 * MIN });
@@ -243,5 +269,17 @@ describe("the chips lookup", () => {
     const second = latest.begin();
     expect(latest.isLatest(second)).toBe(true);
     expect(latest.isLatest(first)).toBe(false);
+  });
+});
+
+describe("triggerLabel", () => {
+  it("never says Recorded while the meeting is still recording", () => {
+    expect(triggerLabel({ trigger: "manual", status: "recording" })).toBeNull();
+    expect(triggerLabel({ trigger: "manual", status: "completed" })).toBe("Recorded");
+    expect(triggerLabel({ trigger: "away", status: "completed" })).toBe("Recorded");
+  });
+  it("names a calendar or detected start whatever the status", () => {
+    expect(triggerLabel({ trigger: "calendar", status: "recording" })).toBe("Calendar");
+    expect(triggerLabel({ trigger: "detected", status: "completed" })).toBe("Detected");
   });
 });

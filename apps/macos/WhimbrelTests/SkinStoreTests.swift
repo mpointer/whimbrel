@@ -80,6 +80,83 @@ final class SkinStoreTests: XCTestCase {
         XCTAssertEqual(s.selectedPaletteId, "slate", "skinId is set, so the old key is no longer read")
     }
 
+    // MARK: the once-per-device move to Thread
+
+    func testTheMoveRuleMovesOnlyTheCreamDefault() {
+        let thread = (skin: "thread", palette: "thread")
+        let moved = ThreadMove.decide(skinId: "whimbrel", paletteId: "default", done: false)
+        XCTAssertEqual(moved?.skin, thread.skin)
+        XCTAssertEqual(moved?.palette, thread.palette)
+        XCTAssertNil(ThreadMove.decide(skinId: "whimbrel", paletteId: "slate", done: false), "Slate stays")
+        XCTAssertNil(ThreadMove.decide(skinId: "whimbrel", paletteId: "sepia", done: false), "Sepia stays")
+        for other in ["almanac", "high-contrast", "retro-terminal", "reference", "game-day", "hypermodern", "user-mine-1", "thread", "gone"] {
+            XCTAssertNil(ThreadMove.decide(skinId: other, paletteId: "default", done: false), other)
+        }
+        XCTAssertNil(ThreadMove.decide(skinId: "whimbrel", paletteId: "default", done: true), "once the move is done it never runs again")
+    }
+
+    private func movingStore(_ d: UserDefaults) -> SkinStore {
+        SkinStore(defaults: d, themes: ThemeStore(defaults: d), movesToThread: true)
+    }
+
+    func testNothingStoredMovesToThreadAndRecordsIt() {
+        let d = defaults()
+        _ = movingStore(d)
+        XCTAssertEqual(d.string(forKey: skinKey), "thread")
+        XCTAssertEqual(d.string(forKey: paletteKey), "thread")
+        XCTAssertTrue(d.bool(forKey: ThreadMove.doneKey))
+        XCTAssertEqual(ThreadMove.doneKey, "com.mpointer.whimbrel.skin.threadMoveDone")
+    }
+
+    func testAStoredCreamDefaultMovesAndAKeptChoiceDoesNot() {
+        let cream = defaults()
+        cream.set("whimbrel", forKey: skinKey)
+        cream.set("default", forKey: paletteKey)
+        _ = movingStore(cream)
+        XCTAssertEqual(cream.string(forKey: skinKey), "thread")
+
+        for (skin, palette) in [("whimbrel", "slate"), ("whimbrel", "sepia"), ("almanac", "parchment"), ("user-mine-1", "default")] {
+            let d = defaults()
+            d.set(skin, forKey: skinKey)
+            d.set(palette, forKey: paletteKey)
+            _ = movingStore(d)
+            XCTAssertEqual(d.string(forKey: skinKey), skin, skin)
+            XCTAssertEqual(d.string(forKey: paletteKey), palette, skin)
+            XCTAssertTrue(d.bool(forKey: ThreadMove.doneKey), "the check ran, so it does not run again")
+        }
+    }
+
+    func testPickingClassicAgainAfterTheMoveIsNotMovedAgain() {
+        let d = defaults()
+        _ = movingStore(d)
+        let (s, _) = store(d)
+        s.select(skinId: "whimbrel", paletteId: "default")
+        XCTAssertEqual(d.string(forKey: skinKey), "whimbrel")
+        _ = movingStore(d)
+        XCTAssertEqual(d.string(forKey: skinKey), "whimbrel", "the done marker is set")
+        XCTAssertEqual(d.string(forKey: paletteKey), "default")
+    }
+
+    func testTheOldHighContrastThemeStillLandsOnHighContrast() {
+        let d = defaults()
+        d.set("high-contrast", forKey: ThemeStore.selectedKey)
+        _ = movingStore(d)
+        XCTAssertEqual(d.string(forKey: skinKey), "high-contrast")
+        XCTAssertEqual(d.string(forKey: paletteKey), "high-contrast")
+        let slate = defaults()
+        slate.set("slate", forKey: ThemeStore.selectedKey)
+        _ = movingStore(slate)
+        XCTAssertEqual(slate.string(forKey: skinKey), "whimbrel", "an old Slate choice stays")
+        XCTAssertEqual(slate.string(forKey: paletteKey), "slate")
+    }
+
+    func testAStoreMadeWithoutTheMoveStartsWhereItsStoredValuesSay() {
+        let d = defaults()
+        _ = store(d)
+        XCTAssertEqual(d.string(forKey: skinKey), "whimbrel")
+        XCTAssertFalse(d.bool(forKey: ThreadMove.doneKey))
+    }
+
     // MARK: fallbacks
 
     func test_missing_skin_file_falls_back_but_keeps_stored_id() {
@@ -201,6 +278,17 @@ final class SkinStoreTests: XCTestCase {
         for (variants, choice, expected) in table {
             XCTAssertEqual(AppearanceSettings.appearanceName(choice: choice, variants: variants), expected, "\(variants) \(choice)")
         }
+    }
+
+    /// A pinned Light or Dark becomes its high contrast twin while the system asks for more contrast, so the high contrast
+    /// colors are drawn under any Appearance choice. Following the system (nil) is left alone.
+    func test_a_pinned_appearance_follows_increase_contrast() {
+        XCTAssertEqual(AppearanceSettings.contrastName(.aqua, increased: true), .accessibilityHighContrastAqua)
+        XCTAssertEqual(AppearanceSettings.contrastName(.darkAqua, increased: true), .accessibilityHighContrastDarkAqua)
+        XCTAssertNil(AppearanceSettings.contrastName(nil, increased: true))
+        XCTAssertEqual(AppearanceSettings.contrastName(.aqua, increased: false), .aqua)
+        XCTAssertEqual(AppearanceSettings.contrastName(.darkAqua, increased: false), .darkAqua)
+        XCTAssertNil(AppearanceSettings.contrastName(nil, increased: false))
     }
 
     /// The picker does nothing under a one-variant palette, so Settings says why instead of looking broken.
