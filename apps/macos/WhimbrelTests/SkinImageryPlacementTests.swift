@@ -3,8 +3,8 @@ import SwiftUI
 import XCTest
 @testable import Whimbrel
 
-/// Skins draw their approved images: header and badge in every Today archetype (background too, except
-/// `standard`), the header on top-level screens, nothing for a missing file; and `SkinImageResolver`.
+/// Skins draw their approved images: header and badge in every Today archetype (the background placement is dropped),
+/// the header on top-level screens, nothing for a missing file or a bad name; and `SkinImageResolver`.
 @MainActor
 final class SkinImageryPlacementTests: XCTestCase {
     private let repo = URL(fileURLWithPath: #filePath)
@@ -29,7 +29,7 @@ final class SkinImageryPlacementTests: XCTestCase {
         for (archetype, base) in skins {
             let skin = try fixture.skin(from: base)
             for dark in [false, true] {
-                let expected: Set<SkinImagePlacement> = archetype == .standard ? [.header, .badge] : [.header, .background, .badge]
+                let expected: Set<SkinImagePlacement> = [.header, .badge]
                 let drawn = SkinStore.shared.withOverride(skin: skin, paletteId: "default") {
                     SkinImageryFixture.drawnPlacements(SkinImageryFixture.chrome(), expecting: expected, dark: dark)
                 }
@@ -38,16 +38,32 @@ final class SkinImageryPlacementTests: XCTestCase {
         }
     }
 
-    /// A text-free background sits under Today's content, so it is not drawn there.
-    func testTextFreeBackgroundIsNotDrawnUnderToday() throws {
+    /// The background placement is dropped: a skin that has one (text-free or not) draws nothing for it.
+    func testBackgroundIsNeverDrawn() throws {
         let fixture = try SkinImageryFixture(self)
-        for (archetype, base) in skinPerArchetype() where archetype != .standard {
-            let skin = try fixture.skin(from: base, textFreeBackground: true)
-            let drawn = SkinStore.shared.withOverride(skin: skin, paletteId: "default") {
-                SkinImageryFixture.drawnPlacements(SkinImageryFixture.chrome(), expecting: [.header, .badge])
+        for textFree in [false, true] {
+            for (archetype, base) in skinPerArchetype() {
+                let skin = try fixture.skin(from: base, textFreeBackground: textFree)
+                let drawn = SkinStore.shared.withOverride(skin: skin, paletteId: "default") {
+                    SkinImageryFixture.drawnPlacements(SkinImageryFixture.chrome(), expecting: [.header, .badge])
+                }
+                XCTAssertEqual(drawn, [.header, .badge], "\(archetype) textFree \(textFree)")
             }
-            XCTAssertEqual(drawn, [.header, .badge], "\(archetype)")
         }
+    }
+
+    /// Thread's Home draws the header image and the badge, and a skin with neither adds nothing.
+    func testHomeDrawsHeaderAndBadge() throws {
+        let fixture = try SkinImageryFixture(self)
+        let skin = try fixture.skin(from: try XCTUnwrap(skinPerArchetype()[.glass]))
+        let drawn = SkinStore.shared.withOverride(skin: skin, paletteId: "default") {
+            SkinImageryFixture.drawnPlacements(SkinHomeImagesView(), expecting: [.header, .badge])
+        }
+        XCTAssertEqual(drawn, [.header, .badge])
+        let none = SkinStore.shared.withOverride(skin: SkinDefaults.whimbrel, paletteId: "default") {
+            SkinImageryFixture.drawnPlacements(SkinHomeImagesView(), expecting: [])
+        }
+        XCTAssertEqual(none, [])
     }
 
     func testMissingImageDrawsNothing() throws {
@@ -72,28 +88,39 @@ final class SkinImageryPlacementTests: XCTestCase {
         XCTAssertEqual(drawn, [.header])
     }
 
-    /// Header and badge sit beside the text (above Today, above a screen's band, beside the greeting), never under
-    /// it, so they draw the image as it is. The background is under Today's text and keeps its scrim.
-    func testHeaderAndBadgeDrawWithoutScrimBackgroundKeepsIt() throws {
+    /// A header image has the page-colour scrim over it (so the title row against it reads at 4.5:1); a text-free one and the
+    /// badge draw the image as it is.
+    func testHeaderHasTheScrimUnlessTextFreeAndBadgeNever() throws {
         let fixture = try SkinImageryFixture(self)
-        let skin = try fixture.skin(from: try XCTUnwrap(skinPerArchetype()[.glass]))
+        let base = try XCTUnwrap(skinPerArchetype()[.glass])
         let size = CGSize(width: 400, height: 120)
-        func brightness(_ placement: SkinImagePlacement, dark: Bool) throws -> CGFloat {
-            // A point in the image's white half (the 48 pt badge is centred: x 176-224); the dark page scrim would pull it far down.
+        func brightness(_ placement: SkinImagePlacement, textFree: Bool, dark: Bool) throws -> CGFloat {
+            var skin = try fixture.skin(from: base)
+            skin.decoration.imagery = skin.decoration.imagery.map { SkinImage(asset: $0.asset, placement: $0.placement, textFree: $0.placement == .header ? textFree : $0.textFree) }
+            // A point in the image's white half (the 40 pt badge is centred: x 180-220); the dark page scrim would pull it far down.
             let x = placement == .badge ? 185 : 50
             let color = SkinStore.shared.withOverride(skin: skin, paletteId: "default") {
                 SkinImageryFixture.pixel(SkinImagerySlot(placement: placement).frame(width: 400, height: 120), size: size, dark: dark, x: x, y: 60)
             }
             return try XCTUnwrap(color).brightnessComponent
         }
+        XCTAssertLessThan(try brightness(.header, textFree: false, dark: true), 0.5, "the header keeps the dark page scrim")
         for dark in [false, true] {
-            XCTAssertGreaterThan(try brightness(.header, dark: dark), 0.98, "header unscrimmed \(dark)")
-            XCTAssertGreaterThan(try brightness(.badge, dark: dark), 0.98, "badge unscrimmed \(dark)")
+            XCTAssertGreaterThan(try brightness(.header, textFree: true, dark: dark), 0.98, "a text-free header is unscrimmed \(dark)")
+            XCTAssertGreaterThan(try brightness(.badge, textFree: false, dark: dark), 0.98, "badge unscrimmed \(dark)")
         }
-        XCTAssertLessThan(try brightness(.background, dark: true), 0.5, "the background keeps the dark page scrim")
-        XCTAssertFalse(SkinImageryView.hasScrim(.header))
-        XCTAssertFalse(SkinImageryView.hasScrim(.badge))
-        XCTAssertTrue(SkinImageryView.hasScrim(.background))
+    }
+
+    /// Every image is decorative: the slot is hidden from VoiceOver, so it has no label and nothing to read.
+    func testImagesAreHiddenFromAccessibility() throws {
+        let src = try String(contentsOf: repo.appendingPathComponent("apps/macos/Whimbrel/UI/SkinDecorationViews.swift"), encoding: .utf8)
+        let slot = try XCTUnwrap(src.range(of: "struct SkinImagerySlot"))
+        let slotBody = src[slot.lowerBound...].prefix(2000)
+        XCTAssertTrue(slotBody.contains(".accessibilityHidden(true)"))
+        XCTAssertFalse(slotBody.contains(".accessibilityLabel"))
+        XCTAssertTrue(src.contains("struct SkinHomeImagesView"))
+        let home = try XCTUnwrap(src.range(of: "struct SkinHomeImagesView"))
+        XCTAssertTrue(src[home.lowerBound...].prefix(900).contains(".accessibilityHidden(true)"))
     }
 
     /// Whimbrel with no imagery renders exactly as before: `TodayChrome` adds nothing around the standard layout,
@@ -114,6 +141,63 @@ final class SkinImageryPlacementTests: XCTestCase {
             }
             try assertSnapshot(SkinImageryFixture.chrome(), named: "standard-sample-light", size: size, colorScheme: .light, tolerance: 0.0001)
             try assertSnapshot(SkinImageryFixture.chrome(), named: "standard-sample-dark", size: size, colorScheme: .dark, tolerance: 0.0001)
+        }
+    }
+
+    // MARK: Home header band
+
+    private func homeBandSkin(_ band: SkinHeaderBand) -> Skin {
+        var skin = SkinDefaults.whimbrel
+        skin.decoration.headerBand = band
+        return skin
+    }
+
+    private func homeChrome(banded: Bool) -> some View {
+        TodayChrome(
+            content: .sample, actions: .noop,
+            slots: TodaySlots(live: nil, decisionCount: TodayContent.sample.pendingApprovalCount, actions: .noop, composer: TodayFixtures.composer),
+            banded: banded
+        )
+    }
+
+    /// With no band Home is pixel-identical whether or not it asks for one, so `none` cannot move anything.
+    func testHomeBandNoneLeavesHomeUnchanged() throws {
+        let size = CGSize(width: 900, height: 1400)
+        try SkinStore.shared.withOverride(skin: homeBandSkin(.none), paletteId: "default") {
+            for scheme in [ColorScheme.light, .dark] {
+                let plain = try XCTUnwrap(OffscreenRender.bitmap(of: homeChrome(banded: false), size: size, colorScheme: scheme, scale: 1))
+                let banded = try XCTUnwrap(OffscreenRender.bitmap(of: homeChrome(banded: true), size: size, colorScheme: scheme, scale: 1))
+                XCTAssertEqual(plain.tiffRepresentation, banded.tiffRepresentation, "\(scheme)")
+            }
+        }
+    }
+
+    /// The band is the first thing on Home, at the height the other tabs use (2, 12 and 8 points), and Home sits
+    /// under it exactly as it was.
+    func testHomeBandSitsAtTheTopOfHome() throws {
+        let size = CGSize(width: 900, height: 600)
+        for (band, height) in [(SkinHeaderBand.rule, 2), (.block, 12), (.stripesDiagonal, 8)] {
+            try SkinStore.shared.withOverride(skin: homeBandSkin(band), paletteId: "default") {
+                let banded = try XCTUnwrap(OffscreenRender.bitmap(of: homeChrome(banded: true), size: size, colorScheme: .light, scale: 1))
+                let plain = try XCTUnwrap(OffscreenRender.bitmap(of: homeChrome(banded: false), size: size, colorScheme: .light, scale: 1))
+                let xs = Array(stride(from: 0, to: 900, by: 7))
+                let drawsBand = xs.contains { x in banded.colorAt(x: x, y: 0) != plain.colorAt(x: x, y: 0) }
+                XCTAssertTrue(drawsBand, "\(band) draws in the first row")
+                // The row just under the band is Home's own page background; Home is the same, moved down by the band.
+                for y in [0, 40, 200] {
+                    for x in xs { XCTAssertEqual(banded.colorAt(x: x, y: y + height), plain.colorAt(x: x, y: y), "\(band) x \(x) y \(y)") }
+                }
+            }
+        }
+    }
+
+    /// Home with each band, for the eye (set WHIMBREL_SNAPSHOTS=1).
+    func testHomeBandSnapshots() throws {
+        let size = CGSize(width: 900, height: 1400)
+        for (band, name) in [(SkinHeaderBand.rule, "rule"), (.block, "block"), (.stripesDiagonal, "stripes")] {
+            try SkinStore.shared.withOverride(skin: homeBandSkin(band), paletteId: "default") {
+                try assertSnapshot(homeChrome(banded: true), named: "home-band-\(name)-light", size: size, colorScheme: .light, tolerance: 0.0001)
+            }
         }
     }
 

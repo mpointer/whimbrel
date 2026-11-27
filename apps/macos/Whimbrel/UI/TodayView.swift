@@ -133,6 +133,7 @@ struct TodayView: View {
             BetterTranscriptsCard(download: appState.turboDownload)
                 .padding(.horizontal, Spacing.lg)
             RedesignSwitch(enabled: appState.redesignEnabled) {
+                TodayHomeBandArea {
                 TodayHomeRedesignView(
                     content: content, actions: actions, live: liveView(content), data: homeData,
                     openBlock: { block in
@@ -142,13 +143,15 @@ struct TodayView: View {
                                 start: Date(timeIntervalSince1970: Double(block.startUnixMs) / 1000),
                                 end: Date(timeIntervalSince1970: Double(block.endUnixMs) / 1000))))
                     })
+                }
             } old: {
                 TodayChrome(
                     content: content, actions: actions,
                     slots: TodaySlots(
                         live: liveView(content), decisionCount: content.pendingApprovalCount, actions: actions,
                         composer: AnyView(TodayComposer(placeholder: SkinStore.shared.selected.voice.text(.askPlaceholder, name: "")) { actions.ask($0) })
-                    )
+                    ),
+                    banded: true
                 )
             }
         }

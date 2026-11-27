@@ -315,6 +315,7 @@ pub fn run() {
             commands::workspace::forget_voice,
             commands::workspace::meeting_trim_info,
             commands::workspace::meeting_trim,
+            crate::meetings::still_here::still_here_prompt,
             crate::meetings::still_here::still_here_keep,
             crate::meetings::still_here::still_here_stop,
             commands::workspace::meeting_save_notes,

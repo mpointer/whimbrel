@@ -104,13 +104,14 @@ fn asker(alert: &LiveAlert) -> Option<&str> {
     alert.asker.as_deref().map(str::trim).filter(|a| !a.is_empty())
 }
 
-/// The notice's title and body: who asked, then the restatement and the draft's first line.
+/// The notice's title and body: who asked, then the restatement and the draft's first line,
+/// as plain text: the draft is Markdown and the popup shows (and Narrator reads) it as is.
 pub fn content(alert: &LiveAlert) -> (String, String) {
     let title = match asker(alert) {
         Some(name) => tr("{asker} asked you", &[("asker", name)]),
         None => tr("Question for you", &[]),
     };
-    let first_line = draft(alert.draft_json.as_deref()).and_then(|d| d.text.lines().find(|l| !l.trim().is_empty()).map(str::to_string));
+    let first_line = draft(alert.draft_json.as_deref()).and_then(|d| api::plain_text::markdown_to_plain(&d.text).lines().find(|l| !l.trim().is_empty()).map(str::to_string));
     let body = std::iter::once(alert.restatement.clone()).chain(first_line).collect::<Vec<_>>().join("\n");
     (title, body)
 }
@@ -391,6 +392,10 @@ mod tests {
         assert_eq!(content(&a), ("Question for you".to_string(), "Send the Q3 numbers\nThey're in the deck.".to_string()));
         a.draft_json = Some("not json".into());
         assert_eq!(content(&a).1, "Send the Q3 numbers", "a bad draft is ignored");
+        a.draft_json = Some(r###"{"text":"## Answer\n- **Yes**, see [the deck](https://x.io/d)","citations":[]}"###.into());
+        assert_eq!(content(&a).1, "Send the Q3 numbers\nAnswer", "the heading's marker is gone");
+        a.draft_json = Some(r#"{"text":"**Yes**, see [the deck](https://x.io/d) and `notes`.","citations":[]}"#.into());
+        assert_eq!(content(&a).1, "Send the Q3 numbers\nYes, see the deck and notes.");
     }
 
     #[test]

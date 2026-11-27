@@ -65,6 +65,20 @@ const COPY: Record<Language, Copy> = {
     sendLink: "M'envoyer un nouveau lien",
     linkSent: "Si cette adresse est inscrite, un nouveau lien est en route.",
   },
+  de: {
+    title: "E-Mail-Einstellungen",
+    confirm: "Sie haben um Versionshinweise und Produktneuigkeiten von Whimbrel gebeten. Bestätigen Sie unten, um sie zu erhalten.",
+    on: "Produkt-E-Mails sind an: Sie erhalten gelegentlich Versionshinweise und Produktneuigkeiten.",
+    off: "Produkt-E-Mails sind aus: Sie erhalten keine Versionshinweise und keine Produktneuigkeiten.",
+    turnOn: "Produkt-E-Mails einschalten",
+    turnOff: "Produkt-E-Mails ausschalten",
+    saved: "Gespeichert.",
+    transactional: "In jedem Fall erhalten Sie weiterhin die E-Mails, die Sie brauchen, etwa Ihre Download-Links und Antworten von Mike.",
+    expired: "Dieser Link ist abgelaufen oder ungültig. Geben Sie Ihre E-Mail-Adresse ein, und wir senden Ihnen einen neuen.",
+    emailLabel: "E-Mail-Adresse",
+    sendLink: "Neuen Link senden",
+    linkSent: "Wenn diese Adresse registriert ist, ist ein neuer Link unterwegs.",
+  },
 };
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

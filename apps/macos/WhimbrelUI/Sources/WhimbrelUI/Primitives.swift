@@ -221,6 +221,7 @@ private struct WButtonBody: View {
             .overlay(shape.fill(Color.black.opacity(configuration.isPressed && kind != .quiet && kind != .destructiveText ? 0.12 : 0)))
             .opacity(readable || isEnabled ? 1 : 0.45)
             .contentShape(shape)
+            .wMotion(.control, value: configuration.isPressed)
     }
 }
 

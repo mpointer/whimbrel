@@ -95,7 +95,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--w-space-sm);
-  padding: calc(var(--w-space-md) * var(--sx-density)) var(--w-space-lg);
+  padding: max(0px, calc(calc(var(--w-space-md) * var(--sx-density)) - var(--sx-border-trim))) max(0px, calc(var(--w-space-lg) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-top: 3px solid var(--w-color-ai-ink);
   border-radius: var(--sx-radius-card);
@@ -179,7 +179,7 @@
   flex: 1 1 14rem;
   min-width: 0;
   min-height: var(--w-target);
-  padding: 0 var(--w-space-md);
+  padding: 0 max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
@@ -201,7 +201,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--w-space-sm);
-  padding: var(--w-space-lg);
+  padding: max(0px, calc(var(--w-space-lg) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-card);
   background: var(--color-background-card);
@@ -347,7 +347,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--w-space-sm);
-  padding: var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-card);
   background: var(--color-background-card);
@@ -407,7 +407,7 @@
   flex: 1 1 8rem;
   min-width: 0;
   min-height: var(--w-target);
-  padding: 0 var(--w-space-sm);
+  padding: 0 max(0px, calc(var(--w-space-sm) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);

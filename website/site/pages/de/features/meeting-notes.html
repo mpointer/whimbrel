@@ -1,0 +1,81 @@
+<!--
+{
+  "title": "KI-Meeting-Notizen ohne Bot: Zoom, Teams, Meet",
+  "description": "Whimbrel transkribiert Zoom, Teams, Google Meet und Slack Huddles auf Ihrem Computer, ohne Meeting-Bot, und schreibt Notizen, Beschlüsse und Aufgaben.",
+  "schema": [
+    "software"
+  ],
+  "priority": 0.8,
+  "ogType": "article",
+  "crumbs": [
+    {
+      "name": "Funktionen",
+      "path": "/#features"
+    },
+    {
+      "name": "Meeting-Notizen",
+      "path": "/features/meeting-notes/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Wie kann Whimbrel einen Anruf transkribieren, ohne daran teilzunehmen?",
+      "a": "Es nimmt zwei Audiospuren auf Ihrem eigenen Computer auf: Ihr Mikrofon und den Systemton, den Ihre Meeting-App abspielt. Da nichts dem Anruf beitritt, funktioniert es in jeder Meeting-App und auch bei Treffen vor Ort."
+    },
+    {
+      "q": "Wird in der Cloud transkribiert?",
+      "a": "Nein. Whimbrel transkribiert auf Ihrem Computer mit einem Whisper-Sprachmodell direkt auf dem Gerät, sodass das Meeting-Audio Ihren Rechner nicht verlassen muss. Zusammenfassungen nutzen das Modell, das Sie wählen: lokal über Ollama oder bei einem externen Anbieter mit Ihrem eigenen Schlüssel."
+    },
+    {
+      "q": "Weiß es, wer was gesagt hat?",
+      "a": "Ja. Whimbrel trennt Sie von der Gegenseite des Anrufs und kennzeichnet verschiedene Sprecher im Transkript."
+    },
+    {
+      "q": "Zeichnet es Meetings auf, die ich nicht aufzeichnen möchte?",
+      "a": "Sie entscheiden. Die Aufnahme kann über Kalendertermine oder die Erkennung von Meeting-Audio starten, und Sie können jedes Meeting beenden, pausieren oder überspringen. Beachten Sie stets die Regeln zur Einwilligung in Aufnahmen, die für Sie gelten."
+    }
+  ],
+  "sourceHash": "baa6c40f0239"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">Meeting-Notizen</p>
+      <h1>KI-Meeting-Notizen, ohne Bot im Anruf.</h1>
+      <p class="lede">Whimbrel hört direkt auf Ihrem Computer mit, sodass niemand die Meldung „KI-Notizassistent ist beigetreten“ sieht. Sie bekommen das Transkript, die Notizen und die Folgeaufgaben.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/download/#register">Whimbrel kostenlos holen</a>
+      </div>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>Jedes Meeting, auf dieselbe Weise erfasst.</h2>
+      <p class="lede">Zoom, Microsoft Teams, Google Meet, Slack Huddles, ein Telefonat auf Lautsprecher, ein Gespräch am Schreibtisch. Was Ihr Computer hören kann, kann Whimbrel mitschreiben.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>Startet von selbst</h3><p>Die Aufnahme beginnt über Ihren Google- oder Outlook-Kalender oder wenn Whimbrel Meeting-Audio erkennt, etwa bei einem Anruf, der nicht im Kalender stand.</p></article>
+      <article class="card feature"><h3>Transkription auf dem Gerät</h3><p>Ein Whisper-Sprachmodell läuft lokal. Zum Transkribieren verlässt kein Audio Ihren Computer.</p></article>
+      <article class="card feature"><h3>Ihre Notizen, verbessert</h3><p>Tippen Sie während des Anrufs kurze Notizen. Whimbrel verbindet sie mit dem Transkript zu sauberen Notizen mit Beschlüssen und Aufgaben.</p></article>
+      <article class="card feature"><h3>Vorbereitet, bevor Sie beitreten</h3><p>Die Meeting-Vorbereitung fasst Ihre letzten Gespräche und offenen Fragen mit denselben Personen in einem Überblick zusammen, bevor das Meeting beginnt.</p></article>
+      <article class="card feature"><h3>Fragen zu jedem Meeting</h3><p>„Was haben sie zum Zeitplan gesagt?“ Die Antworten nennen die genaue Stelle im Transkript.</p></article>
+      <article class="card feature"><h3>Folgemails als Entwurf</h3><p>Whimbrel kann die Folgemail in Gmail entwerfen, damit Sie sie nur noch prüfen und abschicken.</p></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">FAQ zu Meeting-Notizen</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

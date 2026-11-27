@@ -30,6 +30,7 @@ import { elapsedSeconds } from "../../shell/redesign/recordingBar";
 import { useCapture } from "../../shell/redesign/useCapture";
 import { useSkin } from "../../useSkin";
 import { waitingLabel } from "../../automations/automationsModel";
+import { SkinImage } from "../archetypes/parts";
 import { BriefRecapBody } from "../BriefRecapBody";
 import { RecapBody } from "../DigestView";
 import { localizedVoice, recapModel, voiceText } from "../layoutModel";
@@ -54,6 +55,7 @@ import {
   type MeetingStop,
 } from "./homeModel";
 import { useApprovals, useCalendarConnected, useDayBlocks } from "./useHomeData";
+import { withDividers } from "./withDividers";
 import "./home.css";
 
 export type HomeSection = "connectors" | "capture" | "automations" | "library";
@@ -79,6 +81,8 @@ export interface RedesignedHomeProps {
   onOpenSection: (target: HomeSection) => void;
 }
 
+export { withDividers };
+
 export function RedesignedHome(p: RedesignedHomeProps) {
   const { t, locale, lang } = useL10n();
   const skin = useSkin();
@@ -92,6 +96,8 @@ export function RedesignedHome(p: RedesignedHomeProps) {
   const approvals = useApprovals();
   const [openGroup, setOpenGroup] = useState<EarlierGroup["id"] | null>(null);
   const links = el.actions === "links";
+  // A skin with a divider style draws a rule above each section after the first (decoration.dividers; Thread has none).
+  const dividers = skin.skin.decoration.dividers !== "none";
   const section = (id: string, words: string) => (
     <WSectionLabel id={id} variant={el.labels}>
       {words}
@@ -123,7 +129,8 @@ export function RedesignedHome(p: RedesignedHomeProps) {
   useEffect(() => () => setThreadParts([]), []);
 
   const wrap = (children: ReactNode) => (
-    <div className="today th-home" data-next={el.nextMeeting} data-timeline={el.timeline} data-labels={el.labels} data-actions={el.actions}>
+    <div className="today th-home" data-next={el.nextMeeting} data-timeline={el.timeline} data-labels={el.labels} data-actions={el.actions} data-dividers={dividers ? skin.skin.decoration.dividers : undefined}>
+      <SkinImage imagery={skin.imagery} skinId={skin.skin.id} placement="badge" />
       {children}
     </div>
   );
@@ -186,7 +193,7 @@ export function RedesignedHome(p: RedesignedHomeProps) {
     const time = hero.kind === "next" ? timeLabel(hero.event.startUnixMs, locale) : live ? timeLabel(hero.since ?? now, locale) : "";
     const name = hero.kind === "next" ? [time, hero.event.title, soonLabel(hero.event.startUnixMs, now)].join(", ") : live ? [time, hero.title].filter(Boolean).join(", ") : undefined;
     return (
-      <WSpineStop key="hero" time={time} node={live ? "recording" : "upcoming"} label={name} last={last}>
+      <WSpineStop key="hero" time={time} node={live ? "recording" : "upcoming"} label={name} last={last} hero>
         <div data-section="upNext">{heroBlock(hero)}</div>
         {p.prep}
       </WSpineStop>
@@ -278,7 +285,7 @@ export function RedesignedHome(p: RedesignedHomeProps) {
       {section("th-timeline-label", t("Today"))}
       <WSpine label={t("Today, in time order")} variant={el.timeline}>
         {lineItems}
-        <WSpineNow time={timeLabel(now, locale)} text={nowText} last={tail.length === 0} />
+        <WSpineNow key={timeLabel(now, locale)} time={timeLabel(now, locale)} text={nowText} last={tail.length === 0} />
         {tail}
       </WSpine>
     </section>
@@ -305,6 +312,59 @@ export function RedesignedHome(p: RedesignedHomeProps) {
       ) : null}
     </>
   );
+  // The parts of Home below the greeting, in order. A skin's divider goes above each one after the first.
+  const parts: ReactNode[] = [
+    dayEmpty ? emptyDay : timeline,
+
+    approvals > 0 ? (
+      <section className="th-section" data-section="approvals" aria-labelledby="th-approvals">
+        {section("th-approvals", t("Waiting for approval"))}
+        <div className="th-row">
+          <span>{waitingLabel(approvals)}</span>
+          <WButton link={links} onClick={() => p.onOpenSection("automations")}>
+            {t("Open")}
+          </WButton>
+        </div>
+      </section>
+    ) : null,
+
+    overview.openLoops.length > 0 ? (
+      <section className="th-section" data-section="threads" aria-labelledby="th-threads">
+        {section("th-threads", t("Open threads"))}
+        <ul className="th-list">
+          {overview.openLoops.map((loop) => (
+            <li key={loop.id}>
+              <span className="th-list-title">{loop.subject || t("(no subject)")}</span>
+              <span className="th-list-meta">{threadLine(loop)}</span>
+              {loop.summary ? <span className="th-list-text">{loop.summary}</span> : null}
+            </li>
+          ))}
+        </ul>
+      </section>
+    ) : null,
+
+    recapState || overview.briefRecap || p.recap ? (
+      <section className="th-section" data-section="recap" aria-labelledby="th-recap">
+        <div className="th-section-head">
+          {section("th-recap", voiceText(voice, "recapHeader"))}
+          {!overview.briefRecap ? (
+            <WButton variant="quiet" link={links} disabled={p.writing} onClick={p.onRefreshRecap}>
+              {p.writing ? t("Writing…") : t("Refresh")}
+            </WButton>
+          ) : null}
+        </div>
+        {overview.briefRecap ? <BriefRecapBody brief={overview.briefRecap} formatted /> : p.recap ? <RecapBody recap={p.recap} formatted /> : p.writing ? <p role="status">{t("Writing today's recap…")}</p> : null}
+        {p.recapError ? <p role="alert">{p.recapError}</p> : null}
+      </section>
+    ) : null,
+
+    upcomingShows(p.upcoming) && p.upcoming ? (
+      <section className="th-section" data-section="upcoming" aria-labelledby="th-week">
+        {section("th-week", t("This week"))}
+        <UpcomingBody view={p.upcoming} />
+      </section>
+    ) : null,
+  ];
   return wrap(
     <>
       {sched.error ? (
@@ -312,56 +372,7 @@ export function RedesignedHome(p: RedesignedHomeProps) {
           {sched.error}
         </p>
       ) : null}
-      {dayEmpty ? emptyDay : timeline}
-
-      {approvals > 0 ? (
-        <section className="th-section" data-section="approvals" aria-labelledby="th-approvals">
-          {section("th-approvals", t("Waiting for approval"))}
-          <div className="th-row">
-            <span>{waitingLabel(approvals)}</span>
-            <WButton link={links} onClick={() => p.onOpenSection("automations")}>
-              {t("Open")}
-            </WButton>
-          </div>
-        </section>
-      ) : null}
-
-      {overview.openLoops.length > 0 ? (
-        <section className="th-section" data-section="threads" aria-labelledby="th-threads">
-          {section("th-threads", t("Open threads"))}
-          <ul className="th-list">
-            {overview.openLoops.map((loop) => (
-              <li key={loop.id}>
-                <span className="th-list-title">{loop.subject || t("(no subject)")}</span>
-                <span className="th-list-meta">{threadLine(loop)}</span>
-                {loop.summary ? <span className="th-list-text">{loop.summary}</span> : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {recapState || overview.briefRecap || p.recap ? (
-        <section className="th-section" data-section="recap" aria-labelledby="th-recap">
-          <div className="th-section-head">
-            {section("th-recap", voiceText(voice, "recapHeader"))}
-            {!overview.briefRecap ? (
-              <WButton variant="quiet" link={links} disabled={p.writing} onClick={p.onRefreshRecap}>
-                {p.writing ? t("Writing…") : t("Refresh")}
-              </WButton>
-            ) : null}
-          </div>
-          {overview.briefRecap ? <BriefRecapBody brief={overview.briefRecap} formatted /> : p.recap ? <RecapBody recap={p.recap} formatted /> : p.writing ? <p role="status">{t("Writing today's recap…")}</p> : null}
-          {p.recapError ? <p role="alert">{p.recapError}</p> : null}
-        </section>
-      ) : null}
-
-      {upcomingShows(p.upcoming) && p.upcoming ? (
-        <section className="th-section" data-section="upcoming" aria-labelledby="th-week">
-          {section("th-week", t("This week"))}
-          <UpcomingBody view={p.upcoming} />
-        </section>
-      ) : null}
+      {withDividers(parts, dividers)}
     </>,
   );
 }

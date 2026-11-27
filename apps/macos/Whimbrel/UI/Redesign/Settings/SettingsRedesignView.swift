@@ -24,6 +24,9 @@ private struct SettingsRedesignHost: View {
     /// The same row, for a section that keeps it in a collapsed group (Connectors, Advanced): the group opens before the scroll.
     @State private var reveal: String?
     @StateObject private var searchState = SettingsSearchState()
+    /// "That setting isn't shown right now." under the search field after a hit on a row this state does not draw.
+    @State private var hint: String?
+    @State private var hintTask: Task<Void, Never>?
     /// New each time the window closes. The secret rows (and the Connectors token sheet) listen for it and drop what was typed
     /// and not saved: closing a window orders it out and may not remove its views (`onDisappear` is not a promise). Nothing else
     /// is rebuilt, so a long export, compact or delete that is running keeps showing that it is running when the window reopens.
@@ -33,7 +36,7 @@ private struct SettingsRedesignHost: View {
         WSettingsWindow(
             items: SettingsRedesign.navItems(pendingSuggestions: suggestions.pending.count),
             selection: selection?.rawValue,
-            onSelect: { selection = SettingsSection(rawValue: $0) },
+            onSelect: { selection = SettingsSection(rawValue: $0); clearHint() },
             query: $query,
             searchPlaceholder: String(localized: "Search settings"),
             results: SettingsRedesign.results(for: query),
@@ -43,10 +46,16 @@ private struct SettingsRedesignHost: View {
             // A gallery click rebuilds this window (`ThemedRoot`); land back on the card, not the top.
             onScrolled: { id in
                 searchState.flash(id)
+                announceShowing(id)
                 // The group has opened by now. Cleared, so the same hit chosen again is a new hand-off, and opening Connectors
                 // later from the sidebar does not open Advanced on its own.
                 reveal = WSettingsHandoff.afterScroll(target: reveal, done: id)
             },
+            onMissing: { id in
+                reveal = WSettingsHandoff.afterScroll(target: reveal, done: id)
+                showHint(String(localized: "That setting isn't shown right now.", comment: "Shown under the Settings search field when the chosen result is a row this state does not draw, such as Manage subscription on the free plan."))
+            },
+            hint: hint,
             restoreScroll: { SkinStore.shared.takeGalleryScrollTarget() },
             detail: { content }
         )
@@ -56,6 +65,36 @@ private struct SettingsRedesignHost: View {
         .frame(minWidth: 640, minHeight: 480)
         .onAppear(perform: showPendingSection)
         .onChange(of: appState.pendingSettingsSection) { _, _ in showPendingSection() }
+        .onChange(of: query) { _, _ in clearHint() }
+    }
+
+    private func clearHint() {
+        hintTask?.cancel()
+        hint = nil
+    }
+
+    /// Shows the hint and says it to VoiceOver; it goes away by itself, or as soon as the person types or picks a section.
+    private func showHint(_ text: String) {
+        hintTask?.cancel()
+        hint = text
+        announce(text)
+        hintTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            hint = nil
+        }
+    }
+
+    /// The row was found: the tint is the sighted cue, this is the VoiceOver one.
+    private func announceShowing(_ id: String) {
+        guard let title = SettingsSearch.entries.first(where: { $0.id == id })?.title else { return }
+        let format = String(localized: "Showing %@.", comment: "Said by VoiceOver after a Settings search result is chosen and its row is on screen. The placeholder is the setting's name.")
+        announce(WJumpNotice.after(found: true, title: title, shownFormat: format, hiddenText: "").text)
+    }
+
+    private func announce(_ text: String) {
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                             userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
 
     /// Opens the entry's section, clears the search and scrolls to the row once it is on screen.

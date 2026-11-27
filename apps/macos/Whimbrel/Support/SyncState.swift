@@ -795,7 +795,11 @@ final class SyncState: ObservableObject {
     // MARK: - Cloud plan: Upgrade (Stripe Checkout) and Manage (Stripe portal)
 
     func refreshPlan() async {
-        guard let signIn, let billing else { return }
+        guard let signIn, let billing else {
+            // Unconfigured build: no read can ever happen, so say so instead of staying on "Checking your plan…".
+            if plan == nil, !planReadFailed { planReadFailed = true }
+            return
+        }
         do {
             let devicePublicKeyBase64 = try loadOrThrowDevicePublicKey()
             let idToken = try await signIn.validIdToken()

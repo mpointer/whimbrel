@@ -19,6 +19,7 @@ import {
   greetingFor,
   imageryOf,
   infoboxPlacement,
+  hasScrim,
   isDrawn,
   leftovers,
   markerLabel,
@@ -460,20 +461,31 @@ describe("Reference", () => {
 describe("imagery", () => {
   const manifest = (imagery: { asset: string; placement: string; textFree: boolean }[]) => ({ decoration: { imagery } });
 
-  it("textFree image is never placed on background", () => {
-    expect(isDrawn({ placement: "background", textFree: true })).toBe(false);
-    expect(isDrawn({ placement: "background", textFree: false })).toBe(true);
-    expect(isDrawn({ placement: "header", textFree: true })).toBe(true);
-    expect(isDrawn({ placement: "badge", textFree: true })).toBe(true);
-    const kept = imageryOf(manifest([{ asset: "a.png", placement: "background", textFree: true }, { asset: "b.png", placement: "header", textFree: true }]));
-    expect(kept.map((i) => i.asset)).toEqual(["b.png"]);
+  it("drops the background placement: an old file loads, and nothing is drawn for it", () => {
+    expect(isDrawn({ placement: "background" })).toBe(false);
+    expect(isDrawn({ placement: "header" })).toBe(true);
+    expect(isDrawn({ placement: "badge" })).toBe(true);
+    const kept = imageryOf(manifest([{ asset: "a.png", placement: "background", textFree: false }, { asset: "b.png", placement: "header", textFree: true }, { asset: "c.png", placement: "badge", textFree: false }]));
+    expect(kept.map((i) => i.asset)).toEqual(["b.png", "c.png"]);
   });
 
-  it("covers an image fully until the shell has measured its scrim", () => {
-    const [unmeasured] = imageryOf(manifest([{ asset: "a.png", placement: "background", textFree: false }]));
+  it("puts a scrim on a header image unless it is text-free, and none on a badge", () => {
+    expect(hasScrim({ placement: "header", textFree: false })).toBe(true);
+    expect(hasScrim({ placement: "header", textFree: true })).toBe(false);
+    expect(hasScrim({ placement: "badge", textFree: false })).toBe(false);
+  });
+
+  it("covers a header image fully until the shell has measured its scrim", () => {
+    const [unmeasured] = imageryOf(manifest([{ asset: "a.png", placement: "header", textFree: false }]));
     expect(unmeasured.scrim).toBe(1);
-    const [measured] = imageryOf(manifest([{ asset: "a.png", placement: "background", textFree: false }]), { "a.png": 0.42 });
+    const [measured] = imageryOf(manifest([{ asset: "a.png", placement: "header", textFree: false }]), { "a.png": 0.42 });
     expect(measured.scrim).toBe(0.42);
+  });
+
+  it("draws a text-free header and a badge as they are, whatever was measured", () => {
+    const [free, badge] = imageryOf(manifest([{ asset: "a.png", placement: "header", textFree: true }, { asset: "b.png", placement: "badge", textFree: false }]), { "a.png": 0.9, "b.png": 0.9 });
+    expect(free.scrim).toBe(0);
+    expect(badge.scrim).toBe(0);
   });
 
   it("drops a placement it does not know and a skin with no images has none", () => {

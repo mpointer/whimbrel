@@ -22,7 +22,7 @@
 /* ---- The shell ---- */
 .w-shell {
   min-height: 0;
-  background: var(--color-background-page);
+  background: var(--sx-texture, none), var(--color-background-page);
 }
 .w-shell > .w-sidebar {
   flex: none;

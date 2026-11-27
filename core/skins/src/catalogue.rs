@@ -86,7 +86,7 @@ fn base_catalogue() -> Value {
             "headerBand": names(&HeaderBand::ALL),
             "dividers": names(&Divider::ALL),
             "texture": names(&Texture::ALL),
-            "imageryPlacement": names(&Placement::ALL),
+            "imageryPlacement": names(&Placement::OFFERED),
         },
         "voice": {
             "keys": voice_keys,

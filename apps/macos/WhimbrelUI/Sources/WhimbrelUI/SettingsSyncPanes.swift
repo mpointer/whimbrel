@@ -58,7 +58,7 @@ public struct WSyncDevicesSettingsView: View {
             if let labels = model.tellAFriend {
                 WTellAFriendCard(labels: labels, copy: actions.tellAFriend)
                     .wSettingsAnchored(model.anchors.tellAFriend, highlighted: highlighted)
-                    .id(model.anchors.tellAFriend)
+                    .wAnchor(model.anchors.tellAFriend)
             }
         }
         .onChange(of: model.phase) { _, phase in
@@ -111,11 +111,11 @@ public struct WSyncDevicesSettingsView: View {
                 }
             }
             .wSettingsAnchored(model.anchors.phone, highlighted: highlighted)
-            .id(model.anchors.phone)
+            .wAnchor(model.anchors.phone)
         case .connected:
             WSettingsCard { wNote(l.phoneConnected) }
                 .wSettingsAnchored(model.anchors.phone, highlighted: highlighted)
-                .id(model.anchors.phone)
+                .wAnchor(model.anchors.phone)
         }
     }
 
@@ -141,7 +141,7 @@ public struct WSyncDevicesSettingsView: View {
             }
         }
         .wSettingsAnchored(model.anchors.overview, highlighted: highlighted)
-        .id(model.anchors.overview)
+        .wAnchor(model.anchors.overview)
     }
 
     /// The state in one word, with a chip; VoiceOver announces it when it changes.
@@ -173,7 +173,7 @@ public struct WSyncDevicesSettingsView: View {
                 WButton(l.save, kind: .secondary, action: actions.saveDeviceName)
             }
         }
-        .id(a.name)
+        .wAnchor(a.name)
         if let error = model.actionError {
             WSettingsRowFrame(label: "", detail: nil, controlSpeaksLabel: false, errorText: error) { EmptyView() }
         }
@@ -189,7 +189,7 @@ public struct WSyncDevicesSettingsView: View {
             actions.deleteAccountAsked()
             deleting = true
         }
-        .id(a.deleteAccount)
+        .wAnchor(a.deleteAccount)
     }
 
     @ViewBuilder
@@ -286,7 +286,7 @@ public struct WSyncDevicesSettingsView: View {
             ) {
                 WButton(now.isSyncing ? l.syncing : l.syncNow, kind: .secondary, action: actions.syncNow).disabled(!now.isEnabled || now.isSyncing)
             }
-            .id(a.syncNow)
+            .wAnchor(a.syncNow)
             ForEach(model.notes) { note in wNote(note.text) }
             if let pending = model.pending { pendingRows(pending) }
         }

@@ -72,12 +72,15 @@ export interface WSpineStopProps {
   last?: boolean;
   /** The stop's name for assistive technology, with its time: "10:31 AM, Northwind security review, in 9 minutes". */
   label?: string;
+  /** The stop is the hero (the next or live meeting). The ruled time line draws no rule beside it. */
+  hero?: boolean;
   children: ReactNode;
 }
 
-export function WSpineStop({ time, timeNote, node, connector = "dashed", last, label, children }: WSpineStopProps) {
+export function WSpineStop({ time, timeNote, node, connector = "dashed", last, label, hero, children }: WSpineStopProps) {
+  const className = ["w-spine-stop", last ? "w-spine-last" : "", hero ? "w-spine-hero" : ""].filter(Boolean).join(" ");
   return (
-    <li className={last ? "w-spine-stop w-spine-last" : "w-spine-stop"} data-node={node} aria-label={label}>
+    <li className={className} data-node={node} aria-label={label}>
       <span className="w-spine-time">
         {time}
         {timeNote ? <span className="w-spine-sub">{timeNote}</span> : null}
@@ -97,6 +100,12 @@ export function WSpine({ label, children, variant = "line" }: { label: string; c
       {children}
     </ol>
   );
+}
+
+/** The rule a skin draws between Home's sections (`decoration.dividers`, drawn by system.css under `data-dividers`). It is
+ *  decoration, hidden from Narrator, and draws nothing under the `none` style; callers leave it out for Thread. */
+export function WDivider() {
+  return <div className="w-divider" aria-hidden="true" />;
 }
 
 /** The line that marks the present: "Now  Memory on since 8:02 AM". */
@@ -149,6 +158,8 @@ export interface WMeetingCardProps {
   onSecondary?: () => void;
   /** Actions drawn as text links (the skin's `actions: links` choice). */
   links?: boolean;
+  /** Drawn as a still picture: its buttons are not buttons (see WButton). */
+  still?: boolean;
   /** Next only: drawn above the title (the live recording indicator). */
   indicator?: ReactNode;
   /** Next only: the tag's words when they are not "Next, in 8 minutes" (a meeting in progress). */
@@ -170,12 +181,12 @@ export function WMeetingCard(p: WMeetingCardProps) {
         </div>
         <div className="w-meeting-actions">
           {p.secondaryLabel ? (
-            <WButton icon="document" link={p.links} onClick={p.onSecondary}>
+            <WButton icon="document" link={p.links} still={p.still} onClick={p.onSecondary}>
               {p.secondaryLabel}
             </WButton>
           ) : null}
           {p.primaryLabel ? (
-            <WButton variant="primary" icon="document" link={p.links} hint={p.primaryHint} onClick={p.onPrimary}>
+            <WButton variant="primary" icon="document" link={p.links} still={p.still} hint={p.primaryHint} onClick={p.onPrimary}>
               {p.primaryLabel}
             </WButton>
           ) : null}
@@ -192,7 +203,7 @@ export function WMeetingCard(p: WMeetingCardProps) {
       {p.soon ? <span className="w-meeting-tag">{p.soon}</span> : null}
       <span className="w-meeting-spacer" />
       {p.primaryLabel ? (
-        <WButton variant={p.variant === "upcoming" ? "secondary" : "quiet"} link={p.links} onClick={p.onPrimary}>
+        <WButton variant={p.variant === "upcoming" ? "secondary" : "quiet"} link={p.links} still={p.still} onClick={p.onPrimary}>
           {p.primaryLabel}
         </WButton>
       ) : null}

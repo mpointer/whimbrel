@@ -128,6 +128,7 @@ const FOOTER: Record<Language, string> = {
   en: "Manage email preferences",
   es: "Gestionar preferencias de correo",
   fr: "Gérer vos préférences de courriel",
+  de: "E-Mail-Einstellungen verwalten",
 };
 
 export async function send(

@@ -110,6 +110,8 @@ export interface WNextMeetingProps {
   secondaryLabel?: string;
   onSecondary?: () => void;
   links?: boolean;
+  /** Drawn as a still picture: its buttons are not buttons (see WButton). */
+  still?: boolean;
   /** Drawn above the title in every look (the live recording indicator). */
   indicator?: ReactNode;
   /** The tag's words when they are not "Next, in 8 minutes" (a meeting in progress). */
@@ -118,7 +120,7 @@ export interface WNextMeetingProps {
 
 /** The next meeting, hero of Home. `card` is the system's next-meeting card. `scoreboard` leads with the start time in
  *  large numerals on the accent color. `infobox` is a boxed list of the facts. All three carry the same words. */
-export function WNextMeeting({ variant = "card", title, time, when, soon, attendees, primaryLabel, onPrimary, primaryHint, secondaryLabel, onSecondary, links, indicator, tag: tagText }: WNextMeetingProps) {
+export function WNextMeeting({ variant = "card", title, time, when, soon, attendees, primaryLabel, onPrimary, primaryHint, secondaryLabel, onSecondary, links, still, indicator, tag: tagText }: WNextMeetingProps) {
   const heading = useId();
   if (variant === "card") {
     return (
@@ -134,6 +136,7 @@ export function WNextMeeting({ variant = "card", title, time, when, soon, attend
         secondaryLabel={secondaryLabel}
         onSecondary={onSecondary}
         links={links}
+        still={still}
         indicator={indicator}
         tag={tagText}
       />
@@ -143,12 +146,12 @@ export function WNextMeeting({ variant = "card", title, time, when, soon, attend
   const actions = (
     <div className="w-meeting-actions">
       {secondaryLabel ? (
-        <WButton icon="document" link={links} onClick={onSecondary}>
+        <WButton icon="document" link={links} still={still} onClick={onSecondary}>
           {secondaryLabel}
         </WButton>
       ) : null}
       {primaryLabel ? (
-        <WButton variant="primary" icon="document" link={links} hint={primaryHint} onClick={onPrimary}>
+        <WButton variant="primary" icon="document" link={links} still={still} hint={primaryHint} onClick={onPrimary}>
           {primaryLabel}
         </WButton>
       ) : null}

@@ -81,6 +81,7 @@ p { margin: 0 0 1em; text-wrap: pretty; }
 .site-header { position: sticky; top: 0; z-index: 50; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--border); }
 .header-row { display: flex; align-items: center; justify-content: space-between; height: 64px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); font: 700 1.2rem/1 var(--serif); }
+.brand { flex-shrink: 0; margin-right: 24px; }
 .brand img { border-radius: 8px; }
 .header-row { position: relative; }
 .lang-switch { display: flex; gap: 10px; }
@@ -88,10 +89,19 @@ p { margin: 0 0 1em; text-wrap: pretty; }
 .primary-nav .lang-switch a[aria-current] { color: var(--accent); font-weight: 600; }
 .nav-toggle { display: none; background: none; border: 0; padding: 12px 8px; cursor: pointer; gap: 5px; }
 .nav-toggle span { display: block; width: 22px; height: 2px; background: var(--text); border-radius: 2px; transition: transform .2s, opacity .2s; }
-.primary-nav { display: flex; align-items: center; gap: 28px; }
+.primary-nav { display: flex; align-items: center; gap: clamp(14px, 1.6vw, 28px); }
+.primary-nav a { white-space: nowrap; }
+/* Four languages and German or French labels need the room: tighter spacing at every width above the menu button, since the header row is no wider than the page. */
+@media (min-width: 1241px) {
+  .brand { margin-right: 16px; }
+  .primary-nav { gap: 13px; }
+  .primary-nav a:not(.btn) { font-size: .9rem; }
+  .lang-switch { gap: 8px; }
+  .primary-nav .lang-switch a { font-size: .78rem; }
+}
 .primary-nav a:not(.btn) { color: var(--text); text-decoration: none; font-weight: 500; font-size: .97rem; }
 .primary-nav a:not(.btn):hover { color: var(--accent); }
-@media (max-width: 820px) {
+@media (max-width: 1240px) {
   .nav-toggle { display: grid; }
   .primary-nav { display: none; position: absolute; left: -16px; right: -16px; top: 64px; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 16px 20px; background: var(--bg); border-bottom: 1px solid var(--border); box-shadow: var(--shadow); }
   .site-header[data-open] .primary-nav { display: flex; }

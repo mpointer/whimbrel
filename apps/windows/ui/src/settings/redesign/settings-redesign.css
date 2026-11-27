@@ -8,6 +8,24 @@
   width: 100%;
   margin-bottom: var(--w-space-md);
 }
+/* The hint after a search hit whose row is not drawn in this state. Wraps; never clipped. */
+.rs-notice {
+  margin: 0 0 var(--w-space-md);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+/* Said to a screen reader only. */
+.rs-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .rs-content {
   display: flex;
   flex-direction: column;

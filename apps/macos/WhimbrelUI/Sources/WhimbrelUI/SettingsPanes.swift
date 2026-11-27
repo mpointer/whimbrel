@@ -141,7 +141,7 @@ public struct WGeneralSettingsView: View {
                     label: l.updatesLabel, description: model.updateStatus, buttonTitle: l.checkForUpdates,
                     isEnabled: !model.updateBusy, highlighted: on(a.update), action: actions.checkForUpdates
                 )
-                .id(a.update)
+                .wAnchor(a.update)
                 if model.restartAvailable && !model.updateBusy {
                     WSettingsRow(
                         label: l.restartToUpdate, description: model.restartBlockedNote, buttonTitle: l.restartToUpdate,
@@ -156,13 +156,13 @@ public struct WGeneralSettingsView: View {
                     options: model.languageOptions.map { WSettingsOption(id: $0.id, title: $0.title) },
                     selection: model.languageSelection, highlighted: on(a.language), onSelect: actions.setLanguage
                 )
-                .id(a.language)
+                .wAnchor(a.language)
                 WSettingsPickerRow(
                     label: l.writeIn, description: [model.routinesNote, model.localModelNote].compactMap { $0 }.joined(separator: " "),
                     options: model.writeInOptions.map { WSettingsOption(id: $0.id, title: $0.title) },
                     selection: model.writeInSelection, highlighted: on(a.writeIn), onSelect: actions.setWriteIn
                 )
-                .id(a.writeIn)
+                .wAnchor(a.writeIn)
             }
 
             WSettingsCard {
@@ -173,7 +173,7 @@ public struct WGeneralSettingsView: View {
                     isEnabled: model.appearanceLockedCaption == nil, disabledReason: model.appearanceLockedCaption,
                     highlighted: on(a.appearance), onSelect: actions.setAppearance
                 )
-                .id(a.appearance)
+                .wAnchor(a.appearance)
                 .accessibilityIdentifier(WSettingsIDs.appearancePicker)
             }
 
@@ -334,10 +334,10 @@ public struct WProfileSettingsView: View {
         VStack(alignment: .leading, spacing: theme.space(16)) {
             WSettingsCard(heading: l.profile, description: l.intro) {
                 WSettingsRow(label: l.useProfile, isOn: model.enabled, highlighted: on(a.use), onChange: actions.setEnabled)
-                    .id(a.use)
+                    .wAnchor(a.use)
                     .accessibilityIdentifier(WSettingsIDs.profileEnabled)
                 WSettingsRow(label: l.suggest, isOn: model.suggestEnabled, highlighted: on(a.suggest), onChange: actions.setSuggestEnabled)
-                    .id(a.suggest)
+                    .wAnchor(a.suggest)
                     .accessibilityIdentifier(WSettingsIDs.profileSuggestEnabled)
                 WSettingsTextFieldRow(label: l.name, text: Binding(get: { model.name }, set: actions.setName))
                 WSettingsTextFieldRow(label: l.role, text: Binding(get: { model.role }, set: actions.setRole))
@@ -346,13 +346,13 @@ public struct WProfileSettingsView: View {
                     label: l.about, text: Binding(get: { model.about }, set: actions.setAbout), footer: model.aboutFooter,
                     highlighted: on(a.about)
                 )
-                .id(a.about)
+                .wAnchor(a.about)
                 .accessibilityIdentifier(WSettingsIDs.profileAbout)
             }
 
             WSettingsCard {
                 WSettingsList(label: l.learnedFacts, items: model.facts.map(factItem), highlighted: on(a.facts))
-                    .id(a.facts)
+                    .wAnchor(a.facts)
                 WSettingsRowFrame(label: l.addFact, detail: nil, controlSpeaksLabel: false, alwaysStacked: true, errorText: factError) {
                     WFlowLayout(spacing: theme.space(8), lineSpacing: theme.space(8)) {
                         WTextBox(label: l.addFact, placeholder: l.addFactPlaceholder, text: $newFact, onSubmit: addTyped).frame(minWidth: 200, idealWidth: 280)
@@ -529,7 +529,7 @@ public struct WPlanSettingsView: View {
                     WSettingsRow(label: model.planLine ?? "", highlighted: on(a.manage)) {
                         WButton(l.manage, kind: .secondary, action: actions.manage).disabled(model.isWorking)
                     }
-                    .id(a.manage)
+                    .wAnchor(a.manage)
                 } else {
                     WSettingsRow(label: model.planLine ?? "") { EmptyView() }
                 }
@@ -552,7 +552,7 @@ public struct WPlanSettingsView: View {
                 WSettingsRow(label: l.provider, highlighted: on(a.provider)) {
                     WButton(l.aiSettings, kind: .secondary, action: actions.openAISettings)
                 }
-                .id(a.provider)
+                .wAnchor(a.provider)
             }
         }
         .wSettingsAnchored(a.summary, highlighted: highlighted)

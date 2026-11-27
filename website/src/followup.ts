@@ -97,6 +97,27 @@ const COPY: Record<Language, Copy> = {
     promisePending: "C'est la dernière de ces notes de démarrage. Vous avez demandé les nouvelles du produit à l'inscription; elles commenceront quand vous aurez confirmé avec le lien que nous vous avons envoyé. Jamais un déluge, et vous pouvez changer cela ci-dessous.",
     reply: "J'aimerais beaucoup savoir comment se passent vos premiers jours, ce qui a fonctionné et ce qui n'a pas fonctionné. Répondez simplement à ce courriel.",
   },
+  de: {
+    subject: "Whimbrel: danke fürs Ausprobieren",
+    hi: (f) => `Hallo ${f},`,
+    thanks: "Danke, dass Sie sich gestern bei Whimbrel registriert haben. Ihre Download-Links kamen in einer E-Mail mit dem Betreff „Your Whimbrel download links“. Hier ist Ihr Link noch einmal:",
+    linkAgain: "Whimbrel herunterladen",
+    mac: "Sie brauchen einen Mac mit Apple-Chip und macOS 14 oder neuer.",
+    windows: "Die Windows-Version ist im Early Access und braucht Windows 11, 64 Bit. Wenn SmartScreen meldet, dass das Installationsprogramm nicht erkannt wurde, wählen Sie Weitere Informationen und dann Trotzdem ausführen.",
+    updates: "Nach der Installation müssen Sie nichts mehr herunterladen: Whimbrel sucht selbst nach Updates und installiert sie.",
+    quickstartIntro: "Der Einstieg dauert ein paar Minuten:",
+    steps: (p) => [
+      p === "mac" ? "Erlauben Sie Mikrofon und Bildschirmaufnahme, wenn macOS danach fragt. So hört Whimbrel Ihre Meetings und merkt sich, was auf dem Bildschirm war." : "Erlauben Sie den Zugriff auf das Mikrofon, wenn Windows danach fragt. So hört Whimbrel Ihre Meetings.",
+      "Verbinden Sie Ihren Kalender in den Einstellungen von Whimbrel, damit Ihre Meetings von selbst aufgenommen werden.",
+      "Öffnen Sie ein Meeting danach, um die Zusammenfassung, die Entscheidungen und die Aufgaben zu lesen.",
+      "Fragen Sie Whimbrel alles dazu, etwa: „Was haben wir zum Preis vereinbart?“",
+    ],
+    more: "Mehr dazu, wie Meetings funktionieren",
+    promiseIn: "Das war der letzte dieser Einrichtungshinweise. Sie haben bei der Registrierung um Produktneuigkeiten gebeten. Sie erhalten also gelegentlich Versionshinweise, nie eine Flut, und können sie unten abbestellen.",
+    promiseOut: "Das war alles von uns. Sie erhalten keine Produkt- oder Marketing-E-Mails, weil Sie bei der Registrierung nicht darum gebeten haben. Wenn Sie Versionshinweise möchten, können Sie sie unten einschalten.",
+    promisePending: "Das war der letzte dieser Einrichtungshinweise. Sie haben bei der Registrierung um Produktneuigkeiten gebeten. Sie beginnen, sobald Sie mit dem Link aus unserer E-Mail bestätigen. Es wird nie eine Flut, und Sie können es unten ändern.",
+    reply: "Ich würde gern hören, wie die ersten Tage laufen, was funktioniert hat und was nicht. Antworten Sie einfach auf diese E-Mail.",
+  },
 };
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

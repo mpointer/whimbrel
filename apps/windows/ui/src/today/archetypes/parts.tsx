@@ -2,7 +2,6 @@
 // recap and the devices footer. Each layout places and styles them; none re-derives what a row shows.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { skinImage } from "../../api";
 import { DeviceChip } from "../../library/LibraryView";
 import { t } from "../../l10n";
 import { MeetingChips } from "../../meetings/MeetingCard";
@@ -14,7 +13,6 @@ import {
   type EventRow,
   type HeldRow,
   type Imagery,
-  type ImagePlacement,
   type RecapModel,
   type ScheduleItem,
   type TodayModel,
@@ -381,44 +379,8 @@ export function DevicesLine({ model, align }: { model: TodayModel; align?: "cent
 
 // --- imagery ----------------------------------------------------------------------------------
 
-/** An approved image of the skin as an object URL, or null while it loads or when it cannot be read. */
-export function useSkinImage(skinId: string, asset: string | null): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!asset) {
-      setUrl(null);
-      return;
-    }
-    let live = true;
-    let made: string | null = null;
-    skinImage(skinId, asset)
-      .then((bytes) => {
-        if (!live) return;
-        made = URL.createObjectURL(new Blob([bytes]));
-        setUrl(made);
-      })
-      .catch(() => live && setUrl(null));
-    return () => {
-      live = false;
-      if (made) URL.revokeObjectURL(made);
-    };
-  }, [skinId, asset]);
-  return url;
-}
-
-/** The skin's image for one placement: a header band 120 px tall, a 48 px badge, or a full-bleed background
- *  under a scrim. Draws nothing, and takes no space, when the skin has none or it cannot be read. */
-export function SkinImage({ imagery, skinId, placement }: { imagery: Imagery[]; skinId: string; placement: ImagePlacement }) {
-  const entry = imagery.find((i) => i.placement === placement);
-  const url = useSkinImage(skinId, entry?.asset ?? null);
-  if (!entry || !url) return null;
-  return (
-    <div className={`skin-image skin-image--${placement}`} aria-hidden="true">
-      <img src={url} alt="" />
-      {placement === "background" && <div className="skin-image__scrim" style={{ opacity: entry.scrim }} />}
-    </div>
-  );
-}
+// The skin image (header and badge) draws in today/skinImage.tsx, which the skin cards' Home preview imports without this file's weight.
+export { useSkinImage, SkinImage, SkinImageView } from "../skinImage";
 
 // --- measuring --------------------------------------------------------------------------------
 

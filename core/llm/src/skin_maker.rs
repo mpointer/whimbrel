@@ -106,6 +106,7 @@ Rules:
 - palettes: the full palette objects this skin uses (id, name, and "dark" and/or "light" maps of colour tokens to #RRGGBB). Keep text readable on its background. The skin's "palettes" list names their ids.
 - imageQueries: for a new skin, up to 3 short web image search terms that fit it. For a refine, only when the user's latest message mentions images. Otherwise [].
 - imagePrompts: emit image prompts only when the user's latest message asks for an image to be made (up to 2). Otherwise [].
+- Images go in the header at the top of Home and as a small badge. There is no background image, so never place an image behind the page's text.
 
 Reply with only one JSON object, no prose and no fences, in this shape:
 {"intent": "new" | "refine" | "clarify" | "decline", "reply": "...", "notes": [{"step": "...", "text": "..."}], "skin": {...manifest...} | null, "palettes": [{...}], "imageQueries": ["..."], "imagePrompts": ["..."]}"#;

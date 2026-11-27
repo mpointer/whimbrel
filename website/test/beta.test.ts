@@ -213,15 +213,15 @@ describe("/beta/review", () => {
 });
 
 describe("pages", () => {
-  it("serves the sign-up page in English, Spanish and French, linked from home and download", async () => {
-    for (const path of ["/mobile-beta/", "/es/mobile-beta/", "/fr/mobile-beta/"]) {
+  it("serves the sign-up page in English, Spanish, French and German, linked from home and download", async () => {
+    for (const path of ["/mobile-beta/", "/es/mobile-beta/", "/fr/mobile-beta/", "/de/mobile-beta/"]) {
       const html = await (await call(new Request(`https://whimbrel.test${path}`))).text();
       expect(html, path).toContain('id="beta-form"');
       expect(html, path).toContain('name="phones"');
     }
-    for (const path of ["/", "/download/", "/es/", "/es/download/", "/fr/", "/fr/download/"]) {
+    for (const path of ["/", "/download/", "/es/", "/es/download/", "/fr/", "/fr/download/", "/de/", "/de/download/"]) {
       const html = await (await call(new Request(`https://whimbrel.test${path}`))).text();
-      expect(html, path).toMatch(/href="(\/es|\/fr)?\/mobile-beta\/"/);
+      expect(html, path).toMatch(/href="(\/es|\/fr|\/de)?\/mobile-beta\/"/);
     }
   });
 });

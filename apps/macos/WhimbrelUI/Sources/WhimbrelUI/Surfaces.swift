@@ -133,6 +133,18 @@ struct WFlowLayout: Layout {
         return ProposedViewSize(width: container, height: nil)
     }
 
+    /// How far past the container's edge a line may run before the next child wraps. A row that is exactly as wide as its children
+    /// (a card that sizes itself to its chips) is given that width back, and sums of fractional widths (a monospaced face, a compact
+    /// skin's spacing) can come out a hair above it. Without this slack the last chip wraps onto a second line the card never
+    /// measured, and the next row draws over it.
+    static let wrapTolerance: CGFloat = 0.01
+
+    /// Whether a child of `width` fits on the line that already holds `used` points (the end of the last child plus its spacing).
+    /// `sizeThatFits` and `placeSubviews` both decide through this, so a card always has the height of the lines it draws.
+    static func fits(used: CGFloat, width: CGFloat, container: CGFloat) -> Bool {
+        used == 0 || used + width <= container + wrapTolerance
+    }
+
     private func measured(_ subview: LayoutSubview, container: CGFloat?) -> CGSize {
         let ideal = subview.sizeThatFits(.unspecified)
         let proposal = Self.proposal(idealWidth: ideal.width, container: container)
@@ -145,7 +157,7 @@ struct WFlowLayout: Layout {
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, width: CGFloat = 0
         for subview in subviews {
             let size = measured(subview, container: proposal.width)
-            if x > 0, x + size.width > maxWidth {
+            if !Self.fits(used: x, width: size.width, container: maxWidth) {
                 y += rowHeight + lineSpacing
                 x = 0
                 rowHeight = 0
@@ -161,7 +173,7 @@ struct WFlowLayout: Layout {
         var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
         for subview in subviews {
             let size = measured(subview, container: bounds.width)
-            if x > bounds.minX, x + size.width > bounds.maxX {
+            if !Self.fits(used: x - bounds.minX, width: size.width, container: bounds.width) {
                 y += rowHeight + lineSpacing
                 x = bounds.minX
                 rowHeight = 0
@@ -175,23 +187,56 @@ struct WFlowLayout: Layout {
     }
 }
 
-extension Shape {
-    /// An inside border. A solid border is one even-odd fill between the outer shape and an inset
-    /// copy, so a translucent color does not double up where a stroke starts and ends (that left
-    /// ticks at the ends of capsules). A dashed border is an inset stroke.
-    func wBorder(_ color: Color, style: StrokeStyle) -> some View {
+/// Where the edges of a border sit, measured inward from the outer edge of the shape. Consecutive pairs are the filled bands.
+public enum WBorderGeometry {
+    /// The most a band or the gap of a double border takes (Mike, 2026-11-25): six points in all, line, gap, line.
+    public static let doubleBandLimit: CGFloat = 2
+
+    /// A solid border is one band of `width`. A double border is two bands with a gap of the same size between them, each
+    /// `min(width, 2)`, so it is at most six points thick, and all of it sits inside the shape's edge: the layout box does not
+    /// grow. A width under one point is too fine to show two lines, so it draws solid.
+    public static func insets(width: CGFloat, double: Bool) -> [CGFloat] {
+        if double && width >= 1 {
+            let band = min(width, doubleBandLimit)
+            return [0, band, 2 * band, 3 * band]
+        }
+        return [0, width]
+    }
+
+    /// The thickness a border takes inside its shape.
+    public static func thickness(width: CGFloat, double: Bool) -> CGFloat { insets(width: width, double: double).last ?? 0 }
+}
+
+private struct WBorderView<S: Shape>: View {
+    @Environment(\.wTheme) private var theme
+    let shape: S
+    let color: Color
+    let style: StrokeStyle
+
+    var body: some View {
         GeometryReader { proxy in
             let rect = CGRect(origin: .zero, size: proxy.size)
             let w = style.lineWidth
             if style.dash.isEmpty {
-                let outer = self.path(in: rect)
-                let inner = self.path(in: rect.insetBy(dx: w, dy: w))
-                Path { p in p.addPath(outer); p.addPath(inner) }
-                    .fill(color, style: FillStyle(eoFill: true))
+                let insets = WBorderGeometry.insets(width: w, double: theme.drawsDoubleBorder(width: w))
+                Path { p in
+                    for inset in insets { p.addPath(shape.path(in: rect.insetBy(dx: inset, dy: inset))) }
+                }
+                .fill(color, style: FillStyle(eoFill: true))
             } else {
-                self.path(in: rect.insetBy(dx: w / 2, dy: w / 2)).stroke(color, style: style)
+                shape.path(in: rect.insetBy(dx: w / 2, dy: w / 2)).stroke(color, style: style)
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+extension Shape {
+    /// An inside border. A solid border is one even-odd fill between the outer shape and an inset
+    /// copy, so a translucent color does not double up where a stroke starts and ends (that left
+    /// ticks at the ends of capsules). When the skin's border is double the same fill has two bands (see `WBorderGeometry`).
+    /// A dashed border is an inset stroke.
+    func wBorder(_ color: Color, style: StrokeStyle) -> some View {
+        WBorderView(shape: self, color: color, style: style)
     }
 }

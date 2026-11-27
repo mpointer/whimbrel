@@ -2,6 +2,9 @@
    (docs/12 §6: ported, not redesigned). Light/dark follows the system. */
 
 :root {
+  /* The skin's page texture (skin.ts sets --texture-image). It is drawn under the page color on the page background only,
+     never on cards or inputs. Forced colors, more contrast and the High Contrast skin turn it off (below). */
+  --sx-texture: var(--texture-image, none);
   --color-background-page: #f7f2e7;
   --color-background-card: #ffffff;
   --color-border: #e4d9c2;
@@ -36,6 +39,9 @@
   --radius: 12px;
   --radius-control: 8px;
   --radius-card: var(--radius);
+  /* Surfaces (the recording bar, panels, dialogs): one and a half times the card radius, as on the
+     Mac. skin.ts sets it from the skin (Classic gets 18px there). The default is Thread's 16px, so Thread paints right from the
+     first frame. */
   --radius-surface: 16px;
 
   /* The skin's fonts (skin.ts FONT_MAP). These are Whimbrel's: New York for display, SF Pro for the rest. */
@@ -59,8 +65,14 @@
   /* The rest of the skin's shape; the layouts read these. density scales spacing (0.75, 1, 1.25). */
   --border-style: solid;
   --border-width: 1px;
+  /* A double border is drawn by `border-style: double`, which needs three times the line width (two lines and a gap of one
+     line each, at most 2px each, so 6px in all). The box must not grow, so every padding next to such a border gives back --border-trim, which is the
+     two extra line widths a side (skin.ts `borderVariables`). Zero for any other border. */
+  --border-trim: 0px;
   --density: 1;
   --motion: none;
+  /* The skin's motion (skin.ts `motionVariables`). Thread leaves them unset. 0 under Reduce Motion, whatever the skin says. */
+  --motion-scale: 1;
 
   /* Type scale (the Mac's, docs/superpowers/specs/2026-10-16-mac-today-refresh-design.md):
      nothing meant to be read is below --text-caption; uppercase section labels use --text-label. */
@@ -94,5 +106,21 @@
     --color-highlight: #57462d;
     /* Near-black, not white: white on #c97b54 is 3.26:1, below the 4.5:1 the themes guard requires. */
     --color-text-on-accent: #1c1712;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-scale: 0;
+  }
+}
+
+:root[data-skin="high-contrast"] {
+  --sx-texture: none;
+}
+@media (forced-colors: active), (prefers-contrast: more) {
+  :root,
+  :root[data-skin] {
+    --sx-texture: none;
   }
 }

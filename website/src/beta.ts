@@ -223,6 +223,13 @@ const RECEIVED: Record<Language, { subject: string; hi: (f: string) => string; b
     reads: "L'application pour téléphone affiche les réunions que Whimbrel enregistre sur votre Mac ou votre PC Windows. Il vous faudra donc Whimbrel sur l'un des deux.",
     sign: "Mike",
   },
+  de: {
+    subject: "Wir haben Ihre Anfrage für die Whimbrel-Beta erhalten",
+    hi: (f) => `Hallo ${f},`,
+    body: "Danke, dass Sie die Whimbrel-Handy-App ausprobieren möchten. Wir schreiben Ihnen, sobald Ihr Platz bereit ist.",
+    reads: "Die Handy-App zeigt die Meetings, die Whimbrel auf Ihrem Mac oder Windows-PC aufnimmt. Whimbrel muss also auf einem der beiden laufen.",
+    sign: "Mike",
+  },
 };
 
 function receivedEmail(to: string, lang: Language, first: string, from: string, replyTo: string | undefined): Email {
@@ -251,6 +258,13 @@ const DECLINE: Record<Language, { subject: string; hi: (f: string) => string; bo
     hi: (f) => `Bonjour ${f},`,
     body: "Merci de vouloir rejoindre la bêta de Whimbrel pour téléphone. La bêta est petite et nous ne pouvons pas vous ajouter pour le moment.",
     desktop: "Whimbrel pour Mac et Windows se télécharge gratuitement sur https://whimbrelapp.com/fr/download/.",
+    sign: "Mike",
+  },
+  de: {
+    subject: "Zu Ihrer Anfrage für die Whimbrel-Beta",
+    hi: (f) => `Hallo ${f},`,
+    body: "Danke, dass Sie an der Handy-Beta von Whimbrel teilnehmen möchten. Die Beta ist klein, und wir können Sie im Moment nicht aufnehmen.",
+    desktop: "Whimbrel für Mac und Windows können Sie kostenlos unter https://whimbrelapp.com/de/download/ herunterladen.",
     sign: "Mike",
   },
 };
@@ -354,6 +368,32 @@ const INSTALL: Record<Language, InstallCopy> = {
     iphoneUpdates: "Sur iPhone, TestFlight installe les nouvelles versions pour vous.",
     androidUpdates: "Sur Android, Whimbrel affiche un avis quand une nouvelle version sort. Touchez-le et installez le nouveau fichier de la même façon.",
     problems: (m) => `Si quelque chose ne fonctionne pas, répondez à ce courriel ou écrivez à ${m}.`,
+    sign: "Mike",
+  },
+  de: {
+    subject: "Ihre Whimbrel-Handy-Beta ist bereit",
+    hi: (f) => `Hallo ${f},`,
+    ready: "Ihr Platz in der Handy-Beta von Whimbrel ist bereit. Die Handy-App zeigt die Meetings, die Whimbrel auf Ihrem Mac oder Windows-PC aufnimmt. Lassen Sie Whimbrel dort also weiterlaufen.",
+    iphone: "iPhone",
+    iphoneSteps: (l) => [
+      "Installieren Sie TestFlight aus dem App Store.",
+      `Öffnen Sie auf Ihrem iPhone diesen Link: ${l}`,
+      "Installieren Sie Whimbrel über TestFlight und öffnen Sie die App.",
+      "Melden Sie sich mit dem Google-Konto an, das Sie in Whimbrel auf Ihrem Computer verwenden.",
+    ],
+    iphoneLater: "Ihren TestFlight-Link erhalten Sie in einer weiteren E-Mail. Installieren Sie in der Zwischenzeit TestFlight aus dem App Store.",
+    android: "Android",
+    androidSteps: (l) => [
+      `Öffnen Sie auf Ihrem Android-Handy die Release-Seite: ${l}`,
+      "Tippen Sie unter Assets auf die .apk-Datei von Whimbrel, um sie herunterzuladen.",
+      "Öffnen Sie die Datei. Wenn Android nachfragt, erlauben Sie Installationen aus Ihrem Browser und installieren Sie dann.",
+      "Öffnen Sie Whimbrel und melden Sie sich mit dem Google-Konto an, das Sie in Whimbrel auf Ihrem Computer verwenden.",
+      "Bestätigen Sie das Handy auf Ihrem Computer, wenn Whimbrel danach fragt.",
+    ],
+    updates: "Auf dem neuesten Stand bleiben",
+    iphoneUpdates: "Auf dem iPhone installiert TestFlight neue Versionen für Sie.",
+    androidUpdates: "Auf Android zeigt Whimbrel einen Hinweis, wenn eine neue Version erschienen ist. Tippen Sie darauf und installieren Sie die neue Datei auf die gleiche Weise.",
+    problems: (m) => `Wenn etwas nicht funktioniert, antworten Sie auf diese E-Mail oder schreiben Sie an ${m}.`,
     sign: "Mike",
   },
 };

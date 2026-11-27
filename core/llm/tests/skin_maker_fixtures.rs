@@ -186,6 +186,13 @@ fn the_prompt_does_not_offer_whole_page_layouts() {
 }
 
 #[test]
+fn the_prompt_offers_header_and_badge_images_and_no_background() {
+    let prompt = build_skin_prompt(&input(0));
+    assert!(prompt.contains("header at the top of Home and as a small badge"));
+    assert!(prompt.contains("no background image"));
+}
+
+#[test]
 fn skin_maker_es_us_adds_language_line_first() {
     let mut i = input(0);
     i.output_language = "es-US".into();

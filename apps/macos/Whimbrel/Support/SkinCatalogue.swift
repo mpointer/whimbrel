@@ -31,7 +31,8 @@ enum SkinCatalogue {
                 "headerBand": raw(SkinHeaderBand.self),
                 "dividers": raw(SkinDivider.self),
                 "texture": raw(SkinTexture.self),
-                "imageryPlacement": raw(SkinImagePlacement.self),
+                // The background placement is dropped in Thread: it loads from old files but is not offered.
+                "imageryPlacement": [SkinImagePlacement.header, .badge].map(\.rawValue),
             ],
             "voice": [
                 "keys": Dictionary(uniqueKeysWithValues: SkinVoiceKey.allCases.map { ($0.rawValue, ["limit": $0.limit]) }),

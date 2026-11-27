@@ -33,7 +33,7 @@ public struct WHomeView<Live: View>: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(theme.backgroundPage)
+        .wPageBackground()
         .environment(\.wActionStyle, model.elements.actions)
         .environment(\.wLabelStyle, model.elements.labels)
     }
@@ -49,7 +49,11 @@ public struct WHomeView<Live: View>: View {
             } else {
                 WHomeLineTimeline(model: model, actions: actions, open: $open) { live }
             }
-            ForEach(model.sections) { section in WHomeSectionView(section: section, actions: actions) }
+            ForEach(model.sections) { section in
+                // A skin's divider goes above each section label after the first (the time line is the first).
+                if theme.shape.dividers != .none { WDivider() }
+                WHomeSectionView(section: section, actions: actions).wSectionAppear()
+            }
         }
         .frame(maxWidth: 760 * k, alignment: .leading)
         .padding(.horizontal, theme.space(28))
@@ -184,8 +188,10 @@ struct WHomeHistoryRow: View {
                             primaryTitle: m.openTitle, onPrimary: m.openTitle == nil ? nil : { actions.openMeeting(m.id) })
                     }
                 }
+                .transition(.opacity)
             }
         }
+        .wMotion(.panel, value: isOpen)
         .padding(.horizontal, theme.space(14))
         .padding(.vertical, theme.space(6))
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -357,7 +363,7 @@ struct WHomeScoreboard: View {
         VStack(alignment: .leading, spacing: theme.space(10)) {
             HStack(alignment: .firstTextBaseline, spacing: theme.space(16)) {
                 Text(meeting.time)
-                    .font(.system(size: 44 * k, weight: .bold, design: .default).monospacedDigit())
+                    .font(WTextRole.scoreboardSpec(scale: k, style: theme.type).font)
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
                 VStack(alignment: .leading, spacing: theme.space(2)) {
@@ -545,6 +551,8 @@ struct WHomeLineTimeline<Live: View>: View {
                 }
             }
         }
+        .wMotion(.marker, value: rows.map(\.id))
+        .environment(\.wSpineDividers, true)
     }
 
     private func binding(_ id: String) -> Binding<Bool> {
@@ -605,16 +613,27 @@ struct WHomeRuledTimeline<Live: View>: View {
     }
 
     var body: some View {
-        let rule = max(1, theme.borderWidth)
+        // A rule between rows, never above the first or next to the hero (a framed block of its own). The skin's divider style
+        // draws it; a skin with none draws the plain border-coloured rule it has always used between rows.
+        let rows = WHomeLineRow.rows(model)
+        let ruled = WHomeRuledRules.ruleAbove(rows)
         VStack(spacing: 0) {
-            Rectangle().fill(theme.border).frame(height: rule)
-            ForEach(WHomeLineRow.rows(model)) { row in
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                if ruled[index] { rule }
                 self.row(row)
-                Rectangle().fill(theme.border).frame(height: rule)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(strings.timeline)
+    }
+
+    @ViewBuilder
+    private var rule: some View {
+        if theme.shape.dividers == .none {
+            Rectangle().fill(theme.border).frame(height: max(1, theme.borderWidth)).accessibilityHidden(true)
+        } else {
+            WDivider()
+        }
     }
 
     @ViewBuilder

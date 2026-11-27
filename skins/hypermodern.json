@@ -32,7 +32,13 @@
   },
   "today": {
     "archetype": "glass",
-    "options": {}
+    "options": {
+      "actions": "buttons",
+      "ask": "prompt",
+      "labels": "plain",
+      "nextMeeting": "scoreboard",
+      "timeline": "line"
+    }
   },
   "typography": {
     "body": "SF Pro/regular",

@@ -4,7 +4,7 @@
 
 export type ProductEmails = "opted_in" | "opted_out";
 export type PreferenceSource = "signup_form" | "preferences_page" | "one_click_unsubscribe" | "resend_unsubscribe";
-export const LANGUAGES = ["en", "es", "fr"] as const;
+export const LANGUAGES = ["en", "es", "fr", "de"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
 export interface LeadRow {

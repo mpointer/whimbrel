@@ -56,7 +56,10 @@ extension Color {
 }
 
 /// How the border of a card or control is drawn.
-public enum WBorderStyle: String, Sendable, CaseIterable { case solid, dashed, none }
+public enum WBorderStyle: String, Sendable, CaseIterable { case solid, dashed, double, none }
+
+/// How a skin draws the rules between Home's sections and in its ruled and line time lines (`decoration.dividers`).
+public enum WDividerStyle: String, Sendable, CaseIterable { case none, hairline, chalk, double, dotted }
 
 /// How much room a skin gives content. Multiplies padding and gaps, not text.
 public enum WDensity: String, Sendable, CaseIterable {
@@ -80,6 +83,8 @@ public struct WShape: Sendable, Equatable {
     public var highContrastBorderWidth: CGFloat
     public var borderStyle: WBorderStyle
     public var density: WDensity
+    /// The rules on Home. Thread draws none.
+    public var dividers: WDividerStyle
 
     public init(
         controlRadius: CGFloat = WTokens.Radius.control,
@@ -88,7 +93,8 @@ public struct WShape: Sendable, Equatable {
         borderWidth: CGFloat = 0.5,
         highContrastBorderWidth: CGFloat = 1.5,
         borderStyle: WBorderStyle = .solid,
-        density: WDensity = .regular
+        density: WDensity = .regular,
+        dividers: WDividerStyle = .none
     ) {
         self.controlRadius = controlRadius
         self.cardRadius = cardRadius
@@ -97,9 +103,52 @@ public struct WShape: Sendable, Equatable {
         self.highContrastBorderWidth = highContrastBorderWidth
         self.borderStyle = borderStyle
         self.density = density
+        self.dividers = dividers
     }
 
     public static let thread = WShape()
+}
+
+/// The motion a skin gives the interface, in seconds and points (docs/superpowers/plans/2026-11-25-richer-skins.md, section 6). One set
+/// for both OSes (`skins/testdata/expected/motion.json`). `.thread` and `none` are all zero: nothing new animates, so Thread draws as
+/// it always did. Only interface transitions read this. The recording indicator, the capture control, the consent banner and approvals
+/// never do.
+public struct WMotion: Sendable, Equatable {
+    /// A Home section fades in and rises `rise` points, once, on first show.
+    public var section: Double
+    public var rise: CGFloat
+    /// A button, link or the ask bar changes state.
+    public var control: Double
+    /// The "now" marker moves to its new place.
+    public var marker: Double
+    /// A card or panel opens.
+    public var panel: Double
+
+    public init(section: Double = 0, rise: CGFloat = 0, control: Double = 0, marker: Double = 0, panel: Double = 0) {
+        self.section = section
+        self.rise = rise
+        self.control = control
+        self.marker = marker
+        self.panel = panel
+    }
+
+    public static let thread = WMotion()
+    public static let none = WMotion()
+    public static let subtle = WMotion(section: 0.15, rise: 4, control: 0.12, marker: 0.2, panel: 0.15)
+
+    /// What a skin's motion resolves to. When the system asks for less motion the answer is `none` whatever the skin says.
+    public static func resolve(subtle isSubtle: Bool, reduceMotion: Bool) -> WMotion {
+        isSubtle && !reduceMotion ? .subtle : .none
+    }
+
+    /// The same motion, or none when the system asks for less. A view applies this to the theme's motion, since the system setting
+    /// can change while a window is open.
+    public func respecting(reduceMotion: Bool) -> WMotion { reduceMotion ? .none : self }
+
+    /// The animation for a duration, or nil for none (nil leaves the view exactly as it was before motion existed).
+    public static func animation(_ seconds: Double) -> Animation? {
+        seconds > 0 ? .easeInOut(duration: seconds) : nil
+    }
 }
 
 /// A font family a skin can name.
@@ -108,28 +157,108 @@ public enum WFontFamily: Sendable, Equatable {
     case named(String)
 }
 
-/// Type a skin can set. Display roles are subtitle, title and page title; body roles are the rest of
-/// the interface; reading roles are the user's notes and the note title.
+/// A font weight as a number, so "two steps up" is arithmetic (the CSS scale the Windows app uses).
+public enum WWeight: Int, Sendable, CaseIterable, Comparable {
+    case ultraLight = 100, thin = 200, light = 300, regular = 400, medium = 500
+    case semibold = 600, bold = 700, heavy = 800, black = 900
+
+    public static func < (a: WWeight, b: WWeight) -> Bool { a.rawValue < b.rawValue }
+
+    public var font: Font.Weight {
+        switch self {
+        case .ultraLight: return .ultraLight
+        case .thin: return .thin
+        case .light: return .light
+        case .regular: return .regular
+        case .medium: return .medium
+        case .semibold: return .semibold
+        case .bold: return .bold
+        case .heavy: return .heavy
+        case .black: return .black
+        }
+    }
+
+    /// Body emphasis: two steps (200) above this weight, up to 800. A body already heavier than 800 keeps its own weight,
+    /// so emphasis is never lighter than the text it sits in. Same rule as `emphasisWeight` in the Windows `skin.ts`.
+    public var emphasis: WWeight {
+        WWeight(rawValue: max(rawValue, min(rawValue + 200, WWeight.heavy.rawValue))) ?? self
+    }
+}
+
+/// How a skin sets its section labels: as typed, in capitals, or in small capitals.
+public enum WLabelCaps: Sendable, Equatable {
+    case none, upper, small
+}
+
+/// The faces every Thread text role belongs to. Reading text is fixed and never takes a skin's face.
+public enum WFaceKind: Sendable, Equatable {
+    case display, body, numerals, label, reading
+}
+
+/// Type a skin can set. Display roles are subtitle, title and page title; numerals is the time; label is the caption
+/// and section labels; body roles are the rest of the interface; reading roles are the user's notes and the note title.
+///
+/// A weight of `nil` means the role keeps the weight the Thread type scale gives it, so `.thread` draws as it always did.
+/// Italic applies to display and label only: body italic is ignored (long italic text reads slowly) and so is numerals
+/// italic. Weights follow docs/superpowers/plans/2026-11-25-richer-skins.md, decision 6: display, numerals and label use
+/// the skin weight as set; body uses it for regular text and two steps up (capped at 800) for emphasis.
 public struct WTypeStyle: Sendable, Equatable {
     public var displayFamily: WFontFamily
     public var bodyFamily: WFontFamily
     public var readingFamily: WFontFamily
+    public var numeralsFamily: WFontFamily
+    public var labelFamily: WFontFamily
+    public var displayWeight: WWeight?
+    public var bodyWeight: WWeight?
+    public var numeralsWeight: WWeight?
+    public var labelWeight: WWeight?
+    public var displayItalic: Bool
+    public var labelItalic: Bool
+    /// How section labels are cased.
+    public var labelCaps: WLabelCaps
+
     /// Whether section labels are set in capitals.
-    public var sectionLabelCaps: Bool
+    public var sectionLabelCaps: Bool { labelCaps == .upper }
 
     public init(
         displayFamily: WFontFamily = .system,
         bodyFamily: WFontFamily = .system,
         readingFamily: WFontFamily = .serif,
-        sectionLabelCaps: Bool = true
+        sectionLabelCaps: Bool = true,
+        numeralsFamily: WFontFamily? = nil,
+        labelFamily: WFontFamily? = nil,
+        displayWeight: WWeight? = nil,
+        bodyWeight: WWeight? = nil,
+        numeralsWeight: WWeight? = nil,
+        labelWeight: WWeight? = nil,
+        displayItalic: Bool = false,
+        labelItalic: Bool = false,
+        labelCaps: WLabelCaps? = nil
     ) {
         self.displayFamily = displayFamily
         self.bodyFamily = bodyFamily
         self.readingFamily = readingFamily
-        self.sectionLabelCaps = sectionLabelCaps
+        // Numerals and labels followed the body family before skins could name them, so that stays the default.
+        self.numeralsFamily = numeralsFamily ?? bodyFamily
+        self.labelFamily = labelFamily ?? bodyFamily
+        self.displayWeight = displayWeight
+        self.bodyWeight = bodyWeight
+        self.numeralsWeight = numeralsWeight
+        self.labelWeight = labelWeight
+        self.displayItalic = displayItalic
+        self.labelItalic = labelItalic
+        self.labelCaps = labelCaps ?? (sectionLabelCaps ? .upper : .none)
     }
 
     public static let thread = WTypeStyle()
+
+    /// Section labels: the skin's label weight, or semibold when it sets none. Thread's label weight is regular (captions),
+    /// but its section labels have always been semibold, so Thread pins them there; one label weight cannot be both.
+    public var sectionLabelWeight: WWeight { labelWeight ?? .semibold }
+
+    /// The boldest rules (counts, badges, initials): Thread stays bold (700); any other skin takes its body weight plus
+    /// two steps, capped at 800.
+    public var strongWeight: WWeight { bodyWeight?.emphasis ?? .bold }
 }
 
 /// The colors a component can use: the 15 skinnable colors plus the fixed ones, resolved for one variant.
@@ -158,10 +287,17 @@ public struct WTheme: Sendable, Equatable {
     public let shape: WShape
     /// Font families and label caps.
     public let type: WTypeStyle
+    /// Durations for interface transitions.
+    public let motion: WMotion
 
-    public init(palette: [String: UInt32], variant: WVariant, shape: WShape = .thread, type: WTypeStyle = .thread) {
+    /// The page texture the skin asks for. Drawn only where `drawsTexture` says.
+    public let texture: WTexture
+
+    public init(palette: [String: UInt32], variant: WVariant, shape: WShape = .thread, type: WTypeStyle = .thread, motion: WMotion = .thread, texture: WTexture = .none) {
         self.shape = shape
         self.type = type
+        self.motion = motion
+        self.texture = texture
         var resolved = variant.threadPalette
         for key in Self.skinnableKeys {
             if let value = palette[key] { resolved[key] = value }
@@ -177,9 +313,11 @@ public struct WTheme: Sendable, Equatable {
         colorScheme: ColorScheme,
         contrast: ColorSchemeContrast,
         shape: WShape = .thread,
-        type: WTypeStyle = .thread
+        type: WTypeStyle = .thread,
+        motion: WMotion = .thread,
+        texture: WTexture = .none
     ) {
-        self.init(palette: palette, variant: WVariant(colorScheme: colorScheme, contrast: contrast), shape: shape, type: type)
+        self.init(palette: palette, variant: WVariant(colorScheme: colorScheme, contrast: contrast), shape: shape, type: type, motion: motion, texture: texture)
     }
 
     public static func thread(variant: WVariant) -> WTheme {
@@ -194,6 +332,16 @@ public struct WTheme: Sendable, Equatable {
         shape.borderStyle == .none && !isHighContrast ? 0 : (isHighContrast ? shape.highContrastBorderWidth : shape.borderWidth)
     }
 
+    /// Whether a border of this width draws as two lines: the skin's border is double, the width is a point or more (finer
+    /// draws solid), and high contrast is off (high contrast draws one firm line).
+    public func drawsDoubleBorder(width: CGFloat) -> Bool {
+        shape.borderStyle == .double && !isHighContrast && width >= 1
+    }
+
+    /// Whether the page draws the skin's texture: it asks for one, and high contrast (Increase Contrast, or the High Contrast
+    /// palette) is off. Texture is for the page background only.
+    public var drawsTexture: Bool { texture != .none && !isHighContrast }
+
     /// Stroke style for the skin's borders.
     public var borderStroke: StrokeStyle {
         StrokeStyle(lineWidth: borderWidth, lineCap: .round, lineJoin: .round, dash: shape.borderStyle == .dashed && !isHighContrast ? [4, 3] : [])
@@ -201,7 +349,17 @@ public struct WTheme: Sendable, Equatable {
 
     /// A section label in the skin's case.
     public func sectionLabel(_ text: String) -> String {
-        type.sectionLabelCaps ? text.uppercased() : text
+        switch type.labelCaps {
+        case .none: return text
+        case .upper: return text.uppercased()
+        // The face's own small caps when it has them; otherwise capitals (drawn smaller, see `sectionLabelFont`).
+        case .small: return WFontSupport.hasSmallCaps(type.labelFamily) ? text : text.uppercased()
+        }
+    }
+
+    /// The font for a section label, in the skin's label face and caps.
+    public func sectionLabelFont(scale: CGFloat = 1, caps: WLabelCaps? = nil) -> Font {
+        WTextRole.sectionLabelSpec(scale: scale, style: type, caps: caps).font
     }
 
     public static func thread(colorScheme: ColorScheme, contrast: ColorSchemeContrast) -> WTheme {

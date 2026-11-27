@@ -5670,6 +5670,9 @@
         }
       }
     },
+    "Ask if I'm still recording after" : {
+      "shouldTranslate" : false
+    },
     "Ask needs a model." : {
       "localizations" : {
         "de" : {
@@ -48480,6 +48483,43 @@
         }
       }
     },
+    "Showing {name}." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{name} wird angezeigt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrando {name}."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage de {name}."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage de {name}."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A mostrar {name}."
+          }
+        }
+      }
+    },
+    "Shows a \"Still recording?\" prompt. With no answer in 5 minutes, the recording stops and is saved up to the last words. Recordings always stop at 4 hours. Applies from the next recording." : {
+      "shouldTranslate" : false
+    },
     "Shows what's being said while you record. The full transcript is still made after the meeting and replaces the live one. The live text stays on this PC, and turning this off deletes it." : {
       "localizations" : {
         "de" : {
@@ -50993,6 +51033,9 @@
         }
       }
     },
+    "Still recording?" : {
+      "shouldTranslate" : false
+    },
     "Still sorting your items. The estimate will appear when that's done." : {
       "localizations" : {
         "de" : {
@@ -51095,6 +51138,9 @@
         }
       }
     },
+    "Stop now" : {
+      "shouldTranslate" : false
+    },
     "Stop recording" : {
       "localizations" : {
         "de" : {
@@ -51196,6 +51242,9 @@
           }
         }
       }
+    },
+    "Stopping in {time}" : {
+      "shouldTranslate" : false
     },
     "Stops the countdown. Whimbrel will not ask about this meeting again." : {
       "localizations" : {
@@ -53757,6 +53806,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Essa rotina não existe mais."
+          }
+        }
+      }
+    },
+    "That setting isn't shown right now." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Einstellung wird gerade nicht angezeigt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ese ajuste no se muestra ahora."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce réglage n'est pas affiché pour le moment."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce réglage n'est pas affiché pour le moment."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Essa definição não é apresentada neste momento."
           }
         }
       }
@@ -59793,6 +59876,9 @@
           }
         }
       }
+    },
+    "This recording has been running for a while." : {
+      "shouldTranslate" : false
     },
     "This recording is still paused." : {
       "localizations" : {
@@ -72818,6 +72904,9 @@
           }
         }
       }
+    },
+    "{count} hours" : {
+      "shouldTranslate" : false
     },
     "{count} invited" : {
       "localizations" : {

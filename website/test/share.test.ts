@@ -22,9 +22,10 @@ const languages = [
   { path: "/", lang: "en", locale: "en_US", thanks: "/download/thanks/", copy: "Copy message" },
   { path: "/es/", lang: "es", locale: "es_LA", thanks: "/es/download/thanks/", copy: "Copiar mensaje" },
   { path: "/fr/", lang: "fr-CA", locale: "fr_CA", thanks: "/fr/download/thanks/", copy: "Copier le message" },
+  { path: "/de/", lang: "de", locale: "de_DE", thanks: "/de/download/thanks/", copy: "Nachricht kopieren" },
 ];
 
-describe("link preview tags on the home page, in three languages", () => {
+describe("link preview tags on the home page, in four languages", () => {
   for (const l of languages) {
     it(`${l.lang} has its own og and twitter tags`, async () => {
       const html = await page(l.path);
@@ -51,8 +52,8 @@ describe("link preview tags on the home page, in three languages", () => {
     const pages = await Promise.all(languages.map((l) => page(l.path)));
     const titles = pages.map((h) => meta(h, "property", "og:title"));
     const descriptions = pages.map((h) => meta(h, "property", "og:description"));
-    expect(new Set(titles).size).toBe(3);
-    expect(new Set(descriptions).size).toBe(3);
+    expect(new Set(titles).size).toBe(languages.length);
+    expect(new Set(descriptions).size).toBe(languages.length);
   });
 });
 

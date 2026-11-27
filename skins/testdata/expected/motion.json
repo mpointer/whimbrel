@@ -1,0 +1,9 @@
+{
+  "about": "What a skin's motion resolves to, in milliseconds and points. Mac (WMotion) and Windows (motionTokens in skin.ts) both test against this file, so they cannot drift. Thread is not here: it keeps the motion it always had.",
+  "cases": [
+    { "motion": "subtle", "reduceMotion": false, "section": 150, "rise": 4, "control": 120, "marker": 200, "panel": 150 },
+    { "motion": "subtle", "reduceMotion": true, "section": 0, "rise": 0, "control": 0, "marker": 0, "panel": 0 },
+    { "motion": "none", "reduceMotion": false, "section": 0, "rise": 0, "control": 0, "marker": 0, "panel": 0 },
+    { "motion": "none", "reduceMotion": true, "section": 0, "rise": 0, "control": 0, "marker": 0, "panel": 0 }
+  ]
+}

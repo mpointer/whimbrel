@@ -213,8 +213,11 @@ enum HomeRedesignAdapter {
 
         // Hero: the next meeting (drawn in the line at its time), or the live call, or an empty state.
         var heroEventId: String?
+        // The meeting the live hero shows. The ruled time line skips it, so it is not listed twice (richer skins row 6).
+        var heroHeldId: Int64?
         switch content.hero {
         case .live(let id):
+            if elements.timeline == .ruled { heroHeldId = id }
             m.hero = .live(title: content.recentMeetings.first { $0.id == id }?.title ?? "", elapsedSeconds: elapsedSeconds)
         case .upcoming:
             if let row = TodayRows.upNext(content) {
@@ -260,6 +263,7 @@ enum HomeRedesignAdapter {
                     eyebrow: entry.model.hint ?? (entry.model.isRunning ? String(localized: "In progress") : nil),
                     startTitle: content.activeMeetingId == nil ? String(localized: "Start") : nil))))
             case .held(let id):
+                if id == heroHeldId { continue }
                 let meeting = content.recentMeetings.first { $0.id == id }
                 let gist = content.processingMeetingId == id ? String(localized: "Transcribing…") : meeting?.summaryTldr?.split(separator: "\n").first.map(String.init)
                 earlier.append(Item(start: entry.start, stop: .meeting(WHomeMeeting(
@@ -375,6 +379,8 @@ struct TodayHomeRedesignView: View {
             let thread = model.thread(todayTitle: String(localized: "Today"), nowTime: MeetingRowText.time(context.date))
             // While a meeting records, the live meeting screen takes Home's place (redesign flag only).
             VStack(spacing: 0) {
+                // The skin's header image and badge (not while a meeting records: the live screen takes Home's place).
+                if live == nil { SkinHomeImagesView() }
                 // Ask on Today answers here, directly under the shell's Ask bar (`TodayAnswerArea`; empty until asked).
                 TodayAnswerArea(model: appState.todayAnswer)
                 if let live { live } else { WHomeView(model: model, actions: wiring(), scroll: scroll) { EmptyView() } }

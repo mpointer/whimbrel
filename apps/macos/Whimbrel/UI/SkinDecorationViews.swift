@@ -42,11 +42,12 @@ struct SkinImageryPlacementsKey: PreferenceKey {
 }
 
 /// The selected skin's image for `placement`, sized for it: `header` a full-width 120 pt band, `badge`
-/// 48 pt square, `background` whatever it is given. Draws nothing (and takes no space) when the skin has
-/// no such image, the file is missing, or it is a text-free background.
+/// 40 pt square. Draws nothing (and takes no space) when the skin has no such image or the file is missing
+/// or not a plain file name. The `background` placement is dropped in Thread: an old skin that has one loads
+/// and shows nothing there. Every image is decorative and hidden from VoiceOver.
 struct SkinImagerySlot: View {
     static let headerHeight: CGFloat = 120
-    static let badgeSide: CGFloat = 48
+    static let badgeSide: CGFloat = 40
 
     let placement: SkinImagePlacement
 
@@ -63,7 +64,7 @@ struct SkinImagerySlot: View {
             let frame: (width: CGFloat?, height: CGFloat?) = switch placement {
             case .header: (nil, Self.headerHeight)
             case .badge: (Self.badgeSide, Self.badgeSide)
-            case .background: (nil, nil)
+            case .background: (0, 0) // never reached: `resolved` returns nil for it
             }
             Color.clear
                 .frame(width: frame.width, height: frame.height)
@@ -71,6 +72,24 @@ struct SkinImagerySlot: View {
                 .overlay { SkinImageryView(skinImage: entry, image: image) }
                 .clipped()
                 .accessibilityHidden(true)
+        }
+    }
+}
+
+/// What Thread's Home draws for the skin's images, above its content: the header image (under its scrim unless the
+/// skin marks it text-free) and the badge. Nothing, and no space, for a skin with neither. Kept apart from the header
+/// band (`SkinHeaderBandView`) so the two change independently.
+struct SkinHomeImagesView: View {
+    var body: some View {
+        if SkinImagerySlot.resolved(.header) != nil || SkinImagerySlot.resolved(.badge) != nil {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                SkinImagerySlot(placement: .header)
+                if SkinImagerySlot.resolved(.badge) != nil {
+                    SkinImagerySlot(placement: .badge).padding(.horizontal, Spacing.lg)
+                }
+            }
+            .padding(.bottom, Spacing.md)
+            .accessibilityHidden(true)
         }
     }
 }
@@ -90,7 +109,8 @@ extension View {
     }
 }
 
-/// A skin image; a background gets a scrim over it so every text colour on top reads at 4.5:1.
+/// A skin image; a header image gets a scrim over it (unless the skin marks it text-free) so every text colour that
+/// sits against it reads at 4.5:1.
 struct SkinImageryView: View {
     let skinImage: SkinImage
     let image: NSImage
@@ -113,12 +133,12 @@ struct SkinImageryView: View {
         return SkinImageResolver.scrimOpacity(for: image, text: text, scrim: Self.resolvedColors(isDark: isDark).scrim, glow: glow)
     }
 
-    /// Only the background has text over it. Header and badge sit beside the text (above Today, above a screen's
-    /// band, beside the greeting: `SkinImagerySlot`'s callers), so they draw the image as it is.
-    static func hasScrim(_ placement: SkinImagePlacement) -> Bool { placement == .background }
+    /// A header image sits in the band against the title row, so it has the scrim unless the skin marks it text-free. A badge
+    /// sits beside the text and is never under it, so it draws as it is.
+    static func hasScrim(_ image: SkinImage) -> Bool { image.placement == .header && !image.textFree }
 
-    /// Imagery marked text-free is never placed under text, and a background is under the text.
-    static func isDrawn(_ image: SkinImage) -> Bool { !(image.textFree && image.placement == .background) }
+    /// The `background` placement is dropped in Thread (no part of Home is safe to put an image under); the rest are drawn.
+    static func isDrawn(_ image: SkinImage) -> Bool { image.placement != .background }
 
     var body: some View {
         if Self.isDrawn(skinImage) {
@@ -126,7 +146,7 @@ struct SkinImageryView: View {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()
-                .overlay(Color(nsColor: NSColor(srgbHex: Self.resolvedColors(isDark: isDark).scrim)).opacity(Self.hasScrim(skinImage.placement) ? opacity(isDark: isDark) : 0))
+                .overlay(Color(nsColor: NSColor(srgbHex: Self.resolvedColors(isDark: isDark).scrim)).opacity(Self.hasScrim(skinImage) ? opacity(isDark: isDark) : 0))
                 .clipped()
                 .preference(key: SkinImageryPlacementsKey.self, value: [skinImage.placement])
         }

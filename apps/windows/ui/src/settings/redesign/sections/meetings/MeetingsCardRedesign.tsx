@@ -22,11 +22,19 @@ import {
   WSettingsListRow,
   WSettingsNote,
   WSettingsNumberRow,
+  WSettingsSelectRow,
   WSettingsTextRow,
   WSettingsToggleRow,
 } from "../../../../system";
 import { PROFILE_SAVED_EVENT } from "../../../ProfileCard";
 import "./meetops.css";
+
+/** "Ask if I'm still recording after": Off or 1-4 hours, as on the Mac. */
+export const CHECK_IN_HOURS = [0, 1, 2, 3, 4] as const;
+
+export function checkInLabel(hours: number): string {
+  return hours === 0 ? t("Off") : hours === 1 ? t("1 hour") : t("{count} hours", { count: hours });
+}
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -185,6 +193,15 @@ export function MeetingsCardRedesign() {
             min={5}
             max={120}
             onCommit={(n) => save({ ...settings, prepLeadMinutes: n })}
+          />
+          <WSettingsSelectRow
+            label={t("Ask if I'm still recording after")}
+            description={t(
+              'Shows a "Still recording?" prompt. With no answer in 5 minutes, the recording stops and is saved up to the last words. Recordings always stop at 4 hours. Applies from the next recording.',
+            )}
+            value={String(settings.checkInHours ?? 1)}
+            options={CHECK_IN_HOURS.map((h) => ({ value: String(h), label: checkInLabel(h) }))}
+            onChange={(v) => save({ ...settings, checkInHours: Number(v) })}
           />
           {notice ? (
             <>

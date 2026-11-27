@@ -455,8 +455,8 @@ struct WPermissionGroupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: theme.space(10)) {
             Text(theme.sectionLabel(group.heading))
-                .wFont(.secondary).fontWeight(.semibold)
-                .tracking(theme.type.sectionLabelCaps ? 0.6 : 0)
+                .wSectionLabel()
+                .tracking(theme.type.labelCaps == .none ? 0 : 0.6)
                 .foregroundStyle(theme.textSecondary)
                 .accessibilityAddTraits(.isHeader)
             ForEach(group.rows) { WPermissionRow($0) }

@@ -264,6 +264,7 @@ struct WSpineNodeView: View {
 
 struct WSpineLine: View {
     @Environment(\.wTheme) private var theme
+    @Environment(\.wSpineDividers) private var spineDividers
     @Environment(\.wTextScale) private var k
     let connector: WSpineConnector
 
@@ -272,9 +273,17 @@ struct WSpineLine: View {
         case .none:
             Color.clear.frame(width: 1)
         case .solid:
-            Rectangle().fill(theme.accentPrimary.opacity(theme.isHighContrast ? 1 : 0.45)).frame(width: 2)
+            if spineDividers && theme.shape.dividers != .none {
+                WDividerStrokes(axis: .vertical, color: theme.accentPrimary.opacity(theme.isHighContrast ? 1 : 0.45), usesStrokeOpacity: false)
+            } else {
+                Rectangle().fill(theme.accentPrimary.opacity(theme.isHighContrast ? 1 : 0.45)).frame(width: 2)
+            }
         case .dashed:
-            VLine().stroke(theme.accentSecondary.opacity(theme.isHighContrast ? 1 : 0.7), style: StrokeStyle(lineWidth: 1.5, dash: [3, 4])).frame(width: 2)
+            if spineDividers && theme.shape.dividers != .none {
+                WDividerStrokes(axis: .vertical, color: theme.accentSecondary.opacity(theme.isHighContrast ? 1 : 0.7), usesStrokeOpacity: false)
+            } else {
+                VLine().stroke(theme.accentSecondary.opacity(theme.isHighContrast ? 1 : 0.7), style: StrokeStyle(lineWidth: 1.5, dash: [3, 4])).frame(width: 2)
+            }
         case .span:
             Capsule().fill(theme.accentPrimary.opacity(theme.isHighContrast ? 1 : 0.5)).frame(width: 6 * k)
         case .recording:

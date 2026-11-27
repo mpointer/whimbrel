@@ -31,7 +31,13 @@
   },
   "today": {
     "archetype": "standard",
-    "options": {}
+    "options": {
+      "actions": "buttons",
+      "ask": "field",
+      "labels": "plain",
+      "nextMeeting": "infobox",
+      "timeline": "ruled"
+    }
   },
   "typography": {
     "body": "SF Pro/regular",

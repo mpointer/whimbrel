@@ -18,6 +18,9 @@ struct TodayChrome: View {
     let content: TodayContent
     let actions: TodayActions
     let slots: TodaySlots
+    /// Draw the skin's header band under the header image, as `SkinHeaderArea` does for the other tabs. Only Home itself
+    /// asks; the gallery preview and the tests leave it off. A skin with no band adds nothing either way.
+    var banded = false
 
     /// Banners on Today: none. The recap error is part of the `.recap` section, not a banner.
     static func order(for archetype: SkinArchetype) -> [TodayChromePart] {
@@ -44,6 +47,7 @@ struct TodayChrome: View {
     var body: some View {
         VStack(spacing: 0) {
             SkinImagerySlot(placement: .header)
+            if banded { SkinHeaderBandView() }
             layout
         }
     }
@@ -301,6 +305,23 @@ struct TodayUpcomingList<Heading: View, Row: View, Toggle: View>: View {
             if TodayRows.upcomingHasMore(content) {
                 toggle(expanded ? String(localized: "Show less") : String(localized: "Show the rest of the week")) { expanded.toggle() }
             }
+        }
+    }
+}
+
+/// Home under the skin's header band, as the other tabs are (`SkinHeaderArea`, minus the header image, which the
+/// redesigned Home does not draw yet). A skin with no band gets `content` as it is, with no wrapper, so Home does not move.
+struct TodayHomeBandArea<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if SkinHeaderBandView.draws(SkinStore.shared.selected.decoration.headerBand) {
+            VStack(spacing: 0) {
+                SkinHeaderBandView()
+                content()
+            }
+        } else {
+            content()
         }
     }
 }

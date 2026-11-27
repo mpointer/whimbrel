@@ -5,9 +5,10 @@ import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } fro
 import { skinDelete, skinExport, skinImport, skinRename } from "../../../../api";
 import { describeError, isCommandError } from "../../../../errors";
 import { t, useL10n } from "../../../../l10n";
-import { chooseSkin, currentSelection, installedSkins, reloadSkins, resolveSelection, skinRevision, subscribeSkin } from "../../../../skin";
+import { chooseSkin, currentContrastMore, currentSelection, installedSkins, reloadSkins, resolveSelection, skinRevision, subscribeSkin } from "../../../../skin";
 import { WButton, WConfirmDialog, WIconButton, WSettingsCard, WSettingsChoiceRow, WSettingsNote, WSkinCard, WSkinGrid } from "../../../../system";
 import { APPEARANCES, resolveMode, type Appearance } from "../../../../theme";
+import { SkinPreviewHome } from "../../../../today/redesign/SkinPreviewHome";
 import { SkinChat } from "../../../SkinChat";
 import {
   actionsEnabled,
@@ -81,6 +82,7 @@ export function SkinGalleryCard(props: { turnRunning: boolean }) {
   const selection = currentSelection();
   const cards = galleryState(skins, selection, lang);
   const mode = resolveMode(selection.appearance, systemDark);
+  const contrastMore = currentContrastMore();
   const enabled = actionsEnabled(props.turnRunning);
   const [manage, setManage] = useState<Manage>(null);
   const [name, setName] = useState("");
@@ -159,11 +161,15 @@ export function SkinGalleryCard(props: { turnRunning: boolean }) {
                   name={card.name}
                   caption={card.tagline}
                   preview={
-                    <span className="rs-general-swatches" aria-hidden="true">
-                      {swatchColors(card.previewPalette, mode).map((color, i) => (
-                        <span key={i} className="rs-general-swatch" style={{ background: color }} />
-                      ))}
-                    </span>
+                    dto ? (
+                      <SkinPreviewHome dto={dto} palette={card.previewPalette} appearance={selection.appearance} systemDark={systemDark} contrastMore={contrastMore} />
+                    ) : (
+                      <span className="rs-general-swatches" aria-hidden="true">
+                        {swatchColors(card.previewPalette, mode).map((color, i) => (
+                          <span key={i} className="rs-general-swatch" style={{ background: color }} />
+                        ))}
+                      </span>
+                    )
                   }
                   selected={card.selected}
                   onSelect={() => chooseSkin(pickCard(skins, selection, card.id))}

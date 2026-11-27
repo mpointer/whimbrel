@@ -9,6 +9,12 @@
 //! neither resets the clock nor closes an open prompt. With no live transcription (no model), the
 //! recorder's audio level stands in. The clock is wall time, compared on every poll, so a PC that
 //! slept through the quiet asks as soon as it wakes.
+//!
+//! The same window also asks "Still recording?" (`Hourly`, the Mac's `RecordingCheckIn`): every
+//! recording, detected or started by hand, asks after the hours chosen in Settings → Meetings (1 by
+//! default, Off allowed), then an hour after each "Keep recording". "Stop now" stops it as it is;
+//! five minutes with no answer stops it and trims it to the last words, as "Still in a meeting?"
+//! does. When both are due, "Still in a meeting?" asks first and the hourly one waits.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -24,10 +30,113 @@ pub const QUIET_MS: i64 = 15 * 60_000;
 /// No answer this long → stop.
 pub const ANSWER_MS: i64 = 2 * 60_000;
 
+/// "Still recording?": no answer this long → stop (and trim).
+pub const HOURLY_COUNTDOWN_MS: i64 = 5 * 60_000;
+/// "Still recording?": asks again this long after "Keep recording".
+pub const HOURLY_REASK_MS: i64 = 60 * 60_000;
+
 /// The popup's label (also listed in `capabilities/default.json`).
 pub const STILL_HERE: &str = "still-here";
 const SIZE: (f64, f64) = (380.0, 170.0);
+/// "Still recording?" has one more line, its countdown.
+const HOURLY_SIZE: (f64, f64) = (380.0, 196.0);
 const MARGIN: f64 = 12.0;
+
+/// Which question the window asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PromptKind {
+    /// "Still in a meeting?": 15 quiet minutes.
+    Quiet,
+    /// "Still recording?": the hourly check.
+    Hourly,
+    /// "This recording is still paused."
+    Paused,
+}
+
+/// What the window shows (`still_here_prompt`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StillHerePrompt {
+    pub kind: PromptKind,
+    /// "Still recording?" only: when it stops with no answer, unix ms.
+    pub deadline_unix_ms: Option<i64>,
+}
+
+/// The first "Still recording?" for the setting's hours; None for 0 (Off).
+pub fn check_in_after_ms(hours: u8) -> Option<i64> {
+    (hours > 0).then(|| i64::from(hours) * 60 * 60_000)
+}
+
+/// What an hourly poll should do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HourlyAction {
+    Nothing,
+    /// Show "Still recording?"; it stops at this time (unix ms) with no answer.
+    Ask { deadline_ms: i64 },
+    /// No answer: stop and trim.
+    Stop,
+}
+
+/// "Still recording?" for one recording (the Mac's `RecordingCheckIn`). Pure: times in unix ms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hourly {
+    pub meeting_id: i64,
+    next_prompt_ms: Option<i64>,
+    shown_ms: Option<i64>,
+}
+
+impl Hourly {
+    /// `first_after_ms` None is Off: it never asks.
+    pub fn new(meeting_id: i64, started_ms: i64, first_after_ms: Option<i64>) -> Self {
+        Hourly { meeting_id, next_prompt_ms: first_after_ms.map(|after| started_ms + after), shown_ms: None }
+    }
+
+    pub fn asking(&self) -> bool {
+        self.shown_ms.is_some()
+    }
+
+    pub fn deadline_ms(&self) -> Option<i64> {
+        self.shown_ms.map(|shown| shown + HOURLY_COUNTDOWN_MS)
+    }
+
+    pub fn poll(&mut self, now_ms: i64) -> HourlyAction {
+        if let Some(shown) = self.shown_ms {
+            if now_ms < shown + HOURLY_COUNTDOWN_MS {
+                return HourlyAction::Nothing;
+            }
+            // Stop fires once; nothing re-arms.
+            self.shown_ms = None;
+            self.next_prompt_ms = None;
+            return HourlyAction::Stop;
+        }
+        match self.next_prompt_ms {
+            Some(next) if now_ms >= next => {
+                self.shown_ms = Some(now_ms);
+                self.next_prompt_ms = None;
+                HourlyAction::Ask { deadline_ms: now_ms + HOURLY_COUNTDOWN_MS }
+            }
+            _ => HourlyAction::Nothing,
+        }
+    }
+
+    /// "Keep recording": asks again an hour from now.
+    pub fn keep(&mut self, now_ms: i64) {
+        self.shown_ms = None;
+        self.next_prompt_ms = Some(now_ms + HOURLY_REASK_MS);
+    }
+
+    /// A paused poll. "This recording is still paused." covers a pause, so the hourly check is held:
+    /// a question up is put away (true: close the window) and the next one comes an hour after the
+    /// pause ends. Off stays off.
+    pub fn hold(&mut self, now_ms: i64) -> bool {
+        let was_asking = self.shown_ms.take().is_some();
+        if was_asking || self.next_prompt_ms.is_some() {
+            self.next_prompt_ms = Some(self.next_prompt_ms.unwrap_or(0).max(now_ms + HOURLY_REASK_MS));
+        }
+        was_asking
+    }
+}
 
 /// What a poll should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,39 +338,117 @@ pub fn poll(meeting_id: i64, started_ms: i64, now_ms: i64, audio_active: bool, p
     action
 }
 
-/// The recording ended: forget its timer.
-pub fn reset() {
-    *timer().lock().unwrap() = None;
+/// Whether "Still in a meeting?" is asking now (the hourly check waits while it does).
+pub fn quiet_asking() -> bool {
+    timer().lock().unwrap().as_ref().is_some_and(Timer::asking)
 }
 
-/// "Keep recording" from the popup.
+fn hourly() -> &'static Mutex<Option<Hourly>> {
+    static HOURLY: Mutex<Option<Hourly>> = Mutex::new(None);
+    &HOURLY
+}
+
+/// Whether "Still recording?" is asking now ("Still in a meeting?" is not polled while it does).
+pub fn hourly_asking() -> bool {
+    hourly().lock().unwrap().as_ref().is_some_and(Hourly::asking)
+}
+
+/// One hourly poll of a recording that is not paused. `first_after_ms` (the setting, None for Off)
+/// is read once, at the recording's first poll, so a change applies from the next recording.
+pub fn poll_hourly(meeting_id: i64, started_ms: i64, now_ms: i64, first_after_ms: impl FnOnce() -> Option<i64>) -> HourlyAction {
+    let mut slot = hourly().lock().unwrap();
+    let h = match slot.as_mut() {
+        Some(h) if h.meeting_id == meeting_id => h,
+        _ => slot.insert(Hourly::new(meeting_id, started_ms, first_after_ms())),
+    };
+    let action = h.poll(now_ms);
+    match action {
+        HourlyAction::Ask { .. } => log_check_in("prompt-shown", "hourly", LAST_SPEECH_MS.load(Ordering::Relaxed), None, ""),
+        HourlyAction::Stop => log_check_in("stop", "hourly-timeout", LAST_SPEECH_MS.load(Ordering::Relaxed), None, ""),
+        HourlyAction::Nothing => {}
+    }
+    action
+}
+
+/// A paused poll holds the hourly check (`Hourly::hold`). True when its question was up and the
+/// window should close.
+pub fn hold_hourly(now_ms: i64) -> bool {
+    hourly().lock().unwrap().as_mut().is_some_and(|h| h.hold(now_ms))
+}
+
+/// The recording ended: forget its timers.
+pub fn reset() {
+    *timer().lock().unwrap() = None;
+    *hourly().lock().unwrap() = None;
+}
+
+/// "Keep recording" from the popup: answers whichever question is up.
 pub fn keep(now_ms: i64) {
+    if *SHOWING.lock().unwrap() == Some(PromptKind::Hourly) {
+        if let Some(h) = hourly().lock().unwrap().as_mut() {
+            h.keep(now_ms);
+            log_check_in("keep", "hourly-answer", LAST_SPEECH_MS.load(Ordering::Relaxed), None, "");
+        }
+        return;
+    }
+    keep_quiet(now_ms);
+}
+
+/// Starts the quiet clock over (a resume, or "Keep recording" on "Still in a meeting?"), whatever
+/// the window shows.
+pub fn keep_quiet(now_ms: i64) {
     if let Some(t) = timer().lock().unwrap().as_mut() {
         t.keep(now_ms);
         log_check_in("keep", "quiet-answer", t.last_speech_ms, Some(t.last_speech_ms), "");
     }
 }
 
-pub fn show(app: &AppHandle) {
-    if app.get_webview_window(STILL_HERE).is_some() {
-        return;
+/// The question the window is up for; None while it is closed.
+static SHOWING: Mutex<Option<PromptKind>> = Mutex::new(None);
+
+/// Opens the window for `kind`. Already open for it: nothing changes. Open for another question
+/// (the hourly one after a pause, say): it is drawn again for this one.
+pub fn show(app: &AppHandle, kind: PromptKind) {
+    let open_for = *SHOWING.lock().unwrap();
+    if let Some(window) = app.get_webview_window(STILL_HERE) {
+        if open_for == Some(kind) {
+            return;
+        }
+        let _ = window.destroy();
     }
-    if let Err(e) = open(app) {
+    *SHOWING.lock().unwrap() = Some(kind);
+    if let Err(e) = open(app, kind) {
         tracing::error!(error = %e, "could not open the still-in-a-meeting prompt");
     }
 }
 
 pub fn hide(app: &AppHandle) {
+    *SHOWING.lock().unwrap() = None;
     if let Some(window) = app.get_webview_window(STILL_HERE) {
         let _ = window.destroy();
     }
 }
 
-fn open(app: &AppHandle) -> tauri::Result<()> {
+/// What the window shows now; None when no question is up.
+pub fn prompt() -> Option<StillHerePrompt> {
+    let kind = (*SHOWING.lock().unwrap())?;
+    let deadline_unix_ms = match kind {
+        PromptKind::Hourly => hourly().lock().unwrap().as_ref().and_then(Hourly::deadline_ms),
+        PromptKind::Quiet | PromptKind::Paused => None,
+    };
+    Some(StillHerePrompt { kind, deadline_unix_ms })
+}
+
+fn open(app: &AppHandle, kind: PromptKind) -> tauri::Result<()> {
     let redesign = app.state::<crate::state::AppState>().settings.lock().unwrap().redesign_enabled();
-    let (w, h) = crate::text_scale::size_for_look(SIZE, redesign);
+    let (w, h) = crate::text_scale::size_for_look(if kind == PromptKind::Hourly { HOURLY_SIZE } else { SIZE }, redesign);
+    let title = match kind {
+        PromptKind::Quiet => tr("Still in a meeting?", &[]),
+        PromptKind::Hourly => tr("Still recording?", &[]),
+        PromptKind::Paused => tr("This recording is still paused.", &[]),
+    };
     let popup = WebviewWindowBuilder::new(app, STILL_HERE, WebviewUrl::App("index.html".into()))
-        .title(tr("Still in a meeting?", &[]))
+        .title(title)
         .inner_size(w, h)
         .decorations(false)
         .resizable(false)
@@ -294,6 +481,12 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// What the window asks, for its view.
+#[tauri::command]
+pub fn still_here_prompt() -> Option<StillHerePrompt> {
+    prompt()
+}
+
 /// "Keep recording".
 #[tauri::command]
 pub fn still_here_keep(app: AppHandle) {
@@ -301,16 +494,21 @@ pub fn still_here_keep(app: AppHandle) {
     hide(&app);
 }
 
-/// "Stop": stops the recording; it is trimmed to the last words once transcribed.
+/// "Stop" on "Still in a meeting?": stops the recording; it is trimmed to the last words once
+/// transcribed. "Stop now" on "Still recording?": stops it as it is (only no answer trims).
 #[tauri::command]
 pub async fn still_here_stop(app: AppHandle) -> Result<(), crate::error::CommandError> {
+    let trim = *SHOWING.lock().unwrap() != Some(PromptKind::Hourly);
+    if !trim {
+        log_check_in("stop", "hourly-answer", LAST_SPEECH_MS.load(Ordering::Relaxed), None, "");
+    }
     hide(&app);
     let state = app.state::<crate::state::AppState>();
     let meetings = state.meetings()?.clone();
     // The tray and the in-meeting window follow at once, as after the Stop button (`commands::meetings`), not on the next tick.
     let handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let stopped = meetings.stop_quiet().map(|_| ());
+        let stopped = if trim { meetings.stop_quiet() } else { meetings.stop() }.map(|_| ());
         crate::tray::refresh(&handle);
         stopped
     })
@@ -352,6 +550,94 @@ mod tests {
         t.keep(16 * MIN);
         assert_eq!(t.tick(30 * MIN), Action::Nothing);
         assert_eq!(t.tick(31 * MIN), Action::Ask);
+    }
+
+    const HOUR: i64 = 60 * MIN;
+
+    #[test]
+    fn still_recording_asks_at_an_hour_and_stops_after_five_minutes_once() {
+        let mut h = Hourly::new(1, 0, check_in_after_ms(1));
+        assert_eq!(h.poll(59 * MIN), HourlyAction::Nothing);
+        assert_eq!(h.poll(HOUR), HourlyAction::Ask { deadline_ms: HOUR + 5 * MIN });
+        assert_eq!(h.deadline_ms(), Some(HOUR + 5 * MIN));
+        assert_eq!(h.poll(HOUR + 4 * MIN), HourlyAction::Nothing, "asked once");
+        assert_eq!(h.poll(HOUR + 5 * MIN), HourlyAction::Stop);
+        assert_eq!(h.poll(3 * HOUR), HourlyAction::Nothing, "stop fires once and nothing re-arms");
+    }
+
+    #[test]
+    fn keep_recording_asks_again_an_hour_later() {
+        let mut h = Hourly::new(1, 0, check_in_after_ms(1));
+        assert!(matches!(h.poll(HOUR), HourlyAction::Ask { .. }));
+        h.keep(HOUR + 2 * MIN);
+        assert!(!h.asking());
+        assert_eq!(h.poll(2 * HOUR + MIN), HourlyAction::Nothing);
+        assert!(matches!(h.poll(2 * HOUR + 2 * MIN), HourlyAction::Ask { .. }));
+    }
+
+    #[test]
+    fn the_hours_setting_sets_the_first_check_and_off_never_asks() {
+        assert_eq!(check_in_after_ms(0), None);
+        let mut h = Hourly::new(1, 0, check_in_after_ms(3));
+        assert_eq!(h.poll(3 * HOUR - 1), HourlyAction::Nothing);
+        assert!(matches!(h.poll(3 * HOUR), HourlyAction::Ask { .. }));
+        let mut off = Hourly::new(1, 0, check_in_after_ms(0));
+        assert_eq!(off.poll(10 * HOUR), HourlyAction::Nothing);
+        assert!(!off.hold(10 * HOUR));
+        assert_eq!(off.poll(20 * HOUR), HourlyAction::Nothing, "a pause does not turn Off on");
+    }
+
+    #[test]
+    fn a_pc_that_slept_past_the_hour_asks_on_its_first_poll_awake() {
+        let mut h = Hourly::new(1, 0, check_in_after_ms(1));
+        assert!(matches!(h.poll(5 * HOUR), HourlyAction::Ask { .. }));
+    }
+
+    #[test]
+    fn a_pause_holds_still_recording_and_puts_its_question_away() {
+        let mut h = Hourly::new(1, 0, check_in_after_ms(1));
+        assert!(matches!(h.poll(HOUR), HourlyAction::Ask { .. }));
+        // Paused while asking: the question goes, nothing stops at the old deadline.
+        assert!(h.hold(HOUR + MIN));
+        assert!(!h.hold(HOUR + 30 * MIN), "already put away");
+        // Resumed at 1:30: asks an hour after the last paused poll, not at once.
+        assert_eq!(h.poll(HOUR + 31 * MIN), HourlyAction::Nothing);
+        assert_eq!(h.poll(2 * HOUR + 29 * MIN), HourlyAction::Nothing);
+        assert!(matches!(h.poll(2 * HOUR + 30 * MIN), HourlyAction::Ask { .. }));
+        // A short pause well before the hour keeps the original time.
+        let mut early = Hourly::new(2, 0, check_in_after_ms(2));
+        assert!(!early.hold(10 * MIN));
+        assert!(matches!(early.poll(2 * HOUR), HourlyAction::Ask { .. }));
+    }
+
+    #[test]
+    fn the_window_answers_whichever_question_is_up() {
+        let _turn = serial();
+        reset();
+        *SHOWING.lock().unwrap() = None;
+        assert_eq!(prompt(), None);
+        // Still recording? is up: Keep re-arms the hourly check and leaves the quiet clock alone.
+        assert!(matches!(poll_hourly(4, 0, HOUR, || check_in_after_ms(1)), HourlyAction::Ask { .. }));
+        assert!(hourly_asking());
+        *SHOWING.lock().unwrap() = Some(PromptKind::Hourly);
+        assert_eq!(prompt(), Some(StillHerePrompt { kind: PromptKind::Hourly, deadline_unix_ms: Some(HOUR + 5 * MIN) }));
+        // A resume starts only the quiet clock over: the hourly question is still up.
+        keep_quiet(HOUR);
+        assert!(hourly_asking());
+        // Closed by something else (no SHOWING): the question still counts down, so the poll
+        // shows it again (`service`), and nothing in here forgets it.
+        *SHOWING.lock().unwrap() = None;
+        assert!(hourly_asking());
+        *SHOWING.lock().unwrap() = Some(PromptKind::Hourly);
+        keep(HOUR + MIN);
+        assert!(!hourly_asking());
+        assert_eq!(poll_hourly(4, 0, 2 * HOUR, || unreachable!("read once per recording")), HourlyAction::Nothing);
+        assert!(matches!(poll_hourly(4, 0, 2 * HOUR + MIN, || None), HourlyAction::Ask { .. }));
+        // A new recording reads the setting again.
+        reset();
+        assert_eq!(poll_hourly(5, 0, 10 * HOUR, || None), HourlyAction::Nothing, "Off");
+        *SHOWING.lock().unwrap() = None;
+        reset();
     }
 
     #[test]

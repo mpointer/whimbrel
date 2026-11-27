@@ -72,7 +72,7 @@
   background: var(--color-background-card);
   border: var(--rt-line);
   border-radius: var(--sx-radius-card);
-  padding: calc(var(--w-space-lg) * var(--sx-density));
+  padding: max(0px, calc(calc(var(--w-space-lg) * var(--sx-density)) - var(--sx-border-trim)));
 }
 .w-shell .rt .stack,
 .w-shell .rt.stack {
@@ -103,7 +103,7 @@
   justify-content: center;
   gap: var(--w-space-sm);
   min-height: var(--w-target);
-  padding: 0 calc(var(--w-space-lg) * var(--sx-density));
+  padding: 0 max(0px, calc(calc(var(--w-space-lg) * var(--sx-density)) - var(--sx-border-trim)));
   border: var(--rt-control-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
@@ -111,7 +111,7 @@
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color var(--w-duration-fast) var(--w-ease-standard);
+  transition: background-color calc(var(--dur-control, var(--w-duration-fast)) * var(--motion-scale, 1)) var(--w-ease-standard);
 }
 .w-shell .rt .mode:hover {
   background: var(--color-selection);
@@ -149,7 +149,7 @@
 /* ---- Fields: input, select and textarea take the Thread field (the 3:1 edge) ---- */
 .w-shell .rt .input {
   min-height: var(--w-target);
-  padding: var(--w-space-xs) var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-xs) - var(--sx-border-trim))) max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--rt-control-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
@@ -193,7 +193,7 @@
   display: inline-flex;
   align-items: center;
   min-height: 1.5rem;
-  padding: 0 var(--w-space-sm);
+  padding: 0 max(0px, calc(var(--w-space-sm) - var(--sx-border-trim)));
   border: var(--rt-line);
   border-radius: var(--w-radius-pill);
   background: var(--color-background-page);
@@ -255,7 +255,7 @@
   gap: var(--w-space-sm);
 }
 .w-shell .rt .topic-step {
-  padding: var(--w-space-sm) var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-sm) - var(--sx-border-trim))) max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--rt-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
@@ -301,7 +301,7 @@
 }
 .w-shell .rt .approval-row {
   gap: var(--w-space-lg);
-  padding: var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   /* The page color, so the fields inside keep their 3:1 edge against what is around them (the highlight tint is 2.9:1 in light). */
   background: var(--color-background-page);
   border: var(--rt-line);
@@ -310,7 +310,7 @@
 }
 .w-shell .rt .routine-row {
   gap: var(--w-space-lg);
-  padding: var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--rt-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
@@ -323,7 +323,7 @@
   color: var(--color-warning);
 }
 .w-shell .rt .run-item {
-  padding: var(--w-space-sm) var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-sm) - var(--sx-border-trim))) max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--rt-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);

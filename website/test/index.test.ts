@@ -495,11 +495,11 @@ describe("other routes", () => {
     expect(privacy).toContain('<h2 id="leaves">What leaves your computer</h2>');
     expect(privacy).toContain("A random identifier that changes every week");
     expect(privacy).toContain("<td>When the app starts, then once a day.</td>");
-    for (const path of ["/", "/open-source/", "/es/", "/es/open-source/", "/fr/", "/fr/open-source/"]) {
+    for (const path of ["/", "/open-source/", "/es/", "/es/open-source/", "/fr/", "/fr/open-source/", "/de/", "/de/open-source/"]) {
       const html = await (await call(new Request(`https://whimbrel.test${path}`))).text();
-      expect(html, path).not.toMatch(/no telemetry|sin telemetría|sans télémétrie|ni télémétrie|has no analytics or telemetry/);
+      expect(html, path).not.toMatch(/no telemetry|sin telemetría|sans télémétrie|ni télémétrie|has no analytics or telemetry|keine Telemetrie|ohne Telemetrie/);
       // The check runs at launch and daily; only its identifier is weekly.
-      expect(html, path).not.toMatch(/weekly update check|comprobación semanal|mise à jour hebdomadaire/);
+      expect(html, path).not.toMatch(/weekly update check|comprobación semanal|mise à jour hebdomadaire|wöchentliche/);
     }
   });
 });

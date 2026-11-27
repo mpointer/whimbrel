@@ -16,9 +16,21 @@ export interface WButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElemen
   hint?: string;
   /** Drawn as a text link (the skin's `actions: links` choice). Same button, same name, at least 24 by 24. */
   link?: boolean;
+  /** Part of a still picture of a screen (a skin card's preview): drawn as the same box with no button in it, since a
+   *  button cannot sit inside the card's own button and a picture has nothing to press. */
+  still?: boolean;
 }
 
-export function WButton({ variant = "secondary", icon, hint, link, children, type = "button", ...rest }: WButtonProps) {
+export function WButton({ variant = "secondary", icon, hint, link, still, children, type = "button", ...rest }: WButtonProps) {
+  if (still) {
+    return (
+      <span className={link ? `w-button w-button-${variant} w-button-link` : `w-button w-button-${variant}`}>
+        {icon ? <WIcon name={icon} /> : null}
+        <span>{children}</span>
+        {hint ? <span className="w-button-hint">{hint}</span> : null}
+      </span>
+    );
+  }
   return (
     <button type={type} className={link ? `w-button w-button-${variant} w-button-link` : `w-button w-button-${variant}`} {...rest}>
       {icon ? <WIcon name={icon} /> : null}

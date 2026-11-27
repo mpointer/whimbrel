@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 @testable import Whimbrel
+import WhimbrelUI
 
 @MainActor
 final class SkinGalleryTests: XCTestCase {
@@ -218,5 +219,63 @@ final class SkinGalleryTests: XCTestCase {
         XCTAssertEqual(skins.selected.id, "retro-terminal")
         XCTAssertEqual(skins.takeGalleryScrollTarget(), "skin-card-retro-terminal")
         XCTAssertNil(skins.takeGalleryScrollTarget())
+    }
+
+    // MARK: previews are the real Home (richer skins row 11)
+
+    /// The gallery draws Home's own views from sample text. The old `TodayChrome` is not referenced by either gallery file.
+    func test_gallery_does_not_reference_today_chrome() throws {
+        for path in ["Whimbrel/UI/Settings/SkinGallery.swift", "Whimbrel/UI/Redesign/Settings/SkinGalleryRedesign.swift"] {
+            let source = try String(contentsOf: repo.appendingPathComponent("apps/macos").appendingPathComponent(path), encoding: .utf8)
+            XCTAssertFalse(source.contains("TodayChrome"), "\(path) still names TodayChrome")
+            XCTAssertFalse(source.contains("TodayView"), "\(path) names the live Today view")
+        }
+        let gallery = try String(contentsOf: repo.appendingPathComponent("apps/macos/Whimbrel/UI/Settings/SkinGallery.swift"), encoding: .utf8)
+        XCTAssertTrue(gallery.contains("WHomeView"), "the preview is Home's own view")
+    }
+
+    /// Sample content only: the person's name and data never reach a card, and the model is the same whatever skin draws it.
+    func test_preview_model_is_built_from_the_sample_content() {
+        let (skins, _) = stores()
+        let skin = skins.skins.first { $0.id == "almanac" } ?? skins.skins[0]
+        let model = SkinPreviewHome.model(skin: skin)
+        XCTAssertEqual(model.load, .ready)
+        XCTAssertFalse(model.timeline.isEmpty)
+        let again = SkinPreviewHome.model(skin: skin)
+        XCTAssertEqual(model.thread(todayTitle: "Today", nowTime: ""), again.thread(todayTitle: "Today", nowTime: ""))
+    }
+
+    /// The card's preview shows the skin's own element choices, not the standard ones.
+    func test_preview_uses_the_skins_home_elements() throws {
+        let (skins, _) = stores()
+        let resolved = try skins.skins.map { skin -> WHomeElements in
+            let model = SkinPreviewHome.model(skin: skin)
+            XCTAssertEqual(model.elements, WHomeElements.resolve(options: skin.archetypeOptions, archetype: skin.archetype.rawValue), skin.id)
+            return model.elements
+        }
+        XCTAssertGreaterThan(Set(resolved.map { "\($0)" }).count, 1, "every card drew the same Home elements")
+    }
+
+    /// A still picture: drawing it twice gives the same pixels, so no timer, animation or live read is in it.
+    func test_preview_is_static() throws {
+        let (skins, themeStore) = stores()
+        let skin = try XCTUnwrap(skins.skins.first { $0.id != "whimbrel" })
+        let palette = skins.palettes(for: skin)[0].id
+        let first = SkinPreviewCache(skins: skins, themes: themeStore).image(skinId: skin.id, paletteId: palette, colorScheme: .light)
+        let second = SkinPreviewCache(skins: skins, themes: themeStore).image(skinId: skin.id, paletteId: palette, colorScheme: .light)
+        XCTAssertEqual(first.tiffRepresentation, second.tiffRepresentation)
+    }
+
+    /// One snapshot per built-in skin: the card's picture in the skin's first palette (local only; see `assertSnapshot`).
+    func test_card_preview_snapshot_for_each_built_in_skin() throws {
+        let (skins, themeStore) = stores()
+        let cache = SkinPreviewCache(skins: skins, themes: themeStore)
+        let builtIn = skins.skins.filter { !SkinGallery.isUserSkin($0) }
+        XCTAssertGreaterThanOrEqual(builtIn.count, 8)
+        for skin in builtIn {
+            let image = cache.image(skinId: skin.id, paletteId: skins.palettes(for: skin)[0].id, colorScheme: .light)
+            let view = Image(nsImage: image).resizable().frame(width: image.size.width, height: image.size.height)
+            try assertSnapshot(view, named: "skin-card-\(skin.id)", size: image.size, colorScheme: .light)
+        }
     }
 }

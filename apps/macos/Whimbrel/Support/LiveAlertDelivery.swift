@@ -129,8 +129,30 @@ final class LiveAlertDelivery: AlertDelivering {
     static func content(for alert: CoreLiveAlert, answer: CoreChatAnswer?) -> (title: String, body: String) {
         let asker = alert.asker?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let title = asker.isEmpty ? String(localized: "Question for you") : String(localized: "\(asker) asked you")
-        let firstLine = answer?.text.split(whereSeparator: \.isNewline).first.map(String.init)
+        let firstLine = answer.flatMap { plainFirstLine($0.text) }
         return (title, [alert.restatement, firstLine].compactMap { $0 }.joined(separator: "\n"))
+    }
+
+    /// The answer's first line as plain text: it is Markdown, and a notification shows (and
+    /// VoiceOver reads) it as is. Fences and rules are skipped; heading, quote, list and
+    /// emphasis marks and link URLs go.
+    static func plainFirstLine(_ markdown: String) -> String? {
+        var fenced = false
+        for raw in markdown.split(whereSeparator: \.isNewline) {
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") || line.hasPrefix("~~~") { fenced.toggle(); continue }
+            if !fenced {
+                let marks = line.filter { !$0.isWhitespace }
+                if marks.count >= 3, let m = marks.first, "-*_".contains(m), marks.allSatisfy({ $0 == m }) { continue }
+                while line.hasPrefix(">") { line = String(line.dropFirst()).trimmingCharacters(in: .whitespaces) }
+                line = AskMarkdown.plainText(line)
+                if line.hasPrefix("\u{2022} ") { line = String(line.dropFirst(2)) }
+                for box in ["[ ] ", "[x] ", "[X] "] where line.hasPrefix(box) { line = String(line.dropFirst(box.count)) }
+            }
+            let plain = line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            if !plain.isEmpty { return plain }
+        }
+        return nil
     }
 
     static func emailSubject(for alert: CoreLiveAlert) -> String {

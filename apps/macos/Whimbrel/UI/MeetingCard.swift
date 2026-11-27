@@ -28,7 +28,8 @@ private struct WrappingChipLayout: Layout {
             var size = subview.sizeThatFits(ProposedViewSize(width: width.isFinite ? width : nil, height: nil))
             if width.isFinite { size.width = min(size.width, width) }
             sizes.append(size)
-            if x > 0, x + size.width > width {
+            // A hair of slack: a row exactly as wide as its chips must not wrap the last one (see WFlowLayout.wrapTolerance).
+            if x > 0, x + size.width > width + 0.01 {
                 x = 0
                 y += rowHeight + spacing
                 rowHeight = 0

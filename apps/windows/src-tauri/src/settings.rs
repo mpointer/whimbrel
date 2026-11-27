@@ -100,6 +100,9 @@ pub mod keys {
     pub const REMEMBER_VOICES: &str = "speakerNames.rememberVoices";
     /// Device-local, as on the Mac (`MeetingPrepSettings`): how long before a meeting its brief is made.
     pub const MEETING_PREP_LEAD_MINUTES: &str = "meetingPrep.leadMinutes";
+    /// Device-local, as on the Mac (`RecordingCheckInSettings`): "Ask if I'm still recording after"
+    /// 0 (Off) to 4 hours. Absent is 1.
+    pub const RECORDING_CHECK_IN_HOURS: &str = "recordingCheckIn.hours";
     /// Device-local, as on the Mac (`RecordingNoticeSettings`, W-1.7): "Remind me to tell people I'm
     /// recording". Off unless the user turns it on.
     pub const RECORDING_NOTICE_ENABLED: &str = "recordingNotice.enabled";
@@ -851,6 +854,16 @@ impl SettingsFile {
         self.set(keys::MEETING_PREP_LEAD_MINUTES, Some(minutes.clamp(5.0, 120.0)));
     }
 
+    /// "Ask if I'm still recording after": 0 is Off, else 1-4 hours. Nothing stored, or a value out
+    /// of range, is 1 (the Mac's `RecordingCheckInSettings`); a stored choice is kept as it is.
+    pub fn recording_check_in_hours(&self) -> u8 {
+        self.get::<u8>(keys::RECORDING_CHECK_IN_HOURS).filter(|h| *h <= 4).unwrap_or(1)
+    }
+
+    pub fn set_recording_check_in_hours(&mut self, hours: u8) {
+        self.set(keys::RECORDING_CHECK_IN_HOURS, Some(if hours <= 4 { hours } else { 1 }));
+    }
+
     pub fn recording_notice_enabled(&self) -> bool {
         self.get(keys::RECORDING_NOTICE_ENABLED).unwrap_or(false)
     }
@@ -1369,6 +1382,22 @@ mod tests {
         assert_eq!(hand_edited.prep_lead_minutes(), 5.0, "a stored value below the range is raised on read");
         hand_edited.set(keys::MEETING_PREP_LEAD_MINUTES, Some(999.0_f64));
         assert_eq!(hand_edited.prep_lead_minutes(), 120.0, "and one above it lowered");
+    }
+
+    #[test]
+    fn the_still_recording_check_defaults_to_one_hour_and_keeps_a_stored_choice() {
+        let path = temp_path("check-in-hours");
+        let mut s = SettingsFile::load(&path);
+        assert_eq!(s.recording_check_in_hours(), 1, "nothing stored: 1 hour");
+        for hours in 0..=4 {
+            s.set_recording_check_in_hours(hours);
+            s.save().unwrap();
+            assert_eq!(SettingsFile::load(&path).recording_check_in_hours(), hours, "kept on this PC between launches");
+        }
+        let mut hand_edited = SettingsFile::load(&path);
+        hand_edited.set(keys::RECORDING_CHECK_IN_HOURS, Some(9_u8));
+        assert_eq!(hand_edited.recording_check_in_hours(), 1, "out of range falls back to 1");
+        assert!(!crate::syncing::settings::synced_keys().iter().any(|k| k == keys::RECORDING_CHECK_IN_HOURS), "kept on this PC");
     }
 
     #[test]

@@ -14,6 +14,7 @@
   --sx-font-title: var(--font-display, var(--w-font-ui));
   --sx-border-width: var(--border-width, 1px);
   --sx-border-style: var(--border-style, solid);
+  --sx-border-trim: var(--border-trim, 0px);
   --sx-density: var(--density, 1);
 }
 /* Thread's section labels. Its label face is regular (skins/thread.json), but Thread has always drawn a section label
@@ -91,14 +92,14 @@
   justify-content: center;
   gap: var(--w-space-sm);
   min-height: var(--w-target);
-  padding: 0 calc(var(--w-space-lg) * var(--sx-density));
+  padding: 0 max(0px, calc(calc(var(--w-space-lg) * var(--sx-density)) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
   color: var(--color-text-primary);
   font-weight: var(--weight-emphasis, 600);
   cursor: pointer;
-  transition: background-color var(--w-duration-fast) var(--w-ease-standard);
+  transition: background-color calc(var(--dur-control, var(--w-duration-fast)) * var(--motion-scale, 1)) var(--w-ease-standard);
 }
 .w-button:hover {
   background: var(--color-selection);
@@ -134,7 +135,7 @@
 .w-button-hint {
   font-weight: 400;
   font-size: var(--w-text-caption-size);
-  padding: 0 var(--w-space-xs);
+  padding: 0 max(0px, calc(var(--w-space-xs) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   border-color: currentColor;
@@ -222,7 +223,7 @@
 .w-rec-bar {
   width: 100%;
   flex-wrap: wrap;
-  padding: calc(var(--w-space-md) * var(--sx-density)) var(--w-space-lg);
+  padding: max(0px, calc(calc(var(--w-space-md) * var(--sx-density)) - var(--sx-border-trim))) max(0px, calc(var(--w-space-lg) - var(--sx-border-trim)));
   border-radius: var(--sx-radius-surface);
   background: var(--color-background-card);
   border: var(--sx-line);
@@ -259,7 +260,7 @@
 }
 .w-rec-pill {
   display: inline-flex;
-  padding: var(--w-space-xs) var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-xs) - var(--sx-border-trim))) max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border-radius: var(--w-radius-pill);
   background: var(--color-background-card);
   border: var(--sx-line);
@@ -329,7 +330,7 @@
   align-items: center;
   gap: var(--w-space-sm);
   min-height: var(--w-target);
-  padding: 0 var(--w-space-md);
+  padding: 0 max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
@@ -352,7 +353,7 @@
   top: calc(100% + var(--w-space-xs));
   z-index: 5;
   min-width: 21rem;
-  padding: var(--w-space-sm);
+  padding: max(0px, calc(var(--w-space-sm) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-surface);
   background: var(--color-background-card);
@@ -406,7 +407,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--w-space-md) var(--w-space-lg);
-  padding: calc(var(--w-space-md) * var(--sx-density)) var(--w-space-lg);
+  padding: max(0px, calc(calc(var(--w-space-md) * var(--sx-density)) - var(--sx-border-trim))) max(0px, calc(var(--w-space-lg) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-left: 4px solid var(--w-color-recording);
   border-radius: var(--sx-radius-surface);
@@ -514,7 +515,7 @@
   align-items: center;
   gap: var(--w-space-sm);
   min-height: var(--w-target);
-  padding: 0 var(--w-space-sm) 0 var(--w-space-md);
+  padding: 0 max(0px, calc(var(--w-space-sm) - var(--sx-border-trim))) 0 max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
@@ -538,7 +539,7 @@
   opacity: 1;
 }
 .w-kbd {
-  padding: 0 var(--w-space-xs);
+  padding: 0 max(0px, calc(var(--w-space-xs) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   font-size: var(--w-text-caption-size);
@@ -715,7 +716,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--w-space-sm) var(--w-space-md);
-  padding: calc(var(--w-space-md) * var(--sx-density)) var(--w-space-lg);
+  padding: max(0px, calc(calc(var(--w-space-md) * var(--sx-density)) - var(--sx-border-trim))) max(0px, calc(var(--w-space-lg) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-card);
   background: var(--color-background-card);
@@ -775,7 +776,7 @@
 
 /* ---- WMemoryBlock ---- */
 .w-memory {
-  padding: calc(var(--w-space-md) * var(--sx-density)) var(--w-space-lg);
+  padding: max(0px, calc(calc(var(--w-space-md) * var(--sx-density)) - var(--sx-border-trim))) max(0px, calc(var(--w-space-lg) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-card);
   background: var(--color-background-card);
@@ -1373,7 +1374,7 @@
 .w-flow-root {
   height: 100%;
   overflow-y: auto;
-  background: var(--color-background-page);
+  background: var(--sx-texture, none), var(--color-background-page);
 }
 .w-flow-wait {
   display: flex;
@@ -1451,7 +1452,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--w-space-lg);
-  padding: var(--w-space-xl);
+  padding: max(0px, calc(var(--w-space-xl) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-card);
   background: var(--color-background-card);
@@ -1473,7 +1474,7 @@
 .w-input {
   width: 100%;
   min-height: var(--w-target);
-  padding: var(--w-space-xs) var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-xs) - var(--sx-border-trim))) max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-control-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
@@ -1538,7 +1539,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--w-space-md);
-  padding: var(--w-space-md) var(--w-space-lg);
+  padding: max(0px, calc(var(--w-space-md) - var(--sx-border-trim))) max(0px, calc(var(--w-space-lg) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-left-width: 4px;
   border-radius: var(--sx-radius-card);
@@ -1632,7 +1633,7 @@
 .w-segmented {
   display: inline-flex;
   align-self: flex-start;
-  padding: 2px;
+  padding: max(0px, calc(2px - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-page);
@@ -1677,7 +1678,7 @@
   flex-direction: column;
   gap: var(--w-space-md);
   width: min(28rem, 100%);
-  padding: var(--w-space-xl);
+  padding: max(0px, calc(var(--w-space-xl) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-surface);
   background: var(--color-background-card);
@@ -1712,7 +1713,7 @@
   bottom: calc(100% + var(--w-space-xs));
   z-index: 10;
   min-width: 16rem;
-  padding: var(--w-space-xs);
+  padding: max(0px, calc(var(--w-space-xs) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-card);
   background: var(--color-background-card);
@@ -1743,7 +1744,7 @@
   flex-direction: column;
   gap: var(--w-space-md);
   margin-bottom: var(--w-space-md);
-  padding: var(--w-space-lg) var(--w-space-xl);
+  padding: max(0px, calc(var(--w-space-lg) - var(--sx-border-trim))) max(0px, calc(var(--w-space-xl) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-left-width: 4px;
   border-radius: var(--sx-radius-card);
@@ -1853,7 +1854,7 @@
   align-items: center;
   gap: var(--w-space-sm);
   min-height: var(--w-target);
-  padding: 0 var(--w-space-xs) 0 var(--w-space-md);
+  padding: 0 max(0px, calc(var(--w-space-xs) - var(--sx-border-trim))) 0 max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-card);
@@ -1953,7 +1954,9 @@
   background: var(--color-selection);
   border-bottom: var(--sx-line);
   font-weight: var(--weight-emphasis, 600);
-  color: var(--color-accent-primary);
+  /* textPrimary on selection is a required pair, so every palette keeps this label at 4.5:1. The accent
+     is not: Default, Slate and others miss it on the selection band. */
+  color: var(--color-text-primary);
 }
 .w-next-infobox > .w-next-title,
 .w-next-infobox > .w-next-facts,
@@ -2322,7 +2325,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--w-space-xs);
-  padding: var(--w-space-sm) var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-sm) - var(--sx-border-trim))) max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-card);
   background: var(--color-background-page);
@@ -2448,7 +2451,7 @@
   flex: 1;
   min-width: 0;
   min-height: var(--w-target);
-  padding: 0 var(--w-space-md);
+  padding: 0 max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-page);
@@ -2482,7 +2485,7 @@
   overflow-y: auto;
   white-space: pre-wrap;
   user-select: text;
-  padding: var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-card);
   background: var(--color-background-page);
@@ -2495,4 +2498,13 @@
 /* The frame takes focus (programmatically) so a screen reader says the alert; it is not a control, so it draws no ring. */
 .w-win-frame:focus {
   outline: none;
+}
+
+/* A subtle skin eases the state change of the ask bar and of links over --dur-control (skin.ts `motionVariables`). Thread
+   leaves it unset, so these are 0ms for it, as they always were. */
+.w-ask-form,
+.w-link {
+  transition: background-color calc(var(--dur-control, 0ms) * var(--motion-scale, 1)) var(--w-ease-standard),
+    border-color calc(var(--dur-control, 0ms) * var(--motion-scale, 1)) var(--w-ease-standard),
+    color calc(var(--dur-control, 0ms) * var(--motion-scale, 1)) var(--w-ease-standard);
 }

@@ -3,7 +3,7 @@
 site/i18n/layout.<locale>.html with the Anthropic API. Pages whose sourceHash still matches
 their English page are skipped. Privacy, terms, compare and the changelog stay English.
 
-  ANTHROPIC_API_KEY=... python3 website/scripts/translate-site.py --model claude-sonnet-5-5 [es fr]
+  ANTHROPIC_API_KEY=... python3 website/scripts/translate-site.py --model claude-sonnet-5-5 [es fr de]
 """
 import argparse, hashlib, json, os, re, sys, urllib.request
 from pathlib import Path
@@ -14,7 +14,7 @@ PAGES = ["index.html", "pricing.html", "open-source.html", "features/meeting-not
          "features/routines.html", "features/topics.html", "features/languages.html", "download/index.html", "download/mac.html",
          "download/windows.html", "download/thanks.html", "download/unavailable.html", "mobile-beta/index.html", "mobile-beta/thanks.html"]
 PARTIALS = ["cta.html", "demo-video.html", "register-form.html", "app-mock.html"]
-NAMES = {"es": ("neutral Latin American Spanish", "es"), "fr": ("Canadian French", "fr-CA")}
+NAMES = {"es": ("neutral Latin American Spanish", "es"), "fr": ("Canadian French", "fr-CA"), "de": ("German as used in Germany, addressing the reader as Sie", "de")}
 TAG = re.compile(r"</?([a-zA-Z][\w-]*)")
 TOKEN = re.compile(r"\{\{\{?[^}]*\}?\}\}")
 HREF = re.compile(r'\b(?:href|src|action|name|id|class|data-[\w-]+)="[^"]*"')
@@ -59,7 +59,7 @@ def problems(source, reply, is_page):
 
 def translate(source, locale, model, is_page):
     name, tag = NAMES[locale]
-    style = (ROOT.parent / "l10n" / "style" / f"{'fr-CA' if locale == 'fr' else 'es'}.md").read_text(encoding="utf-8")
+    style = (ROOT.parent / "l10n" / "style" / f"{ {'fr': 'fr-CA'}.get(locale, locale) }.md").read_text(encoding="utf-8")
     system = "\n".join([
         f"You translate the website of Whimbrel, a private desktop AI assistant for meetings, from US English into {name} ({tag}).",
         "It is marketing copy: write what a native copywriter would write, not a word-for-word rendering.",
@@ -84,7 +84,7 @@ def stamp(reply, source):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("locales", nargs="*", default=["es", "fr"])
+    p.add_argument("locales", nargs="*", default=["es", "fr", "de"])
     p.add_argument("--model", required=True)
     a = p.parse_args()
     failed = 0

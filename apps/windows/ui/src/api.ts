@@ -1,7 +1,7 @@
 // Typed wrappers over the shell's Tauri commands (src-tauri/src/commands).
 
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { AudioLevel, ConversationListRow, ConversationPageView, ConversationScopeView, ConversationTopicView, DeleteEverythingPreview, FindFilterInput, FoundPage, MeetingMarkerView, NoteSourcesView, RoutePreviewView, SavedExchangeInput, SavedExchangeResult, SourcedConversationView, TranscriptLinesView } from "./generated/types";
+import type { AudioLevel, StillHerePrompt, ConversationListRow, ConversationPageView, ConversationScopeView, ConversationTopicView, DeleteEverythingPreview, FindFilterInput, FoundPage, MeetingMarkerView, NoteSourcesView, RoutePreviewView, SavedExchangeInput, SavedExchangeResult, SourcedConversationView, TranscriptLinesView } from "./generated/types";
 import type {
   ClientControl,
   ClientDeleteReceipt,
@@ -558,7 +558,9 @@ export const alertDismiss = () => invoke<void>("alert_dismiss");
 export const questionAlertStatus = () => invoke<QuestionNotice[]>("question_alert_status");
 export const questionAlertOpen = (id: string) => invoke<void>("question_alert_open", { id });
 export const questionAlertDismiss = () => invoke<void>("question_alert_dismiss");
-/** "Still in a meeting?": Keep recording, or Stop (trimmed to the last words once transcribed). */
+/** Which question the still-here window asks ("Still in a meeting?", "Still recording?" or paused), and the hourly one's deadline. */
+export const stillHerePrompt = () => invoke<StillHerePrompt | null>("still_here_prompt");
+/** Keep recording answers whichever question is up. Stop on "Still in a meeting?" trims to the last words; Stop now on "Still recording?" does not. */
 export const stillHereKeep = () => invoke<void>("still_here_keep");
 export const stillHereStop = () => invoke<void>("still_here_stop");
 /** The budget alert popup's queued 80% / 100% notices. */

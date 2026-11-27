@@ -106,7 +106,7 @@ describe("compact layout", () => {
   });
 
   it("knows the design size of every small window", () => {
-    expect(Object.keys(WINDOW_DESIGN).sort()).toEqual(["alert", "budget", "disk", "hotkeyPanel", "meetingBar", "popup", "question", "stillHere"]);
+    expect(Object.keys(WINDOW_DESIGN).sort()).toEqual(["alert", "budget", "disk", "hotkeyPanel", "meetingBar", "popup", "question", "stillHere", "stillHereHourly"]);
   });
 });
 

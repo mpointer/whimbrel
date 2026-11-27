@@ -1,0 +1,63 @@
+<form class="register card" id="register-form" action="/api/register" method="post" novalidate data-turnstile-sitekey="{{site.turnstileSiteKey}}">
+  <div class="form-alert" role="alert" hidden></div>
+  <div class="field-row">
+    <div class="field">
+      <label for="reg-name">Vor- und Nachname</label>
+      <input id="reg-name" name="name" type="text" autocomplete="name" required maxlength="100">
+      <p class="field-error" data-for="name"></p>
+    </div>
+    <div class="field">
+      <label for="reg-email">Geschäftliche E-Mail</label>
+      <input id="reg-email" name="email" type="email" autocomplete="email" required maxlength="254" inputmode="email">
+      <p class="field-error" data-for="email"></p>
+    </div>
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label for="reg-company">Unternehmen <span class="optional">(optional)</span></label>
+      <input id="reg-company" name="company" type="text" autocomplete="organization" maxlength="200">
+    </div>
+    <div class="field">
+      <label for="reg-role">Ihre Rolle <span class="optional">(optional)</span></label>
+      <select id="reg-role" name="role">
+        <option value="">Bitte wählen</option>
+        <option value="executive">Geschäftsleitung</option>
+        <option value="manager">Führungskraft / Teamleitung</option>
+        <option value="individual-contributor">Fachkraft ohne Führungsverantwortung</option>
+        <option value="engineer">Ingenieur/in / Entwickler/in</option>
+        <option value="sales">Vertrieb / Kundenkontakt</option>
+        <option value="consultant">Beratung / Agentur</option>
+        <option value="founder">Gründer/in</option>
+        <option value="other">Sonstiges</option>
+      </select>
+    </div>
+  </div>
+  <div class="field-row">
+    <fieldset class="field platform-choice">
+      <legend>Herunterladen für</legend>
+      <label class="choice"><input type="radio" name="platform" value="mac" required> <span>Mac <small>Apple-Chip</small></span></label>
+      <label class="choice"><input type="radio" name="platform" value="windows"> <span>Windows <small>64 Bit</small></span></label>
+      <label class="choice" data-arm-download hidden><input type="radio" name="platform" value="windows-arm"> <span>Windows on Arm <small>Snapdragon und andere Arm-PCs</small></span></label>
+      <p class="field-error" data-for="platform"></p>
+    </fieldset>
+    <div class="field">
+      <label for="reg-team">Teamgröße <span class="optional">(optional)</span></label>
+      <select id="reg-team" name="teamSize">
+        <option value="">Bitte wählen</option>
+        <option value="1">Nur ich</option>
+        <option value="2-10">2 bis 10</option>
+        <option value="11-50">11 bis 50</option>
+        <option value="51-200">51 bis 200</option>
+        <option value="201-1000">201 bis 1.000</option>
+        <option value="1000+">1.000+</option>
+      </select>
+    </div>
+  </div>
+  <div class="hp" aria-hidden="true"><label for="reg-hp">Bitte leer lassen</label><input id="reg-hp" name="whimbrel_hp" type="text" tabindex="-1" autocomplete="off"></div>
+  <input type="hidden" name="utm_source"><input type="hidden" name="utm_medium"><input type="hidden" name="utm_campaign">
+  <input type="hidden" name="referrer"><input type="hidden" name="landing_page"><input type="hidden" name="signup_language" value="de">
+  <div class="turnstile"></div>
+  <label class="checkbox checkbox-optin"><input type="checkbox" name="marketingOptIn" value="true"> <span>Schicken Sie mir eine kurze E-Mail, wenn es etwas Neues gibt (höchstens zweimal im Monat). Abmeldung jederzeit möglich.</span></label>
+  <button class="btn btn-primary btn-lg btn-block" type="submit">Registrieren und herunterladen</button>
+  <p class="fine muted">Kostenlos und Open Source. Wir verwenden Ihre Angaben, um Ihnen den Download bereitzustellen und, wenn Sie zustimmen, Produktneuigkeiten zu senden. Lesen Sie unsere <a href="/privacy/">Datenschutzerklärung</a>.</p>
+</form>

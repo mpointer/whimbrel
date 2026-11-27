@@ -281,7 +281,7 @@ export function Gallery() {
                 />
               </div>
             </Case>
-            <Case label="Still recording?">
+            <Case label="Still in a meeting?">
               <div className="g-window">
                 <WWindowFrame
                   title="Still in a meeting?"
@@ -290,6 +290,21 @@ export function Gallery() {
                     <>
                       <WButton variant="primary">{"Keep recording"}</WButton>
                       <WButton>{"Stop"}</WButton>
+                    </>
+                  }
+                />
+              </div>
+            </Case>
+            <Case label="Still recording? (hourly, with its countdown)">
+              <div className="g-window">
+                <WWindowFrame
+                  title="Still recording?"
+                  lines={["This recording has been running for a while."]}
+                  countdown={<span>{"Stopping in 4:59"}</span>}
+                  actions={
+                    <>
+                      <WButton variant="primary">{"Keep recording"}</WButton>
+                      <WButton>{"Stop now"}</WButton>
                     </>
                   }
                 />

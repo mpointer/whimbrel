@@ -690,6 +690,13 @@ export type PlusAiPromptAnswer = "use_whimbrel" | "keep" | "not_now";
  */
 export type PlusAiPromptState = "show" | "wait" | "not_plus" | "done";
 /**
+ * Which question the window asks.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "PromptKind".
+ */
+export type PromptKind = "quiet" | "hourly" | "paused";
+/**
  * The Quality picker, as the UI sees it (core's `transcribe::engine::Quality`).
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -2817,6 +2824,10 @@ export interface MeetingSettings {
    */
   autoStart: boolean;
   /**
+   * "Ask if I'm still recording after": 0 is Off, else 1-4 hours. 1 until someone chooses. Kept on this PC.
+   */
+  checkInHours?: number;
+  /**
    * Whether there is a name to listen for (the profile name or an other name). Without one,
    * alerts can't run and the switch shows off. Read-only: ignored when saving.
    */
@@ -3630,6 +3641,19 @@ export interface StatusView {
    * Sync operations not yet delivered.
    */
   outboxPending: number;
+}
+/**
+ * What the window shows (`still_here_prompt`).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "StillHerePrompt".
+ */
+export interface StillHerePrompt {
+  /**
+   * "Still recording?" only: when it stops with no answer, unix ms.
+   */
+  deadlineUnixMs?: number | null;
+  kind: PromptKind;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema

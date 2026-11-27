@@ -52,6 +52,7 @@ pub mod inference;
 pub mod jobs;
 pub mod line_sources;
 pub mod live_question;
+pub mod plain_text;
 pub use memory::l10n;
 pub use memory::background_gate;
 pub mod mcp;

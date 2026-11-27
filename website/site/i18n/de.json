@@ -1,0 +1,13 @@
+{
+  "hreflang": "de",
+  "label": "Deutsch",
+  "home": "Startseite",
+  "site": {
+    "tagline": "Der private KI-Assistent, der sich an Ihre Arbeit erinnert",
+    "pricingNote": "Kostenlos und Open Source (Apache 2.0).",
+    "requirements": {
+      "mac": "macOS 14 Sonoma oder neuer, Apple-Chip (M1 oder neuer)",
+      "windows": "Windows 11, 64 Bit (x64)"
+    }
+  }
+}

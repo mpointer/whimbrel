@@ -97,7 +97,7 @@ public struct WMeetingsSettingsView: View {
                     WSettingsRow(
                         label: l.noticeToggle, isOn: model.noticeEnabled, highlighted: on(a.recordingNotice), onChange: actions.setNoticeEnabled
                     )
-                    .id(a.recordingNotice)
+                    .wAnchor(a.recordingNotice)
                 case .customText:
                     WSettingsTextEditorRow(
                         label: l.noticeTextLabel, description: l.noticeTextHelp(model.noticeDefaultText),
@@ -116,13 +116,13 @@ public struct WMeetingsSettingsView: View {
             WSettingsRow(
                 label: l.autoStart, description: l.qualifyingNote, isOn: model.autoStart, highlighted: on(a.autoStart), onChange: actions.setAutoStart
             )
-            .id(a.autoStart)
+            .wAnchor(a.autoStart)
             WSettingsNumberRow(
                 label: l.leadTime, value: model.leadMinutes, range: 1...10, unit: l.minutes, onChange: actions.setLeadMinutes)
             WSettingsRow(
                 label: l.heuristic, description: l.heuristicNote, isOn: model.heuristic, highlighted: on(a.heuristic), onChange: actions.setHeuristic
             )
-            .id(a.heuristic)
+            .wAnchor(a.heuristic)
             WSettingsPickerRow<String>(
                 label: l.checkIn, description: l.checkInNote, options: wOptions(model.checkInOptions), selection: String(model.checkInHours),
                 style: .menu, onSelect: { actions.setCheckInHours(Int($0) ?? model.checkInHours) })
@@ -131,12 +131,12 @@ public struct WMeetingsSettingsView: View {
                 label: l.liveTranscript, description: l.liveTranscriptNote, isOn: model.liveTranscript,
                 highlighted: on(a.liveTranscript), onChange: actions.setLiveTranscript
             )
-            .id(a.liveTranscript)
+            .wAnchor(a.liveTranscript)
             WSettingsRow(
                 label: l.snapshots, description: l.snapshotsNote + (model.screenRecordingGranted ? "" : " " + l.screenRecordingOff),
                 isOn: model.snapshots, highlighted: on(a.snapshots), onChange: actions.setSnapshots
             )
-            .id(a.snapshots)
+            .wAnchor(a.snapshots)
             WSettingsNumberRow(label: l.readingSize, value: model.readingSize, range: 11...20, unit: l.points, onChange: actions.setReadingSize)
         }
     }
@@ -180,7 +180,7 @@ public struct WMeetingsSettingsView: View {
                 label: l.rememberVoices, description: l.rememberVoicesNote, isOn: model.rememberVoices,
                 highlighted: on(a.voices), onChange: actions.setRememberVoices
             )
-            .id(a.voices)
+            .wAnchor(a.voices)
             WSettingsRow(label: l.rememberedVoices, buttonTitle: l.rememberedVoicesButton) {
                 actions.voicesOpened()
                 showVoices = true
@@ -227,7 +227,7 @@ public struct WMeetingsSettingsView: View {
                 label: l.multilingual, description: l.multilingualNote, isOn: t.multilingual, highlighted: on(a.multilingual),
                 onChange: actions.setMultilingual
             )
-            .id(a.multilingual)
+            .wAnchor(a.multilingual)
             if let status = t.statusMessage { wNote(status) }
         }
         .wSettingsAnchored(a.transcription, highlighted: highlighted)

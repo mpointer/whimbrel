@@ -1,0 +1,86 @@
+<!--
+{
+  "title": "Open-Source-KI für Meeting-Notizen und Gedächtnis",
+  "description": "Whimbrel ist Open Source unter Apache 2.0. Jede Funktion ist kostenlos, läuft auf Ihrem Computer mit Ihren Modellen, und das Sync-Relay hosten Sie selbst.",
+  "priority": 0.8,
+  "crumbs": [
+    {
+      "name": "Open Source",
+      "path": "/open-source/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Wo ist der Quellcode?",
+      "a": "Whimbrel steht unter der Apache-2.0-Lizenz. Das öffentliche Repository wird mit der ersten Version unter dem Namen Whimbrel geöffnet, und diese Seite verlinkt es dann."
+    },
+    {
+      "q": "Kann ich Whimbrel ganz ohne Ihre Server nutzen?",
+      "a": "Ja. Aufnahme, Transkription, Gedächtnis, Suche, Chat und Routinen laufen alle auf Ihrem Computer, mit lokalen Modellen oder Ihrem eigenen KI-Schlüssel. Der Sync zwischen Geräten läuft über ein kleines Relay, das Sie in Ihrem eigenen Cloudflare-Konto betreiben können. Die Anleitung führt Sie Schritt für Schritt durch."
+    },
+    {
+      "q": "Sendet die App Telemetriedaten?",
+      "a": "Keine Analytics, keine Absturzberichte, kein Nutzungs-Tracking. Unsere Server sehen nur Folgendes: eine Update-Prüfung beim Start der App und einmal täglich, die zusammen mit Plattform und Version eine zufällige Kennung sendet, die sich jede Woche ändert, damit wir Installationen zählen können, und, wenn Sie unser gehostetes Relay nutzen, Ihr Konto und Ihre Geräteliste. Synchronisierte Inhalte sind Ende-zu-Ende-verschlüsselt, das Relay sieht sie also nie. Wenn Sie Whimbrel AI wählen, geht Ihre Anfrage über den Server von Whimbrel an Anthropic. Whimbrel speichert die Zahl der verbrauchten Tokens, nicht, was Sie gefragt haben. Auf der <a href=\"/privacy/#leaves\">Datenschutzseite</a> steht alles, was Ihren Computer verlässt."
+    },
+    {
+      "q": "Womit verdienen Sie Geld?",
+      "a": "Mit Dingen, die einen Server von uns oder einen Menschen am anderen Ende brauchen: einem Plus-Tarif für 15 $ im Monat (oder 144 $ im Jahr), zuzüglich Steuern, für unser Relay mit beliebig vielen Geräten und KI mit monatlichem Kontingent; geplanten Team-Tarifen und Supportverträgen für Unternehmen, die selbst hosten. Dazu kommt Whimbrel AI, ein optionales Prepaid-Guthaben für Claude-Modelle zu den Kosten plus 30 %."
+    },
+    {
+      "q": "Gibt es eine Open-Source-Alternative zu Granola?",
+      "a": "Whimbrel ist eine: Es schreibt wie Granola Meeting-Notizen ohne Bot, ergänzt ein durchsuchbares Gedächtnis Ihres Bildschirms sowie Routinen, hält Ihre Daten auf Ihrem Computer und ist Open Source. Siehe <a href=\"/compare/granola-alternative/\">Whimbrel im Vergleich zu Granola</a>."
+    }
+  ],
+  "sourceHash": "19ef106e53e8"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow">
+    <p class="eyebrow">Open Source</p>
+    <h1>Ein KI-Assistent, den Sie lesen, ausführen und behalten können.</h1>
+    <p class="lede">Ein Assistent, der sich Ihre Arbeit merkt, sollte einer sein, den Sie prüfen können. Whimbrel ist Open Source unter der Apache-2.0-Lizenz, jede Funktion ist kostenlos, und nichts daran setzt unsere Server voraus.</p>
+  </div>
+</section>
+
+<section>
+  <div class="narrow prose">
+    <h2>Was offen ist</h2>
+    <p>Alles: die Apps für Mac und Windows, der gemeinsame Kern für Aufnahme, Transkription, Gedächtnis, Suche und Chat, die Routinen und Konnektoren, der MCP-Server, das Sync-Relay und der Update-Feed. Es gibt keine „Community Edition“, bei der Funktionen für eine Bezahlversion zurückgehalten werden.</p>
+    <p>Das öffentliche Repository wird mit der ersten Version unter dem Namen Whimbrel geöffnet. Diese Seite verlinkt es dann.</p>
+
+    <h2>Ihre Modelle, Ihre Rechnung</h2>
+    <p>Lassen Sie Modelle mit Ollama auf Ihrem eigenen Computer laufen, oder nutzen Sie einen Schlüssel für Anthropic, OpenAI, Google Gemini oder OpenRouter und bezahlen Sie diesen Anbieter direkt. Kleine Aufgaben gehen standardmäßig an das günstigste Modell, das Sie eingerichtet haben, und die App zeigt, was jeder Aufruf gekostet hat. Mit Ihrem eigenen API-Schlüssel schlägt Whimbrel nichts auf das auf, was Ihr Anbieter berechnet. Whimbrel AI ist ein optionales Prepaid-Guthaben zu den Kosten plus 30 %. Teams können künftig jedem Platz denselben Organisationsschlüssel geben; es bleibt der eigene Schlüssel der Organisation.</p>
+
+    <h2>Ihr eigenes Relay betreiben</h2>
+    <p>Der Sync zwischen Ihren Geräten ist Ende-zu-Ende-verschlüsselt und läuft über ein kleines Relay: einen Cloudflare Worker plus eine Turso-Datenbank pro Konto. Sie können das Relay nutzen, das wir hosten und das einen Computer und ein Handy kostenlos synchronisiert, oder Ihr eigenes in Ihrem Cloudflare-Konto betreiben, ohne Gerätelimit. Die kostenlosen Stufen von Cloudflare und Turso reichen für die private Nutzung. Die Anleitung zum Selbsthosting liegt dem Repository bei.</p>
+
+    <h2>Wofür wir Geld verlangen</h2>
+    <p>Nur für Dinge, die einen Server brauchen, den jemand betreibt, oder einen Menschen am anderen Ende:</p>
+    <ul>
+      <li><strong>Plus</strong>, 15 $ im Monat oder 144 $ im Jahr (12 $ im Monat bei jährlicher Abrechnung), zuzüglich Steuern, wo anwendbar: unser Relay für beliebig viele Geräte, E-Mail-Support und jeden Monat KI inbegriffen, ohne API-Schlüssel: Wählen Sie in den Einstellungen Whimbrel AI. Ist das Monatskontingent aufgebraucht, wechselt Whimbrel zum nächsten Modell, das Sie eingerichtet haben, etwa einem Modell auf Ihrem Computer, bis sich das Kontingent erneuert. Tägliche Backups mit Wiederherstellung, Ihr Vault von überall und Push aufs Handy kommen ohne Aufpreis zu Plus. Sie sind schon bei Cloud? Ihr Tarif läuft unverändert weiter, und das alles kommt auch zu bestehenden Cloud-Tarifen.</li>
+      <li><strong>Team</strong> (geplant): gemeinsames Meeting-Gedächtnis mit Einwilligung derjenigen Person, die aufgenommen hat, Routinen, die Arbeit an Teamkollegen übergeben, und eine gemeinsame Rechnung.</li>
+      <li><strong>Support</strong>: ein Ansprechpartner, der für Ihre selbst gehostete Installation verantwortlich ist.</li>
+    </ul>
+    <p>Alles in der App bleibt kostenlos. Was Plus dazugibt, steht unter <a href="/pricing/">Preise</a>.</p>
+
+    <h2>Unsere Zusagen</h2>
+    <ul>
+      <li>Alles, was auf Ihrem Gerät läuft, bleibt in der kostenlosen, offenen App.</li>
+      <li>Mit Ihrem eigenen API-Schlüssel schlagen wir nichts auf das auf, was Ihr Anbieter berechnet. Whimbrel AI ist ein optionales Prepaid-Guthaben zu den Kosten plus 30 %.</li>
+      <li>Die App enthält weder Analytics noch Tracking. Ihr einziger Kontakt zu uns ist die Update-Prüfung beim Start und einmal täglich, mit einer zufälligen Kennung, die sich wöchentlich ändert.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section-alt" id="faq">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>Fragen zu Open Source</h2>
+    </div>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

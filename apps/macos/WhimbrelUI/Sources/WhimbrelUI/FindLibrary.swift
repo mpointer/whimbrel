@@ -49,7 +49,7 @@ public struct WLibraryPage<Header: View, Panel: View, Content: View>: View {
             panel
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(theme.backgroundPage)
+        .wPageBackground()
     }
 
     private var viewSwitch: some View {

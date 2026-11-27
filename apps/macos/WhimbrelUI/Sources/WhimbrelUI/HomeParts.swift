@@ -89,13 +89,12 @@ public struct WSectionLabel: View {
             switch style {
             case .plain:
                 Text(theme.sectionLabel(text))
-                    .wFont(.secondary)
-                    .fontWeight(.semibold)
+                    .wSectionLabel()
                     .foregroundStyle(theme.textSecondary)
             case .bracketed:
                 HStack(spacing: theme.space(8)) {
                     Text("[").wFont(.secondary).foregroundStyle(theme.textSecondary)
-                    Text(text.uppercased()).wFont(.secondary).fontWeight(.semibold).foregroundStyle(theme.textPrimary)
+                    Text(text.uppercased()).wSectionLabel(caps: .upper).foregroundStyle(theme.textPrimary)
                     Text("]").wFont(.secondary).foregroundStyle(theme.textSecondary)
                     Rectangle().fill(theme.border).frame(height: max(1, theme.borderWidth)).frame(maxWidth: .infinity)
                 }

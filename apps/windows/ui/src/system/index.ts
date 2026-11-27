@@ -9,6 +9,7 @@ export {
   WSpineStop,
   WSpineNow,
   WNowMarker,
+  WDivider,
   WMeetingCard,
   WMemoryBlock,
   WEmptyState,

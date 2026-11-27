@@ -40,20 +40,28 @@ public struct WSettingsWindow<Detail: View>: View {
     let pickerLabel: String
     let scrollTarget: Binding<String?>
     let onScrolled: (String) -> Void
+    let onMissing: (String) -> Void
+    let hint: String?
     let restoreScroll: () -> String?
     let detail: Detail
+    /// Which anchored rows are drawn; the rows report here through the environment.
+    @State private var presence = WAnchorPresence()
 
     /// - results: what the search finds for the current query (empty when there is no query, or nothing matches).
     /// - scrollTarget: set by the app to an anchor id after it has opened that result's section; the window scrolls
     ///   there after the section has replaced the old one, calls `onScrolled` (the app flashes the row) and clears it,
     ///   whether the detail column was already on screen or appeared because of the choice.
+    /// - onMissing: called instead of `onScrolled` when the row never appeared (it is not drawn in this state): the section is
+    ///   open and there is nothing to scroll to or mark. The app says so through `hint`.
+    /// - hint: a short line under the search field (nil: none).
     /// - restoreScroll: asked once when the window appears: an anchor id to put back in view (a skin click rebuilds the
     ///   window and the app wants the same card in view again).
     public init(
         items: [WSettingsNavItem], selection: String?, onSelect: @escaping (String) -> Void,
         query: Binding<String>, searchPlaceholder: String, results: [WSettingsSearchResult],
         onOpenResult: @escaping (String) -> Void, pickerLabel: String, scrollTarget: Binding<String?>,
-        onScrolled: @escaping (String) -> Void = { _ in }, restoreScroll: @escaping () -> String? = { nil },
+        onScrolled: @escaping (String) -> Void = { _ in }, onMissing: @escaping (String) -> Void = { _ in }, hint: String? = nil,
+        restoreScroll: @escaping () -> String? = { nil },
         @ViewBuilder detail: () -> Detail
     ) {
         self.items = items
@@ -66,6 +74,8 @@ public struct WSettingsWindow<Detail: View>: View {
         self.pickerLabel = pickerLabel
         self.scrollTarget = scrollTarget
         self.onScrolled = onScrolled
+        self.onMissing = onMissing
+        self.hint = hint
         self.restoreScroll = restoreScroll
         self.detail = detail()
     }
@@ -102,12 +112,22 @@ public struct WSettingsWindow<Detail: View>: View {
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
         }
-        .background(theme.backgroundPage)
+        .wPageBackground()
         .environment(\.wDisabledButtonLook, true)
     }
 
     private var search: some View {
-        WSearchBar(text: query, placeholder: searchPlaceholder, shortcutHint: nil)
+        // Return in the field opens the first result, as in every other search field.
+        VStack(alignment: .leading, spacing: theme.space(6)) {
+            WSearchBar(text: query, placeholder: searchPlaceholder, shortcutHint: nil, onSubmit: {
+                if let first = WSettingsHandoff.firstResult(results) { onOpenResult(first.id) }
+            })
+            if let hint {
+                Text(hint).wFont(.secondary).foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+        }
     }
 
     private var resultsList: some View {
@@ -132,6 +152,7 @@ public struct WSettingsWindow<Detail: View>: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.space(16)) { detail }
+                    .environment(\.wAnchorPresence, presence)
                     .padding(theme.space(20))
                     .frame(maxWidth: WSettingsWindowMetrics.maxContent * k, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,6 +169,14 @@ public struct WSettingsWindow<Detail: View>: View {
                 // Let the chosen section's content replace the old one first.
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 guard !Task.isCancelled else { return }
+                // A row that exists only in some states is not drawn in this one: say so instead of scrolling to nothing.
+                guard await presence.waitFor(id), !Task.isCancelled else {
+                    if !Task.isCancelled {
+                        onMissing(id)
+                        scrollTarget.wrappedValue = WSettingsHandoff.afterScroll(target: scrollTarget.wrappedValue, done: id)
+                    }
+                    return
+                }
                 if reduceMotion { proxy.scrollTo(id, anchor: .top) } else { withAnimation { proxy.scrollTo(id, anchor: .top) } }
                 onScrolled(id)
                 // Heavy sections can still be laying out; one more nudge, unless a newer pick replaced this one.

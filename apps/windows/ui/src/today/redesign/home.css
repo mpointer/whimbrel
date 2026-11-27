@@ -7,6 +7,10 @@
   flex-direction: column;
   gap: var(--w-space-xl);
 }
+/* The skin's badge image, at the top of Home: decorative, a little one that takes no part in the layout flow around it. */
+.th-home > .skin-image--badge {
+  align-self: flex-start;
+}
 .th-head {
   display: flex;
   flex-direction: column;
@@ -51,7 +55,7 @@
   min-width: 14rem;
   max-height: 18rem;
   overflow: auto;
-  padding: var(--w-space-sm);
+  padding: max(0px, calc(var(--w-space-sm) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-surface);
   background: var(--color-background-card);
@@ -93,7 +97,7 @@
   background: var(--color-background-page);
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
-  padding: 0 var(--w-space-sm);
+  padding: 0 max(0px, calc(var(--w-space-sm) - var(--sx-border-trim)));
 }
 .th-quiet {
   margin: 0;
@@ -175,7 +179,7 @@
   gap: var(--w-space-sm);
   width: 100%;
   min-height: var(--w-target);
-  padding: var(--w-space-xs) var(--w-space-md);
+  padding: max(0px, calc(var(--w-space-xs) - var(--sx-border-trim))) max(0px, calc(var(--w-space-md) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-card);
   background: var(--color-background-card);
@@ -252,4 +256,174 @@
 .th-md .th-md-addr {
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* ---- Motion (skin.ts `motionVariables`). Thread sets no variable here, so none of this applies to it. A subtle skin
+   fades each Home section in and raises it 4px once, on first show; `none` and Reduce Motion give 0ms and no animation. */
+@keyframes w-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--rise-section, 4px));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes w-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.th-timeline,
+.th-section {
+  animation-name: var(--anim-section, none);
+  animation-duration: calc(var(--dur-section, 0ms) * var(--motion-scale, 1));
+  animation-timing-function: var(--w-ease-standard);
+  animation-fill-mode: both;
+}
+.th-earlier-list,
+.th-menu {
+  animation-name: var(--anim-panel, none);
+  animation-duration: calc(var(--dur-panel, 0ms) * var(--motion-scale, 1));
+  animation-timing-function: var(--w-ease-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .th-timeline,
+  .th-section,
+  .th-earlier-list,
+  .th-menu {
+    animation: none;
+  }
+}
+/* The "now" marker settles into its new place (it is keyed by the time it shows, so it plays when the minute moves). Only
+   on Home: the live meeting page keeps its own marker still. */
+@keyframes w-settle {
+  from {
+    opacity: 0.4;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.th-timeline .w-spine-stop[data-node="now"] {
+  animation-name: var(--anim-marker, none);
+  animation-duration: calc(var(--dur-marker, 0ms) * var(--motion-scale, 1));
+  animation-timing-function: var(--w-ease-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .th-timeline .w-spine-stop[data-node="now"] {
+    animation: none;
+  }
+}
+
+/* ---- Dividers (richer skins row 6, docs/superpowers/plans/2026-11-25-richer-skins.md section 3) ----
+   The skin's `decoration.dividers` draws the rules between Home's sections, between
+   the rows of the ruled time line, and as the spine of the line time line. Home's own wrapper carries it as `data-dividers`
+   (not the root), so a skin card's picture of Home draws its own skin's style whatever skin the page is showing. Nothing else reads it. Every divider is
+   decoration: the section rule is aria-hidden and the others are pseudo-elements, so Narrator never meets one.
+   none draws nothing and changes nothing: the ruled rows keep their own border rule, the spine its 2px line.
+   hairline is one 1px stroke, chalk one 2px stroke at 60 percent with round ends, double two 1px strokes with a 2px gap,
+   dotted 1px dots 3px apart. The colour is the border token. */
+.th-home {
+  --dv-h: 0px;
+}
+.th-home[data-dividers="hairline"] {
+  --dv-h: 1px;
+}
+.th-home[data-dividers="chalk"] {
+  --dv-h: 2px;
+}
+.th-home[data-dividers="double"] {
+  --dv-h: 4px;
+}
+.th-home[data-dividers="dotted"] {
+  --dv-h: 1px;
+}
+
+/* The ruled time line: a rule between rows, never above the first and never beside the hero (a framed block of its own).
+   A skin with no divider style keeps the border rule it has always drawn, on the same rows. */
+.th-home .w-spine-ruled .w-spine-stop:first-child,
+.th-home .w-spine-ruled .w-spine-hero,
+.th-home .w-spine-ruled .w-spine-hero + .w-spine-stop {
+  border-top: 0;
+}
+.th-home:is([data-dividers="hairline"], [data-dividers="chalk"], [data-dividers="double"], [data-dividers="dotted"])
+  .w-spine-ruled .w-spine-stop {
+  border-top: 0;
+}
+.th-home:is([data-dividers="hairline"], [data-dividers="chalk"], [data-dividers="double"], [data-dividers="dotted"])
+  .w-spine-ruled
+  .w-spine-stop:not(:first-child):not(.w-spine-hero):not(.w-spine-hero + .w-spine-stop)::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--dv-h);
+}
+
+/* The horizontal strokes, for a section rule and for a ruled row's rule. */
+.th-home .w-divider {
+  flex: none;
+  height: var(--dv-h);
+}
+.th-home[data-dividers="hairline"] .w-divider,
+.th-home[data-dividers="hairline"] .w-spine-ruled .w-spine-stop::before {
+  background: var(--color-border);
+}
+.th-home[data-dividers="chalk"] .w-divider,
+.th-home[data-dividers="chalk"] .w-spine-ruled .w-spine-stop::before {
+  background: var(--color-border);
+  opacity: 0.6;
+  border-radius: 1px;
+}
+.th-home[data-dividers="double"] .w-divider,
+.th-home[data-dividers="double"] .w-spine-ruled .w-spine-stop::before {
+  background: linear-gradient(var(--color-border) 0 1px, transparent 1px 3px, var(--color-border) 3px 4px);
+}
+.th-home[data-dividers="dotted"] .w-divider,
+.th-home[data-dividers="dotted"] .w-spine-ruled .w-spine-stop::before {
+  background: repeating-linear-gradient(90deg, var(--color-border) 0 1px, transparent 1px 3px);
+}
+
+/* The line time line's spine takes the style: the connector keeps its colour (the border token before the present, the accent
+   after) and its own opacity, and the style sets the width and the pattern. */
+.th-home .w-spine-rail {
+  --dv-c: var(--color-border);
+}
+.th-home .w-spine-connector-solid {
+  --dv-c: var(--color-accent-primary);
+}
+.th-home:is([data-dividers="hairline"], [data-dividers="chalk"], [data-dividers="double"], [data-dividers="dotted"])
+  .w-spine:not(.w-spine-ruled) .w-spine-rail::after {
+  width: var(--dv-h);
+  left: calc(50% - var(--dv-h) / 2);
+}
+.th-home[data-dividers="hairline"] .w-spine:not(.w-spine-ruled) .w-spine-rail::after {
+  background: var(--dv-c);
+}
+.th-home[data-dividers="chalk"] .w-spine:not(.w-spine-ruled) .w-spine-rail::after {
+  background: var(--dv-c);
+  border-radius: 1px;
+}
+.th-home[data-dividers="double"] .w-spine:not(.w-spine-ruled) .w-spine-rail::after {
+  background: linear-gradient(90deg, var(--dv-c) 0 1px, transparent 1px 3px, var(--dv-c) 3px 4px);
+}
+.th-home[data-dividers="dotted"] .w-spine:not(.w-spine-ruled) .w-spine-rail::after {
+  background: repeating-linear-gradient(180deg, var(--dv-c) 0 1px, transparent 1px 3px);
+}
+
+/* Forced colors: the skin's colours are off, so every stroke draws solid in the system's text colour. */
+@media (forced-colors: active) {
+  .th-home .w-divider,
+  .th-home .w-spine-ruled .w-spine-stop::before,
+  .th-home .w-spine:not(.w-spine-ruled) .w-spine-rail::after {
+    forced-color-adjust: none;
+    background: CanvasText !important;
+    opacity: 1 !important;
+  }
 }

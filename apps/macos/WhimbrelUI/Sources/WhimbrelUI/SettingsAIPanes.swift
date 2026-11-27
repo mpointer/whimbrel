@@ -62,7 +62,7 @@ public struct WAISettingsView: View {
             isEnabled: isEnabled, disabledReason: disabledReason, highlighted: key.anchor.map(on) ?? false,
             liveHint: { actions.keyHint(id, $0) },
             onSave: { actions.saveKey(id, $0) }, onRemove: { removing = id })
-            .id(key.anchor ?? id)
+            .wAnchor(key.anchor ?? id)
     }
 
     // MARK: Local-only, first
@@ -74,7 +74,7 @@ public struct WAISettingsView: View {
             WSettingsRow(
                 label: l.localOnly, description: l.localOnlyNote, isOn: model.localOnly, highlighted: on(a.localOnly), onChange: actions.setLocalOnly
             )
-            .id(a.localOnly)
+            .wAnchor(a.localOnly)
             if model.localModel.offersRemove {
                 WSettingsRow(label: l.smallLocalModel, buttonTitle: l.removeLocalModel, action: actions.removeLocalModel)
             }
@@ -225,22 +225,22 @@ public struct WAISettingsView: View {
             WSettingsPickerRow<String>(
                 label: l.defaultProvider, options: wOptions(r.providers), selection: r.provider, style: .segmented,
                 highlighted: on(a.provider), onSelect: actions.setProvider)
-                .id(a.provider)
+                .wAnchor(a.provider)
             modelRow(r.model, label: l.defaultModel, placeholder: l.ollamaModelPlaceholder, highlighted: on(a.model), set: actions.setModel)
-                .id(a.model)
+                .wAnchor(a.model)
             ForEach(r.unavailableNotes, id: \.self) { note in
                 WSettingsRowFrame(label: "", detail: nil, controlSpeaksLabel: false, errorText: note) { EmptyView() }
             }
             WSettingsNumberFieldRow(
                 label: l.userCap, value: WCapRule.value(cents: r.userCapCents), rule: WCapRule.rule, placeholder: l.defaultWord,
                 highlighted: on(a.dailyCap), onCommit: { actions.setUserCap($0) })
-                .id(a.dailyCap)
+                .wAnchor(a.dailyCap)
             WSettingsNumberFieldRow(
                 label: l.globalCap, value: WCapRule.value(cents: r.globalCapCents), rule: WCapRule.rule, placeholder: l.defaultWord,
                 onCommit: { actions.setGlobalCap($0) })
             wNote(l.capNote)
             WSettingsRow(label: l.spendToday, description: r.spendText, buttonTitle: l.refresh, highlighted: on(a.spend), action: actions.refreshSpend)
-                .id(a.spend)
+                .wAnchor(a.spend)
         }
     }
 

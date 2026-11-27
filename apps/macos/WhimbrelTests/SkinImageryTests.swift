@@ -55,15 +55,28 @@ final class SkinImageryTests: XCTestCase {
         XCTAssertLessThan(ThemeContrast.relativeLuminance(g.darkest), 0.2)
     }
 
-    func test_textFree_image_never_under_text() {
-        let free = SkinImage(asset: "a.png", placement: .background, textFree: true)
-        let plain = SkinImage(asset: "a.png", placement: .background, textFree: false)
-        XCTAssertFalse(SkinImageryView.isDrawn(free), "a text-free background sits under the content")
-        XCTAssertTrue(SkinImageryView.isDrawn(plain))
-        // Header and badge sit beside the text, never under it.
+    func test_background_is_dropped_and_old_files_still_load() {
+        for textFree in [true, false] {
+            XCTAssertFalse(SkinImageryView.isDrawn(SkinImage(asset: "a.png", placement: .background, textFree: textFree)), "no background in Thread")
+        }
         for placement in [SkinImagePlacement.header, .badge] {
             XCTAssertTrue(SkinImageryView.isDrawn(SkinImage(asset: "a.png", placement: placement, textFree: true)))
+            XCTAssertTrue(SkinImageryView.isDrawn(SkinImage(asset: "a.png", placement: placement, textFree: false)))
         }
+        // The loader keeps an old file's background entry (the Rust corpus agrees); it is the drawing that ignores it.
+        let skin = SkinLoader.parse(Data(#"{"id":"old","name":"Old","palettes":["default"],"decoration":{"imagery":[{"asset":"pitch.jpg","placement":"background","textFree":false}]}}"#.utf8), base: SkinDefaults.whimbrel)
+        XCTAssertEqual(skin?.0.decoration.imagery.first?.placement, .background)
+    }
+
+    func test_header_has_a_scrim_unless_text_free_and_a_badge_never() {
+        XCTAssertTrue(SkinImageryView.hasScrim(SkinImage(asset: "a.png", placement: .header, textFree: false)))
+        XCTAssertFalse(SkinImageryView.hasScrim(SkinImage(asset: "a.png", placement: .header, textFree: true)))
+        XCTAssertFalse(SkinImageryView.hasScrim(SkinImage(asset: "a.png", placement: .badge, textFree: false)))
+    }
+
+    func test_the_skin_maker_is_not_offered_a_background() throws {
+        let decoration = try XCTUnwrap(SkinCatalogue.object()["decoration"] as? [String: Any])
+        XCTAssertEqual(decoration["imageryPlacement"] as? [String], ["header", "badge"])
     }
 
     func test_header_band_draws_nothing_only_for_none() {

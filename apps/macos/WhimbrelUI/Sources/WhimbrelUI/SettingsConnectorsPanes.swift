@@ -91,7 +91,7 @@ public struct WConnectorsSettingsView: View {
             addRow(service, id)
         }
         .wSettingsAnchored(service.anchor, highlighted: highlighted)
-        .id(service.anchor)
+        .wAnchor(service.anchor)
     }
 
     private func accountItem(_ account: WAccountRow, _ service: WConnectorService) -> WSettingsListItem {
@@ -144,7 +144,7 @@ public struct WConnectorsSettingsView: View {
             WSettingsDisclosure(l.advanced, isExpanded: $advanced) {
                 wSubheading(theme, l.ownClientHeading)
                     .wSettingsAnchored(a.ownClient, highlighted: highlighted)
-                    .id(a.ownClient)
+                    .wAnchor(a.ownClient)
                 wNote(l.ownClientNote)
                 if own.isSaved {
                     WSettingsRowFrame(label: l.clientIdLabel, detail: nil, controlSpeaksLabel: false) {
@@ -176,7 +176,7 @@ public struct WConnectorsSettingsView: View {
             ) {
                 WSettingsToggleControl(label: l.serverToggle, isOn: m.serverOn, onChange: actions.setServerOn)
             }
-            .id(a.mcp)
+            .wAnchor(a.mcp)
             wSubheading(theme, l.addClientHeading)
             WSettingsTextFieldRow(
                 label: l.clientName, text: Binding(get: { m.name }, set: actions.setClientName), placeholder: l.clientNamePlaceholder)

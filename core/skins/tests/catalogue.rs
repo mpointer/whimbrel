@@ -194,3 +194,21 @@ fn the_redesign_catalogue_adds_only_the_five_element_keys() {
     assert_eq!(options["ask"], serde_json::json!(["field", "prompt"]));
     assert_eq!(options["actions"], serde_json::json!(["buttons", "links"]));
 }
+
+#[test]
+fn the_catalogue_offers_no_background_image_but_old_files_still_load() {
+    let c = catalogue();
+    let offered: Vec<&str> = c["decoration"]["imageryPlacement"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(offered, ["header", "badge"]);
+    let old = serde_json::json!({
+        "id": "old", "name": "Old", "palettes": ["default"],
+        "decoration": { "imagery": [{ "asset": "pitch.jpg", "placement": "background", "textFree": false }] },
+    });
+    let skin = loads_clean(&old);
+    assert_eq!(skin.decoration.imagery.len(), 1);
+}

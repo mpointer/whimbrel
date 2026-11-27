@@ -13,7 +13,7 @@ body {
   font-family: var(--font-body);
   font-size: var(--text-body);
   color: var(--color-text-primary);
-  background: var(--color-background-page);
+  background: var(--sx-texture, none), var(--color-background-page);
 }
 
 .shell {

@@ -4,6 +4,33 @@ Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
 ## [Unreleased]
 
+## [0.9.84] - 2026-11-27
+
+### Mac and Windows
+- The live question alert now shows the drafted answer as plain text: no more `**`, `#`, `-` bullets, backticks or link addresses. Link text stays, and a lone `*` like "2 * 3" is left alone.
+- A skin's texture (paper, grain or grid) now draws on the page background, faintly: it moves the page color by at most 4 percent in luminance, and it is off in High Contrast, Windows forced colors and Mac Increase Contrast. Cards and inputs stay flat, and Thread looks as it did.
+- A skin with a double border (Almanac) now draws two lines with a gap, inside the edge, so cards keep their size. The whole border is at most 6 points thick. A line under one point still draws as one. On Windows, a skin's surface corners are now one and a half times its radius, as on the Mac. Thread looks as it did.
+- A skin's motion now works. With motion set to subtle, Home sections fade in and rise a little, buttons and links ease between states, the "now" marker settles into place and cards and panels fade open. With none, or when Reduce Motion (Mac) or Show animations (Windows) asks for less, nothing animates. The recording indicator and consent banner never animate from a skin. Thread looks as it did.
+- A skin's header image now shows at the top of Home, under a scrim so text beside it stays readable (unless the skin marks it text-free), and its badge image sits above Home's content. The skin maker no longer offers a background image, and a skin that has one shows nothing there.
+- A skin's dividers now show on Home: a rule above each section after the first, rules between the rows of the ruled time line (none beside the next meeting), and the line time line's spine in the same style (hairline, chalk, double or dotted). They are decoration and are not read aloud. Thread has none and looks as it did.
+- Each skin card in Settings now shows the real Home drawn from sample text in that skin (type, shape, dividers, header band, images and texture), instead of the old preview. It is a still picture: it does not move, uses none of your data, and is hidden from VoiceOver and Narrator, which read only the skin's name and tagline.
+- Classic, High Contrast and Hypermodern now choose their own Home parts. Classic shows up next in a framed box with small-caps section labels. High Contrast shows it in a box too, with ruled rows between meetings. Hypermodern shows it as large numerals, with a prompt-style ask bar. Thread looks as it did, and your own skins are unchanged.
+
+### Mac
+- A meeting row whose attendee chips filled the row to the point (Retro Terminal's monospaced type) no longer wraps its last chip onto a second line that the next row drew over, so every attendee shows.
+- A skin's type now reaches more of the Mac. Titles use the skin's display face, weight and italic, times use its numerals face, and captions and section labels use its label face, weight, italic and caps, including small caps. Body text uses the skin's weight, with emphasis two steps heavier. Notes and note titles keep their reading face, and Thread looks as it did.
+- Home now draws the skin's header band above the greeting, as the other tabs do. A skin with no band, including Thread, looks as it did.
+- Return in the Settings search field now opens the first result.
+- A Settings search hit on a setting that isn't shown right now (Manage subscription on a free plan, a device name when signed out) now says "That setting isn't shown right now." under the search field, and to VoiceOver. A hit that is found is announced as "Showing" and the setting's name.
+- Plan & billing no longer stays on "Checking your plan…" when it can't reach billing: it offers Try again.
+
+### Windows
+- "Still recording?" now comes to Windows. After 1 hour of recording, then every hour after "Keep recording", it asks; "Stop now" stops the recording, and with no answer in 5 minutes it stops and is trimmed to the last words plus 30 seconds, as "Still in a meeting?" does. Settings → Meetings → "Ask if I'm still recording after" sets the hours (Off, 1 to 4) on this PC. While "Still in a meeting?" is asking, it waits, and a paused recording is not asked until an hour after it resumes.
+
+### Website
+- A German site at /de/, in formal Sie, like the Spanish and French ones. Privacy, terms, compare and the changelog stay in English.
+- A blog at /blog/, linked from the footer. It loads from Soro, and the privacy policy says so.
+
 ## [0.9.83] - 2026-11-25
 
 ### Mac and Windows
@@ -17,6 +44,7 @@ Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 - "Still recording?" now asks after 1 hour instead of 2, for anyone who never changed it (a choice you made stays). If it gets no answer, the recording stops and is trimmed to the last words plus 30 seconds, the same trim "Still in a meeting?" uses. A short filler line like "Thank you." from near-silent audio no longer delays "Still in a meeting?" or cancels its prompt.
 
 ### Windows
+- The "Next, in N min" label in the next-meeting infobox is now in the main text color, so it reads at 4.5:1 on every built-in palette. It was in the accent color, which fell short on Default, Slate and four others.
 - Narrator now reads a corner alert (for example "Meeting detected" or "Question for you") when it appears, and Tab reaches its buttons. With no screen reader running, alerts still open without taking focus. This was a known issue in 0.9.82.
 - Skins can now set font weights, italic, and separate fonts for numbers and labels. Thread looks the same as before.
 - When a skin's colors are hard to read against Home's parts, Windows adjusts them, as the Mac does, and says which colors it changed.

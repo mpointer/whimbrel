@@ -188,7 +188,7 @@ public struct WNoteView<Options: View, Notices: View, Editor: View, Extras: View
             ask
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(theme.backgroundPage)
+        .wPageBackground()
         .accessibilityElement(children: .contain)
     }
 
@@ -388,8 +388,8 @@ public struct WNoteView<Options: View, Notices: View, Editor: View, Extras: View
         VStack(alignment: .leading, spacing: theme.space(6)) {
             HStack(alignment: .center, spacing: theme.space(8)) {
                 if !model.eyebrow.isEmpty {
-                    Text(theme.sectionLabel(model.eyebrow)).wFont(.secondary).fontWeight(.semibold)
-                        .tracking(theme.type.sectionLabelCaps ? 0.8 : 0).foregroundStyle(theme.textSecondary)
+                    Text(theme.sectionLabel(model.eyebrow)).wSectionLabel()
+                        .tracking(theme.type.labelCaps == .none ? 0 : 0.8).foregroundStyle(theme.textSecondary)
                 }
                 Spacer(minLength: 0)
                 if model.offersEdit {

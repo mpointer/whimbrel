@@ -9,8 +9,9 @@ import { WSettingsLayout, WSettingsNav, WSettingsSearchResults, type WSettingsNa
 import { SETTINGS_SEARCH_ENTRIES, type SettingsSearchEntry } from "../settingsSearch";
 import type { SettingsSectionId } from "../settingsSections";
 import { JumpContext } from "./jump";
+import { jumpNotice, type JumpNotice } from "./jumpNotice";
 import { REDESIGN_SECTIONS, redesignSectionTitle, sectionPickerLabel } from "./sections";
-import { searchRedesign } from "./search";
+import { REDESIGN_SEARCH_ENTRIES, searchRedesign } from "./search";
 import { ConnectorsSection } from "./sections/ConnectorsSection";
 import { McpTokenHost } from "./sections/connectors/McpTokenHost";
 import { DevicesSection } from "./sections/DevicesSection";
@@ -31,6 +32,8 @@ const BADGE_REFRESH_MS = 30_000;
 const JUMP_MS = 2500;
 /** How long to wait for a card to load before giving up on finding the row. */
 const FIND_MS = 3000;
+/** How long the "not shown" hint stays under the search field. */
+const NOTICE_MS = 6000;
 
 export function SectionBody({ section, ...props }: SectionProps & { section: SettingsSectionId }) {
   switch (section) {
@@ -85,6 +88,7 @@ export function RedesignedSettings(props: {
   const [pending, setPending] = useState(0);
   const [query, setQuery] = useState("");
   const [jump, setJump] = useState<string | null>(null);
+  const [notice, setNotice] = useState<JumpNotice | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const first = useRef(true);
   const results = searchRedesign(query);
@@ -117,9 +121,11 @@ export function RedesignedSettings(props: {
     const started = Date.now();
     let frame = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const title = REDESIGN_SEARCH_ENTRIES.find((e) => e.id === jump)?.title ?? "";
     const look = () => {
       const el = document.getElementById(jump);
       if (el) {
+        setNotice(jumpNotice(true, title));
         if (el.classList.contains("w-scard")) {
           const h = el.querySelector<HTMLElement>("h2, h3, h4");
           h?.setAttribute("tabindex", "-1");
@@ -130,7 +136,11 @@ export function RedesignedSettings(props: {
         return;
       }
       if (Date.now() - started < FIND_MS) frame = requestAnimationFrame(look);
-      else setJump(null);
+      else {
+        // The section is open but this row is not drawn in this state (a Free plan has no Manage, a signed-out Mac no device name).
+        setNotice(jumpNotice(false, title));
+        setJump(null);
+      }
     };
     frame = requestAnimationFrame(look);
     return () => {
@@ -138,6 +148,13 @@ export function RedesignedSettings(props: {
       if (timer) clearTimeout(timer);
     };
   }, [jump]);
+
+  // The hint goes away by itself, and as soon as the person types, picks a section or searches again.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   // The parts take an `id` for a jump; the reorganisation's tests and search read `data-settings-anchor`. The frame writes
   // that attribute on every element whose id is a registry anchor, now and as cards load, so a row carries the same
@@ -159,6 +176,7 @@ export function RedesignedSettings(props: {
     onSection(entry.section);
     setQuery("");
     setJump(null);
+    setNotice(null);
     // A new value even for the same row, so a second search for it marks it again.
     setTimeout(() => setJump(id), 0);
   };
@@ -177,12 +195,25 @@ export function RedesignedSettings(props: {
         placeholder={t("Search settings")}
         aria-label={t("Search settings")}
         value={query}
-        onChange={(ev) => setQuery(ev.target.value)}
+        onChange={(ev) => {
+          setQuery(ev.target.value);
+          setNotice(null);
+        }}
         onKeyDown={(ev) => {
           if (ev.key === "Enter" && results[0]) open(results[0].id);
           if (ev.key === "Escape") setQuery("");
         }}
       />
+      {notice?.kind === "hidden" && (
+        <p className="rs-notice" role="status">
+          {notice.hint}
+        </p>
+      )}
+      {notice?.kind === "shown" && (
+        <p className="rs-sr-only" role="status">
+          {notice.announce}
+        </p>
+      )}
       {searching ? (
         <WSettingsSearchResults
           results={results.map((r) => ({ id: r.id, title: r.title, section: redesignSectionTitle(r.section) }))}

@@ -20,9 +20,9 @@ const site = JSON.parse(readFileSync(join(siteDir, "config.json"), "utf8"));
 // Translated sites: pages live in site/pages/<locale>/, partials in site/partials/<locale>/ and
 // strings in site/i18n/ (written by scripts/translate-site.py). A page with no translation stays English.
 const locales = Object.fromEntries(
-  ["es", "fr"].map((l) => [l, JSON.parse(readFileSync(join(siteDir, "i18n", `${l}.json`), "utf8"))]),
+  ["es", "fr", "de"].map((l) => [l, JSON.parse(readFileSync(join(siteDir, "i18n", `${l}.json`), "utf8"))]),
 );
-const localeOf = (route) => route.match(/^\/(es|fr)\//)?.[1] ?? null;
+const localeOf = (route) => route.match(/^\/(es|fr|de)\//)?.[1] ?? null;
 const siteUrl = site.url.replace(/\/$/, "");
 
 const errors = [];
@@ -296,6 +296,7 @@ const layouts = {
   en: readFileSync(join(siteDir, "layout.html"), "utf8"),
   es: readFileSync(join(siteDir, "i18n", "layout.es.html"), "utf8"),
   fr: readFileSync(join(siteDir, "i18n", "layout.fr.html"), "utf8"),
+  de: readFileSync(join(siteDir, "i18n", "layout.de.html"), "utf8"),
 };
 const pageFiles = walk(join(siteDir, "pages")).filter((f) => f.endsWith(".html"));
 const routes = new Set(pageFiles.map(routeFor));
@@ -442,7 +443,7 @@ writeFileSync(
 );
 writeFileSync(
   join(outDir, "robots.txt"),
-  `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /download/thanks/\nDisallow: /download/unavailable/\nDisallow: /es/download/thanks/\nDisallow: /es/download/unavailable/\nDisallow: /fr/download/thanks/\nDisallow: /fr/download/unavailable/\nDisallow: /cloud/\nDisallow: /ai/\n\nSitemap: ${siteUrl}/sitemap.xml\n`,
+  `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /download/thanks/\nDisallow: /download/unavailable/\nDisallow: /es/download/thanks/\nDisallow: /es/download/unavailable/\nDisallow: /fr/download/thanks/\nDisallow: /fr/download/unavailable/\nDisallow: /de/download/thanks/\nDisallow: /de/download/unavailable/\nDisallow: /cloud/\nDisallow: /ai/\n\nSitemap: ${siteUrl}/sitemap.xml\n`,
 );
 
 // Launch blockers that shouldn't break local builds or CI.

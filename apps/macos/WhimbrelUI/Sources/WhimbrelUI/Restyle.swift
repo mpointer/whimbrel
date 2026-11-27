@@ -127,7 +127,8 @@ public enum WRestyle {
         case .thread:
             return WCardSpec(
                 padding: theme.space(16), cornerRadius: theme.shape.cardRadius, borderWidth: theme.borderWidth,
-                dashed: theme.shape.borderStyle == .dashed && !theme.isHighContrast, doubled: false)
+                dashed: theme.shape.borderStyle == .dashed && !theme.isHighContrast,
+                doubled: theme.drawsDoubleBorder(width: theme.borderWidth))
         }
     }
 

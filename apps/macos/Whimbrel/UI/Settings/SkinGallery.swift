@@ -1,12 +1,14 @@
 import AppKit
 import OSLog
 import SwiftUI
+import WhimbrelUI
 
-/// Renders and caches the gallery's preview images: `TodayChrome` with the sample content under a
-/// skin and palette override, at 900x1200 scaled to a quarter. An entry is reused only while the
+/// Renders and caches the gallery's preview images: the real Thread Home (`WHomeView`, the same model and
+/// elements the Home screen uses) drawn from the sample content under a skin and palette override, at 900x1200
+/// scaled to a quarter. An entry is reused only while the
 /// installed skin and palette are unchanged, so installing a changed skin or theme re-renders it.
 /// The stores only say what is installed; the render itself runs under the shared stores' overrides,
-/// since that is what `TodayChrome` and the colors read.
+/// since that is what the Home theme and the colors read.
 @MainActor
 final class SkinPreviewCache {
     static let shared = SkinPreviewCache()
@@ -75,14 +77,11 @@ final class SkinPreviewCache {
             ?? NSImage(size: CGSize(width: Self.renderSize.width * Self.scale, height: Self.renderSize.height * Self.scale))
     }
 
-    /// The scroll view in `TodayChrome` is why this goes through `OffscreenRender`, not `ImageRenderer`.
+    /// Drawn through `OffscreenRender`, as a still picture: nothing here runs a timer or reads live data.
     private static func render(colorScheme: ColorScheme) -> NSImage {
-        let view = TodayChrome(
-            content: TodaySampleContent.sample, actions: .noop,
-            slots: TodaySlots(live: nil, decisionCount: TodaySampleContent.sample.pendingApprovalCount, actions: .noop, composer: TodaySampleContent.composer)
-        )
-        .frame(width: renderSize.width, height: renderSize.height, alignment: .topLeading)
-        .background(Color.whimbrelBackgroundPage)
+        let view = SkinPreviewHome()
+            .frame(width: renderSize.width, height: renderSize.height, alignment: .topLeading)
+            .background(Color.whimbrelBackgroundPage)
         let target = CGSize(width: renderSize.width * scale, height: renderSize.height * scale)
         let image = NSImage(size: target)
         guard let rep = OffscreenRender.bitmap(of: view, size: renderSize, colorScheme: colorScheme, scale: 1, settle: false) else { return image }
@@ -91,6 +90,35 @@ final class SkinPreviewCache {
         rep.draw(in: CGRect(origin: .zero, size: target))
         image.unlockFocus()
         return image
+    }
+}
+
+/// What a gallery card shows: Home, from fixed sample text and the selected skin (the preview cache selects the card's skin
+/// around the draw). It is a still picture of the real Home views: no clock, no `AppState`, no reads, and motion is off
+/// (the theme's motion is replaced by none). Not interactive; the card hides it from VoiceOver.
+struct SkinPreviewHome: View {
+    /// The model Home draws for the skin: the sample day, no memory blocks, memory on, nothing recording.
+    static func model(skin: Skin) -> WHomeModel {
+        HomeRedesignAdapter.model(
+            content: TodaySampleContent.sample, data: HomeRedesignData(), memory: .on, elapsedSeconds: nil,
+            now: TodaySampleContent.now, voice: skin.voice,
+            elements: WHomeElements.resolve(options: skin.archetypeOptions, archetype: skin.archetype.rawValue))
+    }
+
+    var body: some View {
+        let skin = SkinStore.shared.selected
+        VStack(spacing: 0) {
+            SkinHomeImagesView()
+            WHomeView(model: Self.model(skin: skin), actions: WHomeActions())
+        }
+        // Motion off: the same theme with no durations, so a section that would fade in is drawn in place. Inside `redesignThemed`,
+        // which sets the theme this reads.
+        .transformEnvironment(\.wTheme) { theme in
+            theme = WTheme(palette: theme.palette, variant: theme.variant, shape: theme.shape, type: theme.type, motion: .none, texture: theme.texture)
+        }
+        .redesignThemed()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

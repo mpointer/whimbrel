@@ -282,6 +282,7 @@
 /* --- images ------------------------------------------------------------------------------ */
 
 .skin-image {
+  position: relative;
   overflow: hidden;
 }
 
@@ -294,8 +295,8 @@
 
 .skin-image--badge {
   flex: none;
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
 }
 
 .skin-image--header {
@@ -303,13 +304,7 @@
   height: 120px;
 }
 
-/* A background sits behind the page; the scrim is the page colour at the opacity the shell measured. */
-.skin-image--background {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-}
-
+/* The scrim is the page colour at the opacity the shell measured, over a header image that is not marked text-free. */
 .skin-image__scrim {
   position: absolute;
   inset: 0;

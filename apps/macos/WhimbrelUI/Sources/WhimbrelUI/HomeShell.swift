@@ -335,7 +335,7 @@ public struct WShell<Choices: View, Footer: View, Banner: View, Content: View>: 
                 content
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.backgroundPage)
+            .wPageBackground()
         }
         .background(theme.backgroundPage)
         .background {

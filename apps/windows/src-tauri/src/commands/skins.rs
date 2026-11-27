@@ -122,11 +122,12 @@ fn scrim_for(sample: &[u8], v: &Variant, archetype: Archetype) -> f64 {
     skins::scrim_opacity(&text, page, lightest, darkest, glow.as_ref())
 }
 
-/// The scrim each background image of `skin` needs: the worst over `palettes`, light and dark. Only a
-/// background has text over it; a header or badge sits beside the text and is drawn as it is.
+/// The scrim each header image of `skin` needs: the worst over `palettes`, light and dark. The header
+/// image is the band the title row sits against, so it always gets one unless it is marked text-free; a
+/// badge sits beside the text and is drawn as it is. A background is never drawn in Thread.
 fn image_scrims(user: &UserSkinStore, skin: &Skin, palettes: &[Palette]) -> BTreeMap<String, f64> {
     let mut out = BTreeMap::new();
-    for image in skin.decoration.imagery.iter().filter(|i| i.placement == Placement::Background) {
+    for image in skin.decoration.imagery.iter().filter(|i| i.placement == Placement::Header && !i.text_free) {
         let Some(sample) = user.image_path(&skin.id, &image.asset).ok().and_then(|path| scrim_sample(&path)) else { continue };
         let worst = palettes
             .iter()
@@ -804,7 +805,7 @@ mod tests {
     }
 
     #[test]
-    fn a_background_image_gets_the_worst_scrim_of_its_palettes() {
+    fn a_header_image_gets_the_worst_scrim_of_its_palettes() {
         let root = scratch("scrim");
         let store = UserSkinStore::new(&root);
         let mut skin = skins::whimbrel_default();
@@ -817,13 +818,21 @@ mod tests {
             image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
             out
         };
-        for (asset, placement) in [("bg.png", Placement::Background), ("top.png", Placement::Header), ("gone.png", Placement::Background)] {
-            skin.decoration.imagery.push(skins::format::Image { asset: asset.into(), placement, text_free: false });
+        for (asset, placement, text_free) in [
+            ("bg.png", Placement::Header, false),
+            ("badge.png", Placement::Badge, false),
+            ("old.png", Placement::Background, false),
+            ("free.png", Placement::Header, true),
+            ("gone.png", Placement::Header, false),
+        ] {
+            skin.decoration.imagery.push(skins::format::Image { asset: asset.into(), placement, text_free });
         }
-        store.save(&skin, &[], &[("bg.png".into(), white.clone()), ("top.png".into(), white)]).unwrap();
+        let files: Vec<(String, Vec<u8>)> = ["bg.png", "badge.png", "old.png", "free.png"].iter().map(|n| ((*n).to_string(), white.clone())).collect();
+        store.save(&skin, &[], &files).unwrap();
         let list = list_skins(&dirs(), &store, false);
         let mine = list.last().unwrap();
-        // Only the background is measured, and a missing file is left for the page to cover fully.
+        // Only a header image that is not text-free is measured (a badge sits beside the text, a background is never drawn, a
+        // text-free image draws bare), and a missing file is left for the page to cover fully.
         assert_eq!(mine.image_scrims.keys().collect::<Vec<_>>(), ["bg.png"]);
         // White under Default's dark variant (light text) needs a strong scrim; under its light variant, little.
         let palette = &offered_palettes(&skin, &[], &palette_pool(&dirs(), false))[0];

@@ -98,9 +98,9 @@
     setTimeout(function () { location.href = "/api/download/" + target; }, 900);
   }
 
-  // The form's messages on the translated sites (site/pages/es, site/pages/fr).
+  // The form's messages on the translated sites (site/pages/es, site/pages/fr, site/pages/de).
   var lang = document.documentElement.lang;
-  var localePrefix = lang === "es" ? "/es" : lang === "fr-CA" ? "/fr" : "";
+  var localePrefix = lang === "es" ? "/es" : lang === "fr-CA" ? "/fr" : lang === "de" ? "/de" : "";
   var messages = {
     es: {
       "Enter your name.": "Escribe tu nombre.",
@@ -125,6 +125,18 @@
       "Network error. Check your connection and try again.": "Erreur réseau. Vérifiez votre connexion et réessayez.",
       "Check your email to confirm.": "Vérifiez vos courriels pour confirmer.",
       "You're already on the list.": "Vous êtes déjà sur la liste.",
+    },
+    de: {
+      "Enter your name.": "Geben Sie Ihren Namen ein.",
+      "Enter a valid email address.": "Geben Sie eine gültige E-Mail-Adresse ein.",
+      "Choose Mac or Windows.": "Wählen Sie Mac oder Windows.",
+      "Choose iPhone, Android or both.": "Wählen Sie iPhone, Android oder beides.",
+      "Choose Mac, Windows or none.": "Wählen Sie Mac, Windows oder keins.",
+      "Registering…": "Wird registriert…",
+      "Something went wrong. Please try again.": "Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut.",
+      "Network error. Check your connection and try again.": "Netzwerkfehler. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut.",
+      "Check your email to confirm.": "Bitte bestätigen Sie über den Link in Ihrer E-Mail.",
+      "You're already on the list.": "Sie stehen bereits auf der Liste.",
     },
   };
   function text(s) { return (messages[lang] && messages[lang][s]) || s; }

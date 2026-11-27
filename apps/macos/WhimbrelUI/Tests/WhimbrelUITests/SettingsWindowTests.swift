@@ -67,6 +67,41 @@ import Testing
         #expect(runs == ["capture.retention", "capture.retention"])
     }
 
+    @Test func returnInTheSearchFieldOpensTheFirstResultOrNothing() {
+        let results = [
+            WSettingsSearchResult(id: "plan.manage", title: "Manage subscription", section: "Plan & billing"),
+            WSettingsSearchResult(id: "plan.summary", title: "Plan & billing", section: "Plan & billing"),
+        ]
+        #expect(WSettingsHandoff.firstResult(results)?.id == "plan.manage")
+        #expect(WSettingsHandoff.firstResult([]) == nil)
+    }
+
+    @Test func aFoundRowIsAnnouncedAndAMissingOneSaysItIsNotShown() {
+        let found = WJumpNotice.after(found: true, title: "Manage subscription", shownFormat: "Showing %@.", hiddenText: "That setting isn't shown right now.")
+        #expect(found == .shown("Showing Manage subscription."))
+        let missing = WJumpNotice.after(found: false, title: "Manage subscription", shownFormat: "Showing %@.", hiddenText: "That setting isn't shown right now.")
+        #expect(missing == .hidden("That setting isn't shown right now."))
+        #expect(![found.text, missing.text].contains { $0.contains("\u{2014}") || $0.contains("\u{2013}") })
+    }
+
+    @MainActor @Test func anAnchorIsPresentWhileAnyRowReportsItself() async {
+        let presence = WAnchorPresence()
+        #expect(!presence.contains("plan.manage"))
+        presence.appeared("plan.manage")
+        #expect(presence.contains("plan.manage"))
+        // A replacement row appears before the old one goes: the anchor stays present.
+        presence.appeared("plan.manage")
+        presence.disappeared("plan.manage")
+        #expect(presence.contains("plan.manage"))
+        presence.disappeared("plan.manage")
+        #expect(!presence.contains("plan.manage"))
+        // Never drawn: waiting gives up and says so.
+        #expect(await presence.waitFor("plan.manage", seconds: 0.2) == false)
+        // Drawn while waiting: found.
+        Task { try? await Task.sleep(nanoseconds: 150_000_000); presence.appeared("plan.manage") }
+        #expect(await presence.waitFor("plan.manage", seconds: 1) == true)
+    }
+
     @Test func aHitInsideACollapsedGroupOpensTheGroupFirst() {
         #expect(WSettingsHandoff.opensGroup(["connectors.ownClient"], for: "connectors.ownClient"))
         #expect(!WSettingsHandoff.opensGroup(["connectors.ownClient"], for: "connectors.mcp"))

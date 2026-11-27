@@ -418,6 +418,9 @@ public enum WSettingsHandoff {
     /// a newer choice replaced it in the meantime.
     public static func afterScroll(target: String?, done: String) -> String? { target == done ? nil : target }
 
+    /// The result that Return in the search field opens: the first one, or nil when nothing matched.
+    public static func firstResult(_ results: [WSettingsSearchResult]) -> WSettingsSearchResult? { results.first }
+
     /// True when a search hit is a row inside a collapsed group (`group` holds that group's anchors), so the group has to
     /// open before the window scrolls to the row.
     public static func opensGroup(_ group: [String], for target: String?) -> Bool {

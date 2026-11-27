@@ -547,7 +547,7 @@ impl MeetingController {
 
     /// Ends a recording pause: the streams reopen and the gap is written as silence. Resuming a
     /// recording that is not paused changes nothing; with no recording it is an error. The quiet
-    /// check-in's clock starts over (`still_here::keep`).
+    /// check-in's clock starts over (`still_here::keep_quiet`).
     pub fn resume(&self) -> Result<MeetingRecordingView, CommandError> {
         let now = now_ms();
         let (resumed, spans) = {
@@ -566,7 +566,7 @@ impl MeetingController {
         };
         if resumed {
             self.keep_spans(spans);
-            super::still_here::keep(now);
+            super::still_here::keep_quiet(now);
             tracing::info!("meeting recording resumed");
         }
         Ok(self.status())

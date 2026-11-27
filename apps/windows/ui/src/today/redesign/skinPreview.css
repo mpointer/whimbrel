@@ -1,0 +1,94 @@
+/* A skin card's picture of Home (SkinPreviewHome.tsx, richer skins row 11). The page's own style sheets read the skin from the
+   root; a card draws a skin that is not the one on the page, so it carries its own variables and attributes on `.skin-preview`
+   and re-derives the helpers system.css derives on :root. It is shown at a fixed fraction of its natural size: the picture
+   is laid out `1 / --skin-preview-scale` times the frame, then scaled down to fit it exactly. */
+
+.skin-preview-frame {
+  --skin-preview-scale: 0.32;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.skin-preview {
+  /* system.css derives these on :root, from variables that the page's skin sets there. */
+  --sx-radius-control: var(--radius-control, var(--w-radius-control));
+  --sx-radius-card: var(--radius-card, var(--w-radius-card));
+  --sx-radius-surface: var(--radius-surface, var(--w-radius-surface));
+  --sx-font-ui: var(--font-body, var(--w-font-ui));
+  --sx-font-label: var(--font-label, var(--sx-font-ui));
+  --sx-font-numerals: var(--font-numerals, var(--sx-font-ui));
+  --sx-font-reading: var(--font-display, var(--w-font-reading));
+  --sx-font-title: var(--font-display, var(--w-font-ui));
+  --sx-border-width: var(--border-width, 1px);
+  --sx-border-style: var(--border-style, solid);
+  --sx-border-trim: var(--border-trim, 0px);
+  --sx-density: var(--density, 1);
+  --sx-texture: var(--texture-image, none);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--skin-preview-scale));
+  height: calc(100% / var(--skin-preview-scale));
+  transform: scale(var(--skin-preview-scale));
+  transform-origin: 0 0;
+  overflow: hidden;
+  background: var(--sx-texture, none), var(--color-background-page);
+  color: var(--color-text-primary);
+}
+
+/* Texture, like the page's, is off for forced colors and more contrast. */
+@media (forced-colors: active), (prefers-contrast: more) {
+  .skin-preview {
+    --sx-texture: none;
+  }
+}
+
+/* A picture does not move: no animation and no transition anywhere in it, whatever the skin's motion says. */
+.skin-preview,
+.skin-preview *,
+.skin-preview *::before,
+.skin-preview *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* The header band, as decoration.css draws it above the page: the page's rule reads the root's band, and this skin's may differ. */
+.skin-preview-band {
+  display: none;
+}
+.skin-preview[data-header-band="rule"] .skin-preview-band {
+  display: block;
+  height: 2px;
+  background: var(--color-accent-primary);
+}
+.skin-preview[data-header-band="block"] .skin-preview-band {
+  display: block;
+  height: 12px;
+  background: var(--color-accent-primary);
+}
+.skin-preview[data-header-band="stripes-diagonal"] .skin-preview-band {
+  display: block;
+  height: 8px;
+  background: repeating-linear-gradient(135deg, var(--color-accent-primary) 0 3px, transparent 3px 10px);
+}
+
+/* What the page sets on :root for one skin or palette only, set here for this card's own skin and palette, and cleared
+   for every other (the page's value would otherwise be inherited through). */
+.skin-preview {
+  --weight-section-label: initial;
+  --weight-strong: initial;
+  --w-control-border: initial;
+}
+.skin-preview[data-skin="thread"] {
+  --weight-section-label: 600;
+  --weight-strong: 700;
+}
+.skin-preview[data-palette="thread"][data-theme="light"] {
+  --w-control-border: #7e8ca0;
+}
+.skin-preview[data-palette="thread"][data-theme="dark"] {
+  --w-control-border: #5f6d7e;
+}

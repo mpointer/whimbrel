@@ -130,6 +130,23 @@ final class LiveAlertDeliveryTests: XCTestCase {
         XCTAssertEqual(LiveAlertDelivery.content(for: alert(asker: "  "), answer: nil).body, "Send the Q3 numbers")
     }
 
+    func testNotificationBodyIsPlainTextNotMarkdown() {
+        let cases: [(String, String?)] = [
+            ("**Yes**, see [the deck](https://x.io/d) and `notes`.\nMore", "Yes, see the deck and notes."),
+            ("## Answer\n- one", "Answer"),
+            ("- **Ship** it\n- later", "Ship it"),
+            ("```\ncode here\n```\nDone", "code here"),
+            ("---\n> *quoted*  text", "quoted text"),
+            ("2 * 3 * 4 = 24 \u{2192} caf\u{e9}", "2 * 3 * 4 = 24 \u{2192} caf\u{e9}"),
+            ("\n\n", nil),
+        ]
+        for (markdown, expected) in cases {
+            XCTAssertEqual(LiveAlertDelivery.plainFirstLine(markdown), expected, markdown)
+        }
+        let draft = CoreChatAnswer(text: "**Yes**, by [Friday](https://x.io).", citations: [])
+        XCTAssertEqual(LiveAlertDelivery.content(for: alert(asker: "Sam"), answer: draft).body, "Send the Q3 numbers\nYes, by Friday.")
+    }
+
     func testPeerAlertsNotifyOnceAfterPull() async {
         // Mirrors takeUnnotifiedPeerAlerts: an alert comes back once, then it's marked notified.
         var unnotified = [alert(id: 20, origin: "pc-1", sourceId: 5)]

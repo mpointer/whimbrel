@@ -45,7 +45,7 @@ private struct WAnchoredModifier: ViewModifier {
 private struct WOptionalID: ViewModifier {
     let id: String?
     @ViewBuilder func body(content: Content) -> some View {
-        if let id { content.id(id) } else { content }
+        if let id { content.wAnchor(id) } else { content }
     }
 }
 
@@ -210,7 +210,7 @@ private struct WSkinCardCell: View {
             }
             if let failure { WStatusText(failure) }
         }
-        .id(card.anchorID)
+        .wAnchor(card.anchorID)
         .accessibilityIdentifier(card.anchorID)
     }
 

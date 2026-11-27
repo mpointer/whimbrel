@@ -96,7 +96,7 @@
   display: flex;
   align-items: center;
   gap: var(--w-space-sm);
-  padding: 0 var(--w-space-sm);
+  padding: 0 max(0px, calc(var(--w-space-sm) - var(--sx-border-trim)));
   border: var(--sx-line);
   border-radius: var(--sx-radius-control);
   background: var(--color-background-page);

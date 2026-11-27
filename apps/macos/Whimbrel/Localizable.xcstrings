@@ -53365,6 +53365,41 @@
         }
       }
     },
+    "Showing %@." : {
+      "comment" : "Said by VoiceOver after a Settings search result is chosen and its row is on screen. The placeholder is the setting's name.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ wird angezeigt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrando %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage de %@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Affichage de %@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrando %@."
+          }
+        }
+      }
+    },
     "Showing %lld of %lld meetings" : {
       "comment" : "Under the Meetings list while older meetings are not loaded yet: how many show, of all meetings.",
       "shouldTranslate" : false
@@ -59123,6 +59158,41 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Não foi possível executar essa busca."
+          }
+        }
+      }
+    },
+    "That setting isn't shown right now." : {
+      "comment" : "Shown under the Settings search field when the chosen result is a row this state does not draw, such as Manage subscription on the free plan.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Einstellung wird gerade nicht angezeigt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ese ajuste no se muestra ahora."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce réglage n'est pas affiché pour le moment."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce réglage n'est pas affiché pour le moment."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esse ajuste não é exibido agora."
           }
         }
       }

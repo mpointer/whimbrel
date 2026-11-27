@@ -3,6 +3,7 @@ import {
   DEFAULT_SELECTION,
   FONT_MAP,
   HIGH_CONTRAST_PALETTE,
+  MOTION_VARIABLES,
   MORE_CONTRAST_QUERY,
   THREAD,
   THREAD_MOVE_KEY,
@@ -14,6 +15,7 @@ import {
   SKIN_KEY,
   WEIGHTS,
   applySkin,
+  borderVariables,
   chooseSkin,
   controlRadius,
   emphasisWeight,
@@ -27,6 +29,7 @@ import {
   paletteToDraw,
   paletteMode,
   parseFace,
+  surfaceRadius,
   readSelection,
   reloadSkins,
   resolveSelection,
@@ -206,6 +209,54 @@ describe("applying a skin", () => {
 
   it("rounds the control radius like core/skins: two thirds of the radius", () => {
     expect([0, 1, 2, 3, 4, 12, 15, 24].map(controlRadius)).toEqual([0, 1, 1, 2, 3, 8, 10, 16]);
+  });
+
+  it("sets the surface radius to one and a half times the radius, as on the Mac", () => {
+    const surface = (radius: number) => skinVariables(variant({ shape: { radius } }).skin)["--radius-surface"];
+    expect([0, 2, 8, 12, 15, 24].map(surface)).toEqual(["0px", "3px", "12px", "18px", "22.5px", "36px"]);
+    expect(skinVariables(WHIMBREL.skin)["--radius-surface"]).toBe("18px");
+    expect(surfaceRadius(variant({ shape: { radius: 12 } }).skin)).toBe(18);
+  });
+
+  it("keeps Thread's surface radius at the 16px it has always drawn", () => {
+    expect(THREAD.skin.shape.radius).toBe(8);
+    expect(skinVariables(THREAD.skin)["--radius-surface"]).toBe("16px");
+    expect(skinVariables(THREAD.skin)["--radius"]).toBe("8px");
+    expect(skinVariables(THREAD.skin)["--border-style"]).toBe("solid");
+    expect(skinVariables(THREAD.skin)["--border-width"]).toBe("1px");
+    expect(skinVariables(THREAD.skin)["--border-trim"]).toBe("0px");
+  });
+
+  it("draws a double border with three times the line width and gives the padding back the two extra lines", () => {
+    expect(borderVariables("double", 1)).toEqual({ "--border-style": "double", "--border-width": "3px", "--border-trim": "2px" });
+    expect(borderVariables("double", 1.5)).toEqual({ "--border-style": "double", "--border-width": "4.5px", "--border-trim": "3px" });
+    expect(borderVariables("double", 2)).toEqual({ "--border-style": "double", "--border-width": "6px", "--border-trim": "4px" });
+  });
+
+  it("caps a double border at 6px in all: line, gap and line are each at most 2px", () => {
+    for (const width of [3, 4]) {
+      expect(borderVariables("double", width)).toEqual({ "--border-style": "double", "--border-width": "6px", "--border-trim": "4px" });
+    }
+    // the box keeps its size at every width: border plus the trimmed padding equals the capped border plus the padding
+    for (const width of [1, 1.5, 2, 3, 4]) {
+      const v = borderVariables("double", width);
+      expect(parseFloat(v["--border-width"]) + 16 - parseFloat(v["--border-trim"])).toBe(Math.min(width, 2) + 16);
+      expect(parseFloat(v["--border-width"])).toBeLessThanOrEqual(6);
+    }
+  });
+
+  it("draws a line under one pixel solid, and leaves every other border as it was", () => {
+    expect(borderVariables("double", 0.5)).toEqual({ "--border-style": "solid", "--border-width": "0.5px", "--border-trim": "0px" });
+    expect(borderVariables("solid", 2)).toEqual({ "--border-style": "solid", "--border-width": "2px", "--border-trim": "0px" });
+    expect(borderVariables("dashed", 2.5)).toEqual({ "--border-style": "dashed", "--border-width": "2.5px", "--border-trim": "0px" });
+    expect(borderVariables("none", 0)).toEqual({ "--border-style": "none", "--border-width": "0px", "--border-trim": "0px" });
+  });
+
+  it("sets the double border from an Almanac-shaped skin", () => {
+    const vars = skinVariables(variant({ shape: { radius: 2, border: "double", borderWidth: 1, density: "airy" } }).skin);
+    expect([vars["--radius"], vars["--radius-control"], vars["--radius-surface"]]).toEqual(["2px", "1px", "3px"]);
+    expect([vars["--border-style"], vars["--border-width"], vars["--border-trim"]]).toEqual(["double", "3px", "2px"]);
+    expect(vars["--density"]).toBe("1.25");
   });
 
   it("carries weight and italic into their own variables", () => {
@@ -431,7 +482,15 @@ describe("Whimbrel before the shell answers", () => {
       const alias = value && /^var\((--[a-z-]+)\)$/.exec(value);
       return alias ? declared(alias[1]) : value;
     };
-    for (const [name, value] of Object.entries(skinVariables(WHIMBREL.skin))) expect(declared(name), name).toBe(value);
+    // --radius-surface is the one exception: the stylesheet holds Thread's 16px so Thread paints right from the start, and
+    // Classic gets its 18px from skin.ts.
+    for (const [name, value] of Object.entries(skinVariables(WHIMBREL.skin))) {
+      // The motion variables are left out of the stylesheet on purpose: unset is how Thread keeps the motion it has.
+      if (MOTION_VARIABLES.includes(name)) expect(declared(name), name).toBeUndefined();
+      else if (name !== "--radius-surface") expect(declared(name), name).toBe(value);
+    }
+    expect(declared("--radius-surface")).toBe(skinVariables(THREAD.skin)["--radius-surface"]);
+    expect(skinVariables(WHIMBREL.skin)["--radius-surface"]).toBe("18px");
   });
 });
 

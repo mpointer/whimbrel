@@ -4588,6 +4588,14 @@
           "description": "Start recording when the alert's countdown ends, instead of waiting. Off by default.",
           "type": "boolean"
         },
+        "checkInHours": {
+          "default": 1,
+          "description": "\"Ask if I'm still recording after\": 0 is Off, else 1-4 hours. 1 until someone chooses. Kept on this PC.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
         "hasNames": {
           "default": false,
           "description": "Whether there is a name to listen for (the profile name or an other name). Without one,\nalerts can't run and the switch shows off. Read-only: ignored when saving.",
@@ -5524,6 +5532,26 @@
         "maxFactChars"
       ],
       "type": "object"
+    },
+    "PromptKind": {
+      "description": "Which question the window asks.",
+      "oneOf": [
+        {
+          "const": "quiet",
+          "description": "\"Still in a meeting?\": 15 quiet minutes.",
+          "type": "string"
+        },
+        {
+          "const": "hourly",
+          "description": "\"Still recording?\": the hourly check.",
+          "type": "string"
+        },
+        {
+          "const": "paused",
+          "description": "\"This recording is still paused.\"",
+          "type": "string"
+        }
+      ]
     },
     "PromptSurface": {
       "description": "The LLM call sites that carry their own free-text instructions — the Mac's\n`PromptSurface` (`PromptLibrarySettings.swift`). Stored under `prompts.<raw value>`,\nthe Mac's settings-sync field key; empty means \"no extra instructions\".",
@@ -7673,6 +7701,26 @@
           "type": "object"
         }
       ]
+    },
+    "StillHerePrompt": {
+      "description": "What the window shows (`still_here_prompt`).",
+      "properties": {
+        "deadlineUnixMs": {
+          "description": "\"Still recording?\" only: when it stops with no answer, unix ms.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/definitions/PromptKind"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
     },
     "StorageView": {
       "properties": {

@@ -444,19 +444,29 @@ export interface Imagery {
   scrim: number;
 }
 
-/** Imagery marked text-free is never placed under text, and a background is under the text. */
-export const isDrawn = (image: Pick<Imagery, "placement" | "textFree">): boolean => !(image.textFree && image.placement === "background");
+/** The background placement is dropped in Thread: no part of Home is safe to put an image under. A skin that still
+ *  has one loads as before and shows nothing there. */
+export const isDrawn = (image: Pick<Imagery, "placement">): boolean => image.placement !== "background";
 
-const PLACEMENTS: readonly string[] = ["header", "background", "badge"];
+/** The placements that are drawn. `background` stays in the type because old skin files can name it. */
+const PLACEMENTS: readonly string[] = ["header", "badge"];
 
-/** The images of a skin that would be drawn. Until the shell has measured an image (a skin you made), its
- *  scrim is 1, which covers it: an image is never shown below 4.5:1. */
+/** Whether an image carries a scrim. A header image sits in the band against the title row, so it has one unless the skin
+ *  marks it text-free; a badge sits beside the text and never under it. */
+export const hasScrim = (image: Pick<Imagery, "placement" | "textFree">): boolean => image.placement === "header" && !image.textFree;
+
+/** The images of a skin that would be drawn. Until the shell has measured a header image (a skin you made), its
+ *  scrim is 1, which covers it: an image is never shown under text below 4.5:1. */
 export function imageryOf(
   manifest: { decoration: { imagery: { asset: string; placement: string; textFree: boolean }[] } },
   scrims: Record<string, number> = {},
 ): Imagery[] {
   return manifest.decoration.imagery
     .filter((i) => PLACEMENTS.includes(i.placement))
-    .map((i) => ({ asset: i.asset, placement: i.placement as ImagePlacement, textFree: i.textFree, scrim: scrims[i.asset] ?? 1 }))
+    .map((i) => {
+      const entry = { asset: i.asset, placement: i.placement as ImagePlacement, textFree: i.textFree };
+      // Unmeasured is 1 (fully covered); an image with no scrim has 0 so it draws as it is.
+      return { ...entry, scrim: hasScrim(entry) ? (scrims[i.asset] ?? 1) : 0 };
+    })
     .filter(isDrawn);
 }

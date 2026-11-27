@@ -177,6 +177,13 @@ pub struct MeetingSettings {
     /// alerts can't run and the switch shows off. Read-only: ignored when saving.
     #[serde(default)]
     pub has_names: bool,
+    /// "Ask if I'm still recording after": 0 is Off, else 1-4 hours. 1 until someone chooses. Kept on this PC.
+    #[serde(default = "check_in_hours_default")]
+    pub check_in_hours: u8,
+}
+
+fn check_in_hours_default() -> u8 {
+    1
 }
 
 fn remember_voices_default() -> bool {
@@ -198,6 +205,7 @@ fn read_settings(settings: &crate::settings::SettingsFile) -> MeetingSettings {
         remember_voices: settings.remember_voices(),
         other_names: settings.other_names(),
         has_names: !settings.live_question_names().is_empty(),
+        check_in_hours: settings.recording_check_in_hours(),
     }
 }
 
@@ -207,6 +215,7 @@ fn apply_settings(file: &mut crate::settings::SettingsFile, settings: MeetingSet
     file.set_live_question_enabled(settings.live_question_alerts);
     file.set_live_transcript_enabled(settings.live_transcript);
     file.set_remember_voices(settings.remember_voices);
+    file.set_recording_check_in_hours(settings.check_in_hours);
     crate::syncing::settings::edit(file, |f| f.set_other_names(&settings.other_names));
 }
 
@@ -320,10 +329,12 @@ mod settings_tests {
                 remember_voices: true,
                 other_names: String::new(),
                 has_names: false,
+                check_in_hours: 3,
             },
         );
         let back = read_settings(&file);
         assert_eq!((back.lead_minutes, back.prep_lead_minutes), (3.0, 90.0));
+        assert_eq!(back.check_in_hours, 3, "the still-recording hours are saved");
         apply_settings(&mut file, MeetingSettings { prep_lead_minutes: 1.0, ..back });
         assert_eq!(read_settings(&file).prep_lead_minutes, 5.0, "clamped on the way in");
         assert!(read_settings(&file).live_question_alerts, "question alerts are on by default");

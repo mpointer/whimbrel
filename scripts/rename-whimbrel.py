@@ -37,6 +37,7 @@ SKIP_FILES = {
     "CHANGELOG.md",                     # past releases, quoted as shipped
     "website/site/pages/es/index.html",  # the FAQ on the old name, translated
     "website/site/pages/fr/index.html",  # the FAQ on the old name, translated
+    "website/site/pages/de/index.html",  # the FAQ on the old name, translated
     "docs/sync-compaction-rollout.md",   # real relay database names (kestrel-sync-*)
     "scripts/sync-row-entity-tag.sql",   # real relay database names (kestrel-sync-*)
     "scripts/sync-sweep-items.py",       # real relay database names (kestrel-sync-*)

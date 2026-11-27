@@ -119,8 +119,72 @@ export const emphasisWeight = (body: number): number => Math.max(body, Math.min(
 /** The control radius is two thirds of the radius, rounded (core/skins `Shape::control_radius`). */
 export const controlRadius = (radius: number): number => Math.round((radius * 2) / 3);
 
+/** The surface radius is one and a half times the radius, as on the Mac. Thread keeps the 16px it has always drawn
+ *  (its own radius is 8, which would make 12). */
+export const surfaceRadius = (skin: SkinManifest): number => (skin.id === THREAD_ID ? 16 : skin.shape.radius * 1.5);
+
+/** A double border: CSS draws two lines and a gap from `border-style: double`, which needs three times the line width, so
+ *  the width is tripled, with each line and the gap at most 2px (6px in all, Mike 2026-11-25), and `--border-trim` is the
+ *  extra two line widths a side, which padding gives back so the box keeps
+ *  its size (docs/superpowers/plans/2026-11-25-richer-skins.md, section 2). A line under 1px is too fine for two, so it
+ *  draws solid. Any other border has no trim. */
+export function borderVariables(border: string, width: number): Record<string, string> {
+  const double = border === "double" && width >= 1;
+  const line = Math.min(width, 2);
+  return {
+    "--border-style": border === "double" && !double ? "solid" : border,
+    "--border-width": `${double ? line * 3 : width}px`,
+    "--border-trim": `${double ? line * 2 : 0}px`,
+  };
+}
+
+/** The motion a skin gives the interface, in milliseconds (docs/superpowers/plans/2026-11-25-richer-skins.md, section 6). One
+ *  set for both OSes (`skins/testdata/expected/motion.json`). `none`, and any skin when the system asks for less motion,
+ *  gives zero everywhere. Only interface transitions are here: the recording indicator, the capture control, the consent
+ *  banner and approvals never read this. */
+export interface MotionTokens {
+  /** A Home section fades in and rises `rise` px, once, on first show. */
+  section: number;
+  rise: number;
+  /** A button, link or the ask bar changes state. */
+  control: number;
+  /** The "now" marker settles into its new place. */
+  marker: number;
+  /** A card or panel opens. */
+  panel: number;
+}
+
+export const MOTION_NONE: MotionTokens = { section: 0, rise: 0, control: 0, marker: 0, panel: 0 };
+export const MOTION_SUBTLE: MotionTokens = { section: 150, rise: 4, control: 120, marker: 200, panel: 150 };
+
+export function motionTokens(motion: string, reduced: boolean): MotionTokens {
+  return motion === "subtle" && !reduced ? MOTION_SUBTLE : MOTION_NONE;
+}
+
+/** The motion custom properties. Thread sets none, so every rule that reads one falls back to what Thread has always drawn.
+ *  A rule that animates names its keyframes through `--anim-*`, which is `none` unless the skin is subtle. */
+export function motionVariables(skin: SkinManifest, reduced: boolean): Record<string, string> {
+  if (skin.id === THREAD_ID) return {};
+  const m = motionTokens(skin.motion, reduced);
+  const on = (ms: number, name: string) => (ms > 0 ? name : "none");
+  return {
+    "--dur-section": `${m.section}ms`,
+    "--rise-section": `${m.rise}px`,
+    "--dur-control": `${m.control}ms`,
+    "--dur-marker": `${m.marker}ms`,
+    "--dur-panel": `${m.panel}ms`,
+    "--anim-section": on(m.section, "w-rise"),
+    "--anim-marker": on(m.marker, "w-settle"),
+    "--anim-panel": on(m.panel, "w-fade"),
+  };
+}
+
+export const MOTION_VARIABLES = ["--dur-section", "--rise-section", "--dur-control", "--dur-marker", "--dur-panel", "--anim-section", "--anim-marker", "--anim-panel"];
+
+const reducedMotion = (): boolean => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
 /** Every custom property a skin sets other than colours. */
-export function skinVariables(skin: SkinManifest): Record<string, string> {
+export function skinVariables(skin: SkinManifest, reduced: boolean = reducedMotion()): Record<string, string> {
   const vars: Record<string, string> = {};
   for (const role of ["display", "body", "numerals", "label"] as const) {
     const face = parseFace(skin.typography[role]);
@@ -134,11 +198,105 @@ export function skinVariables(skin: SkinManifest): Record<string, string> {
   vars["--caps-variant"] = skin.typography.caps === "small" ? "small-caps" : "normal";
   vars["--radius"] = `${skin.shape.radius}px`;
   vars["--radius-control"] = `${controlRadius(skin.shape.radius)}px`;
-  vars["--border-style"] = skin.shape.border;
-  vars["--border-width"] = `${skin.shape.borderWidth}px`;
+  vars["--radius-surface"] = `${surfaceRadius(skin)}px`;
+  Object.assign(vars, borderVariables(skin.shape.border, skin.shape.borderWidth));
   vars["--density"] = String(DENSITY[skin.shape.density] ?? 1);
   vars["--motion"] = skin.motion;
+  Object.assign(vars, motionVariables(skin, reduced));
   return vars;
+}
+
+// --- texture -----------------------------------------------------------------------------------
+
+export type Texture = "none" | "paper" | "grain" | "grid";
+
+/** The most a texture may move the page color, in relative luminance (0 black, 1 white): four percent. */
+export const TEXTURE_MAX_SHIFT = 0.04;
+/** What the strength is solved for: a little under the cap so rounding cannot cross it. */
+const TEXTURE_TARGET_SHIFT = 0.039;
+/** The ink's strongest alpha before the cap. A light page has the least room, so the cap lowers it there. */
+export const TEXTURE_NOMINAL_ALPHA: Record<Texture, number> = { none: 0, paper: 0.05, grain: 0.06, grid: 0.05 };
+/** Grid line spacing, in px. */
+export const TEXTURE_GRID_SPACING = 24;
+/** The skin whose look is plain by design: no texture. Thread has none either, by its own file. */
+const NO_TEXTURE_SKINS = new Set(["high-contrast", "thread"]);
+
+const hexChannels = (hex: string): [number, number, number] | null => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+};
+const linear = (c: number): number => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+const luminanceOf = (r: number, g: number, b: number): number => 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+
+/** WCAG relative luminance of `#rrggbb`; 1 when it cannot be read (a page that is not understood gets the least ink). */
+export function relativeLuminance(hex: string): number {
+  const c = hexChannels(hex);
+  return c ? luminanceOf(c[0], c[1], c[2]) : 1;
+}
+
+/** White ink on a dark page, black on a light one. */
+export const textureInk = (pageHex: string): "white" | "black" => (relativeLuminance(pageHex) < 0.5 ? "white" : "black");
+
+/** How far ink of `alpha` moves the page's luminance, blended in encoded sRGB as the screen does. */
+export function textureAlphaShift(alpha: number, pageHex: string): number {
+  const c = hexChannels(pageHex);
+  if (!c) return 0;
+  const ink = textureInk(pageHex) === "white" ? 1 : 0;
+  const mixed = c.map((v) => v * (1 - alpha) + ink * alpha);
+  return Math.abs(luminanceOf(mixed[0], mixed[1], mixed[2]) - luminanceOf(c[0], c[1], c[2]));
+}
+
+/** The strongest alpha `texture` may draw on `pageHex`: its nominal alpha, lowered where the page has too little room for it
+ *  to stay inside `TEXTURE_MAX_SHIFT`. */
+export function texturePeakAlpha(texture: Texture, pageHex: string): number {
+  const nominal = TEXTURE_NOMINAL_ALPHA[texture] ?? 0;
+  if (nominal === 0 || textureAlphaShift(nominal, pageHex) <= TEXTURE_TARGET_SHIFT) return nominal;
+  let low = 0;
+  let high = nominal;
+  for (let i = 0; i < 40; i++) {
+    const mid = (low + high) / 2;
+    if (textureAlphaShift(mid, pageHex) <= TEXTURE_TARGET_SHIFT) low = mid;
+    else high = mid;
+  }
+  return low;
+}
+
+/** The most the texture can move the page's luminance, at its strongest point. */
+export const textureShift = (texture: Texture, pageHex: string): number => textureAlphaShift(texturePeakAlpha(texture, pageHex), pageHex);
+
+/** The CSS `background` layers for a texture on `pageHex`, or "none". Drawn by code: noise is an SVG filter, the grid is two
+ *  gradients, so a skin ships no image. The page color is the layer below, set by the rules that use `--sx-texture`. */
+export function textureBackground(texture: Texture, pageHex: string): string {
+  const alpha = texturePeakAlpha(texture, pageHex);
+  if (texture === "none" || alpha <= 0) return "none";
+  const rgb = textureInk(pageHex) === "white" ? "255,255,255" : "0,0,0";
+  if (texture === "grid") {
+    const line = `rgba(${rgb},${alpha.toFixed(4)})`;
+    const n = TEXTURE_GRID_SPACING;
+    return (
+      `linear-gradient(to right, ${line} 1px, transparent 1px) 0 0 / ${n}px ${n}px, ` +
+      `linear-gradient(to bottom, ${line} 1px, transparent 1px) 0 0 / ${n}px ${n}px`
+    );
+  }
+  const white = textureInk(pageHex) === "white" ? 1 : 0;
+  const frequency = texture === "grain" ? 0.45 : 0.9;
+  // Noise in the red channel (0 to 1) becomes the ink's alpha, scaled to the page's peak.
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'>` +
+    `<filter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'>` +
+    `<feTurbulence type='fractalNoise' baseFrequency='${frequency}' numOctaves='2' stitchTiles='stitch'/>` +
+    `<feColorMatrix values='0 0 0 0 ${white} 0 0 0 0 ${white} 0 0 0 0 ${white} ${alpha.toFixed(4)} 0 0 0 0'/>` +
+    `</filter><rect width='100%' height='100%' filter='url(#n)'/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 0 0 / 160px 160px`;
+}
+
+/** The texture `skin` draws: its own, unless the skin is plain by design (Thread, High Contrast). */
+export function skinTexture(skin: SkinManifest): Texture {
+  if (NO_TEXTURE_SKINS.has(skin.id)) return "none";
+  const t = skin.decoration.texture;
+  return t === "paper" || t === "grain" || t === "grid" ? t : "none";
 }
 
 /** The data attributes the layouts and decoration style by. */
@@ -356,6 +514,14 @@ const systemIsDark = (): boolean => typeof window !== "undefined" && window.matc
 
 const moreContrast = (): boolean => typeof window !== "undefined" && window.matchMedia(MORE_CONTRAST_QUERY).matches;
 
+/** Set on the root; `system.css` reads it as `--sx-texture`, which forced colors and more contrast turn off. */
+export const TEXTURE_VARIABLE = "--texture-image";
+
+function applyTexture(root: SkinRoot, texture: Texture, pageHex: string | undefined): void {
+  if (texture === "none" || !pageHex) root.style.removeProperty(TEXTURE_VARIABLE);
+  else root.style.setProperty(TEXTURE_VARIABLE, textureBackground(texture, pageHex));
+}
+
 /** Shows `dto` in `paletteId` (the skin's first when it does not offer that one) under `appearance`; with
  *  `contrastMore` the palette is the High Contrast one (`paletteToDraw`). */
 export function applySkin(
@@ -368,9 +534,17 @@ export function applySkin(
 ): void {
   const picked = dto.palettes.find((p) => p.id === paletteId) ?? dto.palettes[0];
   const palette = picked && paletteToDraw(picked, contrastMore);
-  for (const [name, value] of Object.entries(skinVariables(dto.skin))) root.style.setProperty(name, value);
+  const vars = skinVariables(dto.skin);
+  for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value);
+  // Thread sets no motion variable, so one left by the skin before it must go.
+  for (const name of MOTION_VARIABLES) if (!(name in vars)) root.style.removeProperty(name);
   for (const [name, value] of Object.entries(skinAttributes(dto.skin))) root.setAttribute(name, value);
-  if (!palette) return;
+  if (!palette) {
+    root.style.removeProperty(TEXTURE_VARIABLE);
+    return;
+  }
+  const textureMode = paletteMode(palette, appearance, systemDark);
+  applyTexture(root, contrastMore ? "none" : skinTexture(dto.skin), (palette[textureMode] ?? palette.light ?? palette.dark)?.backgroundPage);
   if (dto.skin.id === WHIMBREL_ID && palette.id === "default" && appearance === "system") {
     for (const token of TOKENS) root.style.removeProperty(cssVariable(token));
     root.removeAttribute("data-theme");

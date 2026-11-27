@@ -233,5 +233,8 @@ enum SkinDefaults {
         ]),
         decoration: SkinDecoration(),
         voice: SkinVoice(values: englishVoice),
-        archetype: .standard, archetypeOptions: [:], motion: .none)
+        // Classic's Home elements (richer skins plan, section 7): all five keys, as `skins/whimbrel.json`.
+        archetype: .standard,
+        archetypeOptions: ["actions": "buttons", "ask": "field", "labels": "smallCaps", "nextMeeting": "infobox", "timeline": "line"],
+        motion: .none)
 }

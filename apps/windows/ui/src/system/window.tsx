@@ -92,6 +92,8 @@ export const WINDOW_DESIGN = {
   budget: { width: 380, height: 170 },
   disk: { width: 380, height: 170 },
   stillHere: { width: 380, height: 170 },
+  /** "Still recording?": one more line, its countdown (`still_here.rs` `HOURLY_SIZE`). */
+  stillHereHourly: { width: 380, height: 196 },
   hotkeyPanel: { width: 560, height: 360 },
   /** The in-meeting window (`meetings/meeting_bar.rs` `SIZE`). */
   meetingBar: { width: 320, height: 260 },

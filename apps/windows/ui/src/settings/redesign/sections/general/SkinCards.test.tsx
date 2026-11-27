@@ -81,3 +81,78 @@ describe("the redesigned skin gallery", () => {
     expect(busy).toMatch(/<button[^>]*disabled[^>]*>(<span>)?Import Skin…/);
   });
 });
+
+/** What a screen reader gets from a piece of markup: its text, leaving out every element marked `aria-hidden="true"` and what is in it. */
+function readable(markup: string): string {
+  let out = "";
+  let hiddenDepth = 0;
+  const hiddenTags: string[] = [];
+  for (const m of markup.matchAll(/<(\/?)([a-z0-9]+)([^>]*)>|([^<]+)/gi)) {
+    if (m[4] !== undefined) {
+      if (hiddenDepth === 0) out += m[4];
+      continue;
+    }
+    const [, closing, tag, attrs] = m;
+    if (/^(br|img|input|hr|path|svg)$/i.test(tag) && !closing) continue;
+    if (closing) {
+      if (hiddenDepth > 0 && hiddenTags[hiddenTags.length - 1] === tag) {
+        hiddenTags.pop();
+        hiddenDepth--;
+      }
+      continue;
+    }
+    if (hiddenDepth > 0 || /aria-hidden="true"/.test(attrs)) {
+      hiddenDepth++;
+      hiddenTags.push(tag);
+    }
+  }
+  return out.replace(/\s+/g, " ").trim();
+}
+
+describe("the skin cards' Home preview (richer skins row 11)", () => {
+  const mainButtons = (html: string): string[] => [...html.matchAll(/<button type="button" class="w-skin-main"[^>]*>([\s\S]*?)<\/button>/g)].map((m) => m[1]);
+  /** The card's own button, by skin id. */
+  const cardButton = (html: string, id: string): string => {
+    const from = html.indexOf(`id="skin-card-${id}"`);
+    expect(from, id).toBeGreaterThan(-1);
+    return mainButtons(html.slice(from))[0];
+  };
+
+  it("draws the Home preview on every card, hidden from the accessibility tree", () => {
+    const html = show(DEFAULT_SELECTION);
+    const buttons = mainButtons(html);
+    expect(buttons).toHaveLength(manifests.length);
+    for (const inner of buttons) {
+      expect(inner).toContain('<span class="w-skin-preview"><div class="skin-preview-frame" aria-hidden="true">');
+      expect(inner).toContain('class="today th-home"');
+    }
+    expect(html.match(/class="skin-preview-frame" aria-hidden="true"/g)).toHaveLength(manifests.length);
+    // No swatch strip any more: the picture carries the palette.
+    expect(html).not.toContain("rs-general-swatches");
+  });
+
+  it("labels each card with its name and tagline and nothing from the picture", () => {
+    const html = show(DEFAULT_SELECTION);
+    manifests.forEach((m) => {
+      const label = readable(cardButton(html, m.id));
+      // The name and the tagline are two elements, one under the other.
+      expect(label, m.id).toBe(`${m.name}${m.voice.tagline}`);
+      expect(label, m.id).not.toContain("Design review");
+      expect(label, m.id).not.toContain("Pipeline sync");
+    });
+  });
+
+  it("puts no button inside the card's own button, so the picture cannot be pressed or tabbed to", () => {
+    for (const inner of mainButtons(show(DEFAULT_SELECTION))) expect(inner).not.toContain("<button");
+  });
+
+  it("shows each skin's own picture whichever skin is selected, and the selected one in the palette in force", () => {
+    const retro = skins.find((d) => d.skin.id === "retro-terminal")!;
+    const html = show({ skinId: "retro-terminal", paletteId: retro.palettes[0].id, appearance: "dark" });
+    const at = (id: string) => cardButton(html, id);
+    expect(at("almanac")).toContain('data-skin="almanac"');
+    expect(at("retro-terminal")).toContain('data-skin="retro-terminal"');
+    expect(at("retro-terminal")).toContain('data-theme="dark"');
+    expect(at("almanac")).not.toContain('data-skin="retro-terminal"');
+  });
+});

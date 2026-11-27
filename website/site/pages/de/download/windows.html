@@ -1,0 +1,87 @@
+<!--
+{
+  "title": "Whimbrel für Windows: KI-Meeting-Notizen",
+  "description": "Whimbrel für Windows 11 laden: KI-Meeting-Notizen ohne Bot, Bildschirmgedächtnis und Briefings in einer App. Ohne Administratorrechte. Früher Zugang kostenlos.",
+  "schema": [
+    "software-windows"
+  ],
+  "priority": 0.8,
+  "crumbs": [
+    {
+      "name": "Download",
+      "path": "/download/"
+    },
+    {
+      "name": "Windows",
+      "path": "/download/windows/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Warum zeigt Windows eine SmartScreen-Warnung?",
+      "a": "Im frühen Zugang ist das Installationsprogramm noch nicht mit einem Windows-Codesignaturzertifikat signiert. Deshalb zeigt Microsoft Defender SmartScreen möglicherweise „Der Computer wurde durch Windows geschützt“. Wählen Sie Weitere Informationen und dann Trotzdem ausführen. Updates, die in der App geliefert werden, werden vor der Installation per Signatur geprüft."
+    },
+    {
+      "q": "Brauche ich Administratorrechte?",
+      "a": "Nein. Whimbrel wird nur für Ihr Benutzerkonto in Ihrem Benutzerprofil installiert. Ein Standardkonto kann es also installieren und aktualisieren."
+    },
+    {
+      "q": "Hat die Windows-App alle Funktionen der Mac-App?",
+      "a": "Noch nicht. Whimbrel für Windows ist im frühen Zugang und zieht Version für Version mit der Mac-App gleich. Beide Apps teilen sich denselben Kern, und ein Mac und ein PC können eine gemeinsame Zeitleiste nutzen."
+    }
+  ],
+  "sourceHash": "2bc8fa1f3957"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">Windows 11 · Früher Zugang</p>
+      <h1>Whimbrel für Windows</h1>
+      <p class="lede">Dasselbe private Gedächtnis und dieselbe Meeting-Aufnahme ohne Bot wie auf dem Mac, jetzt auf Ihrem Windows-PC, mit einer gemeinsamen Zeitleiste für Ihre anderen Geräte.</p>
+      {{{site.renameNote}}}
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/api/download/windows">Für Windows herunterladen</a>
+        <span class="version" data-version="windows"></span>
+      </div>
+      <p class="fine muted">Zum ersten Mal hier? Vor dem Start des Downloads werden Sie gebeten, sich zu registrieren.</p>
+      <p class="fine" data-arm-download hidden>Ein PC mit Arm-Prozessor (etwa Snapdragon)? <a href="/api/download/windows-arm">Laden Sie Windows on Arm herunter</a>. Diese Version läuft nativ, die Transkription ist daher schneller als mit der normalen Version unter Emulation.</p>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container split">
+    <div>
+      <h2>Systemvoraussetzungen</h2>
+      <ul class="checklist">
+        <li><strong>Windows 11, 64 Bit (x64 oder Arm)</strong>Nutzen Sie auf einem Arm-PC den Download für Windows on Arm. Er unterscheidet die übrigen Sprecher in einem Anruf noch nicht.</li>
+        <li><strong>Microsoft Edge WebView2</strong>Ist in Windows 11 bereits enthalten.</li>
+        <li><strong>Speicherplatz</strong>Platz für die App, das Sprachmodell auf dem Gerät und Ihren wachsenden Verlauf.</li>
+        <li><strong>Optional: Ollama</strong>Um Sprachmodelle vollständig auf Ihrem PC auszuführen.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Installation in zwei Minuten</h2>
+      <ol class="install-steps">
+        <li>Starten Sie die heruntergeladene Datei <code>Whimbrel_x.y.z_x64-setup.exe</code> (<code>_arm64-setup.exe</code> unter Windows on Arm).</li>
+        <li>Wenn SmartScreen erscheint, wählen Sie <strong>Weitere Informationen</strong> → <strong>Trotzdem ausführen</strong> (den Grund finden Sie weiter unten).</li>
+        <li>Die Installation wird ohne Administratorrechte abgeschlossen.</li>
+        <li>Whimbrel startet im Infobereich der Taskleiste. Öffnen Sie es, um die Einrichtung abzuschließen.</li>
+        <li>Verbinden Sie Ihren Kalender, damit Aufnahmen mit Ihren Meetings starten.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Fragen zu Windows</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

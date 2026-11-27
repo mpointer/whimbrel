@@ -266,11 +266,12 @@ impl Detection {
         let manual = self.controller.recording_is_manual();
         // A browser call is asked about the same way once no meeting tab is in front and no one
         // has spoken for 15 minutes; its other end rules stay as they are (Mike, 2026-11-05).
-        if manual || on_meeting_tab.is_some() {
+        // Not while "Still recording?" is up: the one window asks one question at a time.
+        if (manual || on_meeting_tab.is_some()) && !super::still_here::hourly_asking() {
             match super::still_here::poll(meeting_id, started, now_ms(), audible, on_meeting_tab == Some(true)) {
                 super::still_here::Action::Ask => {
                     tracing::info!(meeting_id, "no words for 15 minutes: asking if the meeting is still on");
-                    super::still_here::show(&self.app);
+                    super::still_here::show(&self.app, super::still_here::PromptKind::Quiet);
                 }
                 super::still_here::Action::Close => super::still_here::hide(&self.app),
                 super::still_here::Action::Stop => {
@@ -283,6 +284,33 @@ impl Detection {
                     return;
                 }
                 super::still_here::Action::Nothing => {}
+            }
+        }
+        // "Still recording?", for every recording. While "Still in a meeting?" asks it waits (it is
+        // time-based, so it only comes later).
+        if !super::still_here::quiet_asking() {
+            let first_after = || super::still_here::check_in_after_ms(self.settings.lock().unwrap().recording_check_in_hours());
+            match super::still_here::poll_hourly(meeting_id, started, now_ms(), first_after) {
+                super::still_here::HourlyAction::Ask { .. } => {
+                    tracing::info!(meeting_id, "the recording has run its check-in time: asking if it should go on");
+                    super::still_here::show(&self.app, super::still_here::PromptKind::Hourly);
+                }
+                super::still_here::HourlyAction::Stop => {
+                    tracing::info!(meeting_id, "no answer to \"Still recording?\": stopping");
+                    super::still_here::hide(&self.app);
+                    if let Err(e) = self.controller.stop_quiet() {
+                        tracing::error!(meeting_id, error = %e, "could not stop the recording");
+                    }
+                    crate::tray::refresh(&self.app);
+                    return;
+                }
+                // A question still counting down is always on screen: a window closed some other
+                // way (a pause and resume between two polls, a failed open) comes back, so the
+                // recording never stops on a countdown no one could see. Already up: nothing changes.
+                super::still_here::HourlyAction::Nothing if super::still_here::hourly_asking() => {
+                    super::still_here::show(&self.app, super::still_here::PromptKind::Hourly);
+                }
+                super::still_here::HourlyAction::Nothing => {}
             }
         }
         // A manual recording watches no app: it ends when the user says so.
@@ -326,10 +354,14 @@ impl Detection {
             self.end(meeting_id, reason);
             return;
         }
+        // "Still recording?" is held while paused, and a question it had up goes away.
+        if super::still_here::hold_hourly(now) {
+            super::still_here::hide(&self.app);
+        }
         let Some(paused_since) = self.controller.paused_since() else { return };
         if super::still_here::poll_paused(paused_since, now) {
             tracing::info!(meeting_id, "paused for an hour: asking if the recording should go on");
-            super::still_here::show(&self.app);
+            super::still_here::show(&self.app, super::still_here::PromptKind::Paused);
         }
     }
 

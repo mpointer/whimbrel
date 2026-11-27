@@ -331,6 +331,9 @@ pub enum Placement {
 
 impl Placement {
     pub const ALL: [Placement; 3] = [Placement::Header, Placement::Background, Placement::Badge];
+    /// The placements the skin maker offers. `Background` is dropped in Thread (no part of Home is safe to put an
+    /// image under), so it stays in the format and loads from old files, but is never offered and never drawn.
+    pub const OFFERED: [Placement; 2] = [Placement::Header, Placement::Badge];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -601,9 +604,19 @@ pub fn whimbrel_default() -> Skin {
         },
         voice: Voice(voice.into_iter().map(|(k, s)| (k, s.to_string())).collect()),
         voice_localized: BTreeMap::new(),
+        // Classic's Home elements (richer skins plan, section 7): all five keys, as `skins/whimbrel.json`.
         today: Today {
             archetype: Archetype::Standard,
-            options: BTreeMap::new(),
+            options: [
+                ("actions", "buttons"),
+                ("ask", "field"),
+                ("labels", "smallCaps"),
+                ("nextMeeting", "infobox"),
+                ("timeline", "line"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
         },
         motion: Motion::None,
     }

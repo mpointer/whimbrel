@@ -112,7 +112,7 @@ public struct WMemoryPrivacySettingsView: View {
                 label: l.showScreenCaptures, description: l.showScreenCapturesCaption, isOn: model.showScreenCaptures,
                 highlighted: on(model.anchors.screenCaptures), onChange: actions.setShowScreenCaptures
             )
-            .id(model.anchors.screenCaptures)
+            .wAnchor(model.anchors.screenCaptures)
         }
     }
 
@@ -137,7 +137,7 @@ public struct WMemoryPrivacySettingsView: View {
                 },
                 emptyText: emptyText, search: $appSearch, searchPlaceholder: l.appsSearchPlaceholder, highlighted: on(a.excludeApps)
             )
-            .id(a.excludeApps)
+            .wAnchor(a.excludeApps)
             WSettingsList(
                 label: l.sitesLabel, description: l.sitesHelp,
                 items: model.sites.sorted().map { domain in
@@ -149,7 +149,7 @@ public struct WMemoryPrivacySettingsView: View {
                     validator: { actions.domainProblem($0) == nil ? nil : l.domainRefused }, onAdd: actions.addDomain),
                 highlighted: on(a.excludeSites)
             )
-            .id(a.excludeSites)
+            .wAnchor(a.excludeSites)
         }
     }
 
@@ -205,12 +205,12 @@ public struct WMemoryPrivacySettingsView: View {
                     if model.canShowExportFolder { WButton(l.showInFinder, kind: .secondary, action: actions.showExportFolder) }
                 }
             }
-            .id(a.export)
+            .wAnchor(a.export)
             if let status = model.exportStatus {
                 WSettingsRowFrame(label: status, detail: nil, controlSpeaksLabel: false) { EmptyView() }
             }
             WSettingsRow(label: l.vaultLabel, isOn: model.vault.enabled, highlighted: on(a.obsidian), onChange: actions.setVaultEnabled)
-                .id(a.obsidian)
+                .wAnchor(a.obsidian)
             if model.vault.enabled || !model.vault.path.isEmpty {
                 let note = [model.vault.lastUpdated, model.vault.failed ? l.vaultFailed : nil].compactMap { $0 }.joined(separator: " ")
                 WSettingsRow(label: l.vaultFolder, description: ([model.vault.path.isEmpty ? l.noFolderChosen : model.vault.path] + (note.isEmpty ? [] : [note])).joined(separator: "\u{000A}"), buttonTitle: l.chooseFolder, action: actions.chooseVaultFolder)
@@ -232,7 +232,7 @@ public struct WMemoryPrivacySettingsView: View {
                 alsoSync = false
                 actions.deleteSheetOpened()
             }
-            .id(a.delete)
+            .wAnchor(a.delete)
         }
     }
 
@@ -244,10 +244,10 @@ public struct WMemoryPrivacySettingsView: View {
         return WSettingsCard(heading: l.keepingHeading, description: l.keepingIntro) {
             if let total = model.storageTotal {
                 WSettingsRow(label: total, description: model.storageParts, highlighted: on(a.storage)) { EmptyView() }
-                    .id(a.storage)
+                    .wAnchor(a.storage)
             } else {
                 WSettingsRow(label: l.storageMeasuring, highlighted: on(a.storage)) { EmptyView() }
-                    .id(a.storage)
+                    .wAnchor(a.storage)
             }
             ForEach(model.lowDisk, id: \.self) { line in
                 WNoticeBox(tone: .warning, text: line)
@@ -257,7 +257,7 @@ public struct WMemoryPrivacySettingsView: View {
             WSettingsRow(label: l.freeUpLabel, buttonTitle: l.freeUpButton, isEnabled: model.canFreeUp, action: actions.openFreeUpSpace)
             ForEach(Array(model.retention.enumerated()), id: \.element.id) { index, row in
                 WRetentionRowView(row: row, labels: l, actions: actions, highlighted: index == 0 && on(a.retention))
-                    .id(index == 0 ? a.retention : row.id)
+                    .wAnchor(index == 0 ? a.retention : row.id)
             }
             WSettingsRow(
                 label: l.applyNow, description: l.applyNowHelp, buttonTitle: l.applyNow,

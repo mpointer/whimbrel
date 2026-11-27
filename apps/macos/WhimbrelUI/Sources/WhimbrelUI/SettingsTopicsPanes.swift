@@ -65,7 +65,7 @@ public struct WTopicsSettingsView: View {
             }
             WSettingsList(label: l.yourTopics, items: model.seeds.map(seedItem), emptyText: l.noTopicsText(hasSuggestions: !model.suggestions.isEmpty))
             WSettingsRow(label: l.addTopicLabel, buttonTitle: l.addTopic, highlighted: on(a.add)) { editor = Editor(seed: nil) }
-                .id(a.add)
+                .wAnchor(a.add)
         }
         .wSettingsAnchored(a.list, highlighted: highlighted)
     }

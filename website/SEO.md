@@ -18,6 +18,7 @@ Whimbrel combines things people search for separately: bot-free meeting notes, s
 | Competitor alternatives (high intent) | littlebird alternative, shadow alternative, voicenotes alternative, bluedot alternative, grain alternative, fellow alternative | `/compare/<name>-alternative/` (six pages) | Download |
 | Open source (commercial, high intent) | open source ai meeting notes, open source granola alternative, self-hosted ai notetaker, local ai meeting assistant | `/open-source/` | Download free |
 | Pricing (commercial) | whimbrel pricing, ai meeting notes pricing, granola pricing alternative | `/pricing/` | Download free |
+| Blog (top of funnel) | articles from Soro, targeted per article | `/blog/` (embed; articles open at `/blog/?post=<slug>`) | Download |
 | Release history (navigational, long tail) | whimbrel changelog, whimbrel 0.9 release notes, what's new in whimbrel | `/changelog/` | Download |
 | Download (transactional) | whimbrel download mac, whimbrel for windows, ai meeting notes app windows 11 | `/download/`, `/download/mac/`, `/download/windows/` | Register form |
 

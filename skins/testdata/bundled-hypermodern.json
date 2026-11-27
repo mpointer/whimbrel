@@ -52,7 +52,13 @@
     },
     "today": {
       "archetype": "glass",
-      "options": {}
+      "options": {
+        "actions": "buttons",
+        "ask": "prompt",
+        "labels": "plain",
+        "nextMeeting": "scoreboard",
+        "timeline": "line"
+      }
     },
     "motion": "none"
   },
@@ -109,7 +115,13 @@
     },
     "today": {
       "archetype": "glass",
-      "options": {}
+      "options": {
+        "actions": "buttons",
+        "ask": "prompt",
+        "labels": "plain",
+        "nextMeeting": "scoreboard",
+        "timeline": "line"
+      }
     },
     "motion": "none"
   },

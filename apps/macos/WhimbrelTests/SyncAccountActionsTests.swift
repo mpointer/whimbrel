@@ -165,6 +165,13 @@ final class SyncAccountActionsTests: XCTestCase {
         XCTAssertEqual(SyncState(signIn: signIn, worker: worker, keys: keys, defaults: defaults).swapHolderName, "Studio Mac")
     }
 
+    func test_refresh_plan_without_a_billing_client_reports_a_failed_read() async {
+        XCTAssertFalse(state.planReadFailed)
+        await state.refreshPlan()
+        XCTAssertTrue(state.planReadFailed, "an unconfigured build must offer Try again, not wait on \"Checking your plan…\" forever")
+        XCTAssertNil(state.plan)
+    }
+
     func test_start_fresh_resets_key_and_cursor_in_order() async {
         await atTheLimit()
         await state.swap(replacing: holder)

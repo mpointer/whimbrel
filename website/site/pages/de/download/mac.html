@@ -1,0 +1,86 @@
+<!--
+{
+  "title": "Whimbrel für Mac: Meeting-Notizen ohne Bot",
+  "description": "Whimbrel für Mac laden: KI-Meeting-Notizen ohne Bot, Bildschirmgedächtnis und Briefings für Apple silicon ab macOS 14. Signiert, notarisiert, kostenlos.",
+  "schema": [
+    "software-mac"
+  ],
+  "priority": 0.8,
+  "crumbs": [
+    {
+      "name": "Download",
+      "path": "/download/"
+    },
+    {
+      "name": "Mac",
+      "path": "/download/mac/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Läuft Whimbrel auf Intel-Macs?",
+      "a": "Nein. Whimbrel setzt einen Mac mit Apple silicon voraus (M1 oder neuer). Die Transkription auf dem Gerät und die lokalen Modelle sind nur für Apple silicon entwickelt und getestet."
+    },
+    {
+      "q": "Welche macOS-Berechtigungen braucht Whimbrel?",
+      "a": "Mikrofon, Bildschirm- & Systemaudioaufnahme (um die andere Seite eines Anrufs aufzunehmen) und Bedienungshilfen (um Fenstertext für das Bildschirmgedächtnis zu lesen). Die Einrichtung fragt jede Berechtigung einzeln an, und Sie können jede davon in den Systemeinstellungen wieder entziehen."
+    },
+    {
+      "q": "Wie funktionieren Updates?",
+      "a": "Whimbrel sucht täglich nach einer neuen Version, lädt sie im Hintergrund herunter und prüft sie. Danach erscheint ein Banner „Jetzt neu starten“. Updates lassen Ihre Daten unberührt."
+    }
+  ],
+  "sourceHash": "b87c4c721cdc"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">macOS · Apple silicon</p>
+      <h1>Whimbrel für Mac</h1>
+      <p class="lede">Meeting-Notizen ohne Bot, ein durchsuchbares Gedächtnis Ihrer Arbeit und tägliche Briefings, nativ für macOS mit SwiftUI gebaut.</p>
+      {{{site.renameNote}}}
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/api/download/mac">Für Mac herunterladen</a>
+        <span class="version" data-version="mac"></span>
+      </div>
+      <p class="fine muted">Zum ersten Mal hier? Vor dem Start des Downloads werden Sie gebeten, sich zu registrieren.</p>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container split">
+    <div>
+      <h2>Systemvoraussetzungen</h2>
+      <ul class="checklist">
+        <li><strong>macOS 14 Sonoma oder neuer</strong>Einschließlich macOS 15 Sequoia und neuer.</li>
+        <li><strong>Apple silicon</strong>M1, M2, M3, M4 oder neuer. Intel-Macs werden nicht unterstützt.</li>
+        <li><strong>Speicherplatz</strong>Platz für die App, das Sprachmodell auf dem Gerät und Ihren wachsenden Verlauf.</li>
+        <li><strong>Optional: Ollama</strong>Um Sprachmodelle vollständig auf Ihrem Mac auszuführen.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Installation in zwei Minuten</h2>
+      <ol class="install-steps">
+        <li>Öffnen Sie die heruntergeladene Datei <code>Whimbrel-x.y.z.zip</code>. macOS entpackt sie zu <code>Whimbrel.app</code>.</li>
+        <li>Ziehen Sie <code>Whimbrel.app</code> in Ihren Ordner <strong>Programme</strong>.</li>
+        <li>Öffnen Sie Whimbrel. Die App ist von Apple signiert und notarisiert, daher öffnet sie sich ohne Warnung.</li>
+        <li>Folgen Sie der Einrichtung, um Zugriff auf Mikrofon, Audio und Bedienungshilfen zu erlauben.</li>
+        <li>Verbinden Sie Ihren Kalender, damit Aufnahmen mit Ihren Meetings starten.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Fragen zum Mac</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

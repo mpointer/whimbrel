@@ -53,7 +53,13 @@
     },
     "today": {
       "archetype": "standard",
-      "options": {}
+      "options": {
+        "actions": "buttons",
+        "ask": "field",
+        "labels": "smallCaps",
+        "nextMeeting": "infobox",
+        "timeline": "line"
+      }
     },
     "motion": "none"
   },
@@ -111,7 +117,13 @@
     },
     "today": {
       "archetype": "standard",
-      "options": {}
+      "options": {
+        "actions": "buttons",
+        "ask": "field",
+        "labels": "smallCaps",
+        "nextMeeting": "infobox",
+        "timeline": "line"
+      }
     },
     "motion": "none"
   },

@@ -87,4 +87,61 @@ final class HomeElementPairsTests: XCTestCase {
         rest["today"] = nil
         XCTAssertEqual(NSDictionary(dictionary: rest), NSDictionary(dictionary: off))
     }
+
+    // MARK: richer skins row 12: the built-in skins' Home elements
+
+    private var bundledSkins: [Skin] { SkinLoader.loadDirectory(repo.appendingPathComponent("skins")) }
+
+    private func bundled(_ id: String) throws -> Skin { try XCTUnwrap(bundledSkins.first { $0.id == id }, id) }
+
+    private func elements(_ skin: Skin) -> WHomeElements {
+        WHomeElements.resolve(options: skin.archetypeOptions, archetype: skin.archetype.rawValue)
+    }
+
+    private var planned: [(id: String, elements: WHomeElements)] {
+        [("whimbrel", WHomeElements(nextMeeting: .infobox, timeline: .line, labels: .smallCaps, ask: .field, actions: .buttons)),
+         ("high-contrast", WHomeElements(nextMeeting: .infobox, timeline: .ruled, labels: .plain, ask: .field, actions: .buttons)),
+         ("hypermodern", WHomeElements(nextMeeting: .scoreboard, timeline: .line, labels: .plain, ask: .prompt, actions: .buttons))]
+    }
+
+    func testClassicHighContrastAndHypermodernResolveToTheirOwnElements() throws {
+        for (id, want) in planned {
+            let skin = try bundled(id)
+            XCTAssertEqual(elements(skin), want, id)
+            XCTAssertNotEqual(elements(skin), WHomeElements(), "\(id) still looks like the default")
+            XCTAssertEqual(Set(skin.archetypeOptions.keys), ["nextMeeting", "timeline", "labels", "ask", "actions"], id)
+        }
+        XCTAssertEqual(try bundled("hypermodern").archetype, .glass, "the archetype stays, so an older app draws its old layout")
+        XCTAssertEqual(try bundled("high-contrast").archetype, .standard)
+        XCTAssertEqual(SkinDefaults.whimbrel.archetypeOptions, try bundled("whimbrel").archetypeOptions)
+    }
+
+    func testTheElementPairsPassOnEveryPaletteOfTheThreeAsShipped() throws {
+        let pool = palettes()
+        for (id, want) in planned {
+            let skin = try bundled(id)
+            let pairs = ArchetypeContrast.withElementPairs(ArchetypeContrast.pairs(for: .standard), for: [want])
+            XCTAssertFalse(skin.paletteIds.isEmpty, id)
+            for pid in skin.paletteIds {
+                let theme = try XCTUnwrap(pool.first { $0.id == pid }, "\(id): palette \(pid)")
+                XCTAssertEqual(ArchetypeContrast.failures(theme.light, pairs), [], "\(id) on \(pid) light")
+                XCTAssertEqual(ArchetypeContrast.failures(theme.dark, pairs), [], "\(id) on \(pid) dark")
+            }
+        }
+    }
+
+    func testThreadIsUnchangedAndOldSyncedCopiesStillLoad() throws {
+        let thread = try bundled("thread")
+        XCTAssertEqual(elements(thread), WHomeElements())
+        XCTAssertEqual(thread.archetypeOptions, ["actions": "buttons", "ask": "field", "labels": "plain", "nextMeeting": "card", "timeline": "line"])
+        // An older Whimbrel wrote these skins with no element keys; sync can still hand that copy to this app.
+        for (id, _) in planned {
+            for today in [#""today": {"archetype": "standard", "options": {}}"#, #""today": {"archetype": "standard"}"#, ""] {
+                let json = #"{"id": "\#(id)", "name": "Old", "palettes": ["default"], \#(today)}"#.replacingOccurrences(of: ", }", with: "}")
+                let (skin, repairs) = try XCTUnwrap(SkinLoader.parse(Data(json.utf8), base: SkinDefaults.whimbrel), id)
+                XCTAssertEqual(repairs, [], id)
+                XCTAssertEqual(elements(skin), WHomeElements(), "\(id): an old copy draws its old Home")
+            }
+        }
+    }
 }

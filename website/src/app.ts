@@ -4,7 +4,7 @@ import { handleBeta, handleReview } from "./beta";
 import { platformOf, resolveRelease, type DownloadTarget } from "./downloads";
 import { leadAlertEmail, send, welcomeEmail, type Email } from "./email";
 import { preferencesPage } from "./preferences-page";
-import { language, leadByEmail, leadById, logEvent, markSynced, setPreference, signToken, syncContact, verifyToken, type ProductEmails } from "./preferences";
+import { language, leadByEmail, leadById, logEvent, markSynced, setPreference, signToken, syncContact, verifyToken, type Language, type ProductEmails } from "./preferences";
 
 export interface Env {
   ASSETS: Fetcher;
@@ -384,7 +384,7 @@ async function handleUpdatesStatus(request: Request, env: Env): Promise<Response
   return Response.json({ opted_in: lead.product_emails === "opted_in" }, { headers: noStore });
 }
 
-function confirmEmail(to: string, lang: "en" | "es" | "fr", link: string, from: string, replyTo: string | undefined): Email {
+function confirmEmail(to: string, lang: Language, link: string, from: string, replyTo: string | undefined): Email {
   const c = {
     en: {
       subject: "Confirm Whimbrel product news",
@@ -403,6 +403,12 @@ function confirmEmail(to: string, lang: "en" | "es" | "fr", link: string, from: 
       body: "Vous avez demandé à recevoir les notes de version et les nouvelles de Whimbrel lors de votre inscription. Pour vérifier que c'était bien vous, veuillez confirmer.",
       button: "Oui, envoyez-moi les nouvelles",
       ignore: "Si ce n'était pas vous, ignorez ce courriel et vous n'en recevrez aucune.",
+    },
+    de: {
+      subject: "Produktneuigkeiten von Whimbrel bestätigen",
+      body: "Sie haben bei der Registrierung um Versionshinweise und Produktneuigkeiten von Whimbrel gebeten. Bitte bestätigen Sie, dass Sie das waren.",
+      button: "Ja, Produktneuigkeiten senden",
+      ignore: "Wenn Sie das nicht waren, ignorieren Sie diese E-Mail. Sie erhalten dann keine.",
     },
   }[lang];
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -465,11 +471,12 @@ async function handlePreferencesPost(request: Request, env: Env, ctx: ExecutionC
 }
 
 /** The footer `send` adds carries the fresh link, so the body only says what it is for. */
-function preferencesLinkEmail(to: string, lang: "en" | "es" | "fr", from: string, replyTo: string | undefined): Email {
+function preferencesLinkEmail(to: string, lang: Language, from: string, replyTo: string | undefined): Email {
   const copy = {
     en: ["Your Whimbrel email preferences link", "Here's a new link to change which emails you get from Whimbrel. It's below."],
     es: ["Tu enlace de preferencias de correo de Whimbrel", "Aquí tienes un enlace nuevo para cambiar qué correos recibes de Whimbrel. Está abajo."],
     fr: ["Votre lien de préférences de courriel Whimbrel", "Voici un nouveau lien pour choisir les courriels que vous recevez de Whimbrel. Il se trouve ci-dessous."],
+    de: ["Ihr Link zu den E-Mail-Einstellungen von Whimbrel", "Hier ist ein neuer Link, mit dem Sie festlegen, welche E-Mails Sie von Whimbrel erhalten. Sie finden ihn unten."],
   }[lang];
   const html = `<!doctype html><html><body style="margin:0;background:#F7F2E7;font-family:-apple-system,'Segoe UI',sans-serif;color:#241E19">
 <div style="max-width:560px;margin:0 auto;padding:32px 20px">
