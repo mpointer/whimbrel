@@ -279,7 +279,7 @@ final class MeetingNoteRedesignTests: XCTestCase {
         XCTAssertEqual(labels[11], "Me")
     }
 
-    // MARK: The ends of lines, flag off and on
+    // MARK: The ends of lines
 
     func testALineWithNoEndWritesTheJSONItAlwaysDid() throws {
         let json = String(decoding: try JSONEncoder().encode([NewTranscriptSegmentInput(startCs: 1, speakerLabel: "Me", text: "hi")]), as: UTF8.self)

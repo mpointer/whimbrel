@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 import WhimbrelUI
 
-/// Recent, Episodes and Digest of Library, behind the redesign flag: the old modes' loading and actions, drawn as the same cards.
+/// Recent, Episodes and Digest of Library: the old modes' loading and actions, drawn as the same cards.
 @MainActor
 final class LibraryListsController: ObservableObject {
     private weak var appState: AppState?
@@ -79,7 +79,7 @@ final class LibraryListsController: ObservableObject {
         m.isLoading = isLoading
         m.emptyTitle = String(localized: "Nothing here yet", comment: "Title of an empty Library list.")
         m.emptyHelp = appState?.coreStore == nil
-            ? TimelineView.storeUnavailableMessage
+            ? AskShared.storeUnavailableMessage
             : String(localized: "No episodes yet. They form from screen activity after a few minutes of use.")
         return m
     }
@@ -141,7 +141,7 @@ final class LibraryListsController: ObservableObject {
     }
 }
 
-/// Library with the redesign flag on: Find (the default), Recent, Episodes and Digest. The shell's header field drives Find.
+/// Library: Find (the default), Recent, Episodes and Digest. The shell's header field drives Find.
 ///
 /// Find's controller belongs to the bridge, which the shell keeps for the whole session, so an answer still arriving when another section is
 /// chosen is not lost with this screen: it goes on arriving, is saved, and is on the page when Library is chosen again.

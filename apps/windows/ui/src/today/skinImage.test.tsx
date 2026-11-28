@@ -3,7 +3,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SkinImageView } from "./archetypes/parts";
+import { SkinImageView } from "./skinImage";
 
 describe("drawing a skin image", () => {
   const header = { asset: "a.png", placement: "header" as const, textFree: false, scrim: 0.6 };

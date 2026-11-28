@@ -5,8 +5,8 @@ import WhimbrelUI
 /// picks from the same lists `SkinLoader` and `ThemeLoader` accept. Built from the Swift
 /// constants, so it cannot drift from the loaders.
 enum SkinCatalogue {
-    /// With `redesign` on, the five Home element choices are added under `today`; off, the output is what it has always been.
-    static func object(redesign: Bool = false) -> [String: Any] {
+    /// The five Home element choices are listed under `today`.
+    static func object() -> [String: Any] {
         func raw<E: CaseIterable & RawRepresentable>(_: E.Type) -> [String] where E.RawValue == String { E.allCases.map(\.rawValue) }
         let tokens = ThemeToken.allCases.map(\.rawValue)
         var catalogue: [String: Any] = [
@@ -49,16 +49,14 @@ enum SkinCatalogue {
                 ],
             ],
         ]
-        if redesign {
-            catalogue["today"] = [
-                "options": Dictionary(uniqueKeysWithValues: WHomeElements.keys.map { ($0.key, $0.values) }),
-                "rule": "set today.options to any of these keys; a key left out keeps the old archetype's choice, an unknown value is ignored",
-            ]
-        }
+        catalogue["today"] = [
+            "options": Dictionary(uniqueKeysWithValues: WHomeElements.keys.map { ($0.key, $0.values) }),
+            "rule": "set today.options to any of these keys; a key left out keeps the old archetype's choice, an unknown value is ignored",
+        ]
         return catalogue
     }
 
-    static func json(redesign: Bool = false) -> Data {
-        (try? JSONSerialization.data(withJSONObject: object(redesign: redesign), options: [.sortedKeys])) ?? Data("{}".utf8)
+    static func json() -> Data {
+        (try? JSONSerialization.data(withJSONObject: object(), options: [.sortedKeys])) ?? Data("{}".utf8)
     }
 }

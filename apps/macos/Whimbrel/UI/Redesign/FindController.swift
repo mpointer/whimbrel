@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 import WhimbrelUI
 
-/// Library's Find page, behind the redesign flag: search from this device, Ask with numbered sources from the core, and the conversations.
+/// Library's Find page: search from this device, Ask with numbered sources from the core, and the conversations.
 /// The Ask button's promise (the picker, the route preview, the send decision, the sign-in refresh) is decided here; the question is then
 /// asked by the shared `AskRunner` with its sourced options (the filter, `requireLocal`, this page's route). The old screen's own re-search
 /// for citations is not used here.
@@ -333,7 +333,7 @@ final class FindController: ObservableObject {
             return
         }
         guard let store = appState.coreStore else {
-            stage = .failed(title: f.searchFailedTitle, help: TimelineView.storeUnavailableMessage)
+            stage = .failed(title: f.searchFailedTitle, help: AskShared.storeUnavailableMessage)
             return
         }
         stage = .searching
@@ -803,7 +803,7 @@ final class FindController: ObservableObject {
 
     /// The store, the plan or a core call was not there: the same failure, with the old page's own words for a database that did not open.
     private func failStoreUnavailable(_ request: AskRequest) {
-        fail(request, message: TimelineView.storeUnavailableMessage, button: nil)
+        fail(request, message: AskShared.storeUnavailableMessage, button: nil)
     }
 
     func openAISettings() {
@@ -999,7 +999,7 @@ final class FindController: ObservableObject {
     /// most of its sources belong to. Until it lands, Delete is off for it.
     private func appendToSaved(_ exchange: AskExchange, conversationId: Int64) {
         guard let store = appState?.coreStore else {
-            notice = TimelineView.storeUnavailableMessage
+            notice = AskShared.storeUnavailableMessage
             return
         }
         beginSave()

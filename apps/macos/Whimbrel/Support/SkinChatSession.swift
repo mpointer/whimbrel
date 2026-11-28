@@ -62,7 +62,7 @@ struct ImageCandidateDTO: Decodable, Identifiable, Equatable {
     var id: String { url }
 }
 
-/// What the skin chat may use right now. The chat follows `TodayComposer.askAvailable` on the
+/// What the skin chat may use right now. The chat follows `AskAvailability.askAvailable` on the
 /// default provider (so local-only mode blocks a hosted one); web search and image generation
 /// are hosted, so local-only mode turns them off too.
 struct SkinChatAccess: Equatable {
@@ -73,7 +73,7 @@ struct SkinChatAccess: Equatable {
     var hasSearchKey: Bool
     var hasImageKey: Bool
 
-    var chatAvailable: Bool { TodayComposer.askAvailable(provider: provider, localOnly: localOnly, hasKey: hasKey) }
+    var chatAvailable: Bool { AskAvailability.askAvailable(provider: provider, localOnly: localOnly, hasKey: hasKey) }
     var canSearch: Bool { hasSearchKey && !localOnly }
     var canGenerate: Bool { hasImageKey && !localOnly }
 }
@@ -255,7 +255,7 @@ final class SkinChatSession: ObservableObject {
         if access.provider != .ollama { status.append("Sent to \(access.provider.displayName): your request, this skin's chat, its design and the list of allowed values") }
         let sent = manifestObject(for: origin)
         let input: [String: Any] = [
-            "request": request, "history": history, "catalogue": SkinCatalogue.object(redesign: RedesignFlag.isOn()),
+            "request": request, "history": history, "catalogue": SkinCatalogue.object(),
             "currentManifest": sent ?? NSNull(),
         ]
         let data = (try? JSONSerialization.data(withJSONObject: input)) ?? Data()
@@ -512,7 +512,7 @@ final class SkinChatSession: ObservableObject {
     }
 
     /// The palette repair the session uses; tests swap in one that gives up.
-    nonisolated(unsafe) static var repairPalette: (ThemePalette) -> (palette: ThemePalette, changed: [ThemeToken]) = { PaletteRepair.repair($0, redesign: RedesignFlag.isOn() ? WHomeElements.everyVariant : nil) }
+    nonisolated(unsafe) static var repairPalette: (ThemePalette) -> (palette: ThemePalette, changed: [ThemeToken]) = { PaletteRepair.repair($0, elements: WHomeElements.everyVariant) }
 
     /// The palette with id `id`, each variant (gaps filled from Default, as `ThemeLoader` does) repaired
     /// to pass every archetype's pairs (`ArchetypeContrast`, since any skin may take it); nil when a variant

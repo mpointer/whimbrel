@@ -65,7 +65,7 @@ struct CoreMeetingTranscriptSegment: Codable, Identifiable {
     let startCs: Int64
     let speakerLabel: String
     let text: String
-    /// The line's end on the clock of `startCs`; only for a line stored with one (new recordings, redesign flag on).
+    /// The line's end on the clock of `startCs`; only for a line stored with one (new recordings).
     var endCs: Int64? = nil
 
     enum CodingKeys: String, CodingKey {
@@ -92,7 +92,7 @@ struct NewTranscriptSegmentInput: Encodable {
     let startCs: Int64
     let speakerLabel: String
     let text: String
-    /// Written only with the redesign flag on; nil leaves the JSON exactly as it was.
+    /// Nil leaves the JSON exactly as it was.
     var endCs: Int64? = nil
 
     enum CodingKeys: String, CodingKey {
@@ -2698,12 +2698,15 @@ final class CoreMemoryStore {
 
     /// The meeting's topic, or nil when it has none (or on failure).
     func topicForMeeting(meetingId: Int64) -> TopicRef? {
-        topicJSON(whimbrel_topics_for_meeting_json(handle, meetingId))
+        // The core answers JSON `null` for "no topic": decoded as `TopicRef??` that is no topic, not a decode error (#1073).
+        let linked: TopicRef?? = topicJSON(whimbrel_topics_for_meeting_json(handle, meetingId))
+        return linked ?? nil
     }
 
     /// A calendar event's topic (series topic, else a seed its title names), or nil.
     func topicForEvent(eventId: String, title: String) -> TopicRef? {
-        topicJSON(eventId.withCString { e in title.withCString { whimbrel_topics_for_event_json(handle, e, $0) } })
+        let linked: TopicRef?? = topicJSON(eventId.withCString { e in title.withCString { whimbrel_topics_for_event_json(handle, e, $0) } })
+        return linked ?? nil
     }
 
     /// Live seed topics whose aliases appear in `text`, or nil on failure.
@@ -7036,7 +7039,7 @@ final class LaneStartFlag: @unchecked Sendable {
     var isSet: Bool { lock.lock(); defer { lock.unlock() }; return started }
 }
 
-// MARK: Marked moments (live meeting, redesign flag only)
+// MARK: Marked moments (live meeting)
 
 /// A moment the person marked during a meeting. `atCs` is centiseconds from the start of the recording on the
 /// meeting-absolute clock (paused time included), the clock live alerts and transcript seek use. Local to this device.
@@ -7079,7 +7082,7 @@ extension CoreMemoryStore {
     }
 }
 
-// MARK: Line sources (finished note, redesign flag only)
+// MARK: Line sources (finished note)
 
 /// The transcript line a summary line came from, as core returns it. `segmentId` is the id in the transcript page.
 struct CoreLineSource: Decodable, Equatable {
@@ -7145,7 +7148,7 @@ extension CoreMemoryStore {
     }
 }
 
-// MARK: Screen 5: memory search and Ask (redesign flag only)
+// MARK: Screen 5: memory search and Ask
 
 extension CoreMemoryStore {
     private static func jsonString<T: Encodable>(_ value: T) -> String? {

@@ -30,7 +30,10 @@ mod content;
 mod kind_backfill;
 mod outbox;
 mod slice_backfill;
-pub use kind_backfill::{kind_backfill_percent, BackfillStop, kind_backfill_step, KindBackfillProgress};
+mod tls;
+pub use kind_backfill::{
+    kind_backfill_percent, kind_backfill_step, BackfillStop, KindBackfillProgress,
+};
 /// Below this much of a runner backfill's total budget left, no new step starts (nor, in the runner's `backfill`
 /// command, the slice pass after the kind pass).
 pub const BACKFILL_MIN_STEP_REMAINING: Duration = kind_backfill::MIN_STEP_REMAINING;
@@ -118,20 +121,12 @@ static REMOTE_BUILD_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::A
 /// `SettingsSyncCoordinator` in the macOS app). Rebuilt only when
 /// `turso_url`/`turso_token` change (e.g. re-auth).
 ///
-/// Building the connector is the one call in this crate that can panic:
-/// libsql's remote transport loads the OS's trusted root certs via
-/// `hyper-rustls`, whose `with_native_roots()` (hyper-rustls-0.25.0/src/
-/// config.rs:32) does `rustls_native_certs::load_native_certs().expect(...)`
-/// — a transient macOS Keychain failure (`errSecIO`/-36, an occasional
-/// `securityd`/`trustd` flake) panics instead of returning an `Err`, and a
-/// Rust panic crossing this crate's `extern "C"` FFI callers aborts the
-/// whole process. Caching cuts how often that OS call runs at all (once per
-/// url/token instead of once a minute); routing the build through
-/// `tokio::spawn` means a panic there is caught by the `JoinHandle` as an
-/// ordinary `Err` instead of unwinding into the caller.
-///
-/// On Android the connector verifies against bundled Mozilla roots instead
-/// (`webpki_connector`): there is no native store there to load.
+/// The connector is `tls::https_connector` (rustls 0.23): OS roots on desktop and
+/// iOS, bundled Mozilla roots on Android, and a failed OS-store read falls back to
+/// the bundled roots instead of panicking as libsql's own hyper-rustls 0.25
+/// connector did. The build still runs inside `tokio::spawn`, so any panic in
+/// libsql's builder comes back as an ordinary `Err` instead of unwinding into an
+/// `extern "C"` caller.
 async fn remote_connection(
     turso_url: &str,
     turso_token: &str,
@@ -154,10 +149,10 @@ async fn remote_connection(
     let url = turso_url.to_string();
     let token = turso_token.to_string();
     let db = tokio::spawn(async move {
-        let builder = Builder::new_remote(url, token);
-        #[cfg(target_os = "android")]
-        let builder = builder.connector(webpki_connector());
-        builder.build().await
+        Builder::new_remote(url, token)
+            .connector(tls::https_connector())
+            .build()
+            .await
     })
     .await
     .map_err(|e| SyncEngineError::Connection(format!("connector setup panicked: {e}")))?
@@ -172,36 +167,6 @@ async fn remote_connection(
         db,
     });
     Ok(conn)
-}
-
-/// Mozilla's trusted roots, bundled into the binary (webpki-roots). Android has no
-/// system cert store that rustls-native-certs can read, so there libsql's default
-/// native-roots connector fails every connect with "no valid native root CA
-/// certificates found".
-#[cfg(any(target_os = "android", test))]
-fn webpki_root_store() -> rustls::RootCertStore {
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    roots
-}
-
-/// The HTTPS connector Android hands libsql: the same shape as libsql's own default
-/// (`libsql::database::connector`, hyper-rustls 0.25, http1, https_or_http) but
-/// verifying against `webpki_root_store`. Normal rustls verification, hostname
-/// checks included. Desktop and iOS keep libsql's native-roots default.
-#[cfg(any(target_os = "android", test))]
-fn webpki_connector() -> hyper_rustls::HttpsConnector<hyper::client::HttpConnector> {
-    let mut http = hyper::client::HttpConnector::new();
-    http.enforce_http(false);
-    http.set_nodelay(true);
-    let tls = rustls::ClientConfig::builder()
-        .with_root_certificates(webpki_root_store())
-        .with_no_client_auth();
-    hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(tls)
-        .https_or_http()
-        .enable_http1()
-        .wrap_connector(http)
 }
 
 const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1000; // 5 minutes
@@ -286,7 +251,15 @@ async fn content_round(
     device_id: &str,
     set: &dyn Fn(&'static str),
 ) -> Result<(), SyncEngineError> {
-    content_round_from(conn, group_key, store, device_id, set, std::time::Instant::now()).await
+    content_round_from(
+        conn,
+        group_key,
+        store,
+        device_id,
+        set,
+        std::time::Instant::now(),
+    )
+    .await
 }
 
 /// [`content_round`] for a round whose `SYNC_TIMEOUT` clock started at `round_started` (before the connect).
@@ -316,18 +289,33 @@ async fn content_round_from(
     set("outbox");
     // The outbox stops OUTBOX_SPARE before the round's timeout; what it did not send goes next round.
     let round_end = tokio::time::Instant::from_std(round_started) + SYNC_TIMEOUT;
-    outbox::dispatch_outbox_until(conn, group_key, store, device_id, now_unix_ms(), Some(round_end - OUTBOX_SPARE))
-        .await?;
+    outbox::dispatch_outbox_until(
+        conn,
+        group_key,
+        store,
+        device_id,
+        now_unix_ms(),
+        Some(round_end - OUTBOX_SPARE),
+    )
+    .await?;
     // Last: a tombstone this device just enqueued is on the relay before its meeting's server rows go, and
     // a peer's tombstone for this device's meeting pulled above is cleaned up this round. Best effort and
     // time-boxed: it never fails the round, and it gets only what is left of the round (none left: next round).
     set("forgotten cleanup");
     if let Some(left) = time_left(round_end) {
-        let _ = tokio::time::timeout(left, content::delete_forgotten_meeting_rows(conn, group_key, store, device_id)).await;
+        let _ = tokio::time::timeout(
+            left,
+            content::delete_forgotten_meeting_rows(conn, group_key, store, device_id),
+        )
+        .await;
     }
     // The same for a client delete's items (its own, or a peer's tombstone naming this device's rows).
     if let Some(left) = time_left(round_end) {
-        let _ = tokio::time::timeout(left, content::delete_forgotten_client_rows(conn, store, device_id)).await;
+        let _ = tokio::time::timeout(
+            left,
+            content::delete_forgotten_client_rows(conn, store, device_id),
+        )
+        .await;
     }
     set("kind backfill");
     run_kind_backfill(conn, group_key, store, device_id, round_started).await;
@@ -473,7 +461,8 @@ async fn pull_only_phased(
     content::announce_pull_only_markers(conn, group_key, device_id).await;
     *phase.lock().unwrap() = "pull";
     // A pull-only peer (the phone) has no skins, so it never fetches their rows.
-    let pulled = content::pull_content_without_skins(conn, group_key, store, device_id, options).await;
+    let pulled =
+        content::pull_content_without_skins(conn, group_key, store, device_id, options).await;
     // The phone's own "update needed" line (a desktop's outbox pass stores the same count).
     content::record_pending_tombstone_devices(conn, store, device_id).await;
     pulled
@@ -565,16 +554,28 @@ pub struct PullTypeCounts {
 /// capability and bookkeeping rows "marker".
 pub fn pull_type_index(row_type: &str) -> usize {
     let name = match row_type {
-        "items" | "meeting" | "capture_item" | "transcript_segment" | "routine_run" | "meeting_prep" | "topic_seed"
-        | "topic_verdict" | "person" | "meeting_speaker" | "live_alert" | "provider_spend" => row_type,
+        "items" | "meeting" | "capture_item" | "transcript_segment" | "routine_run"
+        | "meeting_prep" | "topic_seed" | "topic_verdict" | "person" | "meeting_speaker"
+        | "live_alert" | "provider_spend" => row_type,
         "profile_suggestion" | "profile_suggestion_status" => "profile_suggestion",
         "skin" | "skin_image_chunk" => "skin",
-        t if t.starts_with("topic_") && !t.ends_with("_capability") && t != "topic_seed_purged" => "topic_other",
+        t if t.starts_with("topic_") && !t.ends_with("_capability") && t != "topic_seed_purged" => {
+            "topic_other"
+        }
         "meeting_forgotten" | "client_item_forgotten" | "topic_seed_purged" => "tombstone",
-        t if t.ends_with("_capability") || t == "device_retired" || t == "kind_backfill_claim" || t == "slice_backfill_claim" => "marker",
+        t if t.ends_with("_capability")
+            || t == "device_retired"
+            || t == "kind_backfill_claim"
+            || t == "slice_backfill_claim" =>
+        {
+            "marker"
+        }
         _ => "other",
     };
-    PULL_TYPE_NAMES.iter().position(|n| *n == name).unwrap_or(PULL_TYPE_NAMES.len() - 1)
+    PULL_TYPE_NAMES
+        .iter()
+        .position(|n| *n == name)
+        .unwrap_or(PULL_TYPE_NAMES.len() - 1)
 }
 
 /// How long the cloud runner's pull keeps starting rounds. Its store starts empty every run, so one
@@ -604,10 +605,23 @@ pub fn runner_pull(
         "runner pull",
         async {
             let conn = remote_connection(turso_url, turso_token).await?;
-            runner_pull_phased(&conn, group_key, store, device_id, options, RUNNER_PULL_BUDGET, &phase).await
+            runner_pull_phased(
+                &conn,
+                group_key,
+                store,
+                device_id,
+                options,
+                RUNNER_PULL_BUDGET,
+                &phase,
+            )
+            .await
         },
     ));
-    finish_round(store, &result.as_ref().map(|_| ()).map_err(Clone::clone), *phase.lock().unwrap());
+    finish_round(
+        store,
+        &result.as_ref().map(|_| ()).map_err(Clone::clone),
+        *phase.lock().unwrap(),
+    );
     result
 }
 
@@ -683,7 +697,9 @@ async fn runner_pull_phased(
         report.deferred += round.deferred;
         report.fetch_ms += round.fetch_ms;
         report.apply_ms += round.apply_ms;
-        report.max_round_ms = report.max_round_ms.max(round_started.elapsed().as_millis() as u64);
+        report.max_round_ms = report
+            .max_round_ms
+            .max(round_started.elapsed().as_millis() as u64);
         report.slice_tags = report.slice_tags.max(round.slice_tags);
         report.pull_index |= round.pull_index;
         let caught_up = content::tombstones_caught_up(store);
@@ -711,9 +727,13 @@ async fn runner_pull_phased(
     // After the peers' rows (tombstones included), so a result a delete forgot stays forgotten.
     let own_types: Vec<&str> = match &options.row_type_allowlist {
         Some(allow) => allow.iter().map(String::as_str).collect(),
-        None => vec![memory::OUTBOX_ROW_TYPE_ROUTINE_RUN, memory::OUTBOX_ROW_TYPE_MEETING_PREP],
+        None => vec![
+            memory::OUTBOX_ROW_TYPE_ROUTINE_RUN,
+            memory::OUTBOX_ROW_TYPE_MEETING_PREP,
+        ],
     };
-    report.own_results_applied = content::read_own_results(conn, group_key, store, device_id, &own_types).await?;
+    report.own_results_applied =
+        content::read_own_results(conn, group_key, store, device_id, &own_types).await?;
     report.rows_applied += report.own_results_applied;
     report.exclusion_rows_published = content::client_settings_published(conn, device_id).await?;
     content::record_pending_tombstone_devices(conn, store, device_id).await;
@@ -733,7 +753,17 @@ pub fn runner_kind_backfill(
     total_budget: Duration,
     step_budget: Duration,
 ) -> Result<KindBackfillProgress, SyncEngineError> {
-    runner_kind_backfill_observed(turso_url, turso_token, group_key, store, device_id, total_budget, step_budget, &mut |_, _| {}).map(|(p, _)| p)
+    runner_kind_backfill_observed(
+        turso_url,
+        turso_token,
+        group_key,
+        store,
+        device_id,
+        total_budget,
+        step_budget,
+        &mut |_, _| {},
+    )
+    .map(|(p, _)| p)
 }
 
 /// [`runner_kind_backfill`], calling `on_step(progress, steps so far)` after every step (the CLI's progress line).
@@ -754,7 +784,16 @@ pub fn runner_kind_backfill_observed(
         "runner kind backfill",
         async {
             let conn = remote_connection(turso_url, turso_token).await?;
-            kind_backfill::run_runner_backfill(&conn, group_key, store, device_id, total_budget, step_budget, on_step).await
+            kind_backfill::run_runner_backfill(
+                &conn,
+                group_key,
+                store,
+                device_id,
+                total_budget,
+                step_budget,
+                on_step,
+            )
+            .await
         },
     ))
 }
@@ -768,9 +807,17 @@ pub async fn runner_kind_backfill_with_connection(
     total_budget: Duration,
     step_budget: Duration,
 ) -> Result<KindBackfillProgress, SyncEngineError> {
-    runner_kind_backfill_observed_with_connection(conn, group_key, store, device_id, total_budget, step_budget, &mut |_, _| {})
-        .await
-        .map(|(p, _)| p)
+    runner_kind_backfill_observed_with_connection(
+        conn,
+        group_key,
+        store,
+        device_id,
+        total_budget,
+        step_budget,
+        &mut |_, _| {},
+    )
+    .await
+    .map(|(p, _)| p)
 }
 
 /// [`runner_kind_backfill_with_connection`] with the per-step callback; also returns the [`BackfillStop`] (why it stopped).
@@ -783,7 +830,16 @@ pub async fn runner_kind_backfill_observed_with_connection(
     step_budget: Duration,
     on_step: &mut dyn FnMut(&KindBackfillProgress, usize),
 ) -> Result<(KindBackfillProgress, BackfillStop), SyncEngineError> {
-    kind_backfill::run_runner_backfill(conn, group_key, store, device_id, total_budget, step_budget, on_step).await
+    kind_backfill::run_runner_backfill(
+        conn,
+        group_key,
+        store,
+        device_id,
+        total_budget,
+        step_budget,
+        on_step,
+    )
+    .await
 }
 
 /// The cloud runner's one-time `slice_tag` backfill over the whole relay, run by its `backfill` command after
@@ -806,7 +862,16 @@ pub fn runner_slice_backfill_observed(
         "runner slice backfill",
         async {
             let conn = remote_connection(turso_url, turso_token).await?;
-            slice_backfill::run_runner_slice_backfill(&conn, group_key, store, device_id, total_budget, step_budget, on_step).await
+            slice_backfill::run_runner_slice_backfill(
+                &conn,
+                group_key,
+                store,
+                device_id,
+                total_budget,
+                step_budget,
+                on_step,
+            )
+            .await
         },
     ))
 }
@@ -822,7 +887,16 @@ pub async fn runner_slice_backfill_observed_with_connection(
     step_budget: Duration,
     on_step: &mut dyn FnMut(&KindBackfillProgress, usize),
 ) -> Result<(KindBackfillProgress, BackfillStop), SyncEngineError> {
-    slice_backfill::run_runner_slice_backfill(conn, group_key, store, device_id, total_budget, step_budget, on_step).await
+    slice_backfill::run_runner_slice_backfill(
+        conn,
+        group_key,
+        store,
+        device_id,
+        total_budget,
+        step_budget,
+        on_step,
+    )
+    .await
 }
 
 /// The cloud runner's send, after its routines ran: delivers its outbox (the `routine_run` and
@@ -1606,19 +1680,21 @@ mod tests {
         assert!(b_result.is_empty());
     }
 
-    /// Android's connector: a non-empty bundled root store, and libsql accepts the
-    /// connector (`build` and `connect` are offline, so no network is touched).
+    /// libsql accepts our rustls 0.23 connector, with both the OS and the bundled
+    /// roots (`build` and `connect` are offline, so no network is touched).
     #[tokio::test]
-    async fn android_webpki_connector_builds_with_a_non_empty_root_store() {
-        assert!(
-            webpki_root_store().len() > 100,
-            "bundled Mozilla roots missing"
-        );
-        let db = Builder::new_remote("https://example.invalid".to_string(), "token".to_string())
-            .connector(webpki_connector())
+    async fn libsql_accepts_the_rustls_connector() {
+        let bundled = tls::HttpsConnector::new(tls::client_config(tls::webpki_root_store()));
+        Builder::new_remote("https://example.invalid".to_string(), "token".to_string())
+            .connector(bundled)
             .build()
             .await
-            .expect("libsql must accept the webpki connector");
+            .expect("libsql must accept the bundled-roots connector");
+        let db = Builder::new_remote("https://example.invalid".to_string(), "token".to_string())
+            .connector(tls::https_connector())
+            .build()
+            .await
+            .expect("libsql must accept the default connector");
         db.connect()
             .expect("connect is lazy and must not fail offline");
     }
@@ -1631,11 +1707,16 @@ mod tests {
 
     #[test]
     fn cleanup_targets_are_sealed_even_when_the_relay_is_unreachable() {
-        let _serial = REMOTE_CONNECTION_TESTS.lock().unwrap_or_else(|p| p.into_inner());
+        let _serial = REMOTE_CONNECTION_TESTS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         // libsql configures SQLite first in a test process, so it opens before the store does.
         let dir = tempfile::tempdir().unwrap();
         runtime().block_on(async {
-            libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+            libsql::Builder::new_local(dir.path().join("relay.db"))
+                .build()
+                .await
+                .unwrap();
         });
         let group_key = GroupKey::generate();
         let forget_event = |store: &memory::Store| {
@@ -1651,26 +1732,46 @@ mod tests {
                 .unwrap();
             let id = store.export_items_page("calendar_event", 0, 10).unwrap()[0].id;
             store
-                .enqueue_client_item_forgotten(memory::ClientItemKind::CalendarEvent, &id.to_string())
+                .enqueue_client_item_forgotten(
+                    memory::ClientItemKind::CalendarEvent,
+                    &id.to_string(),
+                )
                 .unwrap();
-            assert!(store.client_relay_cleanup(10).unwrap().iter().any(|t| t.0.starts_with("raw:")));
+            assert!(store
+                .client_relay_cleanup(10)
+                .unwrap()
+                .iter()
+                .any(|t| t.0.starts_with("raw:")));
         };
         let no_raw = |store: &memory::Store| {
             for (target, _, _) in store.client_relay_cleanup(10).unwrap() {
-                assert!(!target.starts_with("raw:") && !target.contains("zorblax"), "{target}");
+                assert!(
+                    !target.starts_with("raw:") && !target.contains("zorblax"),
+                    "{target}"
+                );
             }
         };
         let desktop = memory::Store::open_in_memory().unwrap();
         desktop.set_own_device_id("device-a");
         forget_event(&desktop);
-        assert!(sync_content("https://127.0.0.1:9", "t", &group_key, &desktop, "device-a").is_err());
+        assert!(
+            sync_content("https://127.0.0.1:9", "t", &group_key, &desktop, "device-a").is_err()
+        );
         no_raw(&desktop);
 
         let pull_only = memory::Store::open_in_memory().unwrap();
         pull_only.set_own_device_id("device-a");
         forget_event(&pull_only);
         let options = PullOptions::default();
-        assert!(sync_content_pull_only("https://127.0.0.1:9", "t", &group_key, &pull_only, "device-a", &options).is_err());
+        assert!(sync_content_pull_only(
+            "https://127.0.0.1:9",
+            "t",
+            &group_key,
+            &pull_only,
+            "device-a",
+            &options
+        )
+        .is_err());
         no_raw(&pull_only);
     }
 
@@ -1684,7 +1785,9 @@ mod tests {
     #[allow(clippy::await_holding_lock)] // a current-thread test runtime; the lock only orders tests
     async fn remote_connection_reuses_the_cached_connector_for_the_same_credentials() {
         use std::sync::atomic::Ordering;
-        let _serial = REMOTE_CONNECTION_TESTS.lock().unwrap_or_else(|p| p.into_inner());
+        let _serial = REMOTE_CONNECTION_TESTS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         REMOTE_BUILD_COUNT.store(0, Ordering::SeqCst);
 
         remote_connection("https://example.invalid", "token-a")
@@ -1761,7 +1864,9 @@ mod tests {
     #[test]
     #[ignore = "requires a real Turso database — see doc comment"]
     fn syncs_against_a_real_remote_turso_database() {
-        let _serial = REMOTE_CONNECTION_TESTS.lock().unwrap_or_else(|p| p.into_inner());
+        let _serial = REMOTE_CONNECTION_TESTS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let turso_url = std::env::var("WHIMBREL_TEST_TURSO_URL")
             .expect("set WHIMBREL_TEST_TURSO_URL to a real Turso database URL to run this test");
         let turso_token = std::env::var("WHIMBREL_TEST_TURSO_TOKEN")
@@ -1799,7 +1904,9 @@ mod tests {
     #[test]
     #[ignore = "requires a real Turso database — see doc comment"]
     fn syncs_content_against_a_real_remote_turso_database() {
-        let _serial = REMOTE_CONNECTION_TESTS.lock().unwrap_or_else(|p| p.into_inner());
+        let _serial = REMOTE_CONNECTION_TESTS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let turso_url = std::env::var("WHIMBREL_TEST_TURSO_URL")
             .expect("set WHIMBREL_TEST_TURSO_URL to a real Turso database URL to run this test");
         let turso_token = std::env::var("WHIMBREL_TEST_TURSO_TOKEN")

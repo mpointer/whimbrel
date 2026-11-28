@@ -55,7 +55,7 @@ describe("the sorting row", () => {
 
 describe("Settings → Topics never deletes a client by itself (final review, Major 2)", () => {
   it("Delete on a topic you named points to Delete this client instead of soft-deleting it", async () => {
-    const card = Object.values(import.meta.glob("./TopicsCard.tsx", { query: "?raw", import: "default", eager: true }))[0] as string;
+    const card = Object.values(import.meta.glob("./redesign/sections/topics/TopicsListCard.tsx", { query: "?raw", import: "default", eager: true }))[0] as string;
     // `delete_topic_seed` keeps the name and aliases (deleted = 1) and then blocks Delete this client.
     expect(card).not.toMatch(/deleteTopicSeed\s*\(/);
     expect(card).toContain("To delete a client and what Whimbrel holds on them, open the client's page and choose Delete this client.");

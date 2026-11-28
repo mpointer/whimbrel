@@ -1,7 +1,5 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { LaunchAnswer, LaunchErrorView, LaunchScreenView } from "../generated/types";
-import { BlockingScreen, KeyUnavailableScreen, MigratingScreen } from "./LaunchScreens";
 import { errorParagraphs, isCurrentView, lastActionText, nextProgress, NOT_PRESSED, pressReducer, screenContent } from "./screenModel";
 
 /** The answers each screen offers, as the shell's `offers` computes them (commands/launch.rs
@@ -19,22 +17,7 @@ const CASES: { name: string; screen: LaunchScreenView; offers: LaunchAnswer[] }[
   { name: "open elsewhere", screen: { kind: "damaged", reason: "openElsewhere" }, offers: ["retry", "quit"] },
 ];
 
-const answersIn = (html: string) => [...html.matchAll(/data-answer="([a-zA-Z]+)"/g)].map((m) => m[1]).sort();
-
 describe("blocking screens", () => {
-  it.each(CASES)("$name: the buttons are exactly its offers, Quit always among them", ({ screen, offers }) => {
-    const html = renderToStaticMarkup(<BlockingScreen screen={screen} offers={offers} busy={false} onAnswer={() => {}} />);
-    expect(answersIn(html)).toEqual([...offers].sort());
-    expect(html).toContain("Quit Whimbrel");
-  });
-
-  it("draws no button the shell did not offer, even on a screen that could have it", () => {
-    const html = renderToStaticMarkup(
-      <BlockingScreen screen={{ kind: "error", error: { kind: "plainOpenFailed" } }} offers={["quit"]} busy={false} onAnswer={() => {}} />,
-    );
-    expect(answersIn(html)).toEqual(["quit"]);
-  });
-
   it("the damaged and .enc.tmp-only screens have Quit only", () => {
     for (const c of CASES.filter((c) => c.name === "damaged" || c.name === "missing, .enc.tmp only")) {
       expect(screenContent(c.screen, c.offers).buttons.map((b) => b.answer)).toEqual(["quit"]);
@@ -110,23 +93,6 @@ describe("blocking screens", () => {
     expect(p({ kind: "stepOutOfOrder", code: 3 })).toBe("Whimbrel stopped before opening the memory database, to keep it safe.");
     expect(p({ kind: "decisionUnavailable" })).toBe("Whimbrel stopped before opening the memory database, to keep it safe.");
   });
-
-  it("buttons are disabled while busy", () => {
-    const html = renderToStaticMarkup(<BlockingScreen screen={CASES[0].screen} offers={CASES[0].offers} busy onAnswer={() => {}} />);
-    expect(html.match(/disabled=""/g)?.length).toBe(2);
-  });
-});
-
-describe("key unavailable", () => {
-  it("Try again is the only action besides Quit; the second identical stage says still unavailable", () => {
-    const first = renderToStaticMarkup(<KeyUnavailableScreen stillUnavailable={false} busy={false} onAnswer={() => {}} />);
-    expect(first).toContain("Try again");
-    expect(first).toContain("Quit Whimbrel");
-    expect(first.match(/<button/g)?.length).toBe(2);
-    expect(first).not.toContain("still can&#x27;t be read");
-    const again = renderToStaticMarkup(<KeyUnavailableScreen stillUnavailable busy={false} onAnswer={() => {}} />);
-    expect(again).toContain("The key still can&#x27;t be read.");
-  });
 });
 
 describe("the migration", () => {
@@ -136,33 +102,19 @@ describe("the migration", () => {
     expect(nextProgress(0.2, Number.NaN)).toBe(0.2);
     expect(nextProgress(0.2, 7)).toBe(1);
   });
-
-  it("has no Quit and no button at all", () => {
-    const html = renderToStaticMarkup(<MigratingScreen overall={0.3} />);
-    expect(html).toContain("Encrypting the memory database");
-    expect(html).not.toContain("<button");
-  });
 });
 
 describe("buttons while an answer is in flight", () => {
-  const held: LaunchScreenView = { kind: "damaged", reason: "openElsewhere" };
-  const offers: LaunchAnswer[] = ["retry", "quit"];
-  const disabledAnswers = (busy: boolean) => {
-    const html = renderToStaticMarkup(<BlockingScreen screen={held} offers={offers} busy={busy} onAnswer={() => {}} />);
-    return [...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]).filter((b) => /disabled/.test(b) && /data-answer/.test(b)).length;
-  };
-
   it("a Retry that brings back the very same screen turns Retry and Quit back on", () => {
     let s = pressReducer(NOT_PRESSED, { kind: "view", generation: 4 });
     s = pressReducer(s, { kind: "pressed" });
-    expect(disabledAnswers(s.pressed)).toBe(2);
+    expect(s.pressed).toBe(true);
     // The shell re-reads while it works: same generation, still pressed.
     s = pressReducer(s, { kind: "view", generation: 4 });
     expect(s.pressed).toBe(true);
     // The same in-use screen again (the file still held): a new generation.
     s = pressReducer(s, { kind: "view", generation: 5 });
     expect(s.pressed).toBe(false);
-    expect(disabledAnswers(s.pressed)).toBe(0);
   });
 
   it("an older view resolving late never turns a newer screen's buttons back on", () => {

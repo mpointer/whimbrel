@@ -12745,6 +12745,41 @@
         }
       }
     },
+    "Cloud: $5 a month or $50 a year. Unlimited devices on our sync server." : {
+      "comment" : "Plan & billing, shown while signed out: what the Cloud plan costs and includes. Keep the prices in step with the buy buttons.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cloud: 5 $ im Monat oder 50 $ im Jahr. Unbegrenzt viele Geräte auf unserem Synchronisierungsserver."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cloud: $5 al mes o $50 al año. Dispositivos ilimitados en nuestro servidor de sincronización."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cloud : 5 $ par mois ou 50 $ par an. Appareils illimités sur notre serveur de synchronisation."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cloud : 5 $ par mois ou 50 $ par an. Appareils illimités sur notre serveur de synchronisation."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cloud: US$ 5 por mês ou US$ 50 por ano. Dispositivos ilimitados no nosso servidor de sincronização."
+          }
+        }
+      }
+    },
     "Collapsed" : {
       "comment" : "Spoken state of a row on Today that is closed.",
       "localizations" : {
@@ -43867,6 +43902,41 @@
     "Plus until %@" : {
       "comment" : "Plan row on a Plus plan; %@ is a date.",
       "shouldTranslate" : false
+    },
+    "Plus: $15 a month or $144 a year. Hosted sync on all your devices and a monthly Whimbrel AI allowance." : {
+      "comment" : "Plan & billing, shown while signed out: what the Plus plan costs and includes. Keep the prices in step with the buy buttons.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus: 15 $ im Monat oder 144 $ im Jahr. Gehostete Synchronisierung auf allen Geräten und ein monatliches Whimbrel-AI-Kontingent."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus: $15 al mes o $144 al año. Sincronización alojada en todos tus dispositivos y una asignación mensual de Whimbrel AI."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus : 15 $ par mois ou 144 $ par an. Synchronisation hébergée sur tous vos appareils et une allocation mensuelle Whimbrel AI."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus : 15 $ par mois ou 144 $ par an. Synchronisation hébergée sur tous vos appareils et une allocation mensuelle Whimbrel AI."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus: US$ 15 por mês ou US$ 144 por ano. Sincronização alojada em todos os seus dispositivos e uma franquia mensal de Whimbrel AI."
+          }
+        }
+      }
     },
     "Plus: %@ of this month's AI allowance left" : {
       "comment" : "Whimbrel AI card on Plus when the reset date is not known; %@ is a dollar amount.",

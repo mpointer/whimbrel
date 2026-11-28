@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import WhimbrelUI
 
-/// The Settings window with the hidden redesign switch on. `SettingsView` hands over to this at the top of its body.
+/// The Settings window (⌘,).
 /// Same sections in the same order, the same search (the `SettingsSearch` registry and matching), the same section
 /// jumps from other parts of the app (`pendingSettingsSection`) and the same scroll-and-flash after a search hit.
 struct SettingsRedesignView: View {

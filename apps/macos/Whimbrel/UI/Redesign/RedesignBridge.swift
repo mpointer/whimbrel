@@ -95,16 +95,3 @@ extension View {
     /// Gives a WhimbrelUI view the app's theme (skin and palette) and words.
     func redesignThemed() -> some View { modifier(RedesignThemed()) }
 }
-
-/// The switch at a call site: the redesign view when the hidden flag is on, the old view otherwise.
-/// `enabled` overrides the environment where it is not set (the Settings window).
-struct RedesignSwitch<New: View, Old: View>: View {
-    @Environment(\.redesignEnabled) private var environmentOn
-    var enabled: Bool?
-    @ViewBuilder let new: () -> New
-    @ViewBuilder let old: () -> Old
-
-    var body: some View {
-        if enabled ?? environmentOn { new() } else { old() }
-    }
-}

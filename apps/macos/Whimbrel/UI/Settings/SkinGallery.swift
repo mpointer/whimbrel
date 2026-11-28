@@ -164,11 +164,10 @@ struct SkinGallery: View {
     /// A skin you made (they live in `UserSkinStore`, whose ids all start `user-`).
     static func isUserSkin(_ skin: Skin) -> Bool { skin.id.hasPrefix("user-") }
 
-    /// Built-ins in installed order, then your skins by name. The built-in Thread skin is listed when `redesign`
-    /// is on (always, in the app: `RedesignFlag`); listing it never changes the selected skin (`ThreadMove` does that, once).
-    static func orderedCards(skins: [Skin], redesign: Bool) -> [Skin] {
-        let listed = RedesignFlag.visible(skins, redesign: redesign)
-        return listed.filter { !isUserSkin($0) } + listed.filter(isUserSkin).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    /// Built-ins in installed order, then your skins by name. The built-in Thread skin is listed; listing it never
+    /// changes the selected skin (`ThreadMove` does that, once).
+    static func orderedCards(skins: [Skin]) -> [Skin] {
+        skins.filter { !isUserSkin($0) } + skins.filter(isUserSkin).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     /// The card's preview when already drawn, so a rebuilt card shows it at once instead of a placeholder.
@@ -179,7 +178,7 @@ struct SkinGallery: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: Spacing.md, alignment: .top)], alignment: .leading, spacing: Spacing.md) {
-                ForEach(Self.orderedCards(skins: skins.skins, redesign: RedesignFlag.isOn())) { skin in
+                ForEach(Self.orderedCards(skins: skins.skins)) { skin in
                     SkinCard(skin: skin, skins: skins, skinChat: skinChat, colorScheme: colorScheme)
                 }
             }

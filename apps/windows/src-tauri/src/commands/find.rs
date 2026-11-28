@@ -490,9 +490,6 @@ struct SourcedAsk {
     labeler: DeviceLabeler,
     /// False for an answer the page only shows (Today's): nothing is saved and no conversation is made.
     save: bool,
-    /// The hidden redesign switch was on when the question was asked. Only then does a stored exchange join a topic (screen 6): with it off,
-    /// what this writes is exactly what it wrote before the redesign.
-    redesign: bool,
 }
 
 /// Starts answering `query` and returns at once; the events arrive on `on_event`, the same stream `chat_ask` sends,
@@ -516,9 +513,9 @@ pub fn chat_ask_sourced(
     }
     let store = state.store()?.clone();
     let slow = state.slow_store()?.clone();
-    let (mut settings, instructions, redesign) = {
+    let (mut settings, instructions) = {
         let s = state.settings.lock().unwrap();
-        (s.routing(), s.instructions(PromptSurface::Ask), s.redesign_enabled())
+        (s.routing(), s.instructions(PromptSurface::Ask))
     };
     if require_local {
         settings.local_only = true;
@@ -534,7 +531,6 @@ pub fn chat_ask_sourced(
         scope,
         labeler: state.device_labeler(),
         save: save.unwrap_or(true),
-        redesign,
     };
     let sync = state.sync.clone();
     // Background model requests hold back from now until the answer ends (PR 874).
@@ -782,7 +778,6 @@ fn persist(store: &StoreHandle, ask: &SourcedAsk, answer: &Answer) -> Option<i64
     let (conversation_id, query, text, model, provider) =
         (ask.conversation_id, ask.query.clone(), answer.text.clone(), answer.model.clone(), answer.provider.clone());
     let (sources, answered_locally, left_out, now) = (answer.cited_sources.clone(), answer.answered_locally, answer.left_out, api::util::now_unix_ms());
-    let redesign = ask.redesign;
     // A new conversation keeps the Dates and Apps it was asked under, never a person: only that a People filter was on.
     let f = &ask.scope.filter;
     let kept = memory::SavedFindFilter {
@@ -809,11 +804,9 @@ fn persist(store: &StoreHandle, ask: &SourcedAsk, answer: &Answer) -> Option<i64
             now_unix_ms: now,
         })
         .map_err(|e| e.to_string())?;
-        // Redesign only: after each stored exchange the conversation joins the topic most of its cited sources belong to (never over the
-        // person's choice). With the switch off nothing here differs from before.
-        if redesign {
-            let _ = api::conversations::auto_attach_topic(s, id);
-        }
+        // After each stored exchange the conversation joins the topic most of its cited sources belong to (never over the
+        // person's choice).
+        let _ = api::conversations::auto_attach_topic(s, id);
         Ok(id)
     });
     match result {

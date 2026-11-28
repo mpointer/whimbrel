@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { questionAlertDismiss, questionAlertOpen, questionAlertStatus } from "../api";
 import type { QuestionNotice } from "../generated/types";
 import { useL10n } from "../l10n";
-import { useRedesign } from "../redesign";
 import { WButton, WINDOW_DESIGN, WWindowFrame, mainActionOnReturn } from "../system";
 
 /**
@@ -12,7 +11,6 @@ import { WButton, WINDOW_DESIGN, WWindowFrame, mainActionOnReturn } from "../sys
  */
 export function QuestionAlertView() {
   const { t } = useL10n();
-  const redesign = useRedesign();
   const [notices, setNotices] = useState<QuestionNotice[]>([]);
 
   useEffect(() => {
@@ -23,46 +21,27 @@ export function QuestionAlertView() {
   }, []);
 
   const notice = notices[0];
-  if (!notice) return redesign ? <div className="w-sys w-win-root" /> : <div className="alert" />;
+  if (!notice) return <div className="w-sys w-win-root" />;
   const more = notices.length - 1;
-  if (redesign)
-    return (
-      <WWindowFrame
-        design={WINDOW_DESIGN.question}
-        title={notice.title}
-        lines={[
-          ...(notice.subtitle ? [notice.subtitle] : []),
-          <span className="w-win-strong">{notice.body}</span>,
-          ...(more > 0 ? [t("+{count} more", { count: more })] : []),
-        ]}
-        onPrimary={mainActionOnReturn("question", () => void questionAlertOpen(notice.id))}
-        onDismiss={() => void questionAlertDismiss()}
-        actions={
-          <>
-            <WButton variant="primary" onClick={() => void questionAlertOpen(notice.id)}>
-              {t("Open meeting")}
-            </WButton>
-            <WButton onClick={() => void questionAlertDismiss()}>{t("Dismiss")}</WButton>
-          </>
-        }
-      />
-    );
   return (
-    <div className="alert">
-      <span className="popup-brand">{notice.title}</span>
-      {notice.subtitle && <p className="muted small">{notice.subtitle}</p>}
-      <p role="status" className="alert-title">
-        {notice.body}
-      </p>
-      {more > 0 && <p className="muted small">{t("+{count} more", { count: more })}</p>}
-      <div className="popup-actions">
-        <button className="mode mode--active" onClick={() => void questionAlertOpen(notice.id)}>
-          {t("Open meeting")}
-        </button>
-        <button className="mode" onClick={() => void questionAlertDismiss()}>
-          {t("Dismiss")}
-        </button>
-      </div>
-    </div>
+    <WWindowFrame
+      design={WINDOW_DESIGN.question}
+      title={notice.title}
+      lines={[
+        ...(notice.subtitle ? [notice.subtitle] : []),
+        <span className="w-win-strong">{notice.body}</span>,
+        ...(more > 0 ? [t("+{count} more", { count: more })] : []),
+      ]}
+      onPrimary={mainActionOnReturn("question", () => void questionAlertOpen(notice.id))}
+      onDismiss={() => void questionAlertDismiss()}
+      actions={
+        <>
+          <WButton variant="primary" onClick={() => void questionAlertOpen(notice.id)}>
+            {t("Open meeting")}
+          </WButton>
+          <WButton onClick={() => void questionAlertDismiss()}>{t("Dismiss")}</WButton>
+        </>
+      }
+    />
   );
 }

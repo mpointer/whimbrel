@@ -1,7 +1,7 @@
 import SwiftUI
 import WhimbrelUI
 
-/// `ModelSetupView` in the redesign: the same download call and the same dismissals. The system's
+/// The model setup sheet: the same download call and the same dismissals. The system's
 /// raw error text is not shown; the screen says what failed and what to do.
 struct ModelSetupRedesignView: View {
     @Environment(\.dismiss) private var dismiss

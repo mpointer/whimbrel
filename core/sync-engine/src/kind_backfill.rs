@@ -22,9 +22,9 @@ use std::time::{Duration, Instant};
 use sync::GroupKey;
 
 use crate::content::{
-    content_row_aad, distinct_peer_device_ids, ensure_sync_row_column, item_payload_kind_tag, peer_has_marker,
-    KIND_TAG_COLUMN_SEEN, Latch,
-    refresh_marker, ROW_TYPE_ITEMS, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_KIND_BACKFILL_CLAIM,
+    content_row_aad, distinct_peer_device_ids, ensure_sync_row_column, item_payload_kind_tag,
+    peer_has_marker, refresh_marker, Latch, KIND_TAG_COLUMN_SEEN, ROW_TYPE_ITEMS,
+    ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_KIND_BACKFILL_CLAIM,
 };
 use crate::{now_unix_ms, SyncEngineError};
 
@@ -79,7 +79,10 @@ impl Pass {
     /// about 2M round trips over the relay. `?3..` are the chunk's `local_seq`s: at most [`CHUNK_ROWS`] (500), so
     /// with the two others well under SQLite's 999-variable floor.
     fn update_sql(&self, seq_count: usize) -> String {
-        let seqs = (0..seq_count).map(|i| format!("?{}", i + 3)).collect::<Vec<_>>().join(", ");
+        let seqs = (0..seq_count)
+            .map(|i| format!("?{}", i + 3))
+            .collect::<Vec<_>>()
+            .join(", ");
         let column = self.column;
         format!(
             "UPDATE sync_row SET {column} = ?1 \
@@ -133,7 +136,10 @@ const CHUNK_SQL: &str = "SELECT local_seq, ciphertext FROM sync_row \
      WHERE device_id = ?1 AND local_seq > ?2 AND local_seq <= ?3 AND row_type = 'items' AND kind_tag IS NULL \
      ORDER BY local_seq LIMIT ?4";
 
-const _: () = assert!(CHUNK_ROWS + 2 <= 999, "a chunk's UPDATE must stay under SQLite's variable limit");
+const _: () = assert!(
+    CHUNK_ROWS + 2 <= 999,
+    "a chunk's UPDATE must stay under SQLite's variable limit"
+);
 
 /// A peer's highest `local_seq`: where its walk is done (a primary-key seek, as `CATCH_UP_END_SQL`).
 const PEER_END_SQL: &str = "SELECT MAX(local_seq) FROM sync_row WHERE device_id = ?1";
@@ -149,16 +155,28 @@ const KIND_BACKFILL_PROGRESS_KEY: &str = "kind_backfill_progress";
 /// (`done == 0`, which includes `total == 0`: a relay with no rows, a column that could not be confirmed) keeps
 /// what was saved before: a step another device's claim holds, or one turned away before this device's first
 /// push, is not this device indexing, so it never shows "0%".
-pub(crate) fn record_progress(store: &Store, progress: &KindBackfillProgress) -> Result<(), SyncEngineError> {
+pub(crate) fn record_progress(
+    store: &Store,
+    progress: &KindBackfillProgress,
+) -> Result<(), SyncEngineError> {
     if progress.finished {
         // Only a write when a value is there: a finished device runs this every round.
-        if store.get_meta(KIND_BACKFILL_PROGRESS_KEY).map_err(local_err)?.is_some() {
-            store.delete_meta(KIND_BACKFILL_PROGRESS_KEY).map_err(local_err)?;
+        if store
+            .get_meta(KIND_BACKFILL_PROGRESS_KEY)
+            .map_err(local_err)?
+            .is_some()
+        {
+            store
+                .delete_meta(KIND_BACKFILL_PROGRESS_KEY)
+                .map_err(local_err)?;
         }
         Ok(())
     } else if progress.done > 0 && progress.total > 0 {
         store
-            .set_meta(KIND_BACKFILL_PROGRESS_KEY, &format!("{}:{}", progress.done, progress.total))
+            .set_meta(
+                KIND_BACKFILL_PROGRESS_KEY,
+                &format!("{}:{}", progress.done, progress.total),
+            )
             .map_err(local_err)
     } else {
         Ok(())
@@ -231,12 +249,20 @@ fn local_err(e: impl std::fmt::Display) -> SyncEngineError {
     SyncEngineError::Query(format!("local store: {e}"))
 }
 
-async fn query(conn: &Connection, sql: &str, params: impl IntoParams) -> Result<libsql::Rows, SyncEngineError> {
+async fn query(
+    conn: &Connection,
+    sql: &str,
+    params: impl IntoParams,
+) -> Result<libsql::Rows, SyncEngineError> {
     capture(sql);
     conn.query(sql, params).await.map_err(relay_err)
 }
 
-async fn execute(conn: &Connection, sql: &str, params: impl IntoParams) -> Result<u64, SyncEngineError> {
+async fn execute(
+    conn: &Connection,
+    sql: &str,
+    params: impl IntoParams,
+) -> Result<u64, SyncEngineError> {
     capture(sql);
     conn.execute(sql, params).await.map_err(relay_err)
 }
@@ -271,12 +297,25 @@ pub(crate) async fn pass_step(
     own_device_id: &str,
     budget: Duration,
 ) -> Result<KindBackfillProgress, SyncEngineError> {
-    if let Some(done) = store.get_meta(pass.done_key).map_err(local_err)?.as_deref().and_then(|v| finished_progress(pass, v)) {
+    if let Some(done) = store
+        .get_meta(pass.done_key)
+        .map_err(local_err)?
+        .as_deref()
+        .and_then(|v| finished_progress(pass, v))
+    {
         return Ok(done);
     }
-    match tokio::time::timeout(budget + BACKSTOP_SLACK, step(pass, conn, group_key, store, own_device_id, budget)).await {
+    match tokio::time::timeout(
+        budget + BACKSTOP_SLACK,
+        step(pass, conn, group_key, store, own_device_id, budget),
+    )
+    .await
+    {
         Ok(result) => result,
-        Err(_) => Err(SyncEngineError::Query(format!("{} backfill: a relay call took too long", pass.column))),
+        Err(_) => Err(SyncEngineError::Query(format!(
+            "{} backfill: a relay call took too long",
+            pass.column
+        ))),
     }
 }
 
@@ -311,7 +350,11 @@ async fn step(
     let mut walks = Vec::with_capacity(peers.len());
     for peer in peers {
         let end = peer_end(conn, &peer).await?;
-        let after = match store.get_meta(&pass.peer_key(&peer)).map_err(local_err)?.as_deref() {
+        let after = match store
+            .get_meta(&pass.peer_key(&peer))
+            .map_err(local_err)?
+            .as_deref()
+        {
             Some("done") => end,
             Some(seq) => seq.parse::<i64>().unwrap_or(0),
             None => 0,
@@ -331,18 +374,34 @@ async fn step(
         refresh_marker(conn, group_key, own_device_id, pass.claim_row_type).await?;
         let mut moved = false;
         for walk in walks.iter_mut() {
-            if !walk_peer(pass, conn, group_key, store, walk, deadline, &mut moved, &mut undecryptable).await? {
+            if !walk_peer(
+                pass,
+                conn,
+                group_key,
+                store,
+                walk,
+                deadline,
+                &mut moved,
+                &mut undecryptable,
+            )
+            .await?
+            {
                 return Ok(progress(&walks, undecryptable, false));
             }
         }
     }
 
     for walk in &walks {
-        store.set_meta(&pass.peer_key(&walk.peer), "done").map_err(local_err)?;
+        store
+            .set_meta(&pass.peer_key(&walk.peer), "done")
+            .map_err(local_err)?;
     }
     let done = progress(&walks, undecryptable, true);
     store
-        .set_meta(pass.done_key, &format!("{}:{}:{}", pass.version, done.total, done.undecryptable))
+        .set_meta(
+            pass.done_key,
+            &format!("{}:{}:{}", pass.version, done.total, done.undecryptable),
+        )
         .map_err(local_err)?;
     Ok(done)
 }
@@ -401,7 +460,17 @@ pub(crate) async fn run_runner_backfill(
     step_budget: Duration,
     on_step: &mut dyn FnMut(&KindBackfillProgress, usize),
 ) -> Result<(KindBackfillProgress, BackfillStop), SyncEngineError> {
-    run_runner_pass(&KIND_PASS, conn, group_key, store, device_id, total_budget, step_budget, on_step).await
+    run_runner_pass(
+        &KIND_PASS,
+        conn,
+        group_key,
+        store,
+        device_id,
+        total_budget,
+        step_budget,
+        on_step,
+    )
+    .await
 }
 
 /// [`run_runner_backfill`] for any [`Pass`]: the same markers, steps, retries, stall rule and floor.
@@ -455,7 +524,10 @@ pub(crate) async fn run_runner_pass(
                 if failures > STEP_RETRIES {
                     return Err(e);
                 }
-                eprintln!("backfill: {} step failed, retrying ({failures}/{STEP_RETRIES})", pass.name());
+                eprintln!(
+                    "backfill: {} step failed, retrying ({failures}/{STEP_RETRIES})",
+                    pass.name()
+                );
                 tokio::time::sleep(retry_pause(failures)).await;
                 continue;
             }
@@ -494,18 +566,44 @@ struct SavedCursors {
 /// Puts the cursors saved on the relay into `store`, unless it already has a position for the pass (it is not new).
 /// Best effort: a payload that is missing, will not open or is another version's leaves the walk starting at 0,
 /// which is only slower, never wrong (the walk skips rows that already have the column).
-async fn load_cursors(pass: &Pass, conn: &Connection, group_key: &GroupKey, store: &Store, device_id: &str) {
-    let Ok(existing) = store.list_meta_with_prefix(pass.kv_prefix) else { return };
+async fn load_cursors(
+    pass: &Pass,
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    device_id: &str,
+) {
+    let Ok(existing) = store.list_meta_with_prefix(pass.kv_prefix) else {
+        return;
+    };
     if !existing.is_empty() {
         return;
     }
-    let Ok(mut rows) = query(conn, CLAIM_PAYLOAD_SQL, params![device_id, pass.claim_row_type]).await else { return };
-    let Ok(Some(row)) = rows.next().await else { return };
-    let Ok(text) = row.get::<String>(0) else { return };
-    let Ok(sealed) = STANDARD.decode(text) else { return };
+    let Ok(mut rows) = query(
+        conn,
+        CLAIM_PAYLOAD_SQL,
+        params![device_id, pass.claim_row_type],
+    )
+    .await
+    else {
+        return;
+    };
+    let Ok(Some(row)) = rows.next().await else {
+        return;
+    };
+    let Ok(text) = row.get::<String>(0) else {
+        return;
+    };
+    let Ok(sealed) = STANDARD.decode(text) else {
+        return;
+    };
     let aad = content_row_aad(device_id, 0, pass.claim_row_type);
-    let Ok(plain) = sync::decrypt_payload(group_key, &sealed, &aad) else { return };
-    let Ok(saved) = serde_json::from_slice::<SavedCursors>(&plain) else { return };
+    let Ok(plain) = sync::decrypt_payload(group_key, &sealed, &aad) else {
+        return;
+    };
+    let Ok(saved) = serde_json::from_slice::<SavedCursors>(&plain) else {
+        return;
+    };
     if saved.v != pass.version {
         return;
     }
@@ -522,23 +620,40 @@ async fn load_cursors(pass: &Pass, conn: &Connection, group_key: &GroupKey, stor
 
 /// Saves the walk's position into the runner's claim row after a step (the row `step` refreshed; a step that
 /// walked nothing has none, so nothing is written). Best effort: a failed save costs only a longer next walk.
-async fn save_cursors(pass: &Pass, conn: &Connection, group_key: &GroupKey, store: &Store, device_id: &str) {
+async fn save_cursors(
+    pass: &Pass,
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    device_id: &str,
+) {
     let prefix = format!("{}:{}:", pass.kv_prefix, pass.version);
-    let Ok(list) = store.list_meta_with_prefix(&prefix) else { return };
+    let Ok(list) = store.list_meta_with_prefix(&prefix) else {
+        return;
+    };
     let saved = SavedCursors {
         v: pass.version.to_string(),
         peers: list.into_iter().collect(),
         done: store.get_meta(pass.done_key).ok().flatten(),
         undecryptable: store.get_meta(&pass.undecryptable_key()).ok().flatten(),
     };
-    let Ok(json) = serde_json::to_vec(&saved) else { return };
+    let Ok(json) = serde_json::to_vec(&saved) else {
+        return;
+    };
     let aad = content_row_aad(device_id, 0, pass.claim_row_type);
     let sealed = STANDARD.encode(sync::encrypt_payload(group_key, &json, &aad));
-    let _ = execute(conn, SAVE_CURSORS_SQL, params![sealed.as_str(), device_id, pass.claim_row_type]).await;
+    let _ = execute(
+        conn,
+        SAVE_CURSORS_SQL,
+        params![sealed.as_str(), device_id, pass.claim_row_type],
+    )
+    .await;
 }
 
-const CLAIM_PAYLOAD_SQL: &str = "SELECT ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq = 0 AND row_type = ?2";
-const SAVE_CURSORS_SQL: &str = "UPDATE sync_row SET ciphertext = ?1 WHERE device_id = ?2 AND local_seq = 0 AND row_type = ?3";
+const CLAIM_PAYLOAD_SQL: &str =
+    "SELECT ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq = 0 AND row_type = ?2";
+const SAVE_CURSORS_SQL: &str =
+    "UPDATE sync_row SET ciphertext = ?1 WHERE device_id = ?2 AND local_seq = 0 AND row_type = ?3";
 
 /// The progress a `kind_backfill_done` value records, or `None` when it is another version's (walk again).
 fn finished_progress(pass: &Pass, value: &str) -> Option<KindBackfillProgress> {
@@ -549,7 +664,12 @@ fn finished_progress(pass: &Pass, value: &str) -> Option<KindBackfillProgress> {
     let mut numbers = parts.map(|p| p.parse::<u64>().unwrap_or(0));
     let total = numbers.next().unwrap_or(0);
     let undecryptable = numbers.next().unwrap_or(0);
-    Some(KindBackfillProgress { done: total, total, finished: true, undecryptable })
+    Some(KindBackfillProgress {
+        done: total,
+        total,
+        finished: true,
+        undecryptable,
+    })
 }
 
 fn progress(walks: &[Walk], undecryptable: u64, finished: bool) -> KindBackfillProgress {
@@ -559,7 +679,12 @@ fn progress(walks: &[Walk], undecryptable: u64, finished: bool) -> KindBackfillP
         total += end;
         done += (w.after.clamp(0, w.end.max(0))) as u64;
     }
-    KindBackfillProgress { done, total, finished, undecryptable }
+    KindBackfillProgress {
+        done,
+        total,
+        finished,
+        undecryptable,
+    }
 }
 
 async fn peer_end(conn: &Connection, peer: &str) -> Result<i64, SyncEngineError> {
@@ -572,10 +697,20 @@ async fn peer_end(conn: &Connection, peer: &str) -> Result<i64, SyncEngineError>
 
 /// Whether a device other than this one claimed the backfill less than [`CLAIM_FRESH_MS`] ago (and not more than
 /// [`CLAIM_SKEW_MS`] in the future).
-async fn another_fresh_claim(pass: &Pass, conn: &Connection, walks: &[Walk], own_device_id: &str) -> Result<bool, SyncEngineError> {
+async fn another_fresh_claim(
+    pass: &Pass,
+    conn: &Connection,
+    walks: &[Walk],
+    own_device_id: &str,
+) -> Result<bool, SyncEngineError> {
     let now = now_unix_ms();
     for walk in walks.iter().filter(|w| w.peer != own_device_id) {
-        let mut rows = query(conn, CLAIM_SQL, params![walk.peer.as_str(), pass.claim_row_type]).await?;
+        let mut rows = query(
+            conn,
+            CLAIM_SQL,
+            params![walk.peer.as_str(), pass.claim_row_type],
+        )
+        .await?;
         if let Some(row) = rows.next().await.map_err(relay_err)? {
             let at: i64 = row.get(0).map_err(relay_err)?;
             if claim_is_fresh(now.saturating_sub(at)) {
@@ -587,9 +722,20 @@ async fn another_fresh_claim(pass: &Pass, conn: &Connection, walks: &[Walk], own
 }
 
 /// The tag for one `items` row, or `None` when it does not open or decode.
-fn row_tag(pass: &Pass, group_key: &GroupKey, peer: &str, local_seq: i64, ciphertext: &str) -> Option<String> {
+fn row_tag(
+    pass: &Pass,
+    group_key: &GroupKey,
+    peer: &str,
+    local_seq: i64,
+    ciphertext: &str,
+) -> Option<String> {
     let sealed = STANDARD.decode(ciphertext).ok()?;
-    let plaintext = sync::decrypt_payload(group_key, &sealed, &content_row_aad(peer, local_seq, ROW_TYPE_ITEMS)).ok()?;
+    let plaintext = sync::decrypt_payload(
+        group_key,
+        &sealed,
+        &content_row_aad(peer, local_seq, ROW_TYPE_ITEMS),
+    )
+    .ok()?;
     (pass.tag)(group_key, &plaintext)
 }
 
@@ -618,11 +764,18 @@ async fn walk_peer(
         }
         let window_end = walk.after.saturating_add(span.max(1)).min(walk.end);
         let chunk: Vec<(i64, String)> = {
-            let mut rows =
-                query(conn, pass.chunk_sql, params![walk.peer.as_str(), walk.after, window_end, chunk_rows]).await?;
+            let mut rows = query(
+                conn,
+                pass.chunk_sql,
+                params![walk.peer.as_str(), walk.after, window_end, chunk_rows],
+            )
+            .await?;
             let mut out = Vec::new();
             while let Some(row) = rows.next().await.map_err(relay_err)? {
-                out.push((row.get(0).map_err(relay_err)?, row.get(1).map_err(relay_err)?));
+                out.push((
+                    row.get(0).map_err(relay_err)?,
+                    row.get(1).map_err(relay_err)?,
+                ));
             }
             out
         };
@@ -633,7 +786,8 @@ async fn walk_peer(
         let had_rows = !chunk.is_empty();
         let last_seq = chunk.last().map(|(seq, _)| *seq);
         // Group the chunk by tag: one UPDATE per kind present, over that kind's rows.
-        let mut by_tag: std::collections::BTreeMap<String, Vec<i64>> = std::collections::BTreeMap::new();
+        let mut by_tag: std::collections::BTreeMap<String, Vec<i64>> =
+            std::collections::BTreeMap::new();
         let mut chunk_undecryptable = 0u64;
         for (local_seq, ciphertext) in &chunk {
             match row_tag(pass, group_key, &walk.peer, *local_seq, ciphertext) {
@@ -647,7 +801,12 @@ async fn walk_peer(
             values.push(tag.into());
             values.push(walk.peer.as_str().into());
             values.extend(seqs.into_iter().map(libsql::Value::Integer));
-            execute(conn, &pass.update_sql(values.len() - 2), libsql::params::Params::Positional(values)).await?;
+            execute(
+                conn,
+                &pass.update_sql(values.len() - 2),
+                libsql::params::Params::Positional(values),
+            )
+            .await?;
         }
         // The chunk is written: its progress is saved before the next one is read, so a step cut short (or a
         // relay error mid-chunk) re-reads at most this chunk, whose tagged rows the `IS NULL` read skips.
@@ -657,8 +816,14 @@ async fn walk_peer(
                 .set_meta(&pass.undecryptable_key(), &undecryptable.to_string())
                 .map_err(local_err)?;
         }
-        walk.after = if full { last_seq.unwrap_or(window_end) } else { window_end };
-        store.set_meta(&key, &walk.after.to_string()).map_err(local_err)?;
+        walk.after = if full {
+            last_seq.unwrap_or(window_end)
+        } else {
+            window_end
+        };
+        store
+            .set_meta(&key, &walk.after.to_string())
+            .map_err(local_err)?;
         *moved = true;
         if had_rows && walk.after < walk.end && !pause.is_zero() {
             tokio::time::sleep(pause.min(deadline.saturating_duration_since(Instant::now()))).await;
@@ -670,8 +835,8 @@ async fn walk_peer(
 mod tests {
     use super::*;
     use crate::content::{
-        content_row_aad, ensure_content_schema, kind_tag_for, push_marker, ItemPayload, ROW_TYPE_ITEMS,
-        ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_KIND_BACKFILL_CLAIM, ROW_TYPE_MEETING,
+        content_row_aad, ensure_content_schema, kind_tag_for, push_marker, ItemPayload,
+        ROW_TYPE_ITEMS, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_KIND_BACKFILL_CLAIM, ROW_TYPE_MEETING,
     };
 
     const KINDS: [&str; 3] = ["capture", "transcript", "calendar_event"];
@@ -686,7 +851,10 @@ mod tests {
 
     async fn relay() -> (tempfile::TempDir, libsql::Database, Connection, GroupKey) {
         let dir = tempfile::tempdir().unwrap();
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let conn = db.connect().unwrap();
         ensure_content_schema(&conn).await.unwrap();
         (dir, db, conn, GroupKey::generate())
@@ -711,10 +879,23 @@ mod tests {
     }
 
     fn item_json(kind: &str, body: &str) -> String {
-        serde_json::to_string(&ItemPayload { source_meeting_id: None, meeting_local_seq: None, item: item(kind, body) }).unwrap()
+        serde_json::to_string(&ItemPayload {
+            source_meeting_id: None,
+            meeting_local_seq: None,
+            item: item(kind, body),
+        })
+        .unwrap()
     }
 
-    async fn seed(conn: &Connection, key: &GroupKey, device: &str, seq: i64, row_type: &str, json: &str, tag: Option<String>) {
+    async fn seed(
+        conn: &Connection,
+        key: &GroupKey,
+        device: &str,
+        seq: i64,
+        row_type: &str,
+        json: &str,
+        tag: Option<String>,
+    ) {
         let aad = content_row_aad(device, seq, row_type);
         let ciphertext = STANDARD.encode(sync::encrypt_payload(key, json.as_bytes(), &aad));
         conn.execute(
@@ -733,15 +914,35 @@ mod tests {
     /// fifth seq (NULL, must stay NULL), and one `items` row a new client already tagged on push.
     async fn fixture(conn: &Connection, key: &GroupKey) {
         for (d, device) in DEVICES.iter().enumerate() {
-            push_marker(conn, key, device, ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+            push_marker(conn, key, device, ROW_TYPE_ITEMS_CAPABILITY)
+                .await
+                .unwrap();
             for seq in 1..=ROWS_PER_DEVICE {
                 if seq % 5 == 0 {
                     seed(conn, key, device, seq, ROW_TYPE_MEETING, "{}", None).await;
                 } else if seq == ROWS_PER_DEVICE - 1 {
                     let kind = kind_of(d, seq);
-                    seed(conn, key, device, seq, ROW_TYPE_ITEMS, &item_json(kind, "pushed"), Some(sync::kind_tag(key, kind))).await;
+                    seed(
+                        conn,
+                        key,
+                        device,
+                        seq,
+                        ROW_TYPE_ITEMS,
+                        &item_json(kind, "pushed"),
+                        Some(sync::kind_tag(key, kind)),
+                    )
+                    .await;
                 } else {
-                    seed(conn, key, device, seq, ROW_TYPE_ITEMS, &item_json(kind_of(d, seq), &format!("{device} {seq}")), None).await;
+                    seed(
+                        conn,
+                        key,
+                        device,
+                        seq,
+                        ROW_TYPE_ITEMS,
+                        &item_json(kind_of(d, seq), &format!("{device} {seq}")),
+                        None,
+                    )
+                    .await;
                 }
             }
         }
@@ -755,7 +956,12 @@ mod tests {
             .unwrap();
         let mut out = Vec::new();
         while let Some(r) = rows.next().await.unwrap() {
-            out.push((r.get(0).unwrap(), r.get(1).unwrap(), r.get(2).unwrap(), r.get(3).unwrap()));
+            out.push((
+                r.get(0).unwrap(),
+                r.get(1).unwrap(),
+                r.get(2).unwrap(),
+                r.get(3).unwrap(),
+            ));
         }
         out
     }
@@ -771,16 +977,28 @@ mod tests {
         for (device, seq, row_type, tag) in snapshot(conn).await {
             if row_type == ROW_TYPE_ITEMS {
                 let d = DEVICES.iter().position(|x| *x == device).unwrap();
-                assert_eq!(tag, Some(sync::kind_tag(key, kind_of(d, seq))), "{device}/{seq}");
+                assert_eq!(
+                    tag,
+                    Some(sync::kind_tag(key, kind_of(d, seq))),
+                    "{device}/{seq}"
+                );
             } else {
                 assert_eq!(tag, None, "{device}/{seq}/{row_type} must stay untagged");
             }
         }
     }
 
-    async fn run_to_end(conn: &Connection, key: &GroupKey, store: &Store, own: &str, budget: Duration) -> (KindBackfillProgress, usize) {
+    async fn run_to_end(
+        conn: &Connection,
+        key: &GroupKey,
+        store: &Store,
+        own: &str,
+        budget: Duration,
+    ) -> (KindBackfillProgress, usize) {
         for steps in 1..=10_000 {
-            let p = kind_backfill_step(conn, key, store, own, budget).await.unwrap();
+            let p = kind_backfill_step(conn, key, store, own, budget)
+                .await
+                .unwrap();
             if p.finished {
                 return (p, steps);
             }
@@ -803,7 +1021,14 @@ mod tests {
         assert_eq!(p.total, 3 * ROWS_PER_DEVICE as u64);
         assert_eq!(p.done, p.total);
         assert_tagged(&conn, &key).await;
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await, 0);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL"
+            )
+            .await,
+            0
+        );
     }
 
     /// The backfilled tag is the push path's tag for the same item: one function of the kind.
@@ -811,15 +1036,31 @@ mod tests {
     async fn the_backfilled_tag_equals_the_push_tag() {
         small_pace();
         let (_dir, _db, conn, key) = relay().await;
-        push_marker(&conn, &key, "dev-a", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        push_marker(&conn, &key, "dev-a", ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
         for (i, kind) in KINDS.iter().enumerate() {
-            seed(&conn, &key, "dev-b", i as i64 + 1, ROW_TYPE_ITEMS, &item_json(kind, "x"), None).await;
+            seed(
+                &conn,
+                &key,
+                "dev-b",
+                i as i64 + 1,
+                ROW_TYPE_ITEMS,
+                &item_json(kind, "x"),
+                None,
+            )
+            .await;
         }
         let store = Store::open_in_memory().unwrap();
         run_to_end(&conn, &key, &store, "dev-a", LONG).await;
 
         for (i, kind) in KINDS.iter().enumerate() {
-            let pushed = memory::SyncableRow::Item { local_seq: 1, source_meeting_id: None, meeting_local_seq: None, item: item(kind, "x") };
+            let pushed = memory::SyncableRow::Item {
+                local_seq: 1,
+                source_meeting_id: None,
+                meeting_local_seq: None,
+                item: item(kind, "x"),
+            };
             let tag: Option<String> = {
                 let mut rows = conn
                     .query("SELECT kind_tag FROM sync_row WHERE device_id = 'dev-b' AND local_seq = ?1", params![i as i64 + 1])
@@ -837,18 +1078,42 @@ mod tests {
         small_pace();
         let (_dir, _db, conn, key) = relay().await;
         fixture(&conn, &key).await;
-        run_to_end(&conn, &key, &Store::open_in_memory().unwrap(), "dev-a", LONG).await;
+        run_to_end(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            LONG,
+        )
+        .await;
         let first = snapshot(&conn).await;
 
         // A fresh database (no progress saved) walks everything again: nothing is left to tag.
         CAPTURED_SQL.with(|c| *c.borrow_mut() = Some(Vec::new()));
-        let (p, _) = run_to_end(&conn, &key, &Store::open_in_memory().unwrap(), "dev-a", LONG).await;
+        let (p, _) = run_to_end(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            LONG,
+        )
+        .await;
         let sql = CAPTURED_SQL.with(|c| c.borrow_mut().take().unwrap());
 
         assert!(p.finished);
-        assert!(!sql.iter().any(|s| s.starts_with("UPDATE")), "nothing left to update");
-        let second: Vec<_> = snapshot(&conn).await.into_iter().filter(|r| r.2 != ROW_TYPE_KIND_BACKFILL_CLAIM).collect();
-        let first: Vec<_> = first.into_iter().filter(|r| r.2 != ROW_TYPE_KIND_BACKFILL_CLAIM).collect();
+        assert!(
+            !sql.iter().any(|s| s.starts_with("UPDATE")),
+            "nothing left to update"
+        );
+        let second: Vec<_> = snapshot(&conn)
+            .await
+            .into_iter()
+            .filter(|r| r.2 != ROW_TYPE_KIND_BACKFILL_CLAIM)
+            .collect();
+        let first: Vec<_> = first
+            .into_iter()
+            .filter(|r| r.2 != ROW_TYPE_KIND_BACKFILL_CLAIM)
+            .collect();
         assert_eq!(first, second);
     }
 
@@ -863,16 +1128,29 @@ mod tests {
         fixture(&whole, &key).await;
 
         let store = Store::open_in_memory().unwrap();
-        let first = kind_backfill_step(&interrupted, &key, &store, "dev-a", Duration::ZERO).await.unwrap();
+        let first = kind_backfill_step(&interrupted, &key, &store, "dev-a", Duration::ZERO)
+            .await
+            .unwrap();
         assert!(!first.finished);
         assert!(first.done > 0, "a step always moves forward");
         assert!(first.done < first.total);
-        let tagged = count(&interrupted, "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL").await;
+        let tagged = count(
+            &interrupted,
+            "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL",
+        )
+        .await;
         assert!(tagged > 3 && tagged < 3 * 23, "stopped mid-way: {tagged}");
         let (_, steps) = run_to_end(&interrupted, &key, &store, "dev-a", Duration::ZERO).await;
         assert!(steps > 3, "the run was spread over steps: {steps}");
 
-        run_to_end(&whole, &key, &Store::open_in_memory().unwrap(), "dev-a", LONG).await;
+        run_to_end(
+            &whole,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            LONG,
+        )
+        .await;
         assert_eq!(snapshot(&interrupted).await, snapshot(&whole).await);
         assert_tagged(&interrupted, &key).await;
     }
@@ -890,32 +1168,73 @@ mod tests {
         )
         .await
         .unwrap();
-        seed(&conn, &GroupKey::generate(), "dev-b", 102, ROW_TYPE_ITEMS, &item_json("capture", "other group"), None).await;
-        seed(&conn, &key, "dev-c", 103, ROW_TYPE_ITEMS, "{\"kind\": 7}", None).await;
-        seed(&conn, &key, "dev-c", 104, ROW_TYPE_ITEMS, &item_json("capture", "after the bad ones"), None).await;
+        seed(
+            &conn,
+            &GroupKey::generate(),
+            "dev-b",
+            102,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", "other group"),
+            None,
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            "dev-c",
+            103,
+            ROW_TYPE_ITEMS,
+            "{\"kind\": 7}",
+            None,
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            "dev-c",
+            104,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", "after the bad ones"),
+            None,
+        )
+        .await;
         let store = Store::open_in_memory().unwrap();
 
         let (p, _) = run_to_end(&conn, &key, &store, "dev-a", LONG).await;
 
         assert!(p.finished);
         assert_eq!(p.undecryptable, 3);
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await, 3);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL"
+            )
+            .await,
+            3
+        );
         assert_eq!(
             count(&conn, "SELECT COUNT(*) FROM sync_row WHERE local_seq IN (101, 102, 103) AND kind_tag IS NULL").await,
             3
         );
         let tag: String = {
-            let mut rows = conn.query("SELECT kind_tag FROM sync_row WHERE local_seq = 104", ()).await.unwrap();
+            let mut rows = conn
+                .query("SELECT kind_tag FROM sync_row WHERE local_seq = 104", ())
+                .await
+                .unwrap();
             rows.next().await.unwrap().unwrap().get(0).unwrap()
         };
         assert_eq!(tag, sync::kind_tag(&key, "capture"));
         // Finished reports the same count later.
-        let again = kind_backfill_step(&conn, &key, &store, "dev-a", LONG).await.unwrap();
+        let again = kind_backfill_step(&conn, &key, &store, "dev-a", LONG)
+            .await
+            .unwrap();
         assert_eq!(again, p);
     }
 
     async fn claim_at(conn: &Connection, key: &GroupKey, device: &str, at_ms: i64) {
-        push_marker(conn, key, device, ROW_TYPE_KIND_BACKFILL_CLAIM).await.unwrap();
+        push_marker(conn, key, device, ROW_TYPE_KIND_BACKFILL_CLAIM)
+            .await
+            .unwrap();
         conn.execute(
             "UPDATE sync_row SET created_at_unix_ms = ?2 WHERE device_id = ?1 AND local_seq = 0 AND row_type = ?3",
             params![device, at_ms, ROW_TYPE_KIND_BACKFILL_CLAIM],
@@ -945,12 +1264,18 @@ mod tests {
         claim_at(&conn, &key, "dev-b", now_unix_ms() - 60_000).await;
         let before = snapshot(&conn).await;
 
-        let held = kind_backfill_step(&conn, &key, &store, "dev-a", LONG).await.unwrap();
+        let held = kind_backfill_step(&conn, &key, &store, "dev-a", LONG)
+            .await
+            .unwrap();
 
         assert!(!held.finished);
         assert_eq!(held.done, 0);
         assert_eq!(held.total, 3 * ROWS_PER_DEVICE as u64);
-        assert_eq!(snapshot(&conn).await, before, "nothing written, not even our own claim");
+        assert_eq!(
+            snapshot(&conn).await,
+            before,
+            "nothing written, not even our own claim"
+        );
         assert_eq!(claim_of(&conn, "dev-a").await, None);
 
         // Older than 10 minutes: its claimer is gone.
@@ -959,7 +1284,10 @@ mod tests {
         let (p, _) = run_to_end(&conn, &key, &store, "dev-a", LONG).await;
         assert!(p.finished);
         assert_tagged(&conn, &key).await;
-        assert!(claim_of(&conn, "dev-a").await.unwrap() >= started, "our claim, refreshed");
+        assert!(
+            claim_of(&conn, "dev-a").await.unwrap() >= started,
+            "our claim, refreshed"
+        );
     }
 
     /// Clock skew: a claim dated an hour ahead is ignored, one 30 s ahead still holds, one exactly 600 s old is ignored.
@@ -971,15 +1299,41 @@ mod tests {
         let before = snapshot(&conn).await;
 
         claim_at(&conn, &key, "dev-b", now_unix_ms() + 30_000).await;
-        let held = kind_backfill_step(&conn, &key, &Store::open_in_memory().unwrap(), "dev-a", LONG).await.unwrap();
+        let held = kind_backfill_step(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            LONG,
+        )
+        .await
+        .unwrap();
         assert!(!held.finished);
-        let after_held: Vec<_> = snapshot(&conn).await.into_iter().filter(|r| r.2 != ROW_TYPE_KIND_BACKFILL_CLAIM).collect();
-        let before_rows: Vec<_> = before.iter().filter(|r| r.2 != ROW_TYPE_KIND_BACKFILL_CLAIM).cloned().collect();
-        assert_eq!(after_held, before_rows, "30 s ahead is within the skew: held, nothing written");
+        let after_held: Vec<_> = snapshot(&conn)
+            .await
+            .into_iter()
+            .filter(|r| r.2 != ROW_TYPE_KIND_BACKFILL_CLAIM)
+            .collect();
+        let before_rows: Vec<_> = before
+            .iter()
+            .filter(|r| r.2 != ROW_TYPE_KIND_BACKFILL_CLAIM)
+            .cloned()
+            .collect();
+        assert_eq!(
+            after_held, before_rows,
+            "30 s ahead is within the skew: held, nothing written"
+        );
         assert_eq!(claim_of(&conn, "dev-a").await, None);
 
         claim_at(&conn, &key, "dev-b", now_unix_ms() + 3_600_000).await;
-        let (p, _) = run_to_end(&conn, &key, &Store::open_in_memory().unwrap(), "dev-a", LONG).await;
+        let (p, _) = run_to_end(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            LONG,
+        )
+        .await;
         assert!(p.finished, "an hour ahead is a broken clock, not a claim");
         assert_tagged(&conn, &key).await;
     }
@@ -991,7 +1345,15 @@ mod tests {
         fixture(&conn, &key).await;
         claim_at(&conn, &key, "dev-b", now_unix_ms() - CLAIM_FRESH_MS).await;
 
-        let first = kind_backfill_step(&conn, &key, &Store::open_in_memory().unwrap(), "dev-a", LONG).await.unwrap();
+        let first = kind_backfill_step(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            LONG,
+        )
+        .await
+        .unwrap();
 
         assert!(first.finished);
         assert_tagged(&conn, &key).await;
@@ -1012,15 +1374,30 @@ mod tests {
     #[tokio::test]
     async fn a_step_trusts_the_column_latch() {
         let dir = tempfile::tempdir().unwrap();
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let conn = db.connect().unwrap();
-        conn.execute("CREATE VIEW sync_row AS SELECT 1 AS device_id", ()).await.unwrap();
+        conn.execute("CREATE VIEW sync_row AS SELECT 1 AS device_id", ())
+            .await
+            .unwrap();
         KIND_TAG_COLUMN_SEEN.set();
 
-        let result = kind_backfill_step(&conn, &GroupKey::generate(), &Store::open_in_memory().unwrap(), "dev-a", LONG).await;
+        let result = kind_backfill_step(
+            &conn,
+            &GroupKey::generate(),
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            LONG,
+        )
+        .await;
 
         KIND_TAG_COLUMN_SEEN.reset();
-        assert!(result.is_err(), "no column check ran, so the walk's own read met the broken table: {result:?}");
+        assert!(
+            result.is_err(),
+            "no column check ran, so the walk's own read met the broken table: {result:?}"
+        );
     }
 
     /// Our own claim never holds us, however fresh.
@@ -1030,7 +1407,14 @@ mod tests {
         let (_dir, _db, conn, key) = relay().await;
         fixture(&conn, &key).await;
         claim_at(&conn, &key, "dev-a", now_unix_ms()).await;
-        let (p, _) = run_to_end(&conn, &key, &Store::open_in_memory().unwrap(), "dev-a", LONG).await;
+        let (p, _) = run_to_end(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            LONG,
+        )
+        .await;
         assert!(p.finished);
         assert_tagged(&conn, &key).await;
     }
@@ -1043,8 +1427,15 @@ mod tests {
         let (_dir, db, conn_a, key) = relay().await;
         let conn_b = db.connect().unwrap();
         fixture(&conn_a, &key).await;
-        let (store_a, store_b) = (Store::open_in_memory().unwrap(), Store::open_in_memory().unwrap());
-        let null_items = count(&conn_a, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await;
+        let (store_a, store_b) = (
+            Store::open_in_memory().unwrap(),
+            Store::open_in_memory().unwrap(),
+        );
+        let null_items = count(
+            &conn_a,
+            "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL",
+        )
+        .await;
         CAPTURED_SQL.with(|c| *c.borrow_mut() = Some(Vec::new()));
 
         let mut first_round = true;
@@ -1067,7 +1458,10 @@ mod tests {
                     .filter(|s| s.starts_with("UPDATE"))
                     .map(|s| s.matches('?').count() - 2)
                     .sum();
-                assert!(written as i64 > null_items, "the two steps wrote some of the same rows: {written} vs {null_items}");
+                assert!(
+                    written as i64 > null_items,
+                    "the two steps wrote some of the same rows: {written} vs {null_items}"
+                );
                 assert_tagged(&conn_a, &key).await;
                 return;
             }
@@ -1083,12 +1477,28 @@ mod tests {
         fixture(&conn, &key).await;
         CAPTURED_SQL.with(|c| *c.borrow_mut() = Some(Vec::new()));
 
-        run_to_end(&conn, &key, &Store::open_in_memory().unwrap(), "dev-a", Duration::ZERO).await;
+        run_to_end(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            Duration::ZERO,
+        )
+        .await;
 
         let sql = CAPTURED_SQL.with(|c| c.borrow_mut().take().unwrap());
-        let null_scans: Vec<&String> = sql.iter().filter(|s| s.contains("kind_tag IS NULL")).collect();
-        assert!(null_scans.iter().any(|s| s.starts_with("SELECT")), "{sql:?}");
-        assert!(null_scans.iter().any(|s| s.starts_with("UPDATE")), "{sql:?}");
+        let null_scans: Vec<&String> = sql
+            .iter()
+            .filter(|s| s.contains("kind_tag IS NULL"))
+            .collect();
+        assert!(
+            null_scans.iter().any(|s| s.starts_with("SELECT")),
+            "{sql:?}"
+        );
+        assert!(
+            null_scans.iter().any(|s| s.starts_with("UPDATE")),
+            "{sql:?}"
+        );
         for s in &null_scans {
             assert!(s.contains("device_id = ?"), "no device bound: {s}");
             let ranged = s.contains("local_seq > ?") && s.contains("local_seq <= ?");
@@ -1109,7 +1519,9 @@ mod tests {
         const BIG_KINDS: [&str; 4] = ["capture", "transcript", "calendar_event", "note"];
         TEST_PACE.with(|c| c.set(Some((CHUNK_ROWS, SPAN, Duration::ZERO))));
         let (_dir, _db, conn, key) = relay().await;
-        push_marker(&conn, &key, "dev-a", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        push_marker(&conn, &key, "dev-a", ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
         let mut expected = Vec::new();
         let (mut seq, mut items) = (0i64, 0);
         while items < 1_200 {
@@ -1121,13 +1533,33 @@ mod tests {
             items += 1;
             let kind = BIG_KINDS[seq as usize % BIG_KINDS.len()];
             let pre = (items % 97 == 0).then(|| "foreign-tag".to_string());
-            seed(&conn, &key, "dev-big", seq, ROW_TYPE_ITEMS, &item_json(kind, &format!("row {seq}")), pre.clone()).await;
+            seed(
+                &conn,
+                &key,
+                "dev-big",
+                seq,
+                ROW_TYPE_ITEMS,
+                &item_json(kind, &format!("row {seq}")),
+                pre.clone(),
+            )
+            .await;
             expected.push((seq, pre.unwrap_or_else(|| sync::kind_tag(&key, kind))));
         }
-        let null_items = count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await;
+        let null_items = count(
+            &conn,
+            "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL",
+        )
+        .await;
         CAPTURED_SQL.with(|c| *c.borrow_mut() = Some(Vec::new()));
 
-        run_to_end(&conn, &key, &Store::open_in_memory().unwrap(), "dev-a", LONG).await;
+        run_to_end(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-a",
+            LONG,
+        )
+        .await;
 
         let sql = CAPTURED_SQL.with(|c| c.borrow_mut().take().unwrap());
         // Split into chunks: each chunk read, then its writes.
@@ -1136,26 +1568,54 @@ mod tests {
             if s.starts_with("SELECT local_seq, ciphertext") {
                 chunks.push(Vec::new());
             } else if s.starts_with("UPDATE") {
-                chunks.last_mut().expect("an UPDATE follows a chunk read").push(s);
+                chunks
+                    .last_mut()
+                    .expect("an UPDATE follows a chunk read")
+                    .push(s);
             }
         }
         let written: Vec<&Vec<&String>> = chunks.iter().filter(|c| !c.is_empty()).collect();
-        assert!(written.len() >= 3, "1,200 rows take three chunks of 500: {}", written.len());
+        assert!(
+            written.len() >= 3,
+            "1,200 rows take three chunks of 500: {}",
+            written.len()
+        );
         for c in &written {
-            assert!(c.len() <= BIG_KINDS.len(), "one UPDATE per kind in a chunk, not per row: {}", c.len());
+            assert!(
+                c.len() <= BIG_KINDS.len(),
+                "one UPDATE per kind in a chunk, not per row: {}",
+                c.len()
+            );
         }
-        let seqs_written: usize = written.iter().flat_map(|c| c.iter()).map(|s| s.matches('?').count() - 2).sum();
-        assert_eq!(seqs_written as i64, null_items, "every NULL row written once, no other");
+        let seqs_written: usize = written
+            .iter()
+            .flat_map(|c| c.iter())
+            .map(|s| s.matches('?').count() - 2)
+            .sum();
+        assert_eq!(
+            seqs_written as i64, null_items,
+            "every NULL row written once, no other"
+        );
 
         for (seq, tag) in expected {
             let mut rows = conn
-                .query("SELECT kind_tag FROM sync_row WHERE device_id = 'dev-big' AND local_seq = ?1", params![seq])
+                .query(
+                    "SELECT kind_tag FROM sync_row WHERE device_id = 'dev-big' AND local_seq = ?1",
+                    params![seq],
+                )
                 .await
                 .unwrap();
             let got: Option<String> = rows.next().await.unwrap().unwrap().get(0).unwrap();
             assert_eq!(got.as_deref(), Some(tag.as_str()), "row {seq}");
         }
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND kind_tag IS NOT NULL").await, 0);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND kind_tag IS NOT NULL"
+            )
+            .await,
+            0
+        );
     }
 
     /// A row tagged by someone else after the chunk was read (NULL when read) keeps that tag: the UPDATE's own
@@ -1171,7 +1631,13 @@ mod tests {
 
         let racer = async {
             // Wait for the step's first chunk read (it yields right after), then tag a row of that chunk.
-            while !CAPTURED_SQL.with(|c| c.borrow().as_ref().unwrap().iter().any(|s| s.starts_with("SELECT local_seq, ciphertext"))) {
+            while !CAPTURED_SQL.with(|c| {
+                c.borrow()
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|s| s.starts_with("SELECT local_seq, ciphertext"))
+            }) {
                 tokio::task::yield_now().await;
             }
             other
@@ -1179,16 +1645,35 @@ mod tests {
                 .await
                 .unwrap();
         };
-        let (first, ()) = tokio::join!(kind_backfill_step(&conn, &key, &store, "dev-a", Duration::ZERO), racer);
+        let (first, ()) = tokio::join!(
+            kind_backfill_step(&conn, &key, &store, "dev-a", Duration::ZERO),
+            racer
+        );
         first.unwrap();
         run_to_end(&conn, &key, &store, "dev-a", LONG).await;
 
-        let mut rows = conn.query("SELECT kind_tag FROM sync_row WHERE device_id = 'dev-a' AND local_seq = 2", ()).await.unwrap();
+        let mut rows = conn
+            .query(
+                "SELECT kind_tag FROM sync_row WHERE device_id = 'dev-a' AND local_seq = 2",
+                (),
+            )
+            .await
+            .unwrap();
         let tag: Option<String> = rows.next().await.unwrap().unwrap().get(0).unwrap();
         assert_eq!(tag.as_deref(), Some("foreign-tag"));
-        let mut rows = conn.query("SELECT kind_tag FROM sync_row WHERE device_id = 'dev-a' AND local_seq = 1", ()).await.unwrap();
+        let mut rows = conn
+            .query(
+                "SELECT kind_tag FROM sync_row WHERE device_id = 'dev-a' AND local_seq = 1",
+                (),
+            )
+            .await
+            .unwrap();
         let tag: Option<String> = rows.next().await.unwrap().unwrap().get(0).unwrap();
-        assert_eq!(tag, Some(sync::kind_tag(&key, kind_of(0, 1))), "its chunk-mate is tagged");
+        assert_eq!(
+            tag,
+            Some(sync::kind_tag(&key, kind_of(0, 1))),
+            "its chunk-mate is tagged"
+        );
     }
 
     // (h)
@@ -1203,11 +1688,16 @@ mod tests {
 
         CAPTURED_SQL.with(|c| *c.borrow_mut() = Some(Vec::new()));
         conn.execute("DROP TABLE sync_row", ()).await.unwrap();
-        let later = kind_backfill_step(&conn, &key, &store, "dev-a", LONG).await.unwrap();
+        let later = kind_backfill_step(&conn, &key, &store, "dev-a", LONG)
+            .await
+            .unwrap();
 
         assert_eq!(later, p);
         assert!(later.finished);
-        assert_eq!(CAPTURED_SQL.with(|c| c.borrow_mut().take().unwrap()), Vec::<String>::new());
+        assert_eq!(
+            CAPTURED_SQL.with(|c| c.borrow_mut().take().unwrap()),
+            Vec::<String>::new()
+        );
     }
 
     /// A done marker of another backfill version walks again.
@@ -1228,13 +1718,20 @@ mod tests {
     #[tokio::test]
     async fn a_relay_whose_kind_tag_column_cannot_be_confirmed_is_left_alone() {
         let dir = tempfile::tempdir().unwrap();
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let conn = db.connect().unwrap();
-        conn.execute("CREATE VIEW sync_row AS SELECT 1 AS device_id", ()).await.unwrap();
+        conn.execute("CREATE VIEW sync_row AS SELECT 1 AS device_id", ())
+            .await
+            .unwrap();
         KIND_TAG_COLUMN_SEEN.reset();
         let store = Store::open_in_memory().unwrap();
 
-        let p = kind_backfill_step(&conn, &GroupKey::generate(), &store, "dev-a", LONG).await.unwrap();
+        let p = kind_backfill_step(&conn, &GroupKey::generate(), &store, "dev-a", LONG)
+            .await
+            .unwrap();
 
         assert!(!p.finished);
         assert_eq!(store.get_meta(KIND_BACKFILL_DONE_KEY).unwrap(), None);
@@ -1249,7 +1746,15 @@ mod tests {
         fixture(&conn, &key).await;
         let before = snapshot(&conn).await;
 
-        let p = kind_backfill_step(&conn, &key, &Store::open_in_memory().unwrap(), "dev-new", LONG).await.unwrap();
+        let p = kind_backfill_step(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            "dev-new",
+            LONG,
+        )
+        .await
+        .unwrap();
 
         assert!(!p.finished);
         assert_eq!(snapshot(&conn).await, before);
@@ -1262,11 +1767,22 @@ mod tests {
     /// Like [`fixture`] but only rows a pull can apply (real `items` rows, no placeholder meetings).
     async fn round_fixture(conn: &Connection, key: &GroupKey) {
         for (d, device) in DEVICES.iter().enumerate() {
-            push_marker(conn, key, device, ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+            push_marker(conn, key, device, ROW_TYPE_ITEMS_CAPABILITY)
+                .await
+                .unwrap();
             for seq in 1..=ROWS_PER_DEVICE {
                 let kind = kind_of(d, seq);
                 let tag = (seq == ROWS_PER_DEVICE - 1).then(|| sync::kind_tag(key, kind));
-                seed(conn, key, device, seq, ROW_TYPE_ITEMS, &item_json(kind, &format!("{device} {seq}")), tag).await;
+                seed(
+                    conn,
+                    key,
+                    device,
+                    seq,
+                    ROW_TYPE_ITEMS,
+                    &item_json(kind, &format!("{device} {seq}")),
+                    tag,
+                )
+                .await;
             }
         }
     }
@@ -1279,11 +1795,18 @@ mod tests {
     }
 
     async fn desktop_round(conn: &Connection, key: &GroupKey, store: &Store) {
-        crate::content_round(conn, key, store, OWN, &|_| {}).await.unwrap();
+        crate::content_round(conn, key, store, OWN, &|_| {})
+            .await
+            .unwrap();
     }
 
     fn backfill_keys(store: &Store) -> Vec<String> {
-        store.list_meta_with_prefix("kind_backfill").unwrap().into_iter().map(|(k, _)| k).collect()
+        store
+            .list_meta_with_prefix("kind_backfill")
+            .unwrap()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect()
     }
 
     #[tokio::test]
@@ -1291,19 +1814,80 @@ mod tests {
         let _relay = relay().await; // libsql before rusqlite, see outbox.rs
         let store = Store::open_in_memory().unwrap();
         assert_eq!(kind_backfill_percent(&store), None, "nothing ran yet");
-        record_progress(&store, &KindBackfillProgress { done: 61, total: 100, finished: false, undecryptable: 0 }).unwrap();
+        record_progress(
+            &store,
+            &KindBackfillProgress {
+                done: 61,
+                total: 100,
+                finished: false,
+                undecryptable: 0,
+            },
+        )
+        .unwrap();
         assert_eq!(kind_backfill_percent(&store), Some(61));
-        record_progress(&store, &KindBackfillProgress { done: 1999, total: 2000, finished: false, undecryptable: 0 }).unwrap();
-        assert_eq!(kind_backfill_percent(&store), Some(99), "never 100 until finished");
-        record_progress(&store, &KindBackfillProgress { done: 7, total: 5, finished: false, undecryptable: 0 }).unwrap();
+        record_progress(
+            &store,
+            &KindBackfillProgress {
+                done: 1999,
+                total: 2000,
+                finished: false,
+                undecryptable: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            kind_backfill_percent(&store),
+            Some(99),
+            "never 100 until finished"
+        );
+        record_progress(
+            &store,
+            &KindBackfillProgress {
+                done: 7,
+                total: 5,
+                finished: false,
+                undecryptable: 0,
+            },
+        )
+        .unwrap();
         assert_eq!(kind_backfill_percent(&store), Some(99));
         // The step could not confirm the column, or the relay is empty: 0/0 unfinished keeps what was known.
         record_progress(&store, &KindBackfillProgress::default()).unwrap();
-        assert_eq!(kind_backfill_percent(&store), Some(99), "0/0 is not progress and does not erase it");
-        record_progress(&store, &KindBackfillProgress { done: 0, total: 50, finished: false, undecryptable: 0 }).unwrap();
-        assert_eq!(kind_backfill_percent(&store), Some(99), "nothing walked is not progress either");
-        record_progress(&store, &KindBackfillProgress { done: 100, total: 100, finished: true, undecryptable: 0 }).unwrap();
-        assert_eq!(kind_backfill_percent(&store), None, "finished shows nothing");
+        assert_eq!(
+            kind_backfill_percent(&store),
+            Some(99),
+            "0/0 is not progress and does not erase it"
+        );
+        record_progress(
+            &store,
+            &KindBackfillProgress {
+                done: 0,
+                total: 50,
+                finished: false,
+                undecryptable: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            kind_backfill_percent(&store),
+            Some(99),
+            "nothing walked is not progress either"
+        );
+        record_progress(
+            &store,
+            &KindBackfillProgress {
+                done: 100,
+                total: 100,
+                finished: true,
+                undecryptable: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            kind_backfill_percent(&store),
+            None,
+            "finished shows nothing"
+        );
     }
 
     #[tokio::test]
@@ -1312,9 +1896,31 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         record_progress(&store, &KindBackfillProgress::default()).unwrap();
         assert_eq!(kind_backfill_percent(&store), None, "0/0 is not shown");
-        record_progress(&store, &KindBackfillProgress { done: 0, total: 50, finished: false, undecryptable: 0 }).unwrap();
-        assert_eq!(kind_backfill_percent(&store), None, "0 of 50 is not shown: this device is not indexing");
-        record_progress(&store, &KindBackfillProgress { done: 0, total: 0, finished: true, undecryptable: 0 }).unwrap();
+        record_progress(
+            &store,
+            &KindBackfillProgress {
+                done: 0,
+                total: 50,
+                finished: false,
+                undecryptable: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            kind_backfill_percent(&store),
+            None,
+            "0 of 50 is not shown: this device is not indexing"
+        );
+        record_progress(
+            &store,
+            &KindBackfillProgress {
+                done: 0,
+                total: 0,
+                finished: true,
+                undecryptable: 0,
+            },
+        )
+        .unwrap();
         assert_eq!(kind_backfill_percent(&store), None);
     }
 
@@ -1324,7 +1930,10 @@ mod tests {
         assert_eq!(budget, Duration::from_secs(2));
         assert!(crate::kind_backfill_fits(Duration::ZERO, budget));
         assert!(crate::kind_backfill_fits(Duration::from_secs(23), budget));
-        assert!(!crate::kind_backfill_fits(Duration::from_secs(24), budget), "2 + 3 + 2 s spare must fit in 30 s");
+        assert!(
+            !crate::kind_backfill_fits(Duration::from_secs(24), budget),
+            "2 + 3 + 2 s spare must fit in 30 s"
+        );
         assert!(!crate::kind_backfill_fits(Duration::from_secs(29), budget));
     }
 
@@ -1337,10 +1946,18 @@ mod tests {
         let (_dir, _db, conn, key) = relay().await;
         round_fixture(&conn, &key).await;
         let store = Store::open_in_memory().unwrap();
-        let null_before = count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await;
+        let null_before = count(
+            &conn,
+            "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL",
+        )
+        .await;
 
         desktop_round(&conn, &key, &store).await;
-        let null_after = count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await;
+        let null_after = count(
+            &conn,
+            "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL",
+        )
+        .await;
         assert!(null_after < null_before, "the first round tagged something");
         assert!(null_after > 0, "a zero-budget step stops after one chunk");
         let p = kind_backfill_percent(&store).expect("a percentage while unfinished");
@@ -1352,7 +1969,10 @@ mod tests {
             rounds += 1;
             assert!(rounds < 500, "the backfill never finished");
         }
-        assert!(store.get_meta(KIND_BACKFILL_DONE_KEY).unwrap().is_some(), "finished is persisted");
+        assert!(
+            store.get_meta(KIND_BACKFILL_DONE_KEY).unwrap().is_some(),
+            "finished is persisted"
+        );
         assert!(rounds > 1);
         assert_tagged(&conn, &key).await;
         // Finished: another round does not touch the relay for it.
@@ -1372,7 +1992,11 @@ mod tests {
         // No relay table at all: the step errors (logged), the call returns, and nothing is recorded.
         conn.execute("DROP TABLE sync_row", ()).await.unwrap();
         crate::run_kind_backfill(&conn, &key, &store, OWN, std::time::Instant::now()).await;
-        assert!(backfill_keys(&store).is_empty(), "{:?}", backfill_keys(&store));
+        assert!(
+            backfill_keys(&store).is_empty(),
+            "{:?}",
+            backfill_keys(&store)
+        );
         assert_eq!(kind_backfill_percent(&store), None);
         assert!(store.get_meta(KIND_BACKFILL_DONE_KEY).unwrap().is_none());
         round_budget(None);
@@ -1385,15 +2009,27 @@ mod tests {
         round_budget(Some(Duration::from_secs(5)));
         let (_dir, _db, conn, key) = relay().await;
         round_fixture(&conn, &key).await;
-        refresh_marker(&conn, &key, "dev-a", ROW_TYPE_KIND_BACKFILL_CLAIM).await.unwrap();
+        refresh_marker(&conn, &key, "dev-a", ROW_TYPE_KIND_BACKFILL_CLAIM)
+            .await
+            .unwrap();
         let store = Store::open_in_memory().unwrap();
         let null_before = count_untagged(&conn).await;
 
         desktop_round(&conn, &key, &store).await;
 
-        assert_eq!(count_untagged(&conn).await, null_before, "the claim held the step");
+        assert_eq!(
+            count_untagged(&conn).await,
+            null_before,
+            "the claim held the step"
+        );
         assert_eq!(kind_backfill_percent(&store), None);
-        assert!(backfill_keys(&store).iter().all(|k| k != "kind_backfill_progress"), "{:?}", backfill_keys(&store));
+        assert!(
+            backfill_keys(&store)
+                .iter()
+                .all(|k| k != "kind_backfill_progress"),
+            "{:?}",
+            backfill_keys(&store)
+        );
         round_budget(None);
     }
 
@@ -1403,7 +2039,9 @@ mod tests {
         small_pace();
         let (_dir, _db, conn, key) = relay().await;
         round_fixture(&conn, &key).await;
-        push_marker(&conn, &key, OWN, ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        push_marker(&conn, &key, OWN, ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
         let store = Store::open_in_memory().unwrap();
         let before = snapshot(&conn).await;
         crate::TEST_MORE_TO_PULL.with(|c| c.set(Some(true)));
@@ -1424,8 +2062,12 @@ mod tests {
         round_fixture(&conn, &key).await;
         let store = Store::open_in_memory().unwrap();
         let before = count_untagged(&conn).await;
-        let late = std::time::Instant::now().checked_sub(Duration::from_secs(25)).unwrap();
-        crate::content_round_from(&conn, &key, &store, OWN, &|_| {}, late).await.unwrap();
+        let late = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(25))
+            .unwrap();
+        crate::content_round_from(&conn, &key, &store, OWN, &|_| {}, late)
+            .await
+            .unwrap();
         assert_eq!(count_untagged(&conn).await, before);
         assert!(backfill_keys(&store).is_empty());
     }
@@ -1437,10 +2079,14 @@ mod tests {
         round_budget(None);
         let (_dir, _db, conn, key) = relay().await;
         round_fixture(&conn, &key).await;
-        push_marker(&conn, &key, OWN, ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        push_marker(&conn, &key, OWN, ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
         let store = Store::open_in_memory().unwrap();
         let before = snapshot(&conn).await;
-        let late = std::time::Instant::now().checked_sub(Duration::from_secs(25)).unwrap();
+        let late = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(25))
+            .unwrap();
         crate::run_kind_backfill(&conn, &key, &store, OWN, late).await;
         assert_eq!(snapshot(&conn).await, before);
         assert!(backfill_keys(&store).is_empty());
@@ -1459,16 +2105,46 @@ mod tests {
         round_fixture(&conn, &key).await;
 
         let phone = Store::open_in_memory().unwrap();
-        crate::pull_only_with_connection(&conn, &key, &phone, "phone-1", &crate::PullOptions::default()).await.unwrap();
-        assert!(backfill_keys(&phone).is_empty(), "{:?}", backfill_keys(&phone));
+        crate::pull_only_with_connection(
+            &conn,
+            &key,
+            &phone,
+            "phone-1",
+            &crate::PullOptions::default(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            backfill_keys(&phone).is_empty(),
+            "{:?}",
+            backfill_keys(&phone)
+        );
         let after_phone = count_untagged(&conn).await;
         assert!(after_phone > 0, "the phone round left the rows untagged");
 
         let runner = Store::open_in_memory().unwrap();
-        crate::runner_pull_with_connection(&conn, &key, &runner, "runner-1", &crate::PullOptions::default()).await.unwrap();
-        crate::runner_dispatch_with_connection(&conn, &key, &runner, "runner-1").await.unwrap();
-        assert!(backfill_keys(&runner).is_empty(), "{:?}", backfill_keys(&runner));
-        assert_eq!(count_untagged(&conn).await, after_phone, "no runner round tagged anything");
+        crate::runner_pull_with_connection(
+            &conn,
+            &key,
+            &runner,
+            "runner-1",
+            &crate::PullOptions::default(),
+        )
+        .await
+        .unwrap();
+        crate::runner_dispatch_with_connection(&conn, &key, &runner, "runner-1")
+            .await
+            .unwrap();
+        assert!(
+            backfill_keys(&runner).is_empty(),
+            "{:?}",
+            backfill_keys(&runner)
+        );
+        assert_eq!(
+            count_untagged(&conn).await,
+            after_phone,
+            "no runner round tagged anything"
+        );
         assert_eq!(count(&conn, &format!("SELECT COUNT(*) FROM sync_row WHERE row_type = '{ROW_TYPE_KIND_BACKFILL_CLAIM}'")).await, 0);
 
         // The desktop round on the same relay does.
@@ -1479,7 +2155,11 @@ mod tests {
     }
 
     async fn count_untagged(conn: &Connection) -> i64 {
-        count(conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await
+        count(
+            conn,
+            "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL",
+        )
+        .await
     }
     // ---- The cloud runner's one-off, long run ----
 
@@ -1489,7 +2169,16 @@ mod tests {
     async fn runner_fixture(conn: &Connection, key: &GroupKey) {
         fixture(conn, key).await;
         for seq in 1..=10 {
-            seed(conn, key, RUNNER, seq, ROW_TYPE_ITEMS, &item_json("capture", &format!("runner {seq}")), None).await;
+            seed(
+                conn,
+                key,
+                RUNNER,
+                seq,
+                ROW_TYPE_ITEMS,
+                &item_json("capture", &format!("runner {seq}")),
+                None,
+            )
+            .await;
         }
     }
 
@@ -1501,9 +2190,17 @@ mod tests {
         step: Duration,
     ) -> (KindBackfillProgress, usize) {
         let mut steps = 0;
-        let (p, _) = crate::runner_kind_backfill_observed_with_connection(conn, key, store, RUNNER, total, step, &mut |_, n| steps = n)
-            .await
-            .unwrap();
+        let (p, _) = crate::runner_kind_backfill_observed_with_connection(
+            conn,
+            key,
+            store,
+            RUNNER,
+            total,
+            step,
+            &mut |_, n| steps = n,
+        )
+        .await
+        .unwrap();
         (p, steps)
     }
 
@@ -1515,7 +2212,10 @@ mod tests {
         runner_fixture(&conn, &key).await;
         let store = Store::open_in_memory().unwrap();
 
-        let p = crate::runner_kind_backfill_with_connection(&conn, &key, &store, RUNNER, LONG, LONG).await.unwrap();
+        let p =
+            crate::runner_kind_backfill_with_connection(&conn, &key, &store, RUNNER, LONG, LONG)
+                .await
+                .unwrap();
 
         assert!(p.finished);
         assert_eq!(p.undecryptable, 0);
@@ -1523,7 +2223,14 @@ mod tests {
         assert_eq!(p.done, p.total);
         assert_eq!(count_untagged(&conn).await, 0);
         // Meetings stay untagged; the runner's rows carry the capture tag.
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND kind_tag IS NOT NULL").await, 0);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND kind_tag IS NOT NULL"
+            )
+            .await,
+            0
+        );
         let capture = sync::kind_tag(&key, "capture");
         assert_eq!(
             count(&conn, &format!("SELECT COUNT(*) FROM sync_row WHERE device_id = '{RUNNER}' AND row_type = 'items' AND kind_tag = '{capture}'")).await,
@@ -1547,7 +2254,11 @@ mod tests {
         assert_eq!(p.done, 0);
         assert_eq!(steps, 2, "two steps without progress, then it stops");
         assert_eq!(count_untagged(&conn).await, untagged);
-        assert_eq!(claim_of(&conn, RUNNER).await, None, "it never took the claim");
+        assert_eq!(
+            claim_of(&conn, RUNNER).await,
+            None,
+            "it never took the claim"
+        );
     }
 
     // (c)
@@ -1557,16 +2268,33 @@ mod tests {
         let (_dir, _db, conn, key) = relay().await;
         runner_fixture(&conn, &key).await;
 
-        let (p, _) = runner_run(&conn, &key, &Store::open_in_memory().unwrap(), Duration::ZERO, Duration::ZERO).await;
+        let (p, _) = runner_run(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .await;
         assert!(!p.finished);
-        assert!(p.done > 0 && p.done < p.total, "one step moved, not all: {p:?}");
+        assert!(
+            p.done > 0 && p.done < p.total,
+            "one step moved, not all: {p:?}"
+        );
         let left = count_untagged(&conn).await;
         assert!(left > 0);
 
         // A new store (a new process): it walks again, skipping the rows already tagged.
-        let second = crate::runner_kind_backfill_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG)
-            .await
-            .unwrap();
+        let second = crate::runner_kind_backfill_with_connection(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            RUNNER,
+            LONG,
+            LONG,
+        )
+        .await
+        .unwrap();
         assert!(second.finished);
         assert_eq!(count_untagged(&conn).await, 0);
     }
@@ -1581,16 +2309,40 @@ mod tests {
         let stamp = format!("SELECT created_at_unix_ms FROM sync_row WHERE device_id = '{RUNNER}' AND row_type = '{ROW_TYPE_ITEMS_CAPABILITY}'");
         assert_eq!(count(&conn, &markers).await, 0);
 
-        let _ = runner_run(&conn, &key, &Store::open_in_memory().unwrap(), Duration::ZERO, Duration::ZERO).await;
+        let _ = runner_run(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .await;
         assert_eq!(count(&conn, &markers).await, 1);
         let all_five = format!("SELECT COUNT(*) FROM sync_row WHERE device_id = '{RUNNER}' AND local_seq = 0 AND row_type IN ('items_capability', 'topics_capability', 'topic_page_capability', 'topic_snapshot_capability', 'client_controls_capability')");
-        assert_eq!(count(&conn, &all_five).await, 5, "all five pull-only markers are announced");
+        assert_eq!(
+            count(&conn, &all_five).await,
+            5,
+            "all five pull-only markers are announced"
+        );
         let first = count(&conn, &stamp).await;
 
-        crate::runner_kind_backfill_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG).await.unwrap();
+        crate::runner_kind_backfill_with_connection(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            RUNNER,
+            LONG,
+            LONG,
+        )
+        .await
+        .unwrap();
         assert_eq!(count(&conn, &markers).await, 1);
         // The unchanged timestamp is what proves DO NOTHING (a DO UPDATE would move it to now).
-        assert_eq!(count(&conn, &stamp).await, first, "an existing marker is left as it is");
+        assert_eq!(
+            count(&conn, &stamp).await,
+            first,
+            "an existing marker is left as it is"
+        );
     }
 
     #[tokio::test]
@@ -1599,7 +2351,16 @@ mod tests {
         let (_dir, _db, conn, key) = relay().await;
         runner_fixture(&conn, &key).await;
         TEST_FAIL_STEPS.with(|c| c.set(2));
-        let p = crate::runner_kind_backfill_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG).await.unwrap();
+        let p = crate::runner_kind_backfill_with_connection(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            RUNNER,
+            LONG,
+            LONG,
+        )
+        .await
+        .unwrap();
         assert!(p.finished);
         assert_eq!(count_untagged(&conn).await, 0);
     }
@@ -1610,7 +2371,15 @@ mod tests {
         let (_dir, _db, conn, key) = relay().await;
         runner_fixture(&conn, &key).await;
         TEST_FAIL_STEPS.with(|c| c.set(4));
-        let r = crate::runner_kind_backfill_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG).await;
+        let r = crate::runner_kind_backfill_with_connection(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            RUNNER,
+            LONG,
+            LONG,
+        )
+        .await;
         assert!(r.is_err());
         TEST_FAIL_STEPS.with(|c| c.set(0));
     }
@@ -1624,12 +2393,20 @@ mod tests {
         // 3 failures, a success, then 3 more would exceed 3 only if the count were not reset.
         let mut seen = 0;
         TEST_FAIL_STEPS.with(|c| c.set(3));
-        let r = crate::runner_kind_backfill_observed_with_connection(&conn, &key, &store, RUNNER, LONG, Duration::ZERO, &mut |_, _| {
-            seen += 1;
-            if seen == 1 {
-                TEST_FAIL_STEPS.with(|c| c.set(3));
-            }
-        })
+        let r = crate::runner_kind_backfill_observed_with_connection(
+            &conn,
+            &key,
+            &store,
+            RUNNER,
+            LONG,
+            Duration::ZERO,
+            &mut |_, _| {
+                seen += 1;
+                if seen == 1 {
+                    TEST_FAIL_STEPS.with(|c| c.set(3));
+                }
+            },
+        )
         .await;
         TEST_FAIL_STEPS.with(|c| c.set(0));
         assert!(r.unwrap().0.finished);
@@ -1641,7 +2418,14 @@ mod tests {
         small_pace();
         let (_dir, _db, conn, key) = relay().await;
         runner_fixture(&conn, &key).await;
-        let (p, steps) = runner_run(&conn, &key, &Store::open_in_memory().unwrap(), LONG, Duration::ZERO).await;
+        let (p, steps) = runner_run(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            LONG,
+            Duration::ZERO,
+        )
+        .await;
         assert!(p.finished);
         assert!(steps > 2, "steps {steps}");
         assert_eq!(count_untagged(&conn).await, 0);
@@ -1652,17 +2436,32 @@ mod tests {
         small_pace();
         let (_dir, _db, conn, key) = relay().await;
         runner_fixture(&conn, &key).await;
-        let budget = crate::runner_kind_backfill_observed_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, Duration::ZERO, Duration::ZERO, &mut |_, _| {})
-            .await
-            .unwrap()
-            .1;
+        let budget = crate::runner_kind_backfill_observed_with_connection(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            RUNNER,
+            Duration::ZERO,
+            Duration::ZERO,
+            &mut |_, _| {},
+        )
+        .await
+        .unwrap()
+        .1;
         assert_eq!(budget, BackfillStop::Budget);
-        let finished = crate::runner_kind_backfill_observed_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, Duration::ZERO, &mut |_, _| {})
-            .await
-            .unwrap()
-            .1;
+        let finished = crate::runner_kind_backfill_observed_with_connection(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            RUNNER,
+            LONG,
+            Duration::ZERO,
+            &mut |_, _| {},
+        )
+        .await
+        .unwrap()
+        .1;
         assert_eq!(finished, BackfillStop::Finished);
-
     }
 
     #[tokio::test]
@@ -1672,9 +2471,17 @@ mod tests {
         runner_fixture(&conn, &key).await;
         claim_at(&conn, &key, "dev-b", now_unix_ms() - 60_000).await;
         let mut steps = 0;
-        let r = crate::runner_kind_backfill_observed_with_connection(&conn, &key, &Store::open_in_memory().unwrap(), RUNNER, LONG, LONG, &mut |_, n| steps = n)
-            .await
-            .unwrap();
+        let r = crate::runner_kind_backfill_observed_with_connection(
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            RUNNER,
+            LONG,
+            LONG,
+            &mut |_, n| steps = n,
+        )
+        .await
+        .unwrap();
         assert_eq!(r.1, BackfillStop::ClaimHeld);
         assert_eq!(steps, 2);
     }
@@ -1686,7 +2493,13 @@ mod tests {
         runner_fixture(&conn, &key).await;
         let mut steps = 0;
         let (p, stop) = crate::runner_kind_backfill_observed_with_connection(
-            &conn, &key, &Store::open_in_memory().unwrap(), RUNNER, Duration::from_secs(5), Duration::ZERO, &mut |_, n| steps = n,
+            &conn,
+            &key,
+            &Store::open_in_memory().unwrap(),
+            RUNNER,
+            Duration::from_secs(5),
+            Duration::ZERO,
+            &mut |_, n| steps = n,
         )
         .await
         .unwrap();

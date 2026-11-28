@@ -107,9 +107,7 @@ import Testing
         for selected in [true, false] { #expect(WRestyle.row(look: .classic, selected: selected) == WRowSpec(fill: .none, leadingBar: false)) }
     }
 
-    @Test func theLookFollowsTheSwitch() {
-        #expect(WLook(redesign: false) == .classic)
-        #expect(WLook(redesign: true) == .thread)
+    @Test func theDefaultThemeIsThreadLight() {
         #expect(EnvironmentValues().wTheme == WTheme.thread(variant: .light))
     }
 
@@ -229,8 +227,7 @@ import Testing
     @Test func theRestyledScreensGoThroughTheRestyleModifiersNotTheOldFontsAndButtons() throws {
         let ui = repoRoot().appendingPathComponent("apps/macos/Whimbrel/UI")
         try #require(FileManager.default.fileExists(atPath: ui.path), "apps/macos/Whimbrel/UI not found from the test file")
-        // These files draw their text and buttons through `restyledFont` and `restyledButton`; the old calls remain only in the
-        // flag-off branch of a `RedesignSwitch`, and there are none left in these files.
+        // These files draw their text and buttons through `restyledFont` and `restyledButton`; there are no old calls left in these files.
         for name in Self.screens {
             let text = stripped(try String(contentsOf: ui.appendingPathComponent(name), encoding: .utf8))
             for pattern in [".font(.whimbrelBody(", ".font(.whimbrelDisplay(", ".font(.whimbrelPageTitle", ".buttonStyle(.whimbrelPrimary)", ".buttonStyle(.whimbrelSecondary)", ".buttonStyle(.whimbrelQuiet)", ".textFieldStyle(.roundedBorder)"] {

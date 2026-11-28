@@ -163,54 +163,6 @@ private struct MeetingItemShell<Content: View>: View {
 
 // MARK: - Card (Today)
 
-/// A Today timeline card: title, "start to end - N people", chips, chevron.
-struct MeetingCard: View {
-    let model: MeetingCardModel
-    let onOpen: () -> Void
-    let onChip: (MeetingChip) -> Void
-
-    var body: some View {
-        MeetingItemShell(
-            model: model, cornerRadius: SkinStore.shared.selected.shape.radius,
-            padding: Spacing.lg * SkinStore.shared.selected.shape.density.scale,
-            isCard: true, onOpen: onOpen
-        ) {
-            VStack(alignment: .leading, spacing: Spacing.sm) {
-                VStack(alignment: .leading, spacing: Spacing.xs) {
-                    Text(model.title)
-                        .restyledFont(.bodyMedium)
-                        .foregroundStyle(Color.whimbrelTextPrimary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(subtitle)
-                        .restyledFont(.caption)
-                        .foregroundStyle(Color.whimbrelTextSecondary)
-                        .lineLimit(1)
-                    if let line = model.statusLine {
-                        Text(line)
-                            .restyledFont(.caption)
-                            .foregroundStyle(Color.whimbrelTextSecondary)
-                            .lineLimit(2)
-                    }
-                }
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-                MeetingChips(chips: model.chips, onTap: onChip)
-            }
-        }
-    }
-
-    private var subtitle: String {
-        var parts = [model.timeRange]
-        if let people = model.peopleCount { parts.append(MeetingCardText.people(people)) }
-        if let hint = model.hint { parts.append(hint) }
-        return parts.joined(separator: " \u{00B7} ")
-    }
-}
-
-// MARK: - Row (Meetings tab)
-
 /// A compact Meetings row: 54pt time column (start, duration under it), title, people, chips, chevron.
 /// The whole row, time column included, is the click target.
 struct MeetingListRow: View {
@@ -270,40 +222,3 @@ struct MeetingListRow: View {
 }
 
 // MARK: - Previews
-
-private enum MeetingCardPreviewData {
-    static let past = MeetingCardModel(
-        title: "Quarterly planning with the whole platform team and a very long agenda title that wraps",
-        timeRange: "9:00 AM to 9:45 AM", durationMinutes: 45, peopleCount: 6, isPast: true,
-        chips: [.summary, .actionItems(count: 3), .topic(id: 1, name: "Planning")],
-        target: .meeting(id: 1), startText: "9:00 AM")
-    static let upcoming = MeetingCardModel(
-        title: "Design review", timeRange: "2:00 PM to 2:30 PM", durationMinutes: 30, peopleCount: 1, isPast: false,
-        chips: [.prep(key: "evt-1"), .topic(id: 2, name: "Design")],
-        target: .prepBrief(key: "evt-1"), startText: "2:00 PM")
-    static let inert = MeetingCardModel(
-        title: "Lunch", timeRange: "12:00 PM", durationMinutes: nil, peopleCount: nil, isPast: false,
-        chips: [], target: .none, startText: "12:00 PM")
-}
-
-#Preview("Cards") {
-    VStack(spacing: Spacing.md) {
-        MeetingCard(model: MeetingCardPreviewData.past, onOpen: {}, onChip: { _ in })
-        MeetingCard(model: MeetingCardPreviewData.upcoming, onOpen: {}, onChip: { _ in })
-        MeetingCard(model: MeetingCardPreviewData.inert, onOpen: {}, onChip: { _ in })
-    }
-    .padding(Spacing.lg)
-    .frame(width: 360)
-    .background(Color.whimbrelBackgroundPage)
-}
-
-#Preview("Rows") {
-    VStack(spacing: 0) {
-        MeetingListRow(model: MeetingCardPreviewData.past, onOpen: {}, onChip: { _ in })
-        MeetingListRow(model: MeetingCardPreviewData.upcoming, onOpen: {}, onChip: { _ in })
-        MeetingListRow(model: MeetingCardPreviewData.inert, onOpen: {}, onChip: { _ in })
-    }
-    .padding(Spacing.lg)
-    .frame(width: 420)
-    .background(Color.whimbrelBackgroundPage)
-}

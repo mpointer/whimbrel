@@ -134,12 +134,10 @@ struct LaunchGateView<Content: View>: View {
                 }
                 .modifier(RecordingRefusalAlert(refusal: appState.recordingRefusal))
                 .environment(\.recordingControls, appState.recordingControls)
-                .environment(\.redesignEnabled, appState.redesignEnabled)
                 .environmentObject(appState)
                 .onAppear { host.mainWindowAppeared() }
         } else {
             LaunchWindowView(presenter: host.launch.presenter)
-                .environment(\.redesignEnabled, RedesignFlag.isOn())
         }
     }
 }
@@ -206,23 +204,19 @@ struct WhimbrelCommands: Commands {
                 .keyboardShortcut("f")
                 .disabled(host.appState == nil)
         }
-        // Pause or resume and mark a moment, only with the redesign flag on. Not asking the person to restart: the
-        // flag is read when the menu is built.
+        // Pause or resume and mark a moment.
         CommandGroup(after: .toolbar) {
-            if host.appState?.redesignEnabled == true {
-                Button(String(localized: "Pause or resume recording")) { host.appState?.toggleRecordingPause() }
-                    .keyboardShortcut("p", modifiers: [.command, .shift])
-                Button(String(localized: "Mark this moment")) { host.appState?.markMoment() }
-                    .keyboardShortcut("m", modifiers: [.command, .shift])
-            }
+            Button(String(localized: "Pause or resume recording")) { host.appState?.toggleRecordingPause() }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+            Button(String(localized: "Mark this moment")) { host.appState?.markMoment() }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
         }
         CommandGroup(after: .help) {
             Button("Send Feedback…") { NSWorkspace.shared.open(WhimbrelApp.feedbackMailURL()) }
             Button("Join the Whimbrel Discord…") { NSWorkspace.shared.open(WhimbrelApp.discordURL) }
         }
         CommandMenu("Go") {
-            // Flag off: today's six sections and keys. Flag on: Conversations too (⌘7). The flag is read when the menu is built.
-            ForEach(WhimbrelTab.visibleTabs(redesign: host.appState?.redesignEnabled == true)) { tab in
+            ForEach(WhimbrelTab.visibleTabs) { tab in
                 Button(tab.rawValue) {
                     host.appState?.openTimeline?()
                     host.appState?.selectedTab = tab
@@ -237,7 +231,7 @@ struct WhimbrelCommands: Commands {
 /// The menu bar icon while the launch has not opened the store. It lives as long as the
 /// app: when a screen starts waiting for the user it opens the launch window and brings it
 /// forward. A window the user closes while a screen is already waiting comes back when the
-/// menu bar is clicked (`LaunchMenuBarView` opens it on appear, and offers Show Whimbrel).
+/// menu bar is clicked (`LaunchMenuRedesignView` opens it on appear, and offers Show Whimbrel).
 struct LaunchMenuBarLabel: View {
     @ObservedObject var presenter: LaunchUIPresenter
     @Environment(\.openWindow) private var openWindow
@@ -249,31 +243,6 @@ struct LaunchMenuBarLabel: View {
                 NSApp.activate(ignoringOtherApps: true)
                 openWindow(id: "timeline")
             }
-    }
-}
-
-/// The menu bar while the launch has not opened the store: show the window, or quit.
-struct LaunchMenuBarView: View {
-    @Environment(\.openWindow) private var openWindow
-    @ObservedObject var presenter: LaunchUIPresenter
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.sm) {
-            Text(presenter.waitingForUser ? EncryptionCopy.needsAttention : EncryptionCopy.starting)
-                .font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextSecondary)
-            Button(EncryptionCopy.showWhimbrel) {
-                NSApp.activate(ignoringOtherApps: true)
-                openWindow(id: "timeline")
-            }
-            // Through `AppTerminationGuard`: asks first during the setup when needed.
-            Button(EncryptionCopy.quitAction) { NSApp.terminate(nil) }
-        }
-        .padding(Spacing.md)
-        .onAppear {
-            guard presenter.waitingForUser else { return }
-            NSApp.activate(ignoringOtherApps: true)
-            openWindow(id: "timeline")
-        }
     }
 }
 
@@ -306,23 +275,11 @@ struct WhimbrelApp: App {
         MenuBarExtra {
             ThemedRoot {
                 WithAppState(host: host) { appState in
-                    // With the redesign switch on, the two notices move into the menu's Needs attention section.
-                    RedesignSwitch(enabled: appState.redesignEnabled) {
-                        MenuBarRedesignView(coordinator: host.launch.coordinator, sync: appState.contentSyncCoordinator)
-                    } old: {
-                        VStack(spacing: 0) {
-                            NoStoreNoticeHost()
-                            LibraryMissingNoticeHost(coordinator: host.launch.coordinator)
-                            MenuBarContentView()
-                        }
-                    }
+                    // The two notices are in the menu's Needs attention section.
+                    MenuBarRedesignView(coordinator: host.launch.coordinator, sync: appState.contentSyncCoordinator)
                         .environment(\.recordingControls, appState.recordingControls)
                 } pending: {
-                    RedesignSwitch(enabled: RedesignFlag.isOn()) {
-                        LaunchMenuRedesignView(presenter: host.launch.presenter)
-                    } old: {
-                        LaunchMenuBarView(presenter: host.launch.presenter)
-                    }
+                    LaunchMenuRedesignView(presenter: host.launch.presenter)
                 }
             }
         } label: {
@@ -400,10 +357,10 @@ struct WhimbrelApp: App {
         .handlesExternalEvents(matching: [])
 
         // Native Settings scene (⌘,) — replaces the old standalone "onboarding" window;
-        // permissions are one section among several here now (see SettingsView.swift).
+        // permissions are one section among several here now (see SettingsRedesignView.swift).
         Settings {
             ThemedRoot {
-                WithAppState(host: host) { _ in SettingsView() } pending: {
+                WithAppState(host: host) { _ in SettingsRedesignView() } pending: {
                     Text(EncryptionCopy.settingsAfterStart).font(.whimbrelBody(.callout))
                         .foregroundStyle(Color.whimbrelTextSecondary).frame(minWidth: 480, minHeight: 200)
                 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AiSettings, SyncView } from "../generated/types";
-import { aiLines, backlogStalled, BACKLOG_STALLED_MS, diskSize, relativeTime, routineLines, storageLines, syncLines, syncStopped, updateLines } from "./statusModel";
+import { aiLines, backlogStalled, BACKLOG_STALLED_MS, diskSize, relativeTime, routineLines, syncLines, syncStopped, updateLines } from "./statusModel";
 
 const NOW = Date.UTC(2026, 10, 7, 12, 0);
 const MIN = 60_000;
@@ -113,13 +113,6 @@ describe("aiLines", () => {
 });
 
 describe("storageLines", () => {
-  it("gives the media on disk and how long meetings are kept", () => {
-    expect(storageLines({ audioBytes: 1_300_000_000, imageBytes: 34_200_000 }, { meetingDays: 90 })).toEqual([
-      "Audio: 1.3 GB. Images: 34.2 MB.",
-      "Meetings are kept for 90 days.",
-    ]);
-    expect(storageLines(null, { meetingDays: null })).toEqual(["Meetings are kept forever."]);
-  });
 
   it("writes small sizes in MB", () => {
     expect(diskSize(0)).toBe("0.0 MB");

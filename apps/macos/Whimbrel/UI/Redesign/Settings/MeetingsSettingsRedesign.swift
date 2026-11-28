@@ -232,7 +232,7 @@ private struct MeetingsSettingsRedesignBody: View {
     var body: some View {
         WMeetingsSettingsView(model: model(), actions: actions(), highlighted: highlighted)
             .sheet(isPresented: $runtime.showModelSetup) {
-                RedesignSwitch(enabled: appState.redesignEnabled) { ModelSetupRedesignView() } old: { ModelSetupView() }
+                ModelSetupRedesignView()
             }
     }
 

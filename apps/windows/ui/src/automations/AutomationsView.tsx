@@ -19,7 +19,6 @@ import {
 import { describeError, isCommandError } from "../errors";
 import type { ApprovalView, HostView, ModelOptionView, RoutineView, RunView } from "../generated/types";
 import { useL10n } from "../l10n";
-import { useRedesign } from "../redesign";
 import { WButton, WLoadingState, WNoticeBox, WStatusChip, type WStatusTone } from "../system";
 import {
   accountLine,
@@ -80,8 +79,6 @@ const REFRESH_MS = 30_000;
 export function AutomationsView(props: { onWaiting?: (count: number) => void }) {
   const { onWaiting } = props;
   const { t, locale } = useL10n();
-  // The redesign switch: with it off the tab is drawn exactly as before. On, the same layout and words in the Thread look (step 10).
-  const redesign = useRedesign();
   const [routines, setRoutines] = useState<RoutineView[] | null>(null);
   const [runs, setRuns] = useState<RunView[]>([]);
   const [approvals, setApprovals] = useState<ApprovalView[]>([]);
@@ -195,9 +192,9 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
     );
   };
 
-  const alertLine = (text: string) => (redesign ? <WNoticeBox tone="error">{text}</WNoticeBox> : <p role="alert">{text}</p>);
+  const alertLine = (text: string) => <WNoticeBox tone="error">{text}</WNoticeBox>;
   return (
-    <div className={redesign ? "stack rt" : "stack"}>
+    <div className="stack rt">
       <section className="card about" aria-labelledby="approvals-heading">
         <h2 id="approvals-heading" className="section-label">
           {t("Needs your approval")}
@@ -207,11 +204,11 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
         ) : (
           <ul className="approval-list">
             {approvals.map((a) => (
-              <ApprovalRow key={a.runId} approval={a} busy={working === a.runId} redesign={redesign} onApprove={(account) => approve(a, account)} onReject={() => reject(a)} />
+              <ApprovalRow key={a.runId} approval={a} busy={working === a.runId} onApprove={(account) => approve(a, account)} onReject={() => reject(a)} />
             ))}
           </ul>
         )}
-        {notice && (redesign ? <WNoticeBox tone="info" live>{notice}</WNoticeBox> : <p role="status">{notice}</p>)}
+        {notice && <WNoticeBox tone="info" live>{notice}</WNoticeBox>}
       </section>
 
       <section className="card about" aria-labelledby="routines-heading">
@@ -238,11 +235,7 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
           </div>
         )}
         {routines === null ? (
-          redesign ? (
-            error ? null : <WLoadingState title={t("Loading…")} />
-          ) : (
-            <p className="muted small">{error ? "" : t("Loading…")}</p>
-          )
+          error ? null : <WLoadingState title={t("Loading…")} />
         ) : routines.length === 0 ? (
           <p className="muted small">{noRoutines()}</p>
         ) : (
@@ -280,13 +273,9 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
               <li key={run.id} className="run-item">
                 <button className="run-head" aria-expanded={open === run.id} onClick={() => setOpen(open === run.id ? null : run.id)}>
                   <span>{runHeading(run, locale)}</span>
-                  {redesign ? (
-                    <span className={`run-outcome run-outcome--${run.outcome}`}>
-                      <WStatusChip tone={outcomeTone(run.outcome)}>{outcomeLabel(run.outcome)}</WStatusChip>
-                    </span>
-                  ) : (
-                    <span className={`run-outcome run-outcome--${run.outcome}`}>{outcomeLabel(run.outcome)}</span>
-                  )}
+                  <span className={`run-outcome run-outcome--${run.outcome}`}>
+                    <WStatusChip tone={outcomeTone(run.outcome)}>{outcomeLabel(run.outcome)}</WStatusChip>
+                  </span>
                 </button>
                 <p className={open === run.id ? "run-summary" : "run-summary run-summary--clamped"}>{run.summary}</p>
               </li>
@@ -303,7 +292,7 @@ function outcomeTone(outcome: string): WStatusTone {
   return outcome === "success" ? "good" : outcome === "failed" ? "problem" : outcome === "pending" ? "warning" : "neutral";
 }
 
-function ApprovalRow(props: { approval: ApprovalView; busy: boolean; redesign?: boolean; onApprove: (account: string | undefined) => void; onReject: () => void }) {
+function ApprovalRow(props: { approval: ApprovalView; busy: boolean; onApprove: (account: string | undefined) => void; onReject: () => void }) {
   const { approval } = props;
   const { t, locale } = useL10n();
   const [account, setAccount] = useState(approval.account ?? "");
@@ -340,25 +329,12 @@ function ApprovalRow(props: { approval: ApprovalView; busy: boolean; redesign?: 
         )}
       </div>
       <div className="approval-actions">
-        {props.redesign ? (
-          <>
-            <WButton variant="primary" disabled={!canApprove(approval) || props.busy} onClick={() => props.onApprove(account || undefined)}>
-              {props.busy ? t("Working…") : t("Approve")}
-            </WButton>
-            <WButton disabled={props.busy} onClick={props.onReject}>
-              {t("Reject")}
-            </WButton>
-          </>
-        ) : (
-          <>
-            <button className="mode mode--active" disabled={!canApprove(approval) || props.busy} onClick={() => props.onApprove(account || undefined)}>
-              {props.busy ? t("Working…") : t("Approve")}
-            </button>
-            <button className="mode" disabled={props.busy} onClick={props.onReject}>
-              {t("Reject")}
-            </button>
-          </>
-        )}
+        <WButton variant="primary" disabled={!canApprove(approval) || props.busy} onClick={() => props.onApprove(account || undefined)}>
+          {props.busy ? t("Working…") : t("Approve")}
+        </WButton>
+        <WButton disabled={props.busy} onClick={props.onReject}>
+          {t("Reject")}
+        </WButton>
       </div>
     </li>
   );

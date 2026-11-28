@@ -80,10 +80,11 @@ final class SettingsSearchTests: XCTestCase {
         for entry in SettingsSearch.entries {
             let needle = ".settingsAnchor(\"\(entry.id)\")"
             let count = source.components(separatedBy: needle).count - 1
-            // A classic entry has its call once. A card the classic panes do not have (`inClassicPane` false) has none: the redrawn
-            // section anchors it through `SettingsAnchorID`, which the redesign tests check against the registry.
-            let expected = entry.inClassicPane ? 1 : 0
-            XCTAssertEqual(count, expected, "anchor \(entry.id) appears \(count) times in the UI source, expected \(expected)")
+            // The redrawn sections anchor their rows through `SettingsAnchorID`, which the redesign tests check against the
+            // registry. A literal call remains only in a pane that the Settings window still hosts or whose helpers are still
+            // used, and then once.
+            let allowed = entry.inClassicPane ? 1 : 0
+            XCTAssertLessThanOrEqual(count, allowed, "anchor \(entry.id) appears \(count) times in the UI source, at most \(allowed) expected")
         }
 
         // Orphans: a call site whose id is not in the registry.

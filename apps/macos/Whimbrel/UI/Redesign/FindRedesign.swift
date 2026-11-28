@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 import WhimbrelUI
 
-/// What the shell and Library's Find page share (redesign flag only): the header field's text and the filter chips, which the shell draws and
+/// What the shell and Library's Find page share: the header field's text and the filter chips, which the shell draws and
 /// the page reads, and the requests that move between them (Enter, Command Return, Command K, Search Library).
 @MainActor
 final class FindBridge: ObservableObject {
@@ -371,7 +371,7 @@ enum FindAdapter {
             let attendees = String(localized: "\(m.attendees.count) attendees")
             let card = WFindCard(
                 id: "meeting-" + String(m.id), kind: .meeting, appName: env.strings.kindMeeting, title: m.title, timeMs: m.startUnixMs,
-                time: TimelineView.formattedMeetingTime(startUnixMs: m.startUnixMs, endUnixMs: m.endUnixMs), device: env.device(m.deviceId),
+                time: LibraryTimeText.formattedMeetingTime(startUnixMs: m.startUnixMs, endUnixMs: m.endUnixMs), device: env.device(m.deviceId),
                 open: .meeting(m.id), openHint: env.strings.opensMeeting)
             rows.append(WLibraryRow(
                 id: card.id, card: card, statusLine: statusWord(m.status) + ", " + attendees, canOpenInNewWindow: true, canForget: m.status != .recording))
@@ -393,7 +393,7 @@ enum FindAdapter {
             let card = WFindCard(
                 id: "episode-" + String(e.id), kind: .episode, appGlyph: env.glyph(e.appBundleId), appName: env.appName(e.appBundleId),
                 appDot: env.dot(e.appBundleId), title: e.windowTitle ?? env.appName(e.appBundleId), timeMs: e.startTsUnixMs,
-                time: TimelineView.formattedEpisodeTime(startUnixMs: e.startTsUnixMs, endUnixMs: e.endTsUnixMs), device: env.device(e.deviceId),
+                time: LibraryTimeText.formattedEpisodeTime(startUnixMs: e.startTsUnixMs, endUnixMs: e.endTsUnixMs), device: env.device(e.deviceId),
                 text: episodeSummary(e), open: .episode(e.id), openHint: env.strings.opensEpisode)
             return WLibraryRow(id: card.id, card: card, isHidden: hidden.contains(e.id))
         }

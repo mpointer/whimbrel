@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 import WhimbrelUI
 
-// Ask on Today (redesign flag only; docs/ui-redesign/screens/conversations.md parts 1 and 2). A question asked from the
+// Ask on Today (docs/ui-redesign/screens/conversations.md parts 1 and 2). A question asked from the
 // Ask bar on Today answers right under the bar, with its sources. Asking again replaces the answer; nothing is
 // saved unless the person continues it as a conversation.
 

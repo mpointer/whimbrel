@@ -18,9 +18,6 @@ core/api/src/sync_ops/enrollment.rs  # the Worker client: decodes the plan and A
 apps/windows/src-tauri/src/syncing/enrollment.rs  # calls the Worker for sign-in and checkout; its test fakes a free plan answer
 
 # ---- Render the server's answer: plan lines, upgrade and manage buttons, AI credit copy.
-apps/macos/Whimbrel/UI/Settings/DevicesSettingsPane.swift :: \bplan\??\.(isCloud|plusAvailable)\b  # shows the plan line and the upgrade or manage buttons from the server's plan
-apps/macos/Whimbrel/UI/Settings/PlanControls.swift :: \bplan\??\.plusAvailable\b  # shows the Get Plus buttons when the server's plan answer says Plus is available; the server enforces the plan
-apps/macos/Whimbrel/UI/Settings/PlanSettingsPane.swift :: \bplan\.isCloud\b  # shows the Manage subscription button for an account the server says is on a paid plan; the server enforces the plan
 apps/macos/Whimbrel/UI/Settings/AIProvidersSettingsPane.swift :: \b(plan|balance)\.isPlus\b|isPlusAccount|PlusFlag  # shows the Plus allowance and credit lines from the server's balance; PlusFlag keeps the server's last plan_tier for that wording
 apps/macos/Whimbrel/UI/Redesign/Settings/PlanSettingsRedesign.swift :: \bplan\??\.(isCloud|plusAvailable)\b  # the redrawn Plan & billing section: shows the Manage button for an account the server says is on a paid plan and picks the Plus or Cloud purchase buttons from the server's plus_available answer, as PlanSettingsPane and PlanControls do; the server enforces the plan
 apps/macos/Whimbrel/UI/PlusAiPrompt.swift  # offers Whimbrel AI (models the company hosts) to an account the server says is Plus; the server meters every request

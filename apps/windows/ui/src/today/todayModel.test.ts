@@ -2,11 +2,9 @@ import { describe, expect, it } from "vitest";
 import type {
   BriefRecap,
   DeviceCount,
-  NextMeetingView,
   PrepBriefView,
   ProviderKey,
   RoutingSettings,
-  ScheduleEvent,
   TodayOverview,
   TodayRecap,
 } from "../generated/types";
@@ -17,18 +15,13 @@ const LOCALE = "en-US";
 import {
   askAvailable,
   askModelLabel,
-  attendeesLine,
   briefRecapNote,
   citedSources,
-  composerPrompt,
-  deviceLine,
   greeting,
-  prepLine,
   prepStatus,
   recapFor,
   recapNote,
   relativeStart,
-  rowAction,
   shouldGenerate,
   threadLine,
 } from "./todayModel";
@@ -94,12 +87,6 @@ describe("recapFor", () => {
 });
 
 describe("lines", () => {
-  it("describes each device's day", () => {
-    expect(deviceLine(pc, LOCALE)).toBe("Nothing yet today");
-    const mac: DeviceCount = { device: { deviceId: "M", label: "MacBook Pro", thisDevice: false }, captures: 1204, lastTsUnixMs: 1_757_613_900_000 };
-    expect(deviceLine(mac, LOCALE)).toBe(`1,204 captures · last ${timeLabel(1_757_613_900_000, LOCALE)}`);
-    expect(deviceLine({ ...mac, captures: 1 }, LOCALE)).toMatch(/^1 capture · last /);
-  });
 
   it("says who a thread is waiting on, and how a recap was made", () => {
     const thread = { id: 1, subject: "Budget", lastActivityTsUnixMs: 1, lastMessageFrom: "Dana", status: "waiting_on_me" };
@@ -221,29 +208,12 @@ describe("the Ask composer", () => {
     expect(askAvailable(routing({ preferredProvider: "whimbrel", localOnly: true }), keys(), true)).toBe(false);
   });
 
-  it("sends the trimmed text and nothing for a blank field", () => {
-    expect(composerPrompt("  what did we decide?  ")).toBe("what did we decide?");
-    expect(composerPrompt("")).toBeNull();
-    expect(composerPrompt("   \n\t ")).toBeNull();
-  });
 });
 
 describe("the schedule card", () => {
   const MIN = 60_000;
   const HOUR = 60 * MIN;
   const NOW = 1_000_000_000_000;
-  const event = (over: Partial<ScheduleEvent> = {}): ScheduleEvent => ({
-    eventId: "e1",
-    title: "Acme sync",
-    startUnixMs: NOW + 30 * MIN,
-    endUnixMs: NOW + 60 * MIN,
-    attendees: [],
-    recordedMeetingId: null,
-    hasSummary: false,
-    actionItemCount: 0,
-    ...over,
-  });
-
   describe("relativeStart", () => {
     const rel = (startOffset: number, length = 30 * MIN) => relativeStart(NOW + startOffset, NOW + startOffset + length, NOW);
 
@@ -265,37 +235,6 @@ describe("the schedule card", () => {
     it("says nothing for an event more than 12 hours away", () => {
       expect(rel(12 * HOUR)).toBe("In 12h");
       expect(rel(12 * HOUR + MIN)).toBeNull();
-    });
-  });
-
-  it("lists up to two invitees and counts the rest", () => {
-    expect(attendeesLine([])).toBeNull();
-    expect(attendeesLine(["a@x.test"])).toBe("a@x.test");
-    expect(attendeesLine(["a@x.test", "b@x.test"])).toBe("a@x.test, b@x.test");
-    expect(attendeesLine(["a@x.test", "b@x.test", "c@x.test"])).toBe("a@x.test, b@x.test +1");
-    expect(attendeesLine(["a@x.test", "b@x.test", "c@x.test", "d@x.test"])).toBe("a@x.test, b@x.test +2");
-  });
-
-  it("offers Open for a recorded event, Start otherwise, and no Start while recording", () => {
-    expect(rowAction(event({ recordedMeetingId: 4 }), false)).toBe("open");
-    expect(rowAction(event({ recordedMeetingId: 4 }), true)).toBe("open");
-    expect(rowAction(event(), false)).toBe("start");
-    expect(rowAction(event(), true)).toBeNull();
-  });
-
-  describe("prepLine", () => {
-    const next = (brief: NextMeetingView["brief"]): NextMeetingView => ({ eventId: "e1", title: "Acme sync", startUnixMs: NOW, brief });
-    const brief = { generatedAtUnixMs: NOW } as NonNullable<NextMeetingView["brief"]>;
-
-    it("is Prep ready or No prep yet on the next meeting's row only", () => {
-      expect(prepLine(event(), next(brief))).toBe("ready");
-      expect(prepLine(event(), next(null))).toBe("none");
-      expect(prepLine(event({ eventId: "other" }), next(brief))).toBeNull();
-      expect(prepLine(event(), null)).toBeNull();
-    });
-
-    it("is absent once the event is recorded", () => {
-      expect(prepLine(event({ recordedMeetingId: 4 }), next(brief))).toBeNull();
     });
   });
 });

@@ -1,20 +1,6 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SETTINGS_SEARCH_ENTRIES } from "../settingsSearch";
 import { stampAnchors } from "./RedesignedSettings";
-
-const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
-
-describe("the redesign switch", () => {
-  it("draws the old tab unless the switch is on, and the old files know nothing of the redesign", () => {
-    const app = read("../../App.tsx");
-    expect(app).toMatch(/redesign \?\s*\(\s*<RedesignedSettings/);
-    expect(app).toMatch(/\) : \(\s*<SettingsView/);
-    expect(read("../SettingsView.tsx")).not.toMatch(/redesign/i);
-    expect(read("../settingsSections.ts")).not.toMatch(/redesign/i);
-    expect(read("../settingsSearch.ts")).not.toMatch(/redesign/i);
-  });
-});
 
 describe("search anchors", () => {
   /** A small stand-in for a page: elements with an id and attributes, found by the two selectors the frame uses. */

@@ -152,7 +152,10 @@ struct PrepBriefSheet: View {
             }
         }
         .padding(Spacing.lg)
-        .frame(minWidth: 520, idealWidth: 640, minHeight: 360, idealHeight: 560)
+        // A fixed size: the brief scrolls inside it. With only min and ideal sizes the sheet's window resized to
+        // fit its content, and on 2026-11-27 the app crashed in AppKit's layout engine during that resize as the
+        // sheet closed (a stack overflow in NSHostingView.updateAnimatedWindowSize). A fixed size never resizes.
+        .frame(width: 640, height: 560)
         .onAppear {
             guard let store = appState.coreStore else { loaded = true; return }
             CoreMemoryStore.accessQueue.async {

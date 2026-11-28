@@ -197,7 +197,7 @@ export function MeetingsCardRedesign() {
           <WSettingsSelectRow
             label={t("Ask if I'm still recording after")}
             description={t(
-              'Shows a "Still recording?" prompt. With no answer in 5 minutes, the recording stops and is saved up to the last words. Recordings always stop at 4 hours. Applies from the next recording.',
+              'Shows a "Still recording?" prompt. With no answer in 5 minutes, the recording stops and is saved up to the last words. Recordings stop at 4 hours unless you choose Keep recording, and always at 6 hours. Applies from the next recording.',
             )}
             value={String(settings.checkInHours ?? 1)}
             options={CHECK_IN_HOURS.map((h) => ({ value: String(h), label: checkInLabel(h) }))}

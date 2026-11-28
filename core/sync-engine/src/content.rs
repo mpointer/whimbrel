@@ -63,7 +63,8 @@ pub(crate) const ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY: &str = "topic_snapshot_capa
 /// reads them again on its first pull once updated (`catch_up_tombstones`). Devices on the relay
 /// without `client_controls_capability` (desktops, and phones from the build that announces it) are
 /// the receipt's "N devices still need to update".
-pub(crate) const ROW_TYPE_CLIENT_ITEM_FORGOTTEN: &str = memory::OUTBOX_ROW_TYPE_CLIENT_ITEM_FORGOTTEN;
+pub(crate) const ROW_TYPE_CLIENT_ITEM_FORGOTTEN: &str =
+    memory::OUTBOX_ROW_TYPE_CLIENT_ITEM_FORGOTTEN;
 pub(crate) const ROW_TYPE_TOPIC_SEED_PURGED: &str = memory::OUTBOX_ROW_TYPE_TOPIC_SEED_PURGED;
 pub(crate) const ROW_TYPE_CLIENT_CONTROLS_CAPABILITY: &str = "client_controls_capability";
 /// Written at `local_seq` 0 under a retired device's id by a desktop whose user chose "Remove this device":
@@ -297,7 +298,10 @@ pub(crate) async fn ensure_sync_row_column(conn: &Connection, column: &str) -> b
 
 async fn add_sync_row_column(conn: &Connection, column: &str) -> bool {
     match conn
-        .execute(&format!("ALTER TABLE sync_row ADD COLUMN {column} TEXT"), ())
+        .execute(
+            &format!("ALTER TABLE sync_row ADD COLUMN {column} TEXT"),
+            (),
+        )
         .await
     {
         Ok(_) => true,
@@ -423,16 +427,29 @@ pub(crate) fn item_payload_kind_tag(group_key: &GroupKey, plaintext: &[u8]) -> O
 }
 
 /// The `slice_tag` of one item: its kind, source class and calendar month (`sync::slice_tag`).
-fn item_slice_tag(group_key: &GroupKey, kind: &str, source: Option<&str>, ts_unix_ms: i64) -> String {
-    sync::slice_tag(group_key, kind, sync::source_class(kind, source), sync::month_bucket(ts_unix_ms))
+fn item_slice_tag(
+    group_key: &GroupKey,
+    kind: &str,
+    source: Option<&str>,
+    ts_unix_ms: i64,
+) -> String {
+    sync::slice_tag(
+        group_key,
+        kind,
+        sync::source_class(kind, source),
+        sync::month_bucket(ts_unix_ms),
+    )
 }
 
 /// The `slice_tag` for a pushed row: only `items` rows have one.
 pub(crate) fn slice_tag_for(group_key: &GroupKey, row: &SyncableRow) -> Option<String> {
     match row {
-        SyncableRow::Item { item, .. } => {
-            Some(item_slice_tag(group_key, &item.kind, item.source.as_deref(), item.ts_unix_ms))
-        }
+        SyncableRow::Item { item, .. } => Some(item_slice_tag(
+            group_key,
+            &item.kind,
+            item.source.as_deref(),
+            item.ts_unix_ms,
+        )),
         _ => None,
     }
 }
@@ -442,12 +459,20 @@ pub(crate) fn slice_tag_for(group_key: &GroupKey, row: &SyncableRow) -> Option<S
 pub(crate) fn item_payload_slice_tag(group_key: &GroupKey, plaintext: &[u8]) -> Option<String> {
     let payload = serde_json::from_slice::<ItemPayload>(plaintext).ok()?;
     let item = &payload.item;
-    Some(item_slice_tag(group_key, &item.kind, item.source.as_deref(), item.ts_unix_ms))
+    Some(item_slice_tag(
+        group_key,
+        &item.kind,
+        item.source.as_deref(),
+        item.ts_unix_ms,
+    ))
 }
 
 /// The outbox twin of `slice_tag_for`: an `items` op's payload is the item. An op without `ts_unix_ms` is left
 /// untagged rather than guessed.
-pub(crate) fn outbox_slice_tag(group_key: &GroupKey, op: &memory::ClaimedOutboxOperation) -> Option<String> {
+pub(crate) fn outbox_slice_tag(
+    group_key: &GroupKey,
+    op: &memory::ClaimedOutboxOperation,
+) -> Option<String> {
     if op.row_type != ROW_TYPE_ITEMS {
         return None;
     }
@@ -461,7 +486,10 @@ pub(crate) fn outbox_slice_tag(group_key: &GroupKey, op: &memory::ClaimedOutboxO
 }
 
 /// The outbox twin of `kind_tag_for`: an `items` op's payload is the item, so it names its kind.
-pub(crate) fn outbox_kind_tag(group_key: &GroupKey, op: &memory::ClaimedOutboxOperation) -> Option<String> {
+pub(crate) fn outbox_kind_tag(
+    group_key: &GroupKey,
+    op: &memory::ClaimedOutboxOperation,
+) -> Option<String> {
     if op.row_type != ROW_TYPE_ITEMS {
         return None;
     }
@@ -531,9 +559,21 @@ async fn push_items_capability_marker(
     // Topic page rows wait the same way for this one.
     push_marker(conn, group_key, device_id, ROW_TYPE_TOPIC_PAGE_CAPABILITY).await?;
     // Snapshot rows wait the same way for this one.
-    push_marker(conn, group_key, device_id, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY).await?;
+    push_marker(
+        conn,
+        group_key,
+        device_id,
+        ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
+    )
+    .await?;
     // Client-delete tombstones and seed purges wait for this one.
-    push_marker(conn, group_key, device_id, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await
+    push_marker(
+        conn,
+        group_key,
+        device_id,
+        ROW_TYPE_CLIENT_CONTROLS_CAPABILITY,
+    )
+    .await
 }
 
 /// The markers a pull-only device (the phone) announces: every row type the shared pull applies for it. Not
@@ -553,14 +593,24 @@ pub(crate) const PULL_ONLY_MARKERS: [&str; 5] = [
 /// The pull-only round's only write: [`PULL_ONLY_MARKERS`] at `local_seq` 0, in one statement, so a peer
 /// never sees the phone with some of them and not others. Idempotent. Best effort: a failure is logged and
 /// the pull goes on (the next round tries again).
-pub(crate) async fn announce_pull_only_markers(conn: &Connection, group_key: &GroupKey, device_id: &str) {
+pub(crate) async fn announce_pull_only_markers(
+    conn: &Connection,
+    group_key: &GroupKey,
+    device_id: &str,
+) {
     if device_id.is_empty() {
         return;
     }
     let now = now_unix_ms();
     let ciphertexts: Vec<String> = PULL_ONLY_MARKERS
         .iter()
-        .map(|m| STANDARD.encode(sync::encrypt_payload(group_key, b"1", &content_row_aad(device_id, 0, m))))
+        .map(|m| {
+            STANDARD.encode(sync::encrypt_payload(
+                group_key,
+                b"1",
+                &content_row_aad(device_id, 0, m),
+            ))
+        })
         .collect();
     let values = vec!["(?, 0, ?, ?, ?)"; PULL_ONLY_MARKERS.len()].join(", ");
     let sql = format!(
@@ -583,7 +633,11 @@ pub(crate) async fn announce_pull_only_markers(conn: &Connection, group_key: &Gr
 /// needed" line), leaving out devices removed with "Remove this device". On a desktop the outbox pass does
 /// this; the phone runs none, so its pull-only round does. Best effort: a failed read or write keeps the last
 /// count and never fails the round.
-pub(crate) async fn record_pending_tombstone_devices(conn: &Connection, store: &Store, device_id: &str) {
+pub(crate) async fn record_pending_tombstone_devices(
+    conn: &Connection,
+    store: &Store,
+    device_id: &str,
+) {
     match pending_update_device_ids(conn, device_id).await {
         Ok(ids) => {
             if let Err(e) = store.set_pending_tombstone_device_ids(&ids) {
@@ -599,7 +653,11 @@ pub(crate) async fn record_pending_tombstone_devices(conn: &Connection, store: &
 /// but dropped their control fields, and nothing else would send them again (Nov 19 2026: a PC updated from
 /// 0.9.72 never learned an exclusion set on the Mac before its update). Runs before the pass claims rows, so
 /// the records go out in the same pass. Best effort, like the count.
-pub(crate) async fn record_pending_devices_and_resend_controls(conn: &Connection, store: &Store, device_id: &str) {
+pub(crate) async fn record_pending_devices_and_resend_controls(
+    conn: &Connection,
+    store: &Store,
+    device_id: &str,
+) {
     let before = store.pending_tombstone_device_ids().ok().flatten();
     match pending_update_device_ids(conn, device_id).await {
         Ok(ids) => {
@@ -618,7 +676,10 @@ pub(crate) async fn record_pending_devices_and_resend_controls(conn: &Connection
 
 /// The OTHER devices in `sync_row` that have not announced `client_controls_capability` and were not removed
 /// ([`ROW_TYPE_DEVICE_RETIRED`]).
-pub(crate) async fn pending_update_device_ids(conn: &Connection, own_device_id: &str) -> Result<Vec<String>, SyncEngineError> {
+pub(crate) async fn pending_update_device_ids(
+    conn: &Connection,
+    own_device_id: &str,
+) -> Result<Vec<String>, SyncEngineError> {
     let mut out = Vec::new();
     for peer in distinct_peer_device_ids(conn, own_device_id).await? {
         if peer_has_marker(conn, &peer, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await?
@@ -631,7 +692,11 @@ pub(crate) async fn pending_update_device_ids(conn: &Connection, own_device_id: 
     Ok(out)
 }
 
-pub(crate) async fn peer_has_marker(conn: &Connection, peer: &str, marker: &str) -> Result<bool, SyncEngineError> {
+pub(crate) async fn peer_has_marker(
+    conn: &Connection,
+    peer: &str,
+    marker: &str,
+) -> Result<bool, SyncEngineError> {
     if let Some(answer) = round_peers::has_marker(conn, peer, marker).await? {
         return Ok(answer);
     }
@@ -639,7 +704,11 @@ pub(crate) async fn peer_has_marker(conn: &Connection, peer: &str, marker: &str)
         .query(PEER_MARKER_SQL, params![peer, marker])
         .await
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-    Ok(rows.next().await.map_err(|e| SyncEngineError::Query(e.to_string()))?.is_some())
+    Ok(rows
+        .next()
+        .await
+        .map_err(|e| SyncEngineError::Query(e.to_string()))?
+        .is_some())
 }
 
 /// Publishes the removals queued by "Remove this device" ([`memory::Store::queue_retired_device`]): a
@@ -648,7 +717,12 @@ pub(crate) async fn peer_has_marker(conn: &Connection, peer: &str, marker: &str)
 /// the client marker since, or has no rows on the relay any more, is only taken off the queue: a marker would
 /// make a device with no rows a peer of every gate. Additive and idempotent; it deletes nothing. Best effort:
 /// what fails stays queued for the next round.
-pub(crate) async fn publish_retired_devices(conn: &Connection, group_key: &GroupKey, store: &Store, own_device_id: &str) {
+pub(crate) async fn publish_retired_devices(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    own_device_id: &str,
+) {
     let queue = match store.retired_device_queue() {
         Ok(q) => q,
         Err(e) => {
@@ -663,7 +737,9 @@ pub(crate) async fn publish_retired_devices(conn: &Connection, group_key: &Group
             continue;
         }
         let publish = async {
-            if peer_has_marker(conn, &id, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await? || !peer_has_rows(conn, &id).await? {
+            if peer_has_marker(conn, &id, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await?
+                || !peer_has_rows(conn, &id).await?
+            {
                 return Ok::<(), SyncEngineError>(());
             }
             push_marker(conn, group_key, &id, ROW_TYPE_DEVICE_RETIRED).await?;
@@ -685,10 +761,17 @@ pub(crate) async fn publish_retired_devices(conn: &Connection, group_key: &Group
 
 async fn peer_has_rows(conn: &Connection, peer: &str) -> Result<bool, SyncEngineError> {
     let mut rows = conn
-        .query("SELECT 1 FROM sync_row WHERE device_id = ?1 LIMIT 1", params![peer])
+        .query(
+            "SELECT 1 FROM sync_row WHERE device_id = ?1 LIMIT 1",
+            params![peer],
+        )
         .await
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-    Ok(rows.next().await.map_err(|e| SyncEngineError::Query(e.to_string()))?.is_some())
+    Ok(rows
+        .next()
+        .await
+        .map_err(|e| SyncEngineError::Query(e.to_string()))?
+        .is_some())
 }
 
 /// One capability marker at `local_seq` 0, idempotent (see `push_items_capability_marker`).
@@ -822,7 +905,12 @@ pub(crate) mod round_peers {
 
     /// Starts caching for this thread's round.
     pub(crate) fn begin(own_device_id: &str) {
-        ROUND.with(|r| *r.borrow_mut() = Some(Snapshot { own: own_device_id.to_string(), ..Default::default() }));
+        ROUND.with(|r| {
+            *r.borrow_mut() = Some(Snapshot {
+                own: own_device_id.to_string(),
+                ..Default::default()
+            })
+        });
     }
 
     /// Ends the round: nothing is cached after this.
@@ -840,7 +928,12 @@ pub(crate) mod round_peers {
     }
 
     pub(super) fn peers(own_device_id: &str) -> Option<Vec<String>> {
-        ROUND.with(|r| r.borrow().as_ref().filter(|s| s.own == own_device_id).and_then(|s| s.peers.clone()))
+        ROUND.with(|r| {
+            r.borrow()
+                .as_ref()
+                .filter(|s| s.own == own_device_id)
+                .and_then(|s| s.peers.clone())
+        })
     }
 
     pub(super) fn set_peers(own_device_id: &str, ids: &[String]) {
@@ -853,8 +946,16 @@ pub(crate) mod round_peers {
 
     /// `Some(answer)` from the round's snapshot (read on first use), `None` outside a round or for a device
     /// the snapshot does not cover.
-    pub(super) async fn has_marker(conn: &Connection, peer: &str, marker: &str) -> Result<Option<bool>, SyncEngineError> {
-        let Some((own, loaded)) = ROUND.with(|r| r.borrow().as_ref().map(|s| (s.own.clone(), s.markers.is_some()))) else {
+    pub(super) async fn has_marker(
+        conn: &Connection,
+        peer: &str,
+        marker: &str,
+    ) -> Result<Option<bool>, SyncEngineError> {
+        let Some((own, loaded)) = ROUND.with(|r| {
+            r.borrow()
+                .as_ref()
+                .map(|s| (s.own.clone(), s.markers.is_some()))
+        }) else {
             return Ok(None);
         };
         if !loaded {
@@ -876,8 +977,12 @@ pub(crate) mod round_peers {
     }
 
     /// Every `local_seq` 0 row type of `peers`, in one query (a primary-key seek per device).
-    async fn read_markers(conn: &Connection, peers: &[String]) -> Result<HashMap<String, HashSet<String>>, SyncEngineError> {
-        let mut out: HashMap<String, HashSet<String>> = peers.iter().map(|p| (p.clone(), HashSet::new())).collect();
+    async fn read_markers(
+        conn: &Connection,
+        peers: &[String],
+    ) -> Result<HashMap<String, HashSet<String>>, SyncEngineError> {
+        let mut out: HashMap<String, HashSet<String>> =
+            peers.iter().map(|p| (p.clone(), HashSet::new())).collect();
         if peers.is_empty() {
             return Ok(out);
         }
@@ -886,14 +991,25 @@ pub(crate) mod round_peers {
             "SELECT device_id, row_type FROM sync_row WHERE local_seq = 0 AND device_id IN ({})",
             placeholders.join(", ")
         );
-        let args: Vec<libsql::Value> = peers.iter().map(|p| libsql::Value::Text(p.clone())).collect();
+        let args: Vec<libsql::Value> = peers
+            .iter()
+            .map(|p| libsql::Value::Text(p.clone()))
+            .collect();
         let mut rows = conn
             .query(&sql, libsql::params::Params::Positional(args))
             .await
             .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-        while let Some(row) = rows.next().await.map_err(|e| SyncEngineError::Query(e.to_string()))? {
-            let device: String = row.get(0).map_err(|e| SyncEngineError::Query(e.to_string()))?;
-            let row_type: String = row.get(1).map_err(|e| SyncEngineError::Query(e.to_string()))?;
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?
+        {
+            let device: String = row
+                .get(0)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            let row_type: String = row
+                .get(1)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             out.entry(device).or_default().insert(row_type);
         }
         Ok(out)
@@ -922,7 +1038,14 @@ const MAX_ROWS_PER_PUSH_PASS: usize = 500;
 const PUSH_CHUNK_ROWS: usize = 50;
 
 /// One encoded row to insert: `(local_seq, row_type, ciphertext, entity_tag, kind_tag, slice_tag)`.
-pub(crate) type PushRow<'a> = (i64, &'a str, String, Option<String>, Option<String>, Option<String>);
+pub(crate) type PushRow<'a> = (
+    i64,
+    &'a str,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 /// One multi-row INSERT of a chunk of encoded rows. `with_entity` / `with_kind` / `with_slice` add those
 /// columns (NULL for untagged rows); each is independent, as a relay may have any, all or none.
@@ -959,7 +1082,8 @@ async fn insert_push_chunk(
             values.push(slice.clone().map_or(Value::Null, Value::Text));
         }
     }
-    let mut columns = String::from("device_id, local_seq, row_type, ciphertext, created_at_unix_ms");
+    let mut columns =
+        String::from("device_id, local_seq, row_type, ciphertext, created_at_unix_ms");
     if with_entity {
         columns.push_str(", entity_tag");
     }
@@ -990,7 +1114,17 @@ pub(crate) async fn insert_with_tag_fallback(
     with_slice: &mut bool,
 ) -> Result<u64, libsql::Error> {
     loop {
-        match insert_push_chunk(conn, device_id, now, rows, *with_entity, *with_kind, *with_slice).await {
+        match insert_push_chunk(
+            conn,
+            device_id,
+            now,
+            rows,
+            *with_entity,
+            *with_kind,
+            *with_slice,
+        )
+        .await
+        {
             Err(e) if *with_entity && is_missing_entity_tag_column(&e.to_string()) => {
                 #[cfg(test)]
                 FAILED_TAGGED_INSERTS.with(|c| c.set(c.get() + 1));
@@ -1158,7 +1292,14 @@ pub async fn push_content(
             }
             let kind = kind_on.then(|| kind_tag_for(group_key, row)).flatten();
             let slice = slice_on.then(|| slice_tag_for(group_key, row)).flatten();
-            encoded.push((local_seq, row_type, STANDARD.encode(&ciphertext), tag, kind, slice));
+            encoded.push((
+                local_seq,
+                row_type,
+                STANDARD.encode(&ciphertext),
+                tag,
+                kind,
+                slice,
+            ));
             chunk_highest = chunk_highest.max(local_seq);
         }
         let mut with_entity = !tags.is_empty();
@@ -1227,7 +1368,10 @@ pub(crate) async fn distinct_peer_device_ids(
 }
 
 /// [`distinct_peer_device_ids`] read from the relay, without the round snapshot.
-async fn hop_peer_device_ids(conn: &Connection, own_device_id: &str) -> Result<Vec<String>, SyncEngineError> {
+async fn hop_peer_device_ids(
+    conn: &Connection,
+    own_device_id: &str,
+) -> Result<Vec<String>, SyncEngineError> {
     // Hop from device to device with `NEXT_PEER_SQL`. The own device is skipped by moving
     // the cursor past it, never by a `!=` filter, which would read all of its rows.
     let mut ids = Vec::new();
@@ -1619,7 +1763,13 @@ async fn fetch_gap_rows(
         ];
         values.extend(types.iter().map(|t| Value::Text(t.clone())));
         values.extend(tags.iter().chain(slices).map(|t| Value::Text(t.clone())));
-        match query_envelopes(conn, &fetch_allowed_gap_rows_sql(types.len(), tags.len(), slices.len()), values).await {
+        match query_envelopes(
+            conn,
+            &fetch_allowed_gap_rows_sql(types.len(), tags.len(), slices.len()),
+            values,
+        )
+        .await
+        {
             Ok(envelopes) => return Ok((envelopes, true)),
             Err(e) if filter.tag_column_missing(&e) => {}
             Err(e) => return Err(e),
@@ -1634,8 +1784,11 @@ async fn fetch_gap_rows(
                 Value::Integer(limit),
             ];
             values.extend(types.iter().map(|t| Value::Text(t.clone())));
-            conn.query(&fetch_allowed_gap_rows_sql(types.len(), 0, 0), Params::Positional(values))
-                .await
+            conn.query(
+                &fetch_allowed_gap_rows_sql(types.len(), 0, 0),
+                Params::Positional(values),
+            )
+            .await
         }
         None => {
             let sql = if skip_skins {
@@ -1653,10 +1806,17 @@ async fn fetch_gap_rows(
 
 /// One kind-filtered page: the query and its rows, so a missing `kind_tag` column is caught wherever
 /// the relay reports it.
-async fn query_envelopes(conn: &Connection, sql: &str, values: Vec<Value>) -> Result<Vec<RowEnvelope>, SyncEngineError> {
+async fn query_envelopes(
+    conn: &Connection,
+    sql: &str,
+    values: Vec<Value>,
+) -> Result<Vec<RowEnvelope>, SyncEngineError> {
     #[cfg(test)]
     PULL_SQL.with(|c| c.borrow_mut().push(sql.to_string()));
-    let rows = conn.query(sql, Params::Positional(values)).await.map_err(query_err)?;
+    let rows = conn
+        .query(sql, Params::Positional(values))
+        .await
+        .map_err(query_err)?;
     read_envelopes(rows).await
 }
 
@@ -1708,7 +1868,13 @@ async fn fetch_rows_since(
         values.extend(types.iter().map(|t| Value::Text(t.clone())));
         values.push(Value::Integer(window_hi));
         values.extend(tags.iter().chain(slices).map(|t| Value::Text(t.clone())));
-        match query_envelopes(conn, &fetch_allowed_rows_sql(types.len(), tags.len(), slices.len()), values).await {
+        match query_envelopes(
+            conn,
+            &fetch_allowed_rows_sql(types.len(), tags.len(), slices.len()),
+            values,
+        )
+        .await
+        {
             Ok(envelopes) => return Ok((envelopes, true)),
             Err(e) if filter.tag_column_missing(&e) => {}
             Err(e) => return Err(e),
@@ -1722,8 +1888,11 @@ async fn fetch_rows_since(
                 Value::Integer(limit),
             ];
             values.extend(types.iter().map(|t| Value::Text(t.clone())));
-            conn.query(&fetch_allowed_rows_sql(types.len(), 0, 0), Params::Positional(values))
-                .await
+            conn.query(
+                &fetch_allowed_rows_sql(types.len(), 0, 0),
+                Params::Positional(values),
+            )
+            .await
         }
         None => {
             let sql = if skip_skins {
@@ -1782,10 +1951,16 @@ thread_local! {
 }
 
 /// One indexed pull sub-query ([`fetch_rows_indexed`], [`fetch_gap_rows_indexed`]).
-async fn query_indexed(conn: &Connection, sql: &str, values: Vec<Value>) -> Result<Vec<RowEnvelope>, SyncEngineError> {
+async fn query_indexed(
+    conn: &Connection,
+    sql: &str,
+    values: Vec<Value>,
+) -> Result<Vec<RowEnvelope>, SyncEngineError> {
     #[cfg(test)]
     if INDEXED_QUERY_FAILS.with(|c| c.get()) {
-        return Err(SyncEngineError::Query("injected indexed query failure".to_string()));
+        return Err(SyncEngineError::Query(
+            "injected indexed query failure".to_string(),
+        ));
     }
     query_envelopes(conn, sql, values).await
 }
@@ -1832,9 +2007,11 @@ async fn fetch_rows_indexed(
     limit: i64,
     filter: &RowFilter,
 ) -> Result<Option<Vec<RowEnvelope>>, SyncEngineError> {
-    let (Some(types), Some(kinds), Some(slices)) =
-        (filter.row_types.as_deref(), filter.query_kind_tags(), filter.query_slice_tags())
-    else {
+    let (Some(types), Some(kinds), Some(slices)) = (
+        filter.row_types.as_deref(),
+        filter.query_kind_tags(),
+        filter.query_slice_tags(),
+    ) else {
         return Ok(None);
     };
     // Q1. `slices` is never empty (`month_bucket` clamps the cutoff's month to `MAX_MONTH_BUCKET`, so each kind has
@@ -1854,7 +2031,10 @@ async fn fetch_rows_indexed(
                 "row_type = '{ROW_TYPE_ITEMS}' AND slice_tag IN ({})",
                 numbered_placeholders(5, slices.len())
             );
-            queries.push((indexed_pull_sql("idx_sync_row_slice", &condition), slices.iter().collect()));
+            queries.push((
+                indexed_pull_sql("idx_sync_row_slice", &condition),
+                slices.iter().collect(),
+            ));
         }
         // `kinds` is never empty (kind tags exist only for a kind restriction); if it were, `IN ()` matches nothing
         // and Q3 takes only NULL-kind rows, as the scan's `kind_tag_condition` would.
@@ -1862,7 +2042,10 @@ async fn fetch_rows_indexed(
             "row_type = '{ROW_TYPE_ITEMS}' AND slice_tag IS NULL AND (kind_tag IS NULL OR kind_tag IN ({}))",
             numbered_placeholders(5, kinds.len())
         );
-        queries.push((indexed_pull_sql("idx_sync_row_slice", &condition), kinds.iter().collect()));
+        queries.push((
+            indexed_pull_sql("idx_sync_row_slice", &condition),
+            kinds.iter().collect(),
+        ));
     }
     let mut merged = Vec::new();
     // The lowest last row of a sub-query that came back full: nothing above it is known to be complete.
@@ -1920,9 +2103,11 @@ async fn fetch_gap_rows_indexed(
     limit: i64,
     filter: &RowFilter,
 ) -> Result<Option<Vec<RowEnvelope>>, SyncEngineError> {
-    let (Some(types), Some(kinds), Some(slices)) =
-        (filter.row_types.as_deref(), filter.query_kind_tags(), filter.query_slice_tags())
-    else {
+    let (Some(types), Some(kinds), Some(slices)) = (
+        filter.row_types.as_deref(),
+        filter.query_kind_tags(),
+        filter.query_slice_tags(),
+    ) else {
         return Ok(None);
     };
     // Q1. `slices` is never empty (`month_bucket` clamps the cutoff's month to `MAX_MONTH_BUCKET`, so each kind has
@@ -1942,14 +2127,20 @@ async fn fetch_gap_rows_indexed(
                 "row_type = '{ROW_TYPE_ITEMS}' AND slice_tag IN ({})",
                 numbered_placeholders(5, slices.len())
             );
-            queries.push((indexed_gap_sql("idx_sync_row_slice", &condition), slices.iter().collect()));
+            queries.push((
+                indexed_gap_sql("idx_sync_row_slice", &condition),
+                slices.iter().collect(),
+            ));
         }
         // `kinds` is never empty, as in [`fetch_rows_indexed`].
         let condition = format!(
             "row_type = '{ROW_TYPE_ITEMS}' AND slice_tag IS NULL AND (kind_tag IS NULL OR kind_tag IN ({}))",
             numbered_placeholders(5, kinds.len())
         );
-        queries.push((indexed_gap_sql("idx_sync_row_slice", &condition), kinds.iter().collect()));
+        queries.push((
+            indexed_gap_sql("idx_sync_row_slice", &condition),
+            kinds.iter().collect(),
+        ));
     }
     let mut merged = Vec::new();
     // The highest last (lowest) row of a sub-query that came back full: nothing below it is known to be complete.
@@ -2002,7 +2193,10 @@ fn kind_tag_condition(first: usize, count: usize, slice_count: usize) -> String 
 
 /// `?first, ?first+1, ...`, `count` of them.
 fn numbered_placeholders(first: usize, count: usize) -> String {
-    (first..first + count).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ")
+    (first..first + count)
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 async fn read_envelopes(mut rows: libsql::Rows) -> Result<Vec<RowEnvelope>, SyncEngineError> {
@@ -2089,7 +2283,8 @@ fn apply_parent_row(
         ROW_TYPE_CAPTURE_ITEM => {
             let item: memory::AppliedCaptureItem =
                 serde_json::from_slice(plaintext).map_err(|_| SyncEngineError::Crypto)?;
-            let (kind, id) = memory::client_forget::pulled_capture_identity(peer_device_id, local_seq);
+            let (kind, id) =
+                memory::client_forget::pulled_capture_identity(peer_device_id, local_seq);
             if client_forgotten(store, kind, &id)? {
                 return Ok(());
             }
@@ -2272,14 +2467,15 @@ fn apply_parent_row(
         }
         ROW_TYPE_SKIN => {
             // Kept in the store, not the skins folder: `core/skins` writes it once its images are whole.
-            let payload =
-                match serde_json::from_slice::<memory::skin_sync::SkinSyncPayload>(plaintext) {
-                    Ok(payload) => payload,
-                    Err(e) => {
-                        tracing::warn!(peer = %peer_tag(peer_device_id), local_seq, bytes = plaintext.len(), error = %e, "pulled skin row unreadable");
-                        return Ok(());
-                    }
-                };
+            let payload = match serde_json::from_slice::<memory::skin_sync::SkinSyncPayload>(
+                plaintext,
+            ) {
+                Ok(payload) => payload,
+                Err(e) => {
+                    tracing::warn!(peer = %peer_tag(peer_device_id), local_seq, bytes = plaintext.len(), error = %e, "pulled skin row unreadable");
+                    return Ok(());
+                }
+            };
             let stored = store
                 .apply_synced_skin(peer_device_id, &payload)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -2287,7 +2483,8 @@ fn apply_parent_row(
             return Ok(());
         }
         ROW_TYPE_SKIN_IMAGE_CHUNK => {
-            let chunk = match serde_json::from_slice::<memory::skin_sync::SkinImageChunk>(plaintext) {
+            let chunk = match serde_json::from_slice::<memory::skin_sync::SkinImageChunk>(plaintext)
+            {
                 Ok(chunk) => chunk,
                 Err(e) => {
                     tracing::warn!(peer = %peer_tag(peer_device_id), local_seq, error = %e, "pulled skin image chunk unreadable");
@@ -2312,9 +2509,9 @@ fn apply_parent_row(
         }
         ROW_TYPE_PROFILE_SUGGESTION_STATUS => {
             // Dismissed or added on another device: resolve the copy here (and any that arrives later).
-            let Ok(status) =
-                serde_json::from_slice::<memory::profile::AppliedProfileSuggestionStatus>(plaintext)
-            else {
+            let Ok(status) = serde_json::from_slice::<
+                memory::profile::AppliedProfileSuggestionStatus,
+            >(plaintext) else {
                 return Ok(());
             };
             store
@@ -2395,7 +2592,12 @@ fn apply_parent_row(
                 .origin_device_id
                 .as_deref()
                 .unwrap_or(peer_device_id);
-            if forgotten_child(store, origin, origin_epoch_of(plaintext).as_deref(), Some(speaker.source_meeting_id))? {
+            if forgotten_child(
+                store,
+                origin,
+                origin_epoch_of(plaintext).as_deref(),
+                Some(speaker.source_meeting_id),
+            )? {
                 return Ok(());
             }
             store
@@ -2455,8 +2657,7 @@ fn apply_parent_row(
                 store,
                 memory::ClientItemKind::Step.as_str(),
                 &memory::client_forget::topic_key_opaque_id(&step.key),
-            )?
-                || forgotten_seed(store, Some(&step.topic_key))?
+            )? || forgotten_seed(store, Some(&step.topic_key))?
                 || forgotten_source(store, &step.source_key)?
             {
                 return Ok(());
@@ -2476,8 +2677,7 @@ fn apply_parent_row(
                 store,
                 memory::ClientItemKind::Extraction.as_str(),
                 &memory::client_forget::topic_key_opaque_id(&extraction.source_key),
-            )?
-                || forgotten_seed(store, extraction.topic_key.as_deref())?
+            )? || forgotten_seed(store, extraction.topic_key.as_deref())?
                 || forgotten_source(store, &extraction.source_key)?
             {
                 return Ok(());
@@ -2884,9 +3084,19 @@ fn catch_up_span() -> i64 {
 /// cursors alone; progress is saved per peer after every row, so a long catch-up spreads over rounds within
 /// [`CATCH_UP_BUDGET`] and always moves forward. Never fails the pull: a failure is logged and that peer resumes
 /// next round. The database is marked caught up only once every peer is done.
-async fn catch_up_tombstones(conn: &Connection, group_key: &GroupKey, store: &Store, own_device_id: &str) {
+async fn catch_up_tombstones(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    own_device_id: &str,
+) {
     if old_build_puller()
-        || store.get_meta(TOMBSTONE_CATCH_UP_KEY).ok().flatten().as_deref() == Some(TOMBSTONE_TYPES_VERSION)
+        || store
+            .get_meta(TOMBSTONE_CATCH_UP_KEY)
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some(TOMBSTONE_TYPES_VERSION)
     {
         return;
     }
@@ -2918,7 +3128,9 @@ async fn catch_up_tombstones(conn: &Connection, group_key: &GroupKey, store: &St
         }
         Ok(Ok(false)) => eprintln!("[sync] tombstone catch-up resumes next round"),
         Ok(Err(e)) => eprintln!("[sync] tombstone catch-up resumes next round: {e}"),
-        Err(_) => eprintln!("[sync] tombstone catch-up resumes next round: a relay read took too long"),
+        Err(_) => {
+            eprintln!("[sync] tombstone catch-up resumes next round: a relay read took too long")
+        }
     }
 }
 
@@ -2945,7 +3157,10 @@ async fn catch_up_peer(
         None => 0,
     };
     let end: i64 = {
-        let mut rows = conn.query(CATCH_UP_END_SQL, params![peer]).await.map_err(|e| q(&e))?;
+        let mut rows = conn
+            .query(CATCH_UP_END_SQL, params![peer])
+            .await
+            .map_err(|e| q(&e))?;
         match rows.next().await.map_err(|e| q(&e))? {
             Some(row) => row.get::<Option<i64>>(0).map_err(|e| q(&e))?.unwrap_or(0),
             None => 0,
@@ -2993,7 +3208,9 @@ async fn catch_up_peer(
             }
             // Handled (or skipped for good): saved at once, so a round cut short keeps it.
             after = local_seq;
-            store.set_meta(&key, &after.to_string()).map_err(|e| q(&e))?;
+            store
+                .set_meta(&key, &after.to_string())
+                .map_err(|e| q(&e))?;
             if std::time::Instant::now() >= deadline {
                 return Ok(false);
             }
@@ -3001,7 +3218,9 @@ async fn catch_up_peer(
         if page < CATCH_UP_PAGE {
             // The window is read to its end.
             after = window_end;
-            store.set_meta(&key, &after.to_string()).map_err(|e| q(&e))?;
+            store
+                .set_meta(&key, &after.to_string())
+                .map_err(|e| q(&e))?;
         }
         if after < end && std::time::Instant::now() >= deadline {
             return Ok(false);
@@ -3024,7 +3243,9 @@ fn replay_would_reach_a_newer_meeting(
     let Ok(t) = serde_json::from_slice::<memory::MeetingForgotten>(plaintext) else {
         return Ok(false);
     };
-    if t.origin_epoch.is_some() || store.own_device_id().as_deref() == Some(t.origin_device_id.as_str()) {
+    if t.origin_epoch.is_some()
+        || store.own_device_id().as_deref() == Some(t.origin_device_id.as_str())
+    {
         return Ok(false);
     }
     let q = |e: &dyn std::fmt::Display| SyncEngineError::Query(e.to_string());
@@ -3034,7 +3255,10 @@ fn replay_would_reach_a_newer_meeting(
     else {
         return Ok(false);
     };
-    let start = store.get_meeting(local).map_err(|e| q(&e))?.map(|m| m.start_unix_ms);
+    let start = store
+        .get_meeting(local)
+        .map_err(|e| q(&e))?
+        .map(|m| m.start_unix_ms);
     Ok(t.source_start_unix_ms.is_none() || start != t.source_start_unix_ms)
 }
 
@@ -3042,9 +3266,11 @@ fn replay_would_reach_a_newer_meeting(
 /// entity tags (the relay's own form, keyed by the group key), so no raw calendar id outlives one round. Runs
 /// at the start of every round, whether or not the tagged rows can be deleted yet. Best effort.
 pub fn seal_client_cleanup(store: &Store, group_key: &GroupKey, own_device_id: &str) {
-    let sealed = store
-        .sync_entity_epoch()
-        .and_then(|epoch| store.seal_client_relay_cleanup(|identity| tag_for(group_key, own_device_id, &epoch, identity)));
+    let sealed = store.sync_entity_epoch().and_then(|epoch| {
+        store.seal_client_relay_cleanup(|identity| {
+            tag_for(group_key, own_device_id, &epoch, identity)
+        })
+    });
     if let Err(e) = sealed {
         eprintln!("[sync] client cleanup targets not sealed this round: {e}");
     }
@@ -3065,7 +3291,11 @@ const CLIENT_TAG_DELETE_SQL: &str =
 /// events by sealed entity tag once the ops index exists. Only `device_id = own` rows, each bounded by the
 /// forget time. Best effort and time-boxed like `delete_forgotten_meeting_rows`: what is left stays recorded
 /// for the next round.
-pub(crate) async fn delete_forgotten_client_rows(conn: &Connection, store: &Store, own_device_id: &str) {
+pub(crate) async fn delete_forgotten_client_rows(
+    conn: &Connection,
+    store: &Store,
+    own_device_id: &str,
+) {
     let delete_all = async {
         let targets = store
             .client_relay_cleanup(FORGOTTEN_ROWS_PER_ROUND)
@@ -3085,9 +3315,12 @@ pub(crate) async fn delete_forgotten_client_rows(conn: &Connection, store: &Stor
                 if !tags_ready {
                     continue;
                 }
-                conn.execute(CLIENT_TAG_DELETE_SQL, params![own_device_id, tag, not_after])
-                    .await
-                    .map_err(|e| e.to_string())?;
+                conn.execute(
+                    CLIENT_TAG_DELETE_SQL,
+                    params![own_device_id, tag, not_after],
+                )
+                .await
+                .map_err(|e| e.to_string())?;
             } else {
                 // `raw:`: sealed at the start of the next round.
                 continue;
@@ -3257,10 +3490,18 @@ impl RowFilter {
         if self.query_slice_tags().is_none() || self.no_pull_indexes.load(Ordering::Relaxed) {
             return false;
         }
-        *self.pull_indexes.get_or_init(|| relay_has_pull_indexes(conn)).await
+        *self
+            .pull_indexes
+            .get_or_init(|| relay_has_pull_indexes(conn))
+            .await
     }
 
-    fn new(options: &PullOptions, skip_skins: bool, now_unix_ms: i64, group_key: &GroupKey) -> Self {
+    fn new(
+        options: &PullOptions,
+        skip_skins: bool,
+        now_unix_ms: i64,
+        group_key: &GroupKey,
+    ) -> Self {
         let mut filter = RowFilter {
             capture_cutoff: options.capture_window_ms.map(|w| now_unix_ms - w),
             item_cutoff: options.item_window_ms.map(|w| now_unix_ms - w),
@@ -3310,11 +3551,16 @@ impl RowFilter {
         if skip_skins {
             types.retain(|t| t != ROW_TYPE_SKIN && t != ROW_TYPE_SKIN_IMAGE_CHUNK);
         }
-        filter.meetings_as_parents_only = !explicit_meeting && types.iter().any(|t| t == ROW_TYPE_MEETING);
+        filter.meetings_as_parents_only =
+            !explicit_meeting && types.iter().any(|t| t == ROW_TYPE_MEETING);
         let type_count = types.len();
         filter.row_types = Some(types);
-        filter.kind_tags = (!every_kind && !kinds.is_empty())
-            .then(|| kinds.iter().map(|kind| sync::kind_tag(group_key, kind)).collect());
+        filter.kind_tags = (!every_kind && !kinds.is_empty()).then(|| {
+            kinds
+                .iter()
+                .map(|kind| sync::kind_tag(group_key, kind))
+                .collect()
+        });
         if filter.kind_tags.is_some() {
             filter.slice_tags = filter.slices(&kinds, type_count, group_key);
         }
@@ -3327,7 +3573,12 @@ impl RowFilter {
     /// the item cutoff's through [`sync::MAX_MONTH_BUCKET`] (every month without a window, so Google events are
     /// still left out). A sliced row of the cutoff's month is fetched and checked after decrypting, like any
     /// other. `None` when the query would carry more than [`MAX_TAG_QUERY_VARIABLES`]; the kind tags alone then.
-    fn slices(&self, kinds: &[String], type_count: usize, group_key: &GroupKey) -> Option<Vec<String>> {
+    fn slices(
+        &self,
+        kinds: &[String],
+        type_count: usize,
+        group_key: &GroupKey,
+    ) -> Option<Vec<String>> {
         use sync::SourceClass;
         let first = self.item_cutoff.map_or(0, sync::month_bucket);
         let months = first..=sync::MAX_MONTH_BUCKET;
@@ -3348,7 +3599,11 @@ impl RowFilter {
         let mut tags = Vec::with_capacity(count);
         for kind in kinds {
             for class in classes(kind) {
-                tags.extend(months.clone().map(|month| sync::slice_tag(group_key, kind, *class, month)));
+                tags.extend(
+                    months
+                        .clone()
+                        .map(|month| sync::slice_tag(group_key, kind, *class, month)),
+                );
             }
         }
         Some(tags)
@@ -3389,20 +3644,26 @@ impl RowFilter {
         }
         let missing = is_no_such_kind_tag_column(&error);
         if missing && !self.no_kind_tag_column.swap(true, Ordering::Relaxed) {
-            eprintln!("[sync] the relay has no kind_tag column: this round fetches every item kind");
+            eprintln!(
+                "[sync] the relay has no kind_tag column: this round fetches every item kind"
+            );
         }
         missing
     }
 
     fn kind_allowed(&self, kind: &str) -> bool {
-        self.item_kinds.as_ref().is_none_or(|kinds| kinds.iter().any(|k| k == kind))
+        self.item_kinds
+            .as_ref()
+            .is_none_or(|kinds| kinds.iter().any(|k| k == kind))
     }
 
     /// A calendar event this pull leaves out for its source (see `PullOptions::non_google_calendar_only`).
     fn drops_calendar_source(&self, kind: &str, source: Option<&str>) -> bool {
         self.non_google_calendar_only
             && kind == "calendar_event"
-            && source.map(str::trim).is_none_or(|s| s.is_empty() || s == "google_calendar")
+            && source
+                .map(str::trim)
+                .is_none_or(|s| s.is_empty() || s == "google_calendar")
     }
 
     /// An `items` row of `kind` dated `ts_unix_ms` is outside a window.
@@ -3465,7 +3726,18 @@ pub(crate) async fn runner_pull_round(
     options: &PullOptions,
 ) -> Result<RunnerRound, SyncEngineError> {
     let mut stats = Vec::new();
-    let result = pull_round_mode(conn, group_key, store, own_device_id, CATCH_UP_PACE, options, true, true, &mut stats).await;
+    let result = pull_round_mode(
+        conn,
+        group_key,
+        store,
+        own_device_id,
+        CATCH_UP_PACE,
+        options,
+        true,
+        true,
+        &mut stats,
+    )
+    .await;
     if let (Ok(json), Ok(mut last)) = (serde_json::to_string(&stats), LAST_PULL_STATS.lock()) {
         *last = json;
     }
@@ -3482,8 +3754,14 @@ pub(crate) async fn runner_pull_round(
         skip_item_window: stats.iter().map(|s| s.skip_item_window).sum(),
         refetch: stats.iter().map(|s| s.refetch).sum(),
         deferred: stats.iter().map(|s| s.deferred).sum(),
-        fetch_ms: stats.iter().map(|s| s.fetch_ms + s.gap_fetch_us / 1000).sum(),
-        apply_ms: stats.iter().map(|s| s.apply_ms + s.gap_apply_us / 1000).sum(),
+        fetch_ms: stats
+            .iter()
+            .map(|s| s.fetch_ms + s.gap_fetch_us / 1000)
+            .sum(),
+        apply_ms: stats
+            .iter()
+            .map(|s| s.apply_ms + s.gap_apply_us / 1000)
+            .sum(),
         slice_tags: stats.iter().map(|s| s.slice_tags).max().unwrap_or(0),
         pull_index: stats.iter().any(|s| s.pull_index),
         ..Default::default()
@@ -3526,8 +3804,15 @@ pub(crate) struct RunnerRound {
 /// settings and filings (`topic_seed`, `topic_verdict`) back while any device lacks it, so until then a pull
 /// that read every row can still be missing an exclusion: the cloud runner must not treat "no client
 /// settings read" as "nothing excluded".
-pub(crate) async fn client_settings_published(conn: &Connection, own_device_id: &str) -> Result<bool, SyncEngineError> {
-    Ok(peers_without_marker(conn, own_device_id, ROW_TYPE_TOPICS_CAPABILITY).await?.is_empty())
+pub(crate) async fn client_settings_published(
+    conn: &Connection,
+    own_device_id: &str,
+) -> Result<bool, SyncEngineError> {
+    Ok(
+        peers_without_marker(conn, own_device_id, ROW_TYPE_TOPICS_CAPABILITY)
+            .await?
+            .is_empty(),
+    )
 }
 
 /// The cloud runner's own earlier results: the `row_types` rows (of `routine_run` and `meeting_prep`) this
@@ -3542,19 +3827,39 @@ pub(crate) async fn read_own_results(
     own_device_id: &str,
     row_types: &[&str],
 ) -> Result<usize, SyncEngineError> {
-    let row_types: Vec<&str> = row_types.iter().copied().filter(|t| [ROW_TYPE_ROUTINE_RUN, ROW_TYPE_MEETING_PREP].contains(t)).collect();
+    let row_types: Vec<&str> = row_types
+        .iter()
+        .copied()
+        .filter(|t| [ROW_TYPE_ROUTINE_RUN, ROW_TYPE_MEETING_PREP].contains(t))
+        .collect();
     if row_types.is_empty() {
         return Ok(0);
     }
-    let placeholders = (0..row_types.len()).map(|i| format!("?{}", i + 2)).collect::<Vec<_>>().join(", ");
+    let placeholders = (0..row_types.len())
+        .map(|i| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!("SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND row_type IN ({placeholders}) ORDER BY local_seq");
     let mut values = vec![Value::Text(own_device_id.to_string())];
     values.extend(row_types.iter().map(|t| Value::Text(t.to_string())));
-    let rows = conn.query(&sql, Params::Positional(values)).await.map_err(query_err)?;
+    let rows = conn
+        .query(&sql, Params::Positional(values))
+        .await
+        .map_err(query_err)?;
     let mut applied = 0;
     for env in read_envelopes(rows).await? {
-        let Some(plaintext) = decrypt_row(group_key, own_device_id, &env) else { continue };
-        if apply_parent_row(store, own_device_id, env.local_seq, &env.row_type, &plaintext).is_ok() {
+        let Some(plaintext) = decrypt_row(group_key, own_device_id, &env) else {
+            continue;
+        };
+        if apply_parent_row(
+            store,
+            own_device_id,
+            env.local_seq,
+            &env.row_type,
+            &plaintext,
+        )
+        .is_ok()
+        {
             applied += 1;
         }
     }
@@ -3568,7 +3873,9 @@ pub(crate) async fn read_own_results(
 /// pull budget. A pull that does not read every row is still reported incomplete, so nothing runs on rows
 /// a delete removed. Call only on a store that has never pulled.
 pub(crate) fn mark_new_store_tombstones_read(store: &Store) -> Result<(), SyncEngineError> {
-    store.set_meta(TOMBSTONE_CATCH_UP_KEY, TOMBSTONE_TYPES_VERSION).map_err(query_err)
+    store
+        .set_meta(TOMBSTONE_CATCH_UP_KEY, TOMBSTONE_TYPES_VERSION)
+        .map_err(query_err)
 }
 
 /// Whether this database has read every peer's tombstones once ([`catch_up_tombstones`]). A desktop or
@@ -3576,13 +3883,26 @@ pub(crate) fn mark_new_store_tombstones_read(store: &Store) -> Result<(), SyncEn
 /// ([`mark_new_store_tombstones_read`]).
 pub(crate) fn tombstones_caught_up(store: &Store) -> bool {
     old_build_puller()
-        || store.get_meta(TOMBSTONE_CATCH_UP_KEY).ok().flatten().as_deref() == Some(TOMBSTONE_TYPES_VERSION)
+        || store
+            .get_meta(TOMBSTONE_CATCH_UP_KEY)
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some(TOMBSTONE_TYPES_VERSION)
 }
 
 /// Whether any peer's rows still wait on a dependency (a transcript line whose meeting was not yet read).
-pub(crate) async fn any_pending_dependency(conn: &Connection, store: &Store, own_device_id: &str) -> Result<bool, SyncEngineError> {
+pub(crate) async fn any_pending_dependency(
+    conn: &Connection,
+    store: &Store,
+    own_device_id: &str,
+) -> Result<bool, SyncEngineError> {
     for peer in distinct_peer_device_ids(conn, own_device_id).await? {
-        if !store.list_sync_pending_dependencies(&peer).map_err(query_err)?.is_empty() {
+        if !store
+            .list_sync_pending_dependencies(&peer)
+            .map_err(query_err)?
+            .is_empty()
+        {
             return Ok(true);
         }
     }
@@ -3591,7 +3911,10 @@ pub(crate) async fn any_pending_dependency(conn: &Connection, store: &Store, own
 
 /// The highest `local_seq` this device has on the relay (0 with none): the runner's per-run store
 /// numbers its rows above it.
-pub(crate) async fn own_top_seq(conn: &Connection, own_device_id: &str) -> Result<i64, SyncEngineError> {
+pub(crate) async fn own_top_seq(
+    conn: &Connection,
+    own_device_id: &str,
+) -> Result<i64, SyncEngineError> {
     Ok(peer_top_seq(conn, own_device_id).await?.unwrap_or(0))
 }
 
@@ -3693,7 +4016,9 @@ struct PeerPullStats {
 impl PeerPullStats {
     /// Called after a fetch, so a query that fell back for a missing `slice_tag` column counts none.
     fn note_slice_tags(&mut self, filter: &RowFilter) {
-        self.slice_tags = self.slice_tags.max(filter.query_slice_tags().map_or(0, <[String]>::len));
+        self.slice_tags = self
+            .slice_tags
+            .max(filter.query_slice_tags().map_or(0, <[String]>::len));
     }
 }
 
@@ -3922,21 +4247,35 @@ async fn pull_round_mode(
         let pass_started = std::time::Instant::now();
         let mut from = cursor;
         let (full_page, processed_through) = loop {
-            let mut window_hi = windowed_top.map(|top| from.saturating_add(filtered_pull_span()).min(top));
+            let mut window_hi =
+                windowed_top.map(|top| from.saturating_add(filtered_pull_span()).min(top));
             let fetch_started = std::time::Instant::now();
             // With the relay's pull indexes the window is the whole range up to the peer's top. Its cost tracks
             // matches, not positions, but not linearly (Q1/Q2 ~ matches^2 / limit, Q3 ~ unsliced rows; see
             // [`fetch_rows_indexed`]). If the indexed fetch gives way, this page scans its span window.
             let indexed = match windowed_top {
                 Some(top) if filter.use_pull_indexes(conn).await => {
-                    fetch_rows_indexed(conn, peer, from, top, rows, &filter).await?.inspect(|_| window_hi = Some(top))
+                    fetch_rows_indexed(conn, peer, from, top, rows, &filter)
+                        .await?
+                        .inspect(|_| window_hi = Some(top))
                 }
                 _ => None,
             };
             let indexed_used = indexed.is_some();
             let (envelopes, windowed) = match indexed {
                 Some(envelopes) => (envelopes, true),
-                None => fetch_rows_since(conn, peer, from, window_hi.unwrap_or(i64::MAX), rows, skip_skins, &filter).await?,
+                None => {
+                    fetch_rows_since(
+                        conn,
+                        peer,
+                        from,
+                        window_hi.unwrap_or(i64::MAX),
+                        rows,
+                        skip_skins,
+                        &filter,
+                    )
+                    .await?
+                }
             };
             stats.fetch_ms += fetch_started.elapsed().as_millis() as u64;
             stats.pull_index |= indexed_used;
@@ -3962,7 +4301,16 @@ async fn pull_round_mode(
             let page = with_defer_embedding(
                 store,
                 defer,
-                apply_page(conn, group_key, store, peer, &envelopes, page_budget, &filter, stats),
+                apply_page(
+                    conn,
+                    group_key,
+                    store,
+                    peer,
+                    &envelopes,
+                    page_budget,
+                    &filter,
+                    stats,
+                ),
             )
             .await;
             let page = page?;
@@ -4168,7 +4516,11 @@ async fn pull_gaps(
         // back to span windows from the gap's current top.
         loop {
             let mut window_lo = match filter.query_kind_tags() {
-                Some(_) => gap_lo.max(gap_hi.saturating_sub(filtered_pull_span()).saturating_sub(1)),
+                Some(_) => gap_lo.max(
+                    gap_hi
+                        .saturating_sub(filtered_pull_span())
+                        .saturating_sub(1),
+                ),
                 None => gap_lo,
             };
             let fetch_started = std::time::Instant::now();
@@ -4186,7 +4538,12 @@ async fn pull_gaps(
             let indexed_used = indexed.is_some();
             let (envelopes, windowed) = match indexed {
                 Some(envelopes) => (envelopes, true),
-                None => fetch_gap_rows(conn, peer, gap_lo, window_lo, gap_hi, rows, skip_skins, filter).await?,
+                None => {
+                    fetch_gap_rows(
+                        conn, peer, gap_lo, window_lo, gap_hi, rows, skip_skins, filter,
+                    )
+                    .await?
+                }
             };
             stats.gap_fetch_us += fetch_started.elapsed().as_micros() as u64;
             stats.pull_index |= indexed_used;
@@ -4256,7 +4613,11 @@ struct PageOutcome {
 /// however it ends: also when the future is dropped at an `.await` (the round's timeout cancels
 /// it, for example during a pause in [`apply_page`]). Left on, the connection would store every
 /// later row without an embedding, and the reindex sweep would not be revived to add them.
-async fn with_defer_embedding<T>(store: &Store, defer: bool, fut: impl std::future::Future<Output = T>) -> T {
+async fn with_defer_embedding<T>(
+    store: &Store,
+    defer: bool,
+    fut: impl std::future::Future<Output = T>,
+) -> T {
     struct Restore<'a> {
         store: &'a Store,
         was: bool,
@@ -4266,7 +4627,10 @@ async fn with_defer_embedding<T>(store: &Store, defer: bool, fut: impl std::futu
             self.store.set_defer_embedding(self.was);
         }
     }
-    let _restore = Restore { store, was: store.set_defer_embedding(defer) };
+    let _restore = Restore {
+        store,
+        was: store.set_defer_embedding(defer),
+    };
     fut.await
 }
 
@@ -4510,7 +4874,10 @@ struct OriginEpoch {
 }
 
 fn origin_epoch_of(plaintext: &[u8]) -> Option<String> {
-    serde_json::from_slice::<OriginEpoch>(plaintext).ok().and_then(|e| e.origin_epoch).filter(|e| !e.is_empty())
+    serde_json::from_slice::<OriginEpoch>(plaintext)
+        .ok()
+        .and_then(|e| e.origin_epoch)
+        .filter(|e| !e.is_empty())
 }
 
 /// Decrypts and decodes one row known (or suspected) to need FK resolution before
@@ -4556,14 +4923,25 @@ fn held_meeting_key(peer: &str, source_id: i64) -> String {
 }
 
 /// Remembers a held-back meeting row by key, keeping the newest (highest `local_seq`) seen.
-fn remember_parent_meeting(store: &Store, peer: &str, source_id: i64, local_seq: i64) -> Result<(), SyncEngineError> {
+fn remember_parent_meeting(
+    store: &Store,
+    peer: &str,
+    source_id: i64,
+    local_seq: i64,
+) -> Result<(), SyncEngineError> {
     if remembered_parent_meeting(store, peer, source_id)?.is_some_and(|seen| seen >= local_seq) {
         return Ok(());
     }
-    store.set_meta(&held_meeting_key(peer, source_id), &local_seq.to_string()).map_err(query_err)
+    store
+        .set_meta(&held_meeting_key(peer, source_id), &local_seq.to_string())
+        .map_err(query_err)
 }
 
-fn remembered_parent_meeting(store: &Store, peer: &str, source_id: i64) -> Result<Option<i64>, SyncEngineError> {
+fn remembered_parent_meeting(
+    store: &Store,
+    peer: &str,
+    source_id: i64,
+) -> Result<Option<i64>, SyncEngineError> {
     Ok(store
         .get_meta(&held_meeting_key(peer, source_id))
         .map_err(query_err)?
@@ -4632,7 +5010,8 @@ async fn resolve_segments(
     let mut forgotten = Vec::with_capacity(segments.len());
     for (_, pending) in &segments {
         let epoch = match pending {
-            PendingSegment::Legacy { origin_epoch, .. } | PendingSegment::Item { origin_epoch, .. } => origin_epoch.as_deref(),
+            PendingSegment::Legacy { origin_epoch, .. }
+            | PendingSegment::Item { origin_epoch, .. } => origin_epoch.as_deref(),
         };
         forgotten.push(forgotten_child(store, peer, epoch, fallback(pending).0)?);
     }
@@ -4665,7 +5044,11 @@ async fn resolve_segments(
             if let Some(plaintext) = decrypt_row(group_key, peer, &meeting_env) {
                 if cutoff.is_some() {
                     if let Ok(payload) = serde_json::from_slice::<MeetingPayload>(&plaintext) {
-                        fetched_starts.push((meeting_env.local_seq, payload.source_meeting_id, payload.meeting.start_unix_ms));
+                        fetched_starts.push((
+                            meeting_env.local_seq,
+                            payload.source_meeting_id,
+                            payload.meeting.start_unix_ms,
+                        ));
                     }
                 }
                 fetched.push((meeting_env, plaintext));
@@ -4684,26 +5067,37 @@ async fn resolve_segments(
         if let Some(cutoff) = cutoff {
             if let Ok(payload) = serde_json::from_slice::<MeetingPayload>(plaintext) {
                 // Only the parent of a line that gets applied: an item line is already in the window.
-                let needed = segments.iter().zip(&forgotten).any(|((_, pending), forgotten)| {
-                    let (source_id, seq) = fallback(pending);
-                    let names_it = (source_id.is_some() && source_id == payload.source_meeting_id)
-                        || seq == Some(meeting_env.local_seq);
-                    !*forgotten
-                        && names_it
-                        && match pending {
-                            PendingSegment::Item { .. } => true,
-                            PendingSegment::Legacy { segment, .. } => {
-                                let start = fetched_start(source_id, seq).unwrap_or(payload.meeting.start_unix_ms);
-                                segment.start_cs * 10 + start >= cutoff
+                let needed = segments
+                    .iter()
+                    .zip(&forgotten)
+                    .any(|((_, pending), forgotten)| {
+                        let (source_id, seq) = fallback(pending);
+                        let names_it = (source_id.is_some()
+                            && source_id == payload.source_meeting_id)
+                            || seq == Some(meeting_env.local_seq);
+                        !*forgotten
+                            && names_it
+                            && match pending {
+                                PendingSegment::Item { .. } => true,
+                                PendingSegment::Legacy { segment, .. } => {
+                                    let start = fetched_start(source_id, seq)
+                                        .unwrap_or(payload.meeting.start_unix_ms);
+                                    segment.start_cs * 10 + start >= cutoff
+                                }
                             }
-                        }
-                });
+                    });
                 if !needed {
                     continue;
                 }
             }
         }
-        apply_parent_row(store, peer, meeting_env.local_seq, &meeting_env.row_type, plaintext)?;
+        apply_parent_row(
+            store,
+            peer,
+            meeting_env.local_seq,
+            &meeting_env.row_type,
+            plaintext,
+        )?;
     }
 
     // The transcript lines apply one write each, back to back: pause now and then, as the
@@ -4726,7 +5120,10 @@ async fn resolve_segments(
             let start = match fetched_start(source_meeting_id, fallback_local_seq) {
                 Some(start) => Some(start),
                 None => match resolve(source_meeting_id, fallback_local_seq)? {
-                    Some(id) => store.get_meeting(id).map_err(query_err)?.map(|m| m.start_unix_ms),
+                    Some(id) => store
+                        .get_meeting(id)
+                        .map_err(query_err)?
+                        .map(|m| m.start_unix_ms),
                     None => None,
                 },
             };
@@ -5189,24 +5586,38 @@ pub(crate) mod tests {
         seed_peer_capability_marker(&conn, "dev-a").await;
 
         round_peers::begin("dev-own");
-        assert!(!all_peers_items_capable(&conn, "dev-own").await.unwrap(), "dev-b has no marker");
+        assert!(
+            !all_peers_items_capable(&conn, "dev-own").await.unwrap(),
+            "dev-b has no marker"
+        );
         assert_eq!(
-            peers_without_marker(&conn, "dev-own", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap(),
+            peers_without_marker(&conn, "dev-own", ROW_TYPE_ITEMS_CAPABILITY)
+                .await
+                .unwrap(),
             ["dev-b"]
         );
         // Changes on the relay during the round are seen next round, not this one.
         seed_peer_capability_marker(&conn, "dev-b").await;
         seed_rows(&conn, "dev-c", 1).await;
         assert!(!all_peers_items_capable(&conn, "dev-own").await.unwrap());
-        assert_eq!(distinct_peer_device_ids(&conn, "dev-own").await.unwrap(), ["dev-a", "dev-b"]);
+        assert_eq!(
+            distinct_peer_device_ids(&conn, "dev-own").await.unwrap(),
+            ["dev-a", "dev-b"]
+        );
         // Forgetting the markers (a marker this round published) reads them again.
         round_peers::forget_markers();
         assert!(all_peers_items_capable(&conn, "dev-own").await.unwrap());
         round_peers::end();
 
         // Outside a round: the relay as it is now.
-        assert_eq!(distinct_peer_device_ids(&conn, "dev-own").await.unwrap(), ["dev-a", "dev-b", "dev-c"]);
-        assert!(!all_peers_items_capable(&conn, "dev-own").await.unwrap(), "dev-c has no marker");
+        assert_eq!(
+            distinct_peer_device_ids(&conn, "dev-own").await.unwrap(),
+            ["dev-a", "dev-b", "dev-c"]
+        );
+        assert!(
+            !all_peers_items_capable(&conn, "dev-own").await.unwrap(),
+            "dev-c has no marker"
+        );
     }
 
     #[tokio::test]
@@ -6443,12 +6854,19 @@ pub(crate) mod tests {
             .query(&format!("SELECT kind_tag FROM sync_row WHERE {filter}"), ())
             .await
             .unwrap();
-        rows.next().await.unwrap().unwrap().get::<Option<String>>(0).unwrap()
+        rows.next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get::<Option<String>>(0)
+            .unwrap()
     }
 
     fn push_fixture_store() -> Store {
         let store = Store::open_in_memory().unwrap();
-        store.insert_capture_item(&sample_new_capture_item("a capture")).unwrap();
+        store
+            .insert_capture_item(&sample_new_capture_item("a capture"))
+            .unwrap();
         store
             .upsert_calendar_event_items(&[memory::NewCalendarEventItem {
                 device_id: "dev-a".to_string(),
@@ -6481,7 +6899,10 @@ pub(crate) mod tests {
         assert!(!has_column(&conn, "kind_tag").await);
         assert!(ensure_kind_tag_column(&conn).await);
         assert!(has_column(&conn, "kind_tag").await);
-        assert!(ensure_kind_tag_column(&conn).await, "a second call is a no-op");
+        assert!(
+            ensure_kind_tag_column(&conn).await,
+            "a second call is a no-op"
+        );
     }
 
     #[tokio::test]
@@ -6507,7 +6928,11 @@ pub(crate) mod tests {
             "a meeting row stays NULL"
         );
         assert_eq!(
-            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL AND row_type != 'items'").await,
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL AND row_type != 'items'"
+            )
+            .await,
             0
         );
     }
@@ -6522,8 +6947,13 @@ pub(crate) mod tests {
         let rows = store.unpushed_item_rows("dev-a", 0).unwrap();
         assert!(!rows.is_empty());
         for row in &rows {
-            let SyncableRow::Item { item, .. } = row else { panic!("item rows only") };
-            assert_eq!(kind_tag_for(&key, row), Some(sync::kind_tag(&key, &item.kind)));
+            let SyncableRow::Item { item, .. } = row else {
+                panic!("item rows only")
+            };
+            assert_eq!(
+                kind_tag_for(&key, row),
+                Some(sync::kind_tag(&key, &item.kind))
+            );
         }
         let meetings = store.unpushed_meeting_rows("dev-a", 0).unwrap();
         assert!(!meetings.is_empty());
@@ -6536,7 +6966,9 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = local_connection(&dir.path().join("relay.db")).await;
         conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
-        conn.execute("ALTER TABLE sync_row ADD COLUMN kind_tag TEXT", ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row ADD COLUMN kind_tag TEXT", ())
+            .await
+            .unwrap();
         ENTITY_TAG_COLUMN_SEEN.set();
         KIND_TAG_COLUMN_SEEN.set();
         let key = GroupKey::generate();
@@ -6551,8 +6983,19 @@ pub(crate) mod tests {
                 .map(|t| t.len()),
             Some(24)
         );
-        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL").await, 2);
-        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1, "one entity_tag miss, then kind-only");
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL"
+            )
+            .await,
+            2
+        );
+        assert_eq!(
+            FAILED_TAGGED_INSERTS.with(|c| c.get()),
+            1,
+            "one entity_tag miss, then kind-only"
+        );
     }
 
     /// Account-switch case: the latch says yes but this relay has no column.
@@ -6565,9 +7008,18 @@ pub(crate) mod tests {
         let store = push_fixture_store();
         FAILED_TAGGED_INSERTS.with(|c| c.set(0));
 
-        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a")
+            .await
+            .unwrap();
 
-        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 2);
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'"
+            )
+            .await,
+            2
+        );
         assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1);
     }
 
@@ -6581,25 +7033,46 @@ pub(crate) mod tests {
         let store = push_fixture_store();
         FAILED_TAGGED_INSERTS.with(|c| c.set(0));
 
-        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a")
+            .await
+            .unwrap();
 
-        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 2);
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'"
+            )
+            .await,
+            2
+        );
         assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 0);
     }
 
     #[test]
     fn missing_kind_tag_column_is_recognized() {
-        assert!(is_missing_kind_tag_column("table sync_row has no column named kind_tag"));
-        assert!(!is_missing_kind_tag_column("table sync_row has no column named entity_tag"));
+        assert!(is_missing_kind_tag_column(
+            "table sync_row has no column named kind_tag"
+        ));
+        assert!(!is_missing_kind_tag_column(
+            "table sync_row has no column named entity_tag"
+        ));
         assert!(!is_missing_kind_tag_column("database is locked"));
     }
 
     async fn slice_tag_of(conn: &Connection, filter: &str) -> Option<String> {
         let mut rows = conn
-            .query(&format!("SELECT slice_tag FROM sync_row WHERE {filter}"), ())
+            .query(
+                &format!("SELECT slice_tag FROM sync_row WHERE {filter}"),
+                (),
+            )
             .await
             .unwrap();
-        rows.next().await.unwrap().unwrap().get::<Option<String>>(0).unwrap()
+        rows.next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get::<Option<String>>(0)
+            .unwrap()
     }
 
     #[tokio::test]
@@ -6621,7 +7094,10 @@ pub(crate) mod tests {
         assert!(!has_column(&conn, "slice_tag").await);
         assert!(ensure_slice_tag_column(&conn).await);
         assert!(has_column(&conn, "slice_tag").await);
-        assert!(ensure_slice_tag_column(&conn).await, "a second call is a no-op");
+        assert!(
+            ensure_slice_tag_column(&conn).await,
+            "a second call is a no-op"
+        );
         ensure_content_schema(&conn).await.unwrap();
     }
 
@@ -6635,15 +7111,31 @@ pub(crate) mod tests {
 
         push_content(&conn, &key, &store, "dev-a").await.unwrap();
 
-        let calendar = sync::slice_tag(&key, "calendar_event", sync::SourceClass::Google, sync::month_bucket(5000));
-        let capture = sync::slice_tag(&key, "capture", sync::SourceClass::None, sync::month_bucket(1000));
+        let calendar = sync::slice_tag(
+            &key,
+            "calendar_event",
+            sync::SourceClass::Google,
+            sync::month_bucket(5000),
+        );
+        let capture = sync::slice_tag(
+            &key,
+            "capture",
+            sync::SourceClass::None,
+            sync::month_bucket(1000),
+        );
         for tag in [calendar, capture] {
-            let sql = format!("SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND slice_tag = '{tag}'");
+            let sql = format!(
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND slice_tag = '{tag}'"
+            );
             assert_eq!(single_i64(&conn, &sql).await, 1);
         }
         assert_eq!(slice_tag_of(&conn, "row_type = 'meeting'").await, None);
         assert_eq!(
-            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE slice_tag IS NOT NULL AND row_type != 'items'").await,
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE slice_tag IS NOT NULL AND row_type != 'items'"
+            )
+            .await,
             0
         );
     }
@@ -6653,7 +7145,9 @@ pub(crate) mod tests {
     async fn slice_tag_for_equals_the_tag_derived_from_the_encoded_payload() {
         let key = GroupKey::generate();
         let store = Store::open_in_memory().unwrap();
-        store.insert_capture_item(&sample_new_capture_item("a capture")).unwrap();
+        store
+            .insert_capture_item(&sample_new_capture_item("a capture"))
+            .unwrap();
         for source in ["google_calendar", "outlook"] {
             store
                 .upsert_calendar_event_items(&[memory::NewCalendarEventItem {
@@ -6673,10 +7167,17 @@ pub(crate) mod tests {
             let (_, _, payload_json) = encode_row(row).unwrap();
             let pushed = slice_tag_for(&key, row);
             assert!(pushed.is_some());
-            assert_eq!(pushed, item_payload_slice_tag(&key, payload_json.as_bytes()));
+            assert_eq!(
+                pushed,
+                item_payload_slice_tag(&key, payload_json.as_bytes())
+            );
             seen.insert(pushed);
         }
-        assert_eq!(seen.len(), 3, "capture, google and other calendar are three distinct slices");
+        assert_eq!(
+            seen.len(),
+            3,
+            "capture, google and other calendar are three distinct slices"
+        );
         let meetings = store.unpushed_meeting_rows("dev-a", 0).unwrap();
         assert!(meetings.iter().all(|r| slice_tag_for(&key, r).is_none()));
     }
@@ -6697,23 +7198,51 @@ pub(crate) mod tests {
             attempts: 0,
         };
         let month = sync::month_bucket(1_700_000_000_000);
-        let cal = op(r#"{"kind":"calendar_event","ts_unix_ms":1700000000000}"#, ROW_TYPE_ITEMS);
+        let cal = op(
+            r#"{"kind":"calendar_event","ts_unix_ms":1700000000000}"#,
+            ROW_TYPE_ITEMS,
+        );
         assert_eq!(
             outbox_slice_tag(&key, &cal),
-            Some(sync::slice_tag(&key, "calendar_event", sync::SourceClass::Google, month))
+            Some(sync::slice_tag(
+                &key,
+                "calendar_event",
+                sync::SourceClass::Google,
+                month
+            ))
         );
-        let other = op(r#"{"kind":"calendar_event","source":"outlook","ts_unix_ms":1700000000000}"#, ROW_TYPE_ITEMS);
+        let other = op(
+            r#"{"kind":"calendar_event","source":"outlook","ts_unix_ms":1700000000000}"#,
+            ROW_TYPE_ITEMS,
+        );
         assert_eq!(
             outbox_slice_tag(&key, &other),
-            Some(sync::slice_tag(&key, "calendar_event", sync::SourceClass::Other, month))
+            Some(sync::slice_tag(
+                &key,
+                "calendar_event",
+                sync::SourceClass::Other,
+                month
+            ))
         );
-        let capture = op(r#"{"kind":"capture","ts_unix_ms":1700000000000}"#, ROW_TYPE_ITEMS);
+        let capture = op(
+            r#"{"kind":"capture","ts_unix_ms":1700000000000}"#,
+            ROW_TYPE_ITEMS,
+        );
         assert_eq!(
             outbox_slice_tag(&key, &capture),
-            Some(sync::slice_tag(&key, "capture", sync::SourceClass::None, month))
+            Some(sync::slice_tag(
+                &key,
+                "capture",
+                sync::SourceClass::None,
+                month
+            ))
         );
         let no_ts = op(r#"{"kind":"capture"}"#, ROW_TYPE_ITEMS);
-        assert_eq!(outbox_slice_tag(&key, &no_ts), None, "no ts_unix_ms: left NULL, not guessed");
+        assert_eq!(
+            outbox_slice_tag(&key, &no_ts),
+            None,
+            "no ts_unix_ms: left NULL, not guessed"
+        );
         let meeting = op(r#"{"kind":"capture","ts_unix_ms":1}"#, ROW_TYPE_MEETING);
         assert_eq!(outbox_slice_tag(&key, &meeting), None);
     }
@@ -6725,17 +7254,39 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = local_connection(&dir.path().join("relay.db")).await;
         conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
-        conn.execute("ALTER TABLE sync_row ADD COLUMN kind_tag TEXT", ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row ADD COLUMN kind_tag TEXT", ())
+            .await
+            .unwrap();
         KIND_TAG_COLUMN_SEEN.set();
         SLICE_TAG_COLUMN_SEEN.set();
         let store = push_fixture_store();
         FAILED_TAGGED_INSERTS.with(|c| c.set(0));
 
-        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a")
+            .await
+            .unwrap();
 
-        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 2);
-        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL").await, 2);
-        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1, "one slice_tag miss, then no more asking");
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'"
+            )
+            .await,
+            2
+        );
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL"
+            )
+            .await,
+            2
+        );
+        assert_eq!(
+            FAILED_TAGGED_INSERTS.with(|c| c.get()),
+            1,
+            "one slice_tag miss, then no more asking"
+        );
     }
 
     /// `kind_tag` missing but `slice_tag` present: the kind arm fires first, slice_tag is still written.
@@ -6744,16 +7295,31 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = local_connection(&dir.path().join("relay.db")).await;
         conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
-        conn.execute("ALTER TABLE sync_row ADD COLUMN slice_tag TEXT", ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row ADD COLUMN slice_tag TEXT", ())
+            .await
+            .unwrap();
         KIND_TAG_COLUMN_SEEN.set();
         SLICE_TAG_COLUMN_SEEN.set();
         let store = push_fixture_store();
         FAILED_TAGGED_INSERTS.with(|c| c.set(0));
 
-        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a")
+            .await
+            .unwrap();
 
-        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE slice_tag IS NOT NULL").await, 2);
-        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1, "one kind_tag miss, then slice-only");
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE slice_tag IS NOT NULL"
+            )
+            .await,
+            2
+        );
+        assert_eq!(
+            FAILED_TAGGED_INSERTS.with(|c| c.get()),
+            1,
+            "one kind_tag miss, then slice-only"
+        );
     }
 
     /// Both newer columns missing with both latches set: two misses (one per arm), then untagged.
@@ -6767,16 +7333,29 @@ pub(crate) mod tests {
         let store = push_fixture_store();
         FAILED_TAGGED_INSERTS.with(|c| c.set(0));
 
-        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a")
+            .await
+            .unwrap();
 
-        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 2);
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'"
+            )
+            .await,
+            2
+        );
         assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 2);
     }
 
     #[test]
     fn missing_slice_tag_column_is_recognized() {
-        assert!(is_missing_slice_tag_column("table sync_row has no column named slice_tag"));
-        assert!(!is_missing_slice_tag_column("table sync_row has no column named kind_tag"));
+        assert!(is_missing_slice_tag_column(
+            "table sync_row has no column named slice_tag"
+        ));
+        assert!(!is_missing_slice_tag_column(
+            "table sync_row has no column named kind_tag"
+        ));
         assert!(!is_missing_slice_tag_column("database is locked"));
     }
 
@@ -7540,7 +8119,10 @@ pub(crate) mod tests {
         let store = Store::open_in_memory().unwrap();
         let body = serde_json::to_vec(&snapshot_json("maximus", crate::now_unix_ms())).unwrap();
         apply_parent_row(&store, "peer", 1, ROW_TYPE_TOPIC_PAGE_SNAPSHOT, &body).unwrap();
-        let got = store.topic_page_snapshot("maximus").unwrap().expect("stored");
+        let got = store
+            .topic_page_snapshot("maximus")
+            .unwrap()
+            .expect("stored");
         assert_eq!(got.name, "Maximus");
 
         // A payload that does not parse is dropped, like the other topic rows.
@@ -8398,7 +8980,10 @@ pub(crate) mod tests {
     }
 
     fn mcp_item_writer() -> memory::mcp_items::McpWriter {
-        memory::mcp_items::McpWriter { token_id: 1, client_name: "Claude Code".to_string() }
+        memory::mcp_items::McpWriter {
+            token_id: 1,
+            client_name: "Claude Code".to_string(),
+        }
     }
 
     fn mcp_new_item(id: &str) -> memory::mcp_items::NewMcpItem {
@@ -8423,7 +9008,10 @@ pub(crate) mod tests {
         ensure_content_schema(&conn).await.unwrap();
         let group_key = GroupKey::generate();
         let now = crate::now_unix_ms();
-        for (seq, kind, text) in [(1, memory::MCP_ITEM_KIND, "quokkacanary added"), (2, "capture", "plain peer capture")] {
+        for (seq, kind, text) in [
+            (1, memory::MCP_ITEM_KIND, "quokkacanary added"),
+            (2, "capture", "plain peer capture"),
+        ] {
             let json = serde_json::to_string(&ItemPayload {
                 source_meeting_id: None,
                 meeting_local_seq: None,
@@ -8434,10 +9022,22 @@ pub(crate) mod tests {
         }
         let store = Store::open_in_memory().unwrap();
         let mut stats = Vec::new();
-        pull_round(&conn, &group_key, &store, "dev-b", NORMAL_PACE, &PullOptions::default(), true, &mut stats)
-            .await
-            .unwrap();
-        assert!(applied(&store, 2, ROW_TYPE_ITEMS), "the capture applies, so the pull ran");
+        pull_round(
+            &conn,
+            &group_key,
+            &store,
+            "dev-b",
+            NORMAL_PACE,
+            &PullOptions::default(),
+            true,
+            &mut stats,
+        )
+        .await
+        .unwrap();
+        assert!(
+            applied(&store, 2, ROW_TYPE_ITEMS),
+            "the capture applies, so the pull ran"
+        );
         assert!(!applied(&store, 1, ROW_TYPE_ITEMS));
         assert_eq!(captures_with_text(&store, "quokkacanary added"), 0);
         assert!(store.search_keyword("quokkacanary", 10).unwrap().is_empty());
@@ -8449,7 +9049,10 @@ pub(crate) mod tests {
         })
         .unwrap();
         apply_parent_row(&store, "dev-c", 9, ROW_TYPE_ITEMS, &body).unwrap();
-        assert!(store.resolve_sync_row_map("dev-c", 9, ROW_TYPE_ITEMS).unwrap().is_none());
+        assert!(store
+            .resolve_sync_row_map("dev-c", 9, ROW_TYPE_ITEMS)
+            .unwrap()
+            .is_none());
         assert!(store.search_keyword("quokkacanary", 10).unwrap().is_empty());
     }
 
@@ -8463,20 +9066,47 @@ pub(crate) mod tests {
         let group_key = GroupKey::generate();
         let store = Store::open_in_memory().unwrap();
         store.set_own_device_id("device-a");
-        store.insert_capture_item(&sample_new_capture_item("a capture that is pushed")).unwrap();
-        let clock = memory::mcp_items::WriteClock { now_unix_ms: 1_795_269_780_000, day_start_unix_ms: 1_795_219_200_000 };
-        { let live: &memory::Store = &store; while live.list_mcp_client_tokens().unwrap().len() < 12 { live.insert_mcp_client_token(&memory::NewMcpClientToken { name: "t".into(), token_hash: "h".into(), token_salt: "s".into(), scopes: vec!["write".into()] }).unwrap(); } }
+        store
+            .insert_capture_item(&sample_new_capture_item("a capture that is pushed"))
+            .unwrap();
+        let clock = memory::mcp_items::WriteClock {
+            now_unix_ms: 1_795_269_780_000,
+            day_start_unix_ms: 1_795_219_200_000,
+        };
+        {
+            let live: &memory::Store = &store;
+            while live.list_mcp_client_tokens().unwrap().len() < 12 {
+                live.insert_mcp_client_token(&memory::NewMcpClientToken {
+                    name: "t".into(),
+                    token_hash: "h".into(),
+                    token_salt: "s".into(),
+                    scopes: vec!["write".into()],
+                })
+                .unwrap();
+            }
+        }
         let items: Vec<_> = (0..5).map(|i| mcp_new_item(&format!("m{i}"))).collect();
-        store.upsert_mcp_items(&mcp_item_writer(), &items, &Default::default(), clock).unwrap();
+        store
+            .upsert_mcp_items(&mcp_item_writer(), &items, &Default::default(), clock)
+            .unwrap();
         let mut changed = mcp_new_item("m0");
         changed.text = "quokkacanary revised".to_string();
-        store.upsert_mcp_items(&mcp_item_writer(), &[changed], &Default::default(), clock).unwrap();
-        store.delete_mcp_items(1, "outlook-work", &["m1".to_string()], 1_800_000_000_000).unwrap();
+        store
+            .upsert_mcp_items(&mcp_item_writer(), &[changed], &Default::default(), clock)
+            .unwrap();
+        store
+            .delete_mcp_items(1, "outlook-work", &["m1".to_string()], 1_800_000_000_000)
+            .unwrap();
 
-        push_content(&conn, &group_key, &store, "device-a").await.unwrap();
+        push_content(&conn, &group_key, &store, "device-a")
+            .await
+            .unwrap();
 
         let mut rows = conn
-            .query("SELECT device_id, local_seq, row_type, ciphertext FROM sync_row", ())
+            .query(
+                "SELECT device_id, local_seq, row_type, ciphertext FROM sync_row",
+                (),
+            )
             .await
             .unwrap();
         let mut decrypted = 0;
@@ -8486,9 +9116,14 @@ pub(crate) mod tests {
             let row_type: String = row.get(2).unwrap();
             let ciphertext: String = row.get(3).unwrap();
             let aad = content_row_aad(&device, seq, &row_type);
-            let plain = sync::decrypt_payload(&group_key, &STANDARD.decode(&ciphertext).unwrap(), &aad).unwrap();
+            let plain =
+                sync::decrypt_payload(&group_key, &STANDARD.decode(&ciphertext).unwrap(), &aad)
+                    .unwrap();
             let text = String::from_utf8_lossy(&plain);
-            assert!(!text.contains("mcp_item") && !text.contains("quokkacanary"), "{row_type}: {text}");
+            assert!(
+                !text.contains("mcp_item") && !text.contains("quokkacanary"),
+                "{row_type}: {text}"
+            );
             decrypted += 1;
         }
         assert!(decrypted >= 1, "the capture was pushed, so the round ran");
@@ -8527,12 +9162,22 @@ pub(crate) mod tests {
         };
         let mut stats = Vec::new();
         let more = pull_round(
-            &conn, &group_key, &store, "dev-b", spent, &PullOptions::default(), true, &mut stats,
+            &conn,
+            &group_key,
+            &store,
+            "dev-b",
+            spent,
+            &PullOptions::default(),
+            true,
+            &mut stats,
         )
         .await
         .unwrap();
         assert!(more, "the peer still has rows");
-        assert_eq!(stats[0].fetched, 1, "one row, not a page the spent round can't apply");
+        assert_eq!(
+            stats[0].fetched, 1,
+            "one row, not a page the spent round can't apply"
+        );
     }
 
     #[tokio::test]
@@ -10564,7 +11209,10 @@ mod client_delete_tests {
     async fn a_forgotten_legacy_capture_row_is_dropped() {
         // libsql configures SQLite first in every test process, so it must open before the store does.
         let dir = tempfile::tempdir().unwrap();
-        let _relay = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let _relay = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let store = Store::open_in_memory().unwrap();
         store
             .apply_client_item_forgotten(&memory::ClientItemForgotten {
@@ -10573,8 +11221,22 @@ mod client_delete_tests {
                 forgotten_at_unix_ms: 1,
             })
             .unwrap();
-        apply_parent_row(&store, "dev-x", 5, ROW_TYPE_CAPTURE_ITEM, &capture_row("forgotten")).unwrap();
-        apply_parent_row(&store, "dev-x", 6, ROW_TYPE_CAPTURE_ITEM, &capture_row("kept")).unwrap();
+        apply_parent_row(
+            &store,
+            "dev-x",
+            5,
+            ROW_TYPE_CAPTURE_ITEM,
+            &capture_row("forgotten"),
+        )
+        .unwrap();
+        apply_parent_row(
+            &store,
+            "dev-x",
+            6,
+            ROW_TYPE_CAPTURE_ITEM,
+            &capture_row("kept"),
+        )
+        .unwrap();
         let bodies: Vec<String> = store
             .export_items_page("capture", 0, 10)
             .unwrap()
@@ -10582,14 +11244,22 @@ mod client_delete_tests {
             .map(|r| r.body_text)
             .collect();
         assert_eq!(bodies, vec!["kept".to_string()]);
-        assert_eq!(store.resolve_sync_row_map("dev-x", 5, ROW_TYPE_CAPTURE_ITEM).unwrap(), None);
+        assert_eq!(
+            store
+                .resolve_sync_row_map("dev-x", 5, ROW_TYPE_CAPTURE_ITEM)
+                .unwrap(),
+            None
+        );
     }
 
     /// A meeting brief pulled for a calendar event a client delete forgot is dropped.
     #[tokio::test]
     async fn a_forgotten_events_meeting_prep_is_dropped() {
         let dir = tempfile::tempdir().unwrap();
-        let _relay = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let _relay = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let store = Store::open_in_memory().unwrap();
         // As in production: the item is one occurrence, `{event id}#{start secs}`; the brief `{event id}@{start ms}`.
         let uid = "kickoff-1@zorblax.com";
@@ -10623,9 +11293,26 @@ mod client_delete_tests {
             })
             .unwrap()
         };
-        apply_parent_row(&store, "dev-x", 7, ROW_TYPE_MEETING_PREP, &prep(&format!("{uid}@2000"))).unwrap();
-        apply_parent_row(&store, "dev-x", 8, ROW_TYPE_MEETING_PREP, &prep("other@2000")).unwrap();
-        assert!(store.get_meeting_prep(&format!("{uid}@2000")).unwrap().is_none());
+        apply_parent_row(
+            &store,
+            "dev-x",
+            7,
+            ROW_TYPE_MEETING_PREP,
+            &prep(&format!("{uid}@2000")),
+        )
+        .unwrap();
+        apply_parent_row(
+            &store,
+            "dev-x",
+            8,
+            ROW_TYPE_MEETING_PREP,
+            &prep("other@2000"),
+        )
+        .unwrap();
+        assert!(store
+            .get_meeting_prep(&format!("{uid}@2000"))
+            .unwrap()
+            .is_none());
         assert!(store.get_meeting_prep("other@2000").unwrap().is_some());
     }
 }
@@ -10643,9 +11330,18 @@ mod pull_only_marker_guard {
         let known: &[(&str, &str)] = &[
             ("ROW_TYPE_ITEMS_CAPABILITY", ROW_TYPE_ITEMS_CAPABILITY),
             ("ROW_TYPE_TOPICS_CAPABILITY", ROW_TYPE_TOPICS_CAPABILITY),
-            ("ROW_TYPE_TOPIC_PAGE_CAPABILITY", ROW_TYPE_TOPIC_PAGE_CAPABILITY),
-            ("ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY", ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY),
-            ("ROW_TYPE_CLIENT_CONTROLS_CAPABILITY", ROW_TYPE_CLIENT_CONTROLS_CAPABILITY),
+            (
+                "ROW_TYPE_TOPIC_PAGE_CAPABILITY",
+                ROW_TYPE_TOPIC_PAGE_CAPABILITY,
+            ),
+            (
+                "ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY",
+                ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
+            ),
+            (
+                "ROW_TYPE_CLIENT_CONTROLS_CAPABILITY",
+                ROW_TYPE_CLIENT_CONTROLS_CAPABILITY,
+            ),
         ];
         let mut gated: Vec<String> = Vec::new();
         // The needles are built at run time, so this test's own text never matches them (X6 final review,
@@ -10656,7 +11352,13 @@ mod pull_only_marker_guard {
         for source in [include_str!("outbox.rs"), include_str!("content.rs")] {
             for gate in ["all_peers_have_marker", "peers_without_marker"] {
                 for piece in source.split(call(gate).as_str()).skip(1) {
-                    let args: Vec<&str> = piece.split(')').next().unwrap_or("").split(',').map(str::trim).collect();
+                    let args: Vec<&str> = piece
+                        .split(')')
+                        .next()
+                        .unwrap_or("")
+                        .split(',')
+                        .map(str::trim)
+                        .collect();
                     // The definition's parameters, or a test's string literal, are not a gate in the code.
                     if let Some(marker) = args.get(2).filter(|a| a.starts_with("ROW_TYPE_")) {
                         gated.push(marker.to_string());
@@ -10669,13 +11371,19 @@ mod pull_only_marker_guard {
         }
         assert!(gated.len() >= 4, "the scan found the gates: {gated:?}");
         for expected in ["ROW_TYPE_ITEMS_CAPABILITY", "ROW_TYPE_TOPICS_CAPABILITY"] {
-            assert!(gated.iter().any(|g| g == expected), "the scan found the {expected} gate in the code: {gated:?}");
+            assert!(
+                gated.iter().any(|g| g == expected),
+                "the scan found the {expected} gate in the code: {gated:?}"
+            );
         }
         for name in gated {
             let value = known.iter().find(|(n, _)| *n == name).map(|(_, v)| *v).unwrap_or_else(|| {
                 panic!("a new gating marker {name}: add it to PULL_ONLY_MARKERS if the phone applies those rows, or the phone holds them back")
             });
-            assert!(PULL_ONLY_MARKERS.contains(&value), "{name} gates rows but the phone does not announce it");
+            assert!(
+                PULL_ONLY_MARKERS.contains(&value),
+                "{name} gates rows but the phone does not announce it"
+            );
         }
     }
 }
@@ -10692,7 +11400,10 @@ mod runner_round_tests {
 
     async fn relay() -> (tempfile::TempDir, Connection, GroupKey) {
         let dir = tempfile::tempdir().unwrap();
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let conn = db.connect().unwrap();
         ensure_content_schema(&conn).await.unwrap();
         (dir, conn, GroupKey::generate())
@@ -10709,7 +11420,12 @@ mod runner_round_tests {
         .unwrap();
     }
 
-    fn item_json(kind: &str, ts_unix_ms: i64, body: &str, source_meeting_id: Option<i64>) -> String {
+    fn item_json(
+        kind: &str,
+        ts_unix_ms: i64,
+        body: &str,
+        source_meeting_id: Option<i64>,
+    ) -> String {
         let calendar = kind == "calendar_event";
         serde_json::to_string(&ItemPayload {
             source_meeting_id,
@@ -10795,15 +11511,27 @@ mod runner_round_tests {
     }
 
     async fn pull(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions) {
-        crate::runner_pull_with_connection(conn, key, store, RUNNER, opts).await.unwrap();
+        crate::runner_pull_with_connection(conn, key, store, RUNNER, opts)
+            .await
+            .unwrap();
     }
 
     fn bodies(store: &Store, kind: &str) -> Vec<String> {
-        store.export_items_page(kind, 0, 100).unwrap().into_iter().map(|r| r.body_text).collect()
+        store
+            .export_items_page(kind, 0, 100)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.body_text)
+            .collect()
     }
 
     fn titles(store: &Store) -> Vec<String> {
-        store.recent_meetings(100).unwrap().into_iter().map(|m| m.title).collect()
+        store
+            .recent_meetings(100)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.title)
+            .collect()
     }
 
     async fn relay_rows(conn: &Connection, device: &str) -> Vec<(i64, String)> {
@@ -10825,25 +11553,68 @@ mod runner_round_tests {
     async fn runner_round_pulls_only_allowlisted_row_types() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_json(7, "Standup")).await;
-        seed(&conn, &key, 2, ROW_TYPE_ROUTINE_RUN, &run_json(4, "a brief")).await;
-        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("capture", now, "a capture", None)).await;
-        seed(&conn, &key, 4, ROW_TYPE_ITEMS, &item_json("calendar_event", now, "planning", None)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_json(7, "Standup"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ROUTINE_RUN,
+            &run_json(4, "a brief"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", now, "a capture", None),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            4,
+            ROW_TYPE_ITEMS,
+            &item_json("calendar_event", now, "planning", None),
+        )
+        .await;
 
         let runs_only = runner_store();
         pull(&conn, &key, &runs_only, &allow(&[ROW_TYPE_ROUTINE_RUN])).await;
         let runs = runs_only.recent_routine_runs_across_all(10).unwrap();
         assert_eq!(runs.len(), 1);
         assert!(titles(&runs_only).is_empty(), "meeting not granted");
-        assert!(bodies(&runs_only, "capture").is_empty(), "items not granted");
-        assert!(bodies(&runs_only, "calendar_event").is_empty(), "items not granted");
+        assert!(
+            bodies(&runs_only, "capture").is_empty(),
+            "items not granted"
+        );
+        assert!(
+            bodies(&runs_only, "calendar_event").is_empty(),
+            "items not granted"
+        );
 
         // An item kind grant takes that kind of `items` row only.
         let events_only = runner_store();
         pull(&conn, &key, &events_only, &allow(&["items:calendar_event"])).await;
-        assert_eq!(bodies(&events_only, "calendar_event"), vec!["planning".to_string()]);
-        assert!(bodies(&events_only, "capture").is_empty(), "capture kind not granted");
-        assert!(events_only.recent_routine_runs_across_all(10).unwrap().is_empty());
+        assert_eq!(
+            bodies(&events_only, "calendar_event"),
+            vec!["planning".to_string()]
+        );
+        assert!(
+            bodies(&events_only, "capture").is_empty(),
+            "capture kind not granted"
+        );
+        assert!(events_only
+            .recent_routine_runs_across_all(10)
+            .unwrap()
+            .is_empty());
         assert!(titles(&events_only).is_empty());
 
         // No allowlist: everything, as today.
@@ -10860,7 +11631,14 @@ mod runner_round_tests {
     async fn tombstones_are_applied_even_when_not_allowlisted() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_ITEMS, &item_json("capture", now, "forget me", None)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", now, "forget me", None),
+        )
+        .await;
         seed(&conn, &key, 2, ROW_TYPE_MEETING, &meeting_json(7, "Doomed")).await;
         let store = runner_store();
         let opts = allow(&["items:capture", ROW_TYPE_MEETING]);
@@ -10868,7 +11646,14 @@ mod runner_round_tests {
         assert_eq!(bodies(&store, "capture"), vec!["forget me".to_string()]);
         assert_eq!(titles(&store), vec!["Doomed".to_string()]);
 
-        seed(&conn, &key, 3, ROW_TYPE_CLIENT_ITEM_FORGOTTEN, &forgotten_capture_json(1)).await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_CLIENT_ITEM_FORGOTTEN,
+            &forgotten_capture_json(1),
+        )
+        .await;
         let meeting_forgotten = serde_json::to_string(&memory::MeetingForgotten {
             origin_device_id: PEER.to_string(),
             origin_epoch: Some("e1".to_string()),
@@ -10877,9 +11662,19 @@ mod runner_round_tests {
             source_start_unix_ms: Some(1000),
         })
         .unwrap();
-        seed(&conn, &key, 4, ROW_TYPE_MEETING_FORGOTTEN, &meeting_forgotten).await;
+        seed(
+            &conn,
+            &key,
+            4,
+            ROW_TYPE_MEETING_FORGOTTEN,
+            &meeting_forgotten,
+        )
+        .await;
         pull(&conn, &key, &store, &opts).await;
-        assert!(bodies(&store, "capture").is_empty(), "the client delete applied");
+        assert!(
+            bodies(&store, "capture").is_empty(),
+            "the client delete applied"
+        );
         assert!(titles(&store).is_empty(), "the meeting forget applied");
     }
 
@@ -10888,27 +11683,62 @@ mod runner_round_tests {
     async fn an_allowed_transcript_pulls_its_meeting() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_json(7, "Design review")).await;
-        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("transcript", now, "first line", Some(7))).await;
-        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("transcript", now, "second line", Some(7))).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_json(7, "Design review"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ITEMS,
+            &item_json("transcript", now, "first line", Some(7)),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_ITEMS,
+            &item_json("transcript", now, "second line", Some(7)),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &allow(&["items:transcript"])).await;
         assert_eq!(titles(&store), vec!["Design review".to_string()]);
         let mut lines = bodies(&store, "transcript");
         lines.sort();
-        assert_eq!(lines, vec!["first line".to_string(), "second line".to_string()]);
+        assert_eq!(
+            lines,
+            vec!["first line".to_string(), "second line".to_string()]
+        );
     }
 
     #[tokio::test]
     async fn the_five_pull_only_markers_are_announced() {
         let (_dir, conn, key) = relay().await;
-        seed(&conn, &key, 1, ROW_TYPE_ROUTINE_RUN, &run_json(4, "a brief")).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_ROUTINE_RUN,
+            &run_json(4, "a brief"),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &allow(&[ROW_TYPE_ROUTINE_RUN])).await;
-        let mut announced: Vec<String> = relay_rows(&conn, RUNNER).await.into_iter().map(|(seq, t)| {
-            assert_eq!(seq, 0, "the pull writes markers only");
-            t
-        }).collect();
+        let mut announced: Vec<String> = relay_rows(&conn, RUNNER)
+            .await
+            .into_iter()
+            .map(|(seq, t)| {
+                assert_eq!(seq, 0, "the pull writes markers only");
+                t
+            })
+            .collect();
         announced.sort();
         let mut expected: Vec<String> = PULL_ONLY_MARKERS.iter().map(|m| m.to_string()).collect();
         expected.sort();
@@ -10919,9 +11749,30 @@ mod runner_round_tests {
     async fn a_routine_run_in_the_outbox_is_dispatched_and_no_content_is_back_filled() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_json(7, "Standup")).await;
-        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("capture", now, "a capture", None)).await;
-        seed(&conn, &key, 3, ROW_TYPE_ROUTINE_RUN, &run_json(4, "peer brief")).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_json(7, "Standup"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", now, "a capture", None),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_ROUTINE_RUN,
+            &run_json(4, "peer brief"),
+        )
+        .await;
         let store = runner_store();
         store.seed_builtin_routines().unwrap();
         pull(&conn, &key, &store, &PullOptions::default()).await;
@@ -10942,7 +11793,9 @@ mod runner_round_tests {
             })
             .unwrap();
 
-        crate::runner_dispatch_with_connection(&conn, &key, &store, RUNNER).await.unwrap();
+        crate::runner_dispatch_with_connection(&conn, &key, &store, RUNNER)
+            .await
+            .unwrap();
 
         let content: Vec<String> = relay_rows(&conn, RUNNER)
             .await
@@ -10950,17 +11803,26 @@ mod runner_round_tests {
             .filter(|(seq, _)| *seq != 0)
             .map(|(_, t)| t)
             .collect();
-        assert_eq!(content, vec![ROW_TYPE_ROUTINE_RUN.to_string()], "only the run is sent, nothing pulled is re-pushed");
+        assert_eq!(
+            content,
+            vec![ROW_TYPE_ROUTINE_RUN.to_string()],
+            "only the run is sent, nothing pulled is re-pushed"
+        );
 
         let desktop = Store::open_in_memory().unwrap();
-        pull_content(&conn, &key, &desktop, "desktop").await.unwrap();
+        pull_content(&conn, &key, &desktop, "desktop")
+            .await
+            .unwrap();
         let summaries: Vec<String> = desktop
             .recent_routine_runs_across_all(10)
             .unwrap()
             .into_iter()
             .map(|r| r.output_summary)
             .collect();
-        assert!(summaries.contains(&"cloud brief".to_string()), "{summaries:?}");
+        assert!(
+            summaries.contains(&"cloud brief".to_string()),
+            "{summaries:?}"
+        );
     }
 
     /// Each run's store is new, so its `local_seq` counter starts over: the second run's result must still
@@ -10988,10 +11850,18 @@ mod runner_round_tests {
                     output_json: "{}".into(),
                 })
                 .unwrap();
-            crate::runner_dispatch_with_connection(&conn, &key, &store, RUNNER).await.unwrap();
-            pull_content(&conn, &key, &desktop, "desktop").await.unwrap();
+            crate::runner_dispatch_with_connection(&conn, &key, &store, RUNNER)
+                .await
+                .unwrap();
+            pull_content(&conn, &key, &desktop, "desktop")
+                .await
+                .unwrap();
         }
-        let runs = relay_rows(&conn, RUNNER).await.into_iter().filter(|(_, t)| t == ROW_TYPE_ROUTINE_RUN).count();
+        let runs = relay_rows(&conn, RUNNER)
+            .await
+            .into_iter()
+            .filter(|(_, t)| t == ROW_TYPE_ROUTINE_RUN)
+            .count();
         assert_eq!(runs, 2, "both runs are on the relay");
         let mut summaries: Vec<String> = desktop
             .recent_routine_runs_across_all(10)
@@ -11000,7 +11870,10 @@ mod runner_round_tests {
             .map(|r| r.output_summary)
             .collect();
         summaries.sort();
-        assert_eq!(summaries, vec!["monday brief".to_string(), "tuesday brief".to_string()]);
+        assert_eq!(
+            summaries,
+            vec!["monday brief".to_string(), "tuesday brief".to_string()]
+        );
     }
 
     /// Peer runs the pull applies take ids in the runner's store too, so its own run's id can sit above the
@@ -11008,10 +11881,27 @@ mod runner_round_tests {
     #[tokio::test]
     async fn a_runner_run_id_never_repeats_when_peer_runs_were_pulled() {
         let (_dir, conn, key) = relay().await;
-        seed(&conn, &key, 1, ROW_TYPE_ROUTINE_RUN, &run_json(1, "peer one")).await;
-        seed(&conn, &key, 2, ROW_TYPE_ROUTINE_RUN, &run_json(2, "peer two")).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_ROUTINE_RUN,
+            &run_json(1, "peer one"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ROUTINE_RUN,
+            &run_json(2, "peer two"),
+        )
+        .await;
         let desktop = Store::open_in_memory().unwrap();
-        for (grant, summary) in [(vec![ROW_TYPE_ROUTINE_RUN], "first runner brief"), (vec![], "second runner brief")] {
+        for (grant, summary) in [
+            (vec![ROW_TYPE_ROUTINE_RUN], "first runner brief"),
+            (vec![], "second runner brief"),
+        ] {
             let store = runner_store();
             store.seed_builtin_routines().unwrap();
             pull(&conn, &key, &store, &allow(&grant)).await;
@@ -11030,9 +11920,13 @@ mod runner_round_tests {
                     output_json: "{}".into(),
                 })
                 .unwrap();
-            crate::runner_dispatch_with_connection(&conn, &key, &store, RUNNER).await.unwrap();
+            crate::runner_dispatch_with_connection(&conn, &key, &store, RUNNER)
+                .await
+                .unwrap();
         }
-        pull_content(&conn, &key, &desktop, "desktop").await.unwrap();
+        pull_content(&conn, &key, &desktop, "desktop")
+            .await
+            .unwrap();
         let mut summaries: Vec<String> = desktop
             .recent_routine_runs_across_all(10)
             .unwrap()
@@ -11041,7 +11935,13 @@ mod runner_round_tests {
             .map(|r| r.output_summary)
             .collect();
         summaries.sort();
-        assert_eq!(summaries, vec!["first runner brief".to_string(), "second runner brief".to_string()]);
+        assert_eq!(
+            summaries,
+            vec![
+                "first runner brief".to_string(),
+                "second runner brief".to_string()
+            ]
+        );
     }
 
     /// The runner's store is new every run, so the once-per-database tombstone catch-up is not redone from
@@ -11059,14 +11959,31 @@ mod runner_round_tests {
             source_start_unix_ms: Some(1000),
         })
         .unwrap();
-        seed(&conn, &key, 2, ROW_TYPE_MEETING_FORGOTTEN, &meeting_forgotten).await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_MEETING_FORGOTTEN,
+            &meeting_forgotten,
+        )
+        .await;
         let store = runner_store();
         CATCH_UP_FAILS_FOR.with(|c| *c.borrow_mut() = Some(PEER.to_string()));
-        let report = crate::runner_pull_with_connection(&conn, &key, &store, RUNNER, &allow(&[ROW_TYPE_MEETING])).await;
+        let report = crate::runner_pull_with_connection(
+            &conn,
+            &key,
+            &store,
+            RUNNER,
+            &allow(&[ROW_TYPE_MEETING]),
+        )
+        .await;
         CATCH_UP_FAILS_FOR.with(|c| *c.borrow_mut() = None);
         let report = report.expect("the pull no longer depends on the catch-up");
         assert!(report.complete, "every row was read");
-        assert!(titles(&store).is_empty(), "the live range applied the forget");
+        assert!(
+            titles(&store).is_empty(),
+            "the live range applied the forget"
+        );
         assert!(tombstones_caught_up(&store));
     }
 
@@ -11078,7 +11995,12 @@ mod runner_round_tests {
         let first = runner_store();
         pull(&conn, &key, &first, &allow(&[ROW_TYPE_ROUTINE_RUN])).await;
         first.seed_builtin_routines().unwrap();
-        let brief = first.list_routines().unwrap().into_iter().find(|r| r.template == memory::RoutineTemplate::DailyBrief).unwrap();
+        let brief = first
+            .list_routines()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.template == memory::RoutineTemplate::DailyBrief)
+            .unwrap();
         first
             .insert_routine_run(&memory::NewRoutineRun {
                 routine_id: brief.id,
@@ -11088,28 +12010,57 @@ mod runner_round_tests {
                 output_json: "{}".into(),
             })
             .unwrap();
-        crate::runner_dispatch_with_connection(&conn, &key, &first, RUNNER).await.unwrap();
+        crate::runner_dispatch_with_connection(&conn, &key, &first, RUNNER)
+            .await
+            .unwrap();
 
         let second = runner_store();
-        let report = crate::runner_pull_with_connection(&conn, &key, &second, RUNNER, &allow(&[ROW_TYPE_ROUTINE_RUN])).await.unwrap();
+        let report = crate::runner_pull_with_connection(
+            &conn,
+            &key,
+            &second,
+            RUNNER,
+            &allow(&[ROW_TYPE_ROUTINE_RUN]),
+        )
+        .await
+        .unwrap();
         assert_eq!(report.rows_applied, 1);
         let runs = second.recent_routine_runs_across_all(10).unwrap();
-        assert_eq!(runs.iter().map(|r| r.output_summary.as_str()).collect::<Vec<_>>(), vec!["the runner's brief"]);
+        assert_eq!(
+            runs.iter()
+                .map(|r| r.output_summary.as_str())
+                .collect::<Vec<_>>(),
+            vec!["the runner's brief"]
+        );
         assert_eq!(runs[0].origin_device_id.as_deref(), Some(RUNNER));
 
         let not_granted = runner_store();
         pull(&conn, &key, &not_granted, &allow(&[ROW_TYPE_MEETING])).await;
-        assert!(not_granted.recent_routine_runs_across_all(10).unwrap().is_empty());
+        assert!(not_granted
+            .recent_routine_runs_across_all(10)
+            .unwrap()
+            .is_empty());
     }
 
     fn calendar_json(title: &str, source: Option<&str>) -> String {
-        let mut payload: ItemPayload = serde_json::from_str(&item_json("calendar_event", now_unix_ms() + DAY_MS / 2, title, None)).unwrap();
+        let mut payload: ItemPayload = serde_json::from_str(&item_json(
+            "calendar_event",
+            now_unix_ms() + DAY_MS / 2,
+            title,
+            None,
+        ))
+        .unwrap();
         payload.item.source = source.map(str::to_string);
         serde_json::to_string(&payload).unwrap()
     }
 
     fn calendar_titles(store: &Store) -> Vec<String> {
-        let mut titles: Vec<String> = store.export_items_page("calendar_event", 0, 100).unwrap().into_iter().map(|r| r.body_text).collect();
+        let mut titles: Vec<String> = store
+            .export_items_page("calendar_event", 0, 100)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.body_text)
+            .collect();
         titles.sort();
         titles
     }
@@ -11119,18 +12070,53 @@ mod runner_round_tests {
     #[tokio::test]
     async fn a_sourceless_calendar_event_is_treated_as_google_and_left_out() {
         let (_dir, conn, key) = relay().await;
-        seed(&conn, &key, 1, ROW_TYPE_ITEMS, &calendar_json("google event", Some("google_calendar"))).await;
-        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &calendar_json("sourceless event", None)).await;
-        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &calendar_json("empty source event", Some(""))).await;
-        seed(&conn, &key, 4, ROW_TYPE_ITEMS, &calendar_json("apple event", Some("apple_calendar"))).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_ITEMS,
+            &calendar_json("google event", Some("google_calendar")),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ITEMS,
+            &calendar_json("sourceless event", None),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_ITEMS,
+            &calendar_json("empty source event", Some("")),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            4,
+            ROW_TYPE_ITEMS,
+            &calendar_json("apple event", Some("apple_calendar")),
+        )
+        .await;
         let runner = runner_store();
-        let options = PullOptions { non_google_calendar_only: true, ..allow(&["items:calendar_event"]) };
+        let options = PullOptions {
+            non_google_calendar_only: true,
+            ..allow(&["items:calendar_event"])
+        };
         pull(&conn, &key, &runner, &options).await;
         assert_eq!(calendar_titles(&runner), vec!["apple event".to_string()]);
 
         let as_today = runner_store();
         pull(&conn, &key, &as_today, &allow(&["items:calendar_event"])).await;
-        assert_eq!(calendar_titles(&as_today).len(), 4, "off by default: every calendar event, as today");
+        assert_eq!(
+            calendar_titles(&as_today).len(),
+            4,
+            "off by default: every calendar event, as today"
+        );
     }
 
     /// A device without the topics capability makes every sender hold its client settings back: the report
@@ -11138,12 +12124,40 @@ mod runner_round_tests {
     #[tokio::test]
     async fn the_report_says_whether_client_settings_are_being_held_back() {
         let (_dir, conn, key) = relay().await;
-        seed(&conn, &key, 1, ROW_TYPE_ROUTINE_RUN, &run_json(1, "a brief")).await;
-        let report = crate::runner_pull_with_connection(&conn, &key, &runner_store(), RUNNER, &allow(&[ROW_TYPE_ROUTINE_RUN])).await.unwrap();
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_ROUTINE_RUN,
+            &run_json(1, "a brief"),
+        )
+        .await;
+        let report = crate::runner_pull_with_connection(
+            &conn,
+            &key,
+            &runner_store(),
+            RUNNER,
+            &allow(&[ROW_TYPE_ROUTINE_RUN]),
+        )
+        .await
+        .unwrap();
         assert!(report.complete);
-        assert!(!report.exclusion_rows_published, "the peer has not announced the topics capability");
-        push_marker(&conn, &key, PEER, ROW_TYPE_TOPICS_CAPABILITY).await.unwrap();
-        let report = crate::runner_pull_with_connection(&conn, &key, &runner_store(), RUNNER, &allow(&[ROW_TYPE_ROUTINE_RUN])).await.unwrap();
+        assert!(
+            !report.exclusion_rows_published,
+            "the peer has not announced the topics capability"
+        );
+        push_marker(&conn, &key, PEER, ROW_TYPE_TOPICS_CAPABILITY)
+            .await
+            .unwrap();
+        let report = crate::runner_pull_with_connection(
+            &conn,
+            &key,
+            &runner_store(),
+            RUNNER,
+            &allow(&[ROW_TYPE_ROUTINE_RUN]),
+        )
+        .await
+        .unwrap();
         assert!(report.exclusion_rows_published);
     }
 
@@ -11151,17 +12165,47 @@ mod runner_round_tests {
     #[tokio::test]
     async fn a_drained_runner_pull_reports_complete_with_the_rows_it_applied() {
         let (_dir, conn, key) = relay().await;
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_json(7, "Standup")).await;
-        seed(&conn, &key, 2, ROW_TYPE_ROUTINE_RUN, &run_json(4, "a brief")).await;
-        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("capture", now_unix_ms(), "not granted", None)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_json(7, "Standup"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ROUTINE_RUN,
+            &run_json(4, "a brief"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", now_unix_ms(), "not granted", None),
+        )
+        .await;
         let store = runner_store();
-        let report = crate::runner_pull_with_connection(&conn, &key, &store, RUNNER, &allow(&[ROW_TYPE_MEETING, ROW_TYPE_ROUTINE_RUN]))
-            .await
-            .unwrap();
+        let report = crate::runner_pull_with_connection(
+            &conn,
+            &key,
+            &store,
+            RUNNER,
+            &allow(&[ROW_TYPE_MEETING, ROW_TYPE_ROUTINE_RUN]),
+        )
+        .await
+        .unwrap();
         assert!(report.complete);
         assert_eq!(report.rows_applied, 2, "the capture was left out");
         assert!(report.rounds >= 1, "{report:?}");
-        assert!(report.rows_fetched >= report.rows_applied, "fetched counts every row read: {report:?}");
+        assert!(
+            report.rows_fetched >= report.rows_applied,
+            "fetched counts every row read: {report:?}"
+        );
     }
 
     /// A pull whose budget ends with rows still waiting succeeds (the newest rows are in) but is not
@@ -11171,7 +12215,14 @@ mod runner_round_tests {
         let (_dir, conn, key) = relay().await;
         let rows = CATCH_UP_PACE.rows as i64 + 5;
         for seq in 1..=rows {
-            seed(&conn, &key, seq, ROW_TYPE_ROUTINE_RUN, &run_json(seq, "a brief")).await;
+            seed(
+                &conn,
+                &key,
+                seq,
+                ROW_TYPE_ROUTINE_RUN,
+                &run_json(seq, "a brief"),
+            )
+            .await;
         }
         let store = runner_store();
         let report = crate::runner_pull_phased(
@@ -11186,33 +12237,88 @@ mod runner_round_tests {
         .await
         .unwrap();
         assert!(!report.complete);
-        assert!(report.rows_applied > 0 && (report.rows_applied as i64) < rows, "{}", report.rows_applied);
+        assert!(
+            report.rows_applied > 0 && (report.rows_applied as i64) < rows,
+            "{}",
+            report.rows_applied
+        );
     }
 
     fn meeting_at(source_id: i64, title: &str, start_unix_ms: i64) -> String {
-        let mut payload: MeetingPayload = serde_json::from_str(&meeting_json(source_id, title)).unwrap();
+        let mut payload: MeetingPayload =
+            serde_json::from_str(&meeting_json(source_id, title)).unwrap();
         payload.meeting.start_unix_ms = start_unix_ms;
         payload.meeting.end_unix_ms = Some(start_unix_ms + 60_000);
         serde_json::to_string(&payload).unwrap()
     }
 
     fn windowed(types: &[&str]) -> PullOptions {
-        PullOptions { item_window_ms: Some(DAY_MS), ..allow(types) }
+        PullOptions {
+            item_window_ms: Some(DAY_MS),
+            ..allow(types)
+        }
     }
 
     #[tokio::test]
-    async fn a_transcript_grant_does_not_pull_meetings_older_than_the_window_that_have_no_in_window_transcript() {
+    async fn a_transcript_grant_does_not_pull_meetings_older_than_the_window_that_have_no_in_window_transcript(
+    ) {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Old, no lines", now - 30 * DAY_MS)).await;
-        seed(&conn, &key, 2, ROW_TYPE_MEETING, &meeting_at(8, "Old, old lines", now - 20 * DAY_MS)).await;
-        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("transcript", now - 20 * DAY_MS, "stale line", Some(8))).await;
-        seed(&conn, &key, 4, ROW_TYPE_MEETING, &meeting_at(9, "Recent, no lines", now - DAY_MS / 2)).await;
-        seed(&conn, &key, 5, ROW_TYPE_MEETING, &meeting_at(10, "Today", now - 60_000)).await;
-        seed(&conn, &key, 6, ROW_TYPE_ITEMS, &item_json("transcript", now, "fresh line", Some(10))).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Old, no lines", now - 30 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_MEETING,
+            &meeting_at(8, "Old, old lines", now - 20 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_ITEMS,
+            &item_json("transcript", now - 20 * DAY_MS, "stale line", Some(8)),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            4,
+            ROW_TYPE_MEETING,
+            &meeting_at(9, "Recent, no lines", now - DAY_MS / 2),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            5,
+            ROW_TYPE_MEETING,
+            &meeting_at(10, "Today", now - 60_000),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            6,
+            ROW_TYPE_ITEMS,
+            &item_json("transcript", now, "fresh line", Some(10)),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
-        assert_eq!(titles(&store), vec!["Today".to_string()], "only the meeting an applied line needs");
+        assert_eq!(
+            titles(&store),
+            vec!["Today".to_string()],
+            "only the meeting an applied line needs"
+        );
         assert_eq!(bodies(&store, "transcript"), vec!["fresh line".to_string()]);
     }
 
@@ -11220,64 +12326,160 @@ mod runner_round_tests {
     async fn an_in_window_transcript_still_gets_its_older_started_parent_meeting() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Started last week", now - 7 * DAY_MS)).await;
-        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("transcript", now, "still talking", Some(7))).await;
-        for grant in [vec!["items:transcript"], vec![ROW_TYPE_MEETING, "items:transcript"]] {
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Started last week", now - 7 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ITEMS,
+            &item_json("transcript", now, "still talking", Some(7)),
+        )
+        .await;
+        for grant in [
+            vec!["items:transcript"],
+            vec![ROW_TYPE_MEETING, "items:transcript"],
+        ] {
             let store = runner_store();
             pull(&conn, &key, &store, &windowed(&grant)).await;
-            assert_eq!(titles(&store), vec!["Started last week".to_string()], "{grant:?}");
-            assert_eq!(bodies(&store, "transcript"), vec!["still talking".to_string()], "{grant:?}");
+            assert_eq!(
+                titles(&store),
+                vec!["Started last week".to_string()],
+                "{grant:?}"
+            );
+            assert_eq!(
+                bodies(&store, "transcript"),
+                vec!["still talking".to_string()],
+                "{grant:?}"
+            );
         }
     }
 
-    fn legacy_line_json(meeting_local_seq: i64, source_meeting_id: i64, start_cs: i64, text: &str) -> String {
+    fn legacy_line_json(
+        meeting_local_seq: i64,
+        source_meeting_id: i64,
+        start_cs: i64,
+        text: &str,
+    ) -> String {
         serde_json::to_string(&TranscriptSegmentPayload {
             meeting_local_seq,
             source_meeting_id: Some(source_meeting_id),
-            segment: memory::AppliedTranscriptSegment { start_cs, speaker_label: "Alice".to_string(), text: text.to_string() },
+            segment: memory::AppliedTranscriptSegment {
+                start_cs,
+                speaker_label: "Alice".to_string(),
+                text: text.to_string(),
+            },
         })
         .unwrap()
     }
 
     fn has_line(store: &Store, text: &str) -> bool {
-        !store.search_transcript_keyword(text, 10).unwrap().is_empty()
+        !store
+            .search_transcript_keyword(text, 10)
+            .unwrap()
+            .is_empty()
     }
 
     #[tokio::test]
     async fn a_legacy_line_of_a_meeting_older_than_the_window_applies_neither_line_nor_meeting() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS)).await;
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 100, "stale legacy words")).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 100, "stale legacy words"),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
         assert!(titles(&store).is_empty(), "{:?}", titles(&store));
         assert!(!has_line(&store, "stale"));
-        assert!(store.list_sync_pending_dependencies(PEER).unwrap().is_empty(), "dropped for good, not pending");
+        assert!(
+            store
+                .list_sync_pending_dependencies(PEER)
+                .unwrap()
+                .is_empty(),
+            "dropped for good, not pending"
+        );
     }
 
     #[tokio::test]
-    async fn a_legacy_line_inside_the_window_of_an_older_started_meeting_applies_with_its_meeting() {
+    async fn a_legacy_line_inside_the_window_of_an_older_started_meeting_applies_with_its_meeting()
+    {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
         // Started 7 days ago; the line is 6.5 days in, so it is 12 hours old.
         let offset_cs = (6 * DAY_MS + DAY_MS / 2) / 10;
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Started last week", now - 7 * DAY_MS)).await;
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "early legacy words")).await;
-        seed(&conn, &key, 3, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, offset_cs, "late legacy words")).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Started last week", now - 7 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 0, "early legacy words"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, offset_cs, "late legacy words"),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
         assert_eq!(titles(&store), vec!["Started last week".to_string()]);
         assert!(has_line(&store, "late"));
-        assert!(!has_line(&store, "early"), "the line before the window is dropped");
+        assert!(
+            !has_line(&store, "early"),
+            "the line before the window is dropped"
+        );
     }
 
     #[tokio::test]
     async fn a_legacy_line_of_a_meeting_started_twelve_hours_ago_applies() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "This morning", now - DAY_MS / 2)).await;
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "morning legacy words")).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "This morning", now - DAY_MS / 2),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 0, "morning legacy words"),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
         assert_eq!(titles(&store), vec!["This morning".to_string()]);
@@ -11288,11 +12490,46 @@ mod runner_round_tests {
     async fn only_the_meeting_of_an_in_window_legacy_line_is_pulled() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Old", now - 20 * DAY_MS)).await;
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "old one")).await;
-        seed(&conn, &key, 3, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 500, "old two")).await;
-        seed(&conn, &key, 4, ROW_TYPE_MEETING, &meeting_at(8, "Today", now - 60_000)).await;
-        seed(&conn, &key, 5, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(4, 8, 0, "fresh one")).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Old", now - 20 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 0, "old one"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 500, "old two"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            4,
+            ROW_TYPE_MEETING,
+            &meeting_at(8, "Today", now - 60_000),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            5,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(4, 8, 0, "fresh one"),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
         assert_eq!(titles(&store), vec!["Today".to_string()]);
@@ -11304,8 +12541,22 @@ mod runner_round_tests {
     async fn without_a_window_an_old_legacy_line_and_its_meeting_apply_as_before() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS)).await;
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 100, "ancient legacy words")).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 100, "ancient legacy words"),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &allow(&["items:transcript"])).await;
         assert_eq!(titles(&store), vec!["Twenty days ago".to_string()]);
@@ -11313,44 +12564,133 @@ mod runner_round_tests {
     }
 
     #[tokio::test]
-    async fn lines_applied_when_resolving_are_counted_and_a_windowed_out_one_is_skipped_not_deferred() {
+    async fn lines_applied_when_resolving_are_counted_and_a_windowed_out_one_is_skipped_not_deferred(
+    ) {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Today", now - 60_000)).await;
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "first words")).await;
-        seed(&conn, &key, 3, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 10, "second words")).await;
-        seed(&conn, &key, 4, ROW_TYPE_MEETING, &meeting_at(8, "Old", now - 20 * DAY_MS)).await;
-        seed(&conn, &key, 5, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(4, 8, 0, "stale words")).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Today", now - 60_000),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 0, "first words"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 10, "second words"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            4,
+            ROW_TYPE_MEETING,
+            &meeting_at(8, "Old", now - 20 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            5,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(4, 8, 0, "stale words"),
+        )
+        .await;
         let store = runner_store();
-        let report = crate::runner_pull_with_connection(&conn, &key, &store, RUNNER, &windowed(&["items:transcript"])).await.unwrap();
-        let at = |name: &str| report.by_type[crate::PULL_TYPE_NAMES.iter().position(|n| *n == name).unwrap()];
+        let report = crate::runner_pull_with_connection(
+            &conn,
+            &key,
+            &store,
+            RUNNER,
+            &windowed(&["items:transcript"]),
+        )
+        .await
+        .unwrap();
+        let at = |name: &str| {
+            report.by_type[crate::PULL_TYPE_NAMES
+                .iter()
+                .position(|n| *n == name)
+                .unwrap()]
+        };
         assert_eq!(at("transcript_segment").fetched, 3);
         assert_eq!(at("transcript_segment").applied, 2);
         assert_eq!(report.skipped_window, 1);
-        assert_eq!(report.deferred, 2, "the two lines set aside for their meeting; the dropped one is not among them");
-        assert_eq!(report.by_type.iter().map(|c| c.applied).sum::<usize>() + report.own_results_applied, report.rows_applied);
+        assert_eq!(
+            report.deferred, 2,
+            "the two lines set aside for their meeting; the dropped one is not among them"
+        );
+        assert_eq!(
+            report.by_type.iter().map(|c| c.applied).sum::<usize>() + report.own_results_applied,
+            report.rows_applied
+        );
     }
 
     #[tokio::test]
     async fn an_old_legacy_line_of_a_meeting_applied_earlier_is_dropped() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Started last week", now - 7 * DAY_MS)).await;
-        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("transcript", now, "live words", Some(7))).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Started last week", now - 7 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ITEMS,
+            &item_json("transcript", now, "live words", Some(7)),
+        )
+        .await;
         let store = runner_store();
         let opts = windowed(&["items:transcript"]);
         pull(&conn, &key, &store, &opts).await;
         assert_eq!(titles(&store), vec!["Started last week".to_string()]);
-        seed(&conn, &key, 3, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 100, "week old legacy words")).await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 100, "week old legacy words"),
+        )
+        .await;
         pull(&conn, &key, &store, &opts).await;
-        assert!(!has_line(&store, "week"), "the meeting is local, the line is still before the window");
-        assert!(store.list_sync_pending_dependencies(PEER).unwrap().is_empty());
+        assert!(
+            !has_line(&store, "week"),
+            "the meeting is local, the line is still before the window"
+        );
+        assert!(store
+            .list_sync_pending_dependencies(PEER)
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
     async fn a_windowed_legacy_line_whose_meeting_is_not_on_the_relay_stays_pending() {
         let (_dir, conn, key) = relay().await;
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(99, 99, 0, "orphan words")).await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(99, 99, 0, "orphan words"),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
         assert_eq!(
@@ -11360,17 +12700,35 @@ mod runner_round_tests {
     }
 
     #[tokio::test]
-    async fn a_pending_legacy_line_whose_meeting_arrives_older_than_the_window_is_dropped_by_the_retry() {
+    async fn a_pending_legacy_line_whose_meeting_arrives_older_than_the_window_is_dropped_by_the_retry(
+    ) {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "late arrival words")).await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 0, "late arrival words"),
+        )
+        .await;
         let store = runner_store();
         let opts = windowed(&["items:transcript"]);
         pull(&conn, &key, &store, &opts).await;
         assert_eq!(store.list_sync_pending_dependencies(PEER).unwrap().len(), 1);
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS),
+        )
+        .await;
         pull(&conn, &key, &store, &opts).await;
-        assert!(store.list_sync_pending_dependencies(PEER).unwrap().is_empty());
+        assert!(store
+            .list_sync_pending_dependencies(PEER)
+            .unwrap()
+            .is_empty());
         assert!(titles(&store).is_empty());
         assert!(!has_line(&store, "late"));
     }
@@ -11379,11 +12737,38 @@ mod runner_round_tests {
     async fn an_in_window_items_line_applied_while_resolving_counts_under_items() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Today", now - 60_000)).await;
-        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("transcript", now, "fresh line", Some(7))).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Today", now - 60_000),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ITEMS,
+            &item_json("transcript", now, "fresh line", Some(7)),
+        )
+        .await;
         let store = runner_store();
-        let report = crate::runner_pull_with_connection(&conn, &key, &store, RUNNER, &windowed(&["items:transcript"])).await.unwrap();
-        let at = |name: &str| report.by_type[crate::PULL_TYPE_NAMES.iter().position(|n| *n == name).unwrap()];
+        let report = crate::runner_pull_with_connection(
+            &conn,
+            &key,
+            &store,
+            RUNNER,
+            &windowed(&["items:transcript"]),
+        )
+        .await
+        .unwrap();
+        let at = |name: &str| {
+            report.by_type[crate::PULL_TYPE_NAMES
+                .iter()
+                .position(|n| *n == name)
+                .unwrap()]
+        };
         assert_eq!(at("items").applied, 1);
         assert_eq!(bodies(&store, "transcript"), vec!["fresh line".to_string()]);
     }
@@ -11392,36 +12777,98 @@ mod runner_round_tests {
     async fn a_held_old_meeting_is_not_applied_for_an_old_legacy_line_regression_guard() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Twenty days ago", now - 20 * DAY_MS),
+        )
+        .await;
         // Regression guard (it also passes without the fix wave): the line's own meeting_local_seq (50) names no
         // row, so only the held meeting row (seq 1) leads to the meeting.
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(50, 7, 0, "held path words")).await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(50, 7, 0, "held path words"),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
         assert!(titles(&store).is_empty());
         assert!(!has_line(&store, "held"));
-        assert!(store.list_sync_pending_dependencies(PEER).unwrap().is_empty(), "dated by the held meeting, then dropped");
+        assert!(
+            store
+                .list_sync_pending_dependencies(PEER)
+                .unwrap()
+                .is_empty(),
+            "dated by the held meeting, then dropped"
+        );
     }
 
     #[tokio::test]
     async fn a_legacy_line_is_dated_by_the_newest_copy_of_its_meeting() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Restarted", now - 20 * DAY_MS)).await;
-        seed(&conn, &key, 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &legacy_line_json(1, 7, 0, "newest copy words")).await;
-        seed(&conn, &key, 3, ROW_TYPE_MEETING, &meeting_at(7, "Restarted", now - 60 * 60 * 1000)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Restarted", now - 20 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &legacy_line_json(1, 7, 0, "newest copy words"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Restarted", now - 60 * 60 * 1000),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
-        assert!(has_line(&store, "newest"), "dated by the newer copy, so in the window");
-        assert_eq!(titles(&store), vec!["Restarted".to_string()], "the meeting is applied exactly when its line is");
+        assert!(
+            has_line(&store, "newest"),
+            "dated by the newer copy, so in the window"
+        );
+        assert_eq!(
+            titles(&store),
+            vec!["Restarted".to_string()],
+            "the meeting is applied exactly when its line is"
+        );
     }
 
     #[tokio::test]
     async fn an_explicit_meeting_grant_respects_the_window() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Last week", now - 7 * DAY_MS)).await;
-        seed(&conn, &key, 2, ROW_TYPE_MEETING, &meeting_at(8, "This morning", now - DAY_MS / 4)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Last week", now - 7 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_MEETING,
+            &meeting_at(8, "This morning", now - DAY_MS / 4),
+        )
+        .await;
         let store = runner_store();
         pull(&conn, &key, &store, &windowed(&[ROW_TYPE_MEETING])).await;
         assert_eq!(titles(&store), vec!["This morning".to_string()]);
@@ -11435,19 +12882,51 @@ mod runner_round_tests {
     async fn default_options_still_pull_every_meeting() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Years ago", 1_000)).await;
-        seed(&conn, &key, 2, ROW_TYPE_MEETING, &meeting_at(8, "Last month", now - 30 * DAY_MS)).await;
-        seed(&conn, &key, 3, ROW_TYPE_MEETING, &meeting_at(9, "Today", now)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_at(7, "Years ago", 1_000),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_MEETING,
+            &meeting_at(8, "Last month", now - 30 * DAY_MS),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_MEETING,
+            &meeting_at(9, "Today", now),
+        )
+        .await;
         let phone = Store::open_in_memory().unwrap();
-        crate::pull_only_with_connection(&conn, &key, &phone, "phone", &PullOptions::default()).await.unwrap();
+        crate::pull_only_with_connection(&conn, &key, &phone, "phone", &PullOptions::default())
+            .await
+            .unwrap();
         let desktop = Store::open_in_memory().unwrap();
-        pull_content(&conn, &key, &desktop, "desktop").await.unwrap();
+        pull_content(&conn, &key, &desktop, "desktop")
+            .await
+            .unwrap();
         let runner = runner_store();
         pull(&conn, &key, &runner, &PullOptions::default()).await;
         for store in [&phone, &desktop, &runner] {
             let mut got = titles(store);
             got.sort();
-            assert_eq!(got, vec!["Last month".to_string(), "Today".to_string(), "Years ago".to_string()]);
+            assert_eq!(
+                got,
+                vec![
+                    "Last month".to_string(),
+                    "Today".to_string(),
+                    "Years ago".to_string()
+                ]
+            );
         }
     }
 
@@ -11455,36 +12934,99 @@ mod runner_round_tests {
     async fn the_window_excludes_older_items() {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_ITEMS, &item_json("capture", now - 3 * DAY_MS, "old capture", None)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", now - 3 * DAY_MS, "old capture", None),
+        )
+        .await;
         // A future event pushed long ago is still inside the window: it is dated by its own time.
-        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("calendar_event", now + DAY_MS, "tomorrow", None)).await;
-        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("calendar_event", now - 3 * DAY_MS, "last week", None)).await;
-        seed(&conn, &key, 4, ROW_TYPE_ITEMS, &item_json("capture", now - DAY_MS / 2, "recent capture", None)).await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ITEMS,
+            &item_json("calendar_event", now + DAY_MS, "tomorrow", None),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_ITEMS,
+            &item_json("calendar_event", now - 3 * DAY_MS, "last week", None),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            4,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", now - DAY_MS / 2, "recent capture", None),
+        )
+        .await;
         let store = runner_store();
         let opts = PullOptions {
             item_window_ms: Some(DAY_MS),
             ..allow(&["items:capture", "items:calendar_event"])
         };
         pull(&conn, &key, &store, &opts).await;
-        assert_eq!(bodies(&store, "capture"), vec!["recent capture".to_string()]);
-        assert_eq!(bodies(&store, "calendar_event"), vec!["tomorrow".to_string()]);
+        assert_eq!(
+            bodies(&store, "capture"),
+            vec!["recent capture".to_string()]
+        );
+        assert_eq!(
+            bodies(&store, "calendar_event"),
+            vec!["tomorrow".to_string()]
+        );
     }
 
     #[tokio::test]
-    async fn a_client_delete_tombstone_removes_pulled_rows_and_leaves_no_fts_residue_after_the_round() {
+    async fn a_client_delete_tombstone_removes_pulled_rows_and_leaves_no_fts_residue_after_the_round(
+    ) {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
-        seed(&conn, &key, 1, ROW_TYPE_ITEMS, &item_json("capture", now, "quuxlerberg contract notes", None)).await;
-        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("capture", now, "lunch order", None)).await;
+        seed(
+            &conn,
+            &key,
+            1,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", now, "quuxlerberg contract notes", None),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            2,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", now, "lunch order", None),
+        )
+        .await;
         let store = runner_store();
         let opts = allow(&["items:capture"]);
         pull(&conn, &key, &store, &opts).await;
-        assert!(store.fts_pages_naming("quuxlerberg").unwrap() > 0, "the test needs the term indexed");
+        assert!(
+            store.fts_pages_naming("quuxlerberg").unwrap() > 0,
+            "the test needs the term indexed"
+        );
 
-        seed(&conn, &key, 3, ROW_TYPE_CLIENT_ITEM_FORGOTTEN, &forgotten_capture_json(1)).await;
+        seed(
+            &conn,
+            &key,
+            3,
+            ROW_TYPE_CLIENT_ITEM_FORGOTTEN,
+            &forgotten_capture_json(1),
+        )
+        .await;
         pull(&conn, &key, &store, &opts).await;
         assert_eq!(bodies(&store, "capture"), vec!["lunch order".to_string()]);
-        assert_eq!(store.fts_pages_naming("quuxlerberg").unwrap(), 0, "no residue in the full-text index");
+        assert_eq!(
+            store.fts_pages_naming("quuxlerberg").unwrap(),
+            0,
+            "no residue in the full-text index"
+        );
     }
 }
 
@@ -11498,14 +13040,25 @@ mod filtered_pull_tests {
 
     async fn relay() -> (tempfile::TempDir, Connection, GroupKey) {
         let dir = tempfile::tempdir().unwrap();
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let conn = db.connect().unwrap();
         ensure_content_schema(&conn).await.unwrap();
         (dir, conn, GroupKey::generate())
     }
 
     /// One encrypted row of `device`, with `kind_tag` = the tag of `tag_kind` (or NULL).
-    async fn seed(conn: &Connection, key: &GroupKey, device: &str, seq: i64, row_type: &str, json: &str, tag_kind: Option<&str>) {
+    async fn seed(
+        conn: &Connection,
+        key: &GroupKey,
+        device: &str,
+        seq: i64,
+        row_type: &str,
+        json: &str,
+        tag_kind: Option<&str>,
+    ) {
         let aad = content_row_aad(device, seq, row_type);
         let ciphertext = STANDARD.encode(sync::encrypt_payload(key, json.as_bytes(), &aad));
         let tag = tag_kind.map(|k| sync::kind_tag(key, k));
@@ -11518,7 +13071,12 @@ mod filtered_pull_tests {
     }
 
     fn item_json(kind: &str, body: &str) -> String {
-        item_json_at(kind, body, (kind == "calendar_event").then_some("outlook"), now_unix_ms())
+        item_json_at(
+            kind,
+            body,
+            (kind == "calendar_event").then_some("outlook"),
+            now_unix_ms(),
+        )
     }
 
     /// An `items` payload of `kind` with this `source` and date.
@@ -11546,7 +13104,10 @@ mod filtered_pull_tests {
     }
 
     fn allow(types: &[&str]) -> PullOptions {
-        PullOptions { row_type_allowlist: Some(types.iter().map(|t| t.to_string()).collect()), ..Default::default() }
+        PullOptions {
+            row_type_allowlist: Some(types.iter().map(|t| t.to_string()).collect()),
+            ..Default::default()
+        }
     }
 
     fn runner_store() -> Store {
@@ -11555,13 +13116,24 @@ mod filtered_pull_tests {
         store
     }
 
-    async fn pull(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions) -> crate::RunnerPullReport {
-        crate::runner_pull_with_connection(conn, key, store, RUNNER, opts).await.unwrap()
+    async fn pull(
+        conn: &Connection,
+        key: &GroupKey,
+        store: &Store,
+        opts: &PullOptions,
+    ) -> crate::RunnerPullReport {
+        crate::runner_pull_with_connection(conn, key, store, RUNNER, opts)
+            .await
+            .unwrap()
     }
 
     fn bodies(store: &Store, kind: &str) -> Vec<String> {
-        let mut out: Vec<String> =
-            store.export_items_page(kind, 0, 100_000).unwrap().into_iter().map(|r| r.body_text).collect();
+        let mut out: Vec<String> = store
+            .export_items_page(kind, 0, 100_000)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.body_text)
+            .collect();
         out.sort();
         out
     }
@@ -11581,12 +13153,66 @@ mod filtered_pull_tests {
                 seq
             };
             for i in 0..4 {
-                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("capture", &format!("{device} cap {i}")), Some("capture")).await;
-                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("{device} ev {i}")), Some("calendar_event")).await;
-                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("transcript", &format!("{device} line {i}")), Some("transcript")).await;
-                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("{device} old ev {i}")), None).await;
-                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("capture", &format!("{device} old cap {i}")), None).await;
-                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("capture", &format!("{device} cap2 {i}")), Some("capture")).await;
+                seed(
+                    conn,
+                    key,
+                    device,
+                    next(),
+                    ROW_TYPE_ITEMS,
+                    &item_json("capture", &format!("{device} cap {i}")),
+                    Some("capture"),
+                )
+                .await;
+                seed(
+                    conn,
+                    key,
+                    device,
+                    next(),
+                    ROW_TYPE_ITEMS,
+                    &item_json("calendar_event", &format!("{device} ev {i}")),
+                    Some("calendar_event"),
+                )
+                .await;
+                seed(
+                    conn,
+                    key,
+                    device,
+                    next(),
+                    ROW_TYPE_ITEMS,
+                    &item_json("transcript", &format!("{device} line {i}")),
+                    Some("transcript"),
+                )
+                .await;
+                seed(
+                    conn,
+                    key,
+                    device,
+                    next(),
+                    ROW_TYPE_ITEMS,
+                    &item_json("calendar_event", &format!("{device} old ev {i}")),
+                    None,
+                )
+                .await;
+                seed(
+                    conn,
+                    key,
+                    device,
+                    next(),
+                    ROW_TYPE_ITEMS,
+                    &item_json("capture", &format!("{device} old cap {i}")),
+                    None,
+                )
+                .await;
+                seed(
+                    conn,
+                    key,
+                    device,
+                    next(),
+                    ROW_TYPE_ITEMS,
+                    &item_json("capture", &format!("{device} cap2 {i}")),
+                    Some("capture"),
+                )
+                .await;
             }
         }
     }
@@ -11595,12 +13221,17 @@ mod filtered_pull_tests {
     /// same pull's without tags, at the default span and at spans small enough to put every row on a window
     /// edge.
     #[tokio::test]
-    async fn filtered_pull_fetches_only_granted_and_untagged_items_and_applies_what_unfiltered_does() {
+    async fn filtered_pull_fetches_only_granted_and_untagged_items_and_applies_what_unfiltered_does(
+    ) {
         for span in [None, Some(1), Some(2), Some(5)] {
             let (_dir, conn, key) = relay().await;
             seed_mixed_relay(&conn, &key).await;
             let opts = allow(&["items:calendar_event"]);
-            let total_items = count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await;
+            let total_items = count(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'",
+            )
+            .await;
             let wanted = count(
                 &conn,
                 &format!(
@@ -11613,16 +13244,29 @@ mod filtered_pull_tests {
             let filtered = runner_store();
             let report = pull_with_span(&conn, &key, &filtered, &opts, span).await;
             assert!(report.complete, "span {span:?}");
-            assert_eq!(report.rows_fetched, wanted, "span {span:?}: tagged events and untagged items only");
+            assert_eq!(
+                report.rows_fetched, wanted,
+                "span {span:?}: tagged events and untagged items only"
+            );
 
-            conn.execute("UPDATE sync_row SET kind_tag = NULL", ()).await.unwrap();
+            conn.execute("UPDATE sync_row SET kind_tag = NULL", ())
+                .await
+                .unwrap();
             let unfiltered = runner_store();
             let base = pull_with_span(&conn, &key, &unfiltered, &opts, span).await;
             assert!(base.complete);
             assert_eq!(base.rows_fetched, total_items);
 
-            assert_eq!(bodies(&filtered, "calendar_event"), bodies(&unfiltered, "calendar_event"), "span {span:?}");
-            assert_eq!(bodies(&filtered, "calendar_event").len(), 24, "every event, tagged or not");
+            assert_eq!(
+                bodies(&filtered, "calendar_event"),
+                bodies(&unfiltered, "calendar_event"),
+                "span {span:?}"
+            );
+            assert_eq!(
+                bodies(&filtered, "calendar_event").len(),
+                24,
+                "every event, tagged or not"
+            );
             for kind in ["capture", "transcript"] {
                 assert!(bodies(&filtered, kind).is_empty());
                 assert!(bodies(&unfiltered, kind).is_empty());
@@ -11630,7 +13274,11 @@ mod filtered_pull_tests {
             assert_eq!(report.rows_applied, base.rows_applied, "span {span:?}");
             for device in ["dev-a", "dev-b", "dev-c"] {
                 assert_eq!(filtered.sync_gap(device).unwrap(), None);
-                assert_eq!(filtered.get_sync_cursor(device).unwrap(), 24, "span {span:?}: at the peer's top");
+                assert_eq!(
+                    filtered.get_sync_cursor(device).unwrap(),
+                    24,
+                    "span {span:?}: at the peer's top"
+                );
             }
         }
     }
@@ -11641,11 +13289,29 @@ mod filtered_pull_tests {
     async fn pull_report_counts_rows_fetched_and_applied_per_type() {
         let (_dir, conn, key) = relay().await;
         for i in 1..=5 {
-            seed(&conn, &key, "dev-a", i, ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("ev {i}")), None).await;
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                i,
+                ROW_TYPE_ITEMS,
+                &item_json("calendar_event", &format!("ev {i}")),
+                None,
+            )
+            .await;
         }
         // Four more items of a kind the allowlist leaves out: fetched, not applied.
         for i in 6..=9 {
-            seed(&conn, &key, "dev-a", i, ROW_TYPE_ITEMS, &item_json("capture", &format!("cap {i}")), None).await;
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                i,
+                ROW_TYPE_ITEMS,
+                &item_json("capture", &format!("cap {i}")),
+                None,
+            )
+            .await;
         }
         let meeting = serde_json::to_string(&MeetingPayload {
             source_meeting_id: Some(1),
@@ -11676,22 +13342,61 @@ mod filtered_pull_tests {
         }
         for i in 12..=14 {
             let (kind, opaque_id) = memory::client_forget::pulled_capture_identity("dev-a", i);
-            let json = serde_json::to_string(&memory::ClientItemForgotten { kind: kind.to_string(), opaque_id, forgotten_at_unix_ms: 1 }).unwrap();
-            seed(&conn, &key, "dev-a", i, ROW_TYPE_CLIENT_ITEM_FORGOTTEN, &json, None).await;
+            let json = serde_json::to_string(&memory::ClientItemForgotten {
+                kind: kind.to_string(),
+                opaque_id,
+                forgotten_at_unix_ms: 1,
+            })
+            .unwrap();
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                i,
+                ROW_TYPE_CLIENT_ITEM_FORGOTTEN,
+                &json,
+                None,
+            )
+            .await;
         }
         let store = runner_store();
-        let report = pull(&conn, &key, &store, &allow(&["items:calendar_event", "meeting"])).await;
+        let report = pull(
+            &conn,
+            &key,
+            &store,
+            &allow(&["items:calendar_event", "meeting"]),
+        )
+        .await;
         assert!(report.complete);
-        let at = |name: &str| report.by_type[crate::PULL_TYPE_NAMES.iter().position(|n| *n == name).unwrap()];
+        let at = |name: &str| {
+            report.by_type[crate::PULL_TYPE_NAMES
+                .iter()
+                .position(|n| *n == name)
+                .unwrap()]
+        };
         assert_eq!(at("items").fetched, 9);
         assert_eq!(at("items").applied, 5, "the four captures are not granted");
         assert_eq!(at("meeting").fetched, 2);
         assert_eq!(at("meeting").applied, 2);
         assert_eq!(at("tombstone").fetched, 3);
         assert_eq!(report.skipped_allowlist, 4);
-        assert_eq!((report.skip_kind, report.skip_mcp, report.skip_google_cal, report.skip_item_window), (4, 0, 0, 0));
-        assert_eq!(report.by_type.iter().map(|c| c.fetched).sum::<usize>(), report.rows_fetched);
-        assert_eq!(report.by_type.iter().map(|c| c.applied).sum::<usize>() + report.own_results_applied, report.rows_applied);
+        assert_eq!(
+            (
+                report.skip_kind,
+                report.skip_mcp,
+                report.skip_google_cal,
+                report.skip_item_window
+            ),
+            (4, 0, 0, 0)
+        );
+        assert_eq!(
+            report.by_type.iter().map(|c| c.fetched).sum::<usize>(),
+            report.rows_fetched
+        );
+        assert_eq!(
+            report.by_type.iter().map(|c| c.applied).sum::<usize>() + report.own_results_applied,
+            report.rows_applied
+        );
         assert!(report.rounds >= 1);
     }
 
@@ -11701,15 +13406,32 @@ mod filtered_pull_tests {
     async fn gap_pages_count_per_type_and_are_timed() {
         let (_dir, conn, key) = relay().await;
         for i in 1..=12 {
-            seed(&conn, &key, "dev-a", i, ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("ev {i}")), None).await;
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                i,
+                ROW_TYPE_ITEMS,
+                &item_json("calendar_event", &format!("ev {i}")),
+                None,
+            )
+            .await;
         }
         let store = runner_store();
         let opts = allow(&["items:calendar_event"]);
-        let pace = Pace { rows: 3, peer_budget: std::time::Duration::from_secs(60), round_budget: None };
+        let pace = Pace {
+            rows: 3,
+            peer_budget: std::time::Duration::from_secs(60),
+            round_budget: None,
+        };
         let (mut fetched, mut applied, mut gap_fetched, mut gap_us) = (0, 0, 0, 0);
         for _ in 0..20 {
             let mut stats = Vec::new();
-            let more = pull_round_mode(&conn, &key, &store, RUNNER, pace, &opts, true, true, &mut stats).await.unwrap();
+            let more = pull_round_mode(
+                &conn, &key, &store, RUNNER, pace, &opts, true, true, &mut stats,
+            )
+            .await
+            .unwrap();
             for s in &stats {
                 fetched += s.by_type[0].fetched;
                 applied += s.by_type[0].applied;
@@ -11721,7 +13443,10 @@ mod filtered_pull_tests {
             }
         }
         assert_eq!((fetched, applied), (12, 12));
-        assert!(gap_fetched > 0, "newest first leaves older rows to gap pages");
+        assert!(
+            gap_fetched > 0,
+            "newest first leaves older rows to gap pages"
+        );
         assert!(gap_us > 0, "gap fetch and apply are timed");
     }
 
@@ -11730,18 +13455,51 @@ mod filtered_pull_tests {
     async fn a_budget_stopped_page_counts_refetch() {
         let (_dir, conn, key) = relay().await;
         for i in 1..=6 {
-            seed(&conn, &key, "dev-a", i, ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("ev {i}")), None).await;
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                i,
+                ROW_TYPE_ITEMS,
+                &item_json("calendar_event", &format!("ev {i}")),
+                None,
+            )
+            .await;
         }
         let store = runner_store();
-        let spent = Pace { rows: MAX_ROWS_PER_PULL_PASS, peer_budget: std::time::Duration::ZERO, round_budget: None };
+        let spent = Pace {
+            rows: MAX_ROWS_PER_PULL_PASS,
+            peer_budget: std::time::Duration::ZERO,
+            round_budget: None,
+        };
         let mut stats = Vec::new();
-        let more = pull_round(&conn, &key, &store, RUNNER, spent, &allow(&["items:calendar_event"]), true, &mut stats).await.unwrap();
+        let more = pull_round(
+            &conn,
+            &key,
+            &store,
+            RUNNER,
+            spent,
+            &allow(&["items:calendar_event"]),
+            true,
+            &mut stats,
+        )
+        .await
+        .unwrap();
         assert!(more);
         assert_eq!(stats[0].fetched, 6);
-        assert_eq!(stats[0].refetch, 5, "one row handled, five left for the next pass");
+        assert_eq!(
+            stats[0].refetch, 5,
+            "one row handled, five left for the next pass"
+        );
     }
 
-    async fn pull_with_span(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions, span: Option<i64>) -> crate::RunnerPullReport {
+    async fn pull_with_span(
+        conn: &Connection,
+        key: &GroupKey,
+        store: &Store,
+        opts: &PullOptions,
+        span: Option<i64>,
+    ) -> crate::RunnerPullReport {
         FILTERED_PULL_TEST_SPAN.with(|c| c.set(span));
         let report = pull(conn, key, store, opts).await;
         FILTERED_PULL_TEST_SPAN.with(|c| c.set(None));
@@ -11753,8 +13511,18 @@ mod filtered_pull_tests {
     /// rows pushed above it are read the same way.
     #[tokio::test]
     async fn filtered_pull_live_range_windows_reach_the_top_and_match_unfiltered() {
-        let spent = Pace { rows: MAX_ROWS_PER_PULL_PASS, peer_budget: std::time::Duration::ZERO, round_budget: None };
-        for (span, pace) in [(None, NORMAL_PACE), (Some(1), NORMAL_PACE), (Some(2), NORMAL_PACE), (Some(5), NORMAL_PACE), (Some(2), spent)] {
+        let spent = Pace {
+            rows: MAX_ROWS_PER_PULL_PASS,
+            peer_budget: std::time::Duration::ZERO,
+            round_budget: None,
+        };
+        for (span, pace) in [
+            (None, NORMAL_PACE),
+            (Some(1), NORMAL_PACE),
+            (Some(2), NORMAL_PACE),
+            (Some(5), NORMAL_PACE),
+            (Some(2), spent),
+        ] {
             let (_dir, conn, key) = relay().await;
             seed_mixed_relay(&conn, &key).await;
             let opts = allow(&["items:calendar_event"]);
@@ -11765,8 +13533,14 @@ mod filtered_pull_tests {
                     let mut fetched = 0;
                     for _ in 0..50 {
                         let mut stats = Vec::new();
-                        let more = pull_round(conn, key, &store, RUNNER, pace, opts, true, &mut stats).await.unwrap();
-                        fetched += stats.iter().map(|s| s.fetched + s.gap_fetched).sum::<usize>();
+                        let more =
+                            pull_round(conn, key, &store, RUNNER, pace, opts, true, &mut stats)
+                                .await
+                                .unwrap();
+                        fetched += stats
+                            .iter()
+                            .map(|s| s.fetched + s.gap_fetched)
+                            .sum::<usize>();
                         if !more {
                             break;
                         }
@@ -11776,23 +13550,68 @@ mod filtered_pull_tests {
                 }
             };
             let (filtered, fetched) = rounds(runner_store()).await;
-            assert_eq!(fetched, 3 * 12, "span {span:?}: tagged events and untagged items only");
+            assert_eq!(
+                fetched,
+                3 * 12,
+                "span {span:?}: tagged events and untagged items only"
+            );
             for device in ["dev-a", "dev-b", "dev-c"] {
-                assert_eq!(filtered.get_sync_cursor(device).unwrap(), 24, "span {span:?}");
+                assert_eq!(
+                    filtered.get_sync_cursor(device).unwrap(),
+                    24,
+                    "span {span:?}"
+                );
             }
             // Rows pushed later, above the cursor: an unwanted tail, then one event.
             for seq in 25..=30 {
-                seed(&conn, &key, "dev-a", seq, ROW_TYPE_ITEMS, &item_json("capture", &format!("late cap {seq}")), Some("capture")).await;
+                seed(
+                    &conn,
+                    &key,
+                    "dev-a",
+                    seq,
+                    ROW_TYPE_ITEMS,
+                    &item_json("capture", &format!("late cap {seq}")),
+                    Some("capture"),
+                )
+                .await;
             }
-            seed(&conn, &key, "dev-a", 31, ROW_TYPE_ITEMS, &item_json("calendar_event", "late ev"), Some("calendar_event")).await;
-            seed(&conn, &key, "dev-a", 32, ROW_TYPE_ITEMS, &item_json("capture", "late cap 32"), Some("capture")).await;
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                31,
+                ROW_TYPE_ITEMS,
+                &item_json("calendar_event", "late ev"),
+                Some("calendar_event"),
+            )
+            .await;
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                32,
+                ROW_TYPE_ITEMS,
+                &item_json("capture", "late cap 32"),
+                Some("capture"),
+            )
+            .await;
             let (filtered, fetched) = rounds(filtered).await;
             assert_eq!(fetched, 1, "span {span:?}: only the late event");
-            assert_eq!(filtered.get_sync_cursor("dev-a").unwrap(), 32, "span {span:?}");
+            assert_eq!(
+                filtered.get_sync_cursor("dev-a").unwrap(),
+                32,
+                "span {span:?}"
+            );
 
-            conn.execute("UPDATE sync_row SET kind_tag = NULL", ()).await.unwrap();
+            conn.execute("UPDATE sync_row SET kind_tag = NULL", ())
+                .await
+                .unwrap();
             let (unfiltered, _) = rounds(runner_store()).await;
-            assert_eq!(bodies(&filtered, "calendar_event"), bodies(&unfiltered, "calendar_event"), "span {span:?}");
+            assert_eq!(
+                bodies(&filtered, "calendar_event"),
+                bodies(&unfiltered, "calendar_event"),
+                "span {span:?}"
+            );
             assert_eq!(bodies(&filtered, "calendar_event").len(), 25);
             assert!(bodies(&filtered, "capture").is_empty());
         }
@@ -11803,16 +13622,58 @@ mod filtered_pull_tests {
     #[tokio::test]
     async fn filtered_pull_applies_tagged_and_untagged_rows_of_a_granted_kind() {
         let (_dir, conn, key) = relay().await;
-        seed(&conn, &key, "dev-a", 1, ROW_TYPE_ITEMS, &item_json("calendar_event", "tagged"), Some("calendar_event")).await;
-        seed(&conn, &key, "dev-a", 2, ROW_TYPE_ITEMS, &item_json("calendar_event", "untagged"), None).await;
-        seed(&conn, &key, "dev-a", 3, ROW_TYPE_ITEMS, &item_json("capture", "old capture"), None).await;
-        seed(&conn, &key, "dev-a", 4, ROW_TYPE_ITEMS, &item_json("capture", "new capture"), Some("capture")).await;
+        seed(
+            &conn,
+            &key,
+            "dev-a",
+            1,
+            ROW_TYPE_ITEMS,
+            &item_json("calendar_event", "tagged"),
+            Some("calendar_event"),
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            "dev-a",
+            2,
+            ROW_TYPE_ITEMS,
+            &item_json("calendar_event", "untagged"),
+            None,
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            "dev-a",
+            3,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", "old capture"),
+            None,
+        )
+        .await;
+        seed(
+            &conn,
+            &key,
+            "dev-a",
+            4,
+            ROW_TYPE_ITEMS,
+            &item_json("capture", "new capture"),
+            Some("capture"),
+        )
+        .await;
         let store = runner_store();
         let report = pull(&conn, &key, &store, &allow(&["items:calendar_event"])).await;
         assert!(report.complete);
-        assert_eq!(bodies(&store, "calendar_event"), vec!["tagged".to_string(), "untagged".to_string()]);
+        assert_eq!(
+            bodies(&store, "calendar_event"),
+            vec!["tagged".to_string(), "untagged".to_string()]
+        );
         assert!(bodies(&store, "capture").is_empty());
-        assert_eq!(report.rows_fetched, 3, "the tagged capture is never fetched");
+        assert_eq!(
+            report.rows_fetched, 3,
+            "the tagged capture is never fetched"
+        );
     }
 
     /// (b) Every kind the repo pushes as an `items` row (capture, calendar event, transcript line) is
@@ -11863,11 +13724,17 @@ mod filtered_pull_tests {
                 text: "a transcript line".to_string(),
             }])
             .unwrap();
-        pusher.complete_meeting(meeting_id, now_unix_ms(), None).unwrap();
+        pusher
+            .complete_meeting(meeting_id, now_unix_ms(), None)
+            .unwrap();
         push_content(&conn, &key, &pusher, "dev-a").await.unwrap();
         let kinds = ["capture", "calendar_event", "transcript"];
         assert_eq!(
-            count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await,
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL"
+            )
+            .await,
             0,
             "every pushed item is tagged"
         );
@@ -11878,18 +13745,27 @@ mod filtered_pull_tests {
             assert!(report.complete, "{kind}");
             assert_eq!(bodies(&store, kind).len(), 1, "{kind} round-trips");
             for other in kinds.iter().filter(|k| **k != kind) {
-                assert!(bodies(&store, other).is_empty(), "{kind} pull applied {other}");
+                assert!(
+                    bodies(&store, other).is_empty(),
+                    "{kind} pull applied {other}"
+                );
             }
             fetched.push(report.rows_fetched);
         }
         // The same pulls with every tag cleared (as rows from before tags) fetch exactly the two other kinds'
         // items more.
-        conn.execute("UPDATE sync_row SET kind_tag = NULL, slice_tag = NULL", ()).await.unwrap();
+        conn.execute("UPDATE sync_row SET kind_tag = NULL, slice_tag = NULL", ())
+            .await
+            .unwrap();
         for (kind, filtered) in kinds.iter().zip(fetched) {
             let store = runner_store();
             let report = pull(&conn, &key, &store, &allow(&[&format!("items:{kind}")])).await;
             assert_eq!(bodies(&store, kind).len(), 1, "{kind}");
-            assert_eq!(filtered + 2, report.rows_fetched, "{kind}: the other kinds' items are not fetched");
+            assert_eq!(
+                filtered + 2,
+                report.rows_fetched,
+                "{kind}: the other kinds' items are not fetched"
+            );
         }
     }
 
@@ -11915,22 +13791,53 @@ mod filtered_pull_tests {
             .unwrap();
             for i in 0..WANTED {
                 let seq = i * STRIDE + 1;
-                seed(&conn, &key, "dev-a", seq, ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("ev {seq}")), Some("calendar_event")).await;
+                seed(
+                    &conn,
+                    &key,
+                    "dev-a",
+                    seq,
+                    ROW_TYPE_ITEMS,
+                    &item_json("calendar_event", &format!("ev {seq}")),
+                    Some("calendar_event"),
+                )
+                .await;
             }
             let rows = count(&conn, "SELECT COUNT(*) FROM sync_row").await;
             assert_eq!(rows as i64, top);
 
             let store = runner_store();
             let started = std::time::Instant::now();
-            let report = pull_with_span(&conn, &key, &store, &allow(&["items:calendar_event"]), span).await;
-            eprintln!("sparse fixture span {span:?}: {} rows, fetched {}, rounds {}, {:?}", rows, report.rows_fetched, report.rounds, started.elapsed());
+            let report =
+                pull_with_span(&conn, &key, &store, &allow(&["items:calendar_event"]), span).await;
+            eprintln!(
+                "sparse fixture span {span:?}: {} rows, fetched {}, rounds {}, {:?}",
+                rows,
+                report.rows_fetched,
+                report.rounds,
+                started.elapsed()
+            );
             assert!(report.complete, "span {span:?}");
-            assert_eq!(store.get_sync_cursor("dev-a").unwrap(), top, "span {span:?}: the cursor is at the peer's top");
-            assert_eq!(store.sync_gap("dev-a").unwrap(), None, "span {span:?}: the gap is pulled");
-            assert!(report.rows_fetched * 100 < rows, "span {span:?}: fetched {} of {rows}", report.rows_fetched);
+            assert_eq!(
+                store.get_sync_cursor("dev-a").unwrap(),
+                top,
+                "span {span:?}: the cursor is at the peer's top"
+            );
+            assert_eq!(
+                store.sync_gap("dev-a").unwrap(),
+                None,
+                "span {span:?}: the gap is pulled"
+            );
+            assert!(
+                report.rows_fetched * 100 < rows,
+                "span {span:?}: fetched {} of {rows}",
+                report.rows_fetched
+            );
             let applied = bodies(&store, "calendar_event");
             assert_eq!(applied.len() as i64, WANTED, "span {span:?}");
-            assert!(applied.contains(&"ev 1".to_string()), "the lowest granted row is applied");
+            assert!(
+                applied.contains(&"ev 1".to_string()),
+                "the lowest granted row is applied"
+            );
         }
     }
 
@@ -11939,18 +13846,32 @@ mod filtered_pull_tests {
     #[tokio::test]
     async fn filtered_pull_on_a_relay_without_kind_tag_pulls_unfiltered() {
         let dir = tempfile::tempdir().unwrap();
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let conn = db.connect().unwrap();
-        conn.execute(super::tests::OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        conn.execute(super::tests::OLD_SYNC_ROW_DDL, ())
+            .await
+            .unwrap();
         // This process believes the column is there, so ensure_content_schema does not add it: the pull
         // itself must cope.
         KIND_TAG_COLUMN_SEEN.set();
         let key = GroupKey::generate();
-        let rows = [("calendar_event", "ev 1"), ("capture", "cap 1"), ("calendar_event", "ev 2"), ("transcript", "line")];
+        let rows = [
+            ("calendar_event", "ev 1"),
+            ("capture", "cap 1"),
+            ("calendar_event", "ev 2"),
+            ("transcript", "line"),
+        ];
         for (i, (kind, body)) in rows.iter().enumerate() {
             let seq = i as i64 + 1;
             let aad = content_row_aad("dev-a", seq, ROW_TYPE_ITEMS);
-            let ciphertext = STANDARD.encode(sync::encrypt_payload(&key, item_json(kind, body).as_bytes(), &aad));
+            let ciphertext = STANDARD.encode(sync::encrypt_payload(
+                &key,
+                item_json(kind, body).as_bytes(),
+                &aad,
+            ));
             conn.execute(
                 "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) VALUES ('dev-a', ?1, 'items', ?2, 0)",
                 params![seq, ciphertext.as_str()],
@@ -11960,23 +13881,41 @@ mod filtered_pull_tests {
         }
         for span in [None, Some(1)] {
             let store = runner_store();
-            let report = pull_with_span(&conn, &key, &store, &allow(&["items:calendar_event"]), span).await;
+            let report =
+                pull_with_span(&conn, &key, &store, &allow(&["items:calendar_event"]), span).await;
             assert!(report.complete);
             assert_eq!(report.rows_fetched, 4, "unfiltered: every items row");
-            assert_eq!(bodies(&store, "calendar_event"), vec!["ev 1".to_string(), "ev 2".to_string()]);
+            assert_eq!(
+                bodies(&store, "calendar_event"),
+                vec!["ev 1".to_string(), "ev 2".to_string()]
+            );
             assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 4);
             assert_eq!(store.sync_gap("dev-a").unwrap(), None);
         }
-        let mut cols = conn.query("SELECT COUNT(*) FROM pragma_table_info('sync_row') WHERE name = 'kind_tag'", ()).await.unwrap();
-        assert_eq!(cols.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0, "the pull did not add the column");
+        let mut cols = conn
+            .query(
+                "SELECT COUNT(*) FROM pragma_table_info('sync_row') WHERE name = 'kind_tag'",
+                (),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            cols.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            0,
+            "the pull did not add the column"
+        );
         KIND_TAG_COLUMN_SEEN.reset();
     }
 
     #[test]
     fn no_such_kind_tag_column_is_recognized() {
-        assert!(is_no_such_kind_tag_column("SQLite failure: `no such column: kind_tag`"));
+        assert!(is_no_such_kind_tag_column(
+            "SQLite failure: `no such column: kind_tag`"
+        ));
         assert!(!is_no_such_kind_tag_column("no such column: entity_tag"));
-        assert!(!is_no_such_kind_tag_column("table sync_row has no column named kind_tag"));
+        assert!(!is_no_such_kind_tag_column(
+            "table sync_row has no column named kind_tag"
+        ));
         assert!(!is_no_such_kind_tag_column("database is locked"));
     }
 
@@ -11988,11 +13927,25 @@ mod filtered_pull_tests {
         assert_eq!(tags(&PullOptions::default()), None);
         assert_eq!(tags(&allow(&[ROW_TYPE_ROUTINE_RUN])), None);
         assert_eq!(tags(&allow(&[ROW_TYPE_ITEMS])), None);
-        assert_eq!(tags(&allow(&["items:calendar_event", ROW_TYPE_ITEMS])), None, "every kind");
-        assert_eq!(tags(&allow(&["items:calendar_event"])), Some(vec![sync::kind_tag(&key, "calendar_event")]));
         assert_eq!(
-            tags(&allow(&["items:capture", "items:transcript", "items:capture"])),
-            Some(vec![sync::kind_tag(&key, "capture"), sync::kind_tag(&key, "transcript")])
+            tags(&allow(&["items:calendar_event", ROW_TYPE_ITEMS])),
+            None,
+            "every kind"
+        );
+        assert_eq!(
+            tags(&allow(&["items:calendar_event"])),
+            Some(vec![sync::kind_tag(&key, "calendar_event")])
+        );
+        assert_eq!(
+            tags(&allow(&[
+                "items:capture",
+                "items:transcript",
+                "items:capture"
+            ])),
+            Some(vec![
+                sync::kind_tag(&key, "capture"),
+                sync::kind_tag(&key, "transcript")
+            ])
         );
     }
 
@@ -12004,12 +13957,21 @@ mod filtered_pull_tests {
 
     /// The runner's options for a calendar grant: a window of `days` and no Google Calendar event.
     fn runner_calendar_options(days: i64) -> PullOptions {
-        PullOptions { item_window_ms: Some(days * DAY), non_google_calendar_only: true, ..allow(&["items:calendar_event"]) }
+        PullOptions {
+            item_window_ms: Some(days * DAY),
+            non_google_calendar_only: true,
+            ..allow(&["items:calendar_event"])
+        }
     }
 
     /// The `slice_tag` a push gives an item of `kind` with `source` dated `ts`.
     fn slice_of(key: &GroupKey, kind: &str, source: Option<&str>, ts: i64) -> String {
-        sync::slice_tag(key, kind, sync::source_class(kind, source), sync::month_bucket(ts))
+        sync::slice_tag(
+            key,
+            kind,
+            sync::source_class(kind, source),
+            sync::month_bucket(ts),
+        )
     }
 
     /// The first millisecond of `ts`'s UTC month.
@@ -12033,7 +13995,16 @@ mod filtered_pull_tests {
         ts: i64,
         (kind_tagged, sliced): (bool, bool),
     ) {
-        seed(conn, key, "dev-a", seq, ROW_TYPE_ITEMS, &item_json_at(kind, body, source, ts), kind_tagged.then_some(kind)).await;
+        seed(
+            conn,
+            key,
+            "dev-a",
+            seq,
+            ROW_TYPE_ITEMS,
+            &item_json_at(kind, body, source, ts),
+            kind_tagged.then_some(kind),
+        )
+        .await;
         if sliced {
             conn.execute(
                 "UPDATE sync_row SET slice_tag = ?1 WHERE device_id = 'dev-a' AND local_seq = ?2",
@@ -12045,7 +14016,13 @@ mod filtered_pull_tests {
     }
 
     /// Kind, body, source, date, and (kind tagged, sliced).
-    type SliceRow = (&'static str, &'static str, Option<&'static str>, i64, (bool, bool));
+    type SliceRow = (
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+        i64,
+        (bool, bool),
+    );
 
     /// Thirteen `items` rows for a 60-day calendar grant. Seven are fetched: an in-window event, one in the
     /// cutoff's month (before the cutoff), one dated after 2029 (bucket 359), an old client's (kind tag only),
@@ -12057,19 +14034,85 @@ mod filtered_pull_tests {
         let old = month_start(boundary - 40 * DAY);
         let both = (true, true);
         let rows: [SliceRow; 13] = [
-            ("calendar_event", "google in window", Some("google_calendar"), now - DAY, both),
+            (
+                "calendar_event",
+                "google in window",
+                Some("google_calendar"),
+                now - DAY,
+                both,
+            ),
             ("calendar_event", "blank source", Some(" "), now - DAY, both),
-            ("calendar_event", "outlook old month", Some("outlook"), old, both),
-            ("calendar_event", "outlook in window", Some("outlook"), now - DAY, both),
-            ("calendar_event", "outlook boundary month", Some("outlook"), boundary, both),
-            ("calendar_event", "outlook after 2029", Some("outlook"), AFTER_2029, both),
-            ("calendar_event", "google after 2029", Some("google_calendar"), AFTER_2029, both),
+            (
+                "calendar_event",
+                "outlook old month",
+                Some("outlook"),
+                old,
+                both,
+            ),
+            (
+                "calendar_event",
+                "outlook in window",
+                Some("outlook"),
+                now - DAY,
+                both,
+            ),
+            (
+                "calendar_event",
+                "outlook boundary month",
+                Some("outlook"),
+                boundary,
+                both,
+            ),
+            (
+                "calendar_event",
+                "outlook after 2029",
+                Some("outlook"),
+                AFTER_2029,
+                both,
+            ),
+            (
+                "calendar_event",
+                "google after 2029",
+                Some("google_calendar"),
+                AFTER_2029,
+                both,
+            ),
             ("capture", "capture sliced", None, now - DAY, both),
-            ("calendar_event", "outlook old client", Some("outlook"), now - DAY, (true, false)),
-            ("calendar_event", "outlook untagged", Some("outlook"), now - DAY, (false, false)),
-            ("capture", "capture untagged", None, now - DAY, (false, false)),
-            ("calendar_event", "google old client", Some("google_calendar"), now - DAY, (true, false)),
-            ("capture", "capture old client", None, now - DAY, (true, false)),
+            (
+                "calendar_event",
+                "outlook old client",
+                Some("outlook"),
+                now - DAY,
+                (true, false),
+            ),
+            (
+                "calendar_event",
+                "outlook untagged",
+                Some("outlook"),
+                now - DAY,
+                (false, false),
+            ),
+            (
+                "capture",
+                "capture untagged",
+                None,
+                now - DAY,
+                (false, false),
+            ),
+            (
+                "calendar_event",
+                "google old client",
+                Some("google_calendar"),
+                now - DAY,
+                (true, false),
+            ),
+            (
+                "capture",
+                "capture old client",
+                None,
+                now - DAY,
+                (true, false),
+            ),
         ];
         for (i, (kind, body, source, ts, tags)) in rows.into_iter().enumerate() {
             seed_item(conn, key, i as i64 + 1, kind, body, source, ts, tags).await;
@@ -12090,21 +14133,47 @@ mod filtered_pull_tests {
             let report = pull_with_span(&conn, &key, &sliced, &opts, span).await;
             assert!(report.complete, "span {span:?}");
             assert_eq!(report.rows_fetched, 7, "span {span:?}");
-            let months = usize::from(sync::MAX_MONTH_BUCKET - sync::month_bucket(now_unix_ms() - 60 * DAY)) + 1;
-            assert_eq!(report.slice_tags, months, "one non-Google calendar slice a month from the cutoff's through 359");
+            let months =
+                usize::from(sync::MAX_MONTH_BUCKET - sync::month_bucket(now_unix_ms() - 60 * DAY))
+                    + 1;
+            assert_eq!(
+                report.slice_tags, months,
+                "one non-Google calendar slice a month from the cutoff's through 359"
+            );
             let applied = bodies(&sliced, "calendar_event");
-            for body in ["outlook in window", "outlook after 2029", "outlook old client", "outlook untagged"] {
-                assert!(applied.contains(&body.to_string()), "span {span:?}: {body} in {applied:?}");
+            for body in [
+                "outlook in window",
+                "outlook after 2029",
+                "outlook old client",
+                "outlook untagged",
+            ] {
+                assert!(
+                    applied.contains(&body.to_string()),
+                    "span {span:?}: {body} in {applied:?}"
+                );
             }
-            assert_eq!(sliced.get_sync_cursor("dev-a").unwrap(), 13, "span {span:?}: at the peer's top");
+            assert_eq!(
+                sliced.get_sync_cursor("dev-a").unwrap(),
+                13,
+                "span {span:?}: at the peer's top"
+            );
             assert_eq!(sliced.sync_gap("dev-a").unwrap(), None);
 
-            conn.execute("UPDATE sync_row SET slice_tag = NULL", ()).await.unwrap();
+            conn.execute("UPDATE sync_row SET slice_tag = NULL", ())
+                .await
+                .unwrap();
             let unsliced = runner_store();
             let base = pull_with_span(&conn, &key, &unsliced, &opts, span).await;
             assert!(base.complete);
-            assert_eq!(base.rows_fetched, 11, "kind tags alone leave out only the two tagged captures");
-            assert_eq!(applied, bodies(&unsliced, "calendar_event"), "span {span:?}");
+            assert_eq!(
+                base.rows_fetched, 11,
+                "kind tags alone leave out only the two tagged captures"
+            );
+            assert_eq!(
+                applied,
+                bodies(&unsliced, "calendar_event"),
+                "span {span:?}"
+            );
             assert_eq!(report.rows_applied, base.rows_applied, "span {span:?}");
             assert!(bodies(&sliced, "capture").is_empty());
         }
@@ -12121,31 +14190,48 @@ mod filtered_pull_tests {
         let sliced = pull(&conn, &key, &with, &opts).await;
 
         SLICE_TAG_COLUMN_SEEN.set();
-        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ())
+            .await
+            .unwrap();
         for span in [None, Some(1)] {
             let store = runner_store();
             let report = pull_with_span(&conn, &key, &store, &opts, span).await;
             assert!(report.complete, "span {span:?}");
-            assert_eq!(report.rows_fetched, 11, "span {span:?}: the kind filter still applies");
+            assert_eq!(
+                report.rows_fetched, 11,
+                "span {span:?}: the kind filter still applies"
+            );
             assert_eq!(report.slice_tags, 0, "the query carried no slice tags");
             assert_eq!(report.rows_applied, sliced.rows_applied);
-            assert_eq!(bodies(&store, "calendar_event"), bodies(&with, "calendar_event"));
+            assert_eq!(
+                bodies(&store, "calendar_event"),
+                bodies(&with, "calendar_event")
+            );
             assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 13);
         }
 
         KIND_TAG_COLUMN_SEEN.set();
-        conn.execute("ALTER TABLE sync_row DROP COLUMN kind_tag", ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row DROP COLUMN kind_tag", ())
+            .await
+            .unwrap();
         let store = runner_store();
         let report = pull(&conn, &key, &store, &opts).await;
         assert!(report.complete);
         assert_eq!(report.rows_fetched, 13, "unfiltered: every items row");
         assert_eq!(report.rows_applied, sliced.rows_applied);
-        assert_eq!(bodies(&store, "calendar_event"), bodies(&with, "calendar_event"));
+        assert_eq!(
+            bodies(&store, "calendar_event"),
+            bodies(&with, "calendar_event")
+        );
         let mut cols = conn
             .query("SELECT COUNT(*) FROM pragma_table_info('sync_row') WHERE name IN ('kind_tag', 'slice_tag')", ())
             .await
             .unwrap();
-        assert_eq!(cols.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0, "the pull added no column");
+        assert_eq!(
+            cols.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            0,
+            "the pull added no column"
+        );
         SLICE_TAG_COLUMN_SEEN.reset();
         KIND_TAG_COLUMN_SEEN.reset();
     }
@@ -12158,10 +14244,50 @@ mod filtered_pull_tests {
         let (_dir, conn, key) = relay().await;
         let now = now_unix_ms();
         let slice_only = (false, true);
-        seed_item(&conn, &key, 1, "calendar_event", "outlook in window", Some("outlook"), now - DAY, slice_only).await;
-        seed_item(&conn, &key, 2, "calendar_event", "google in window", Some("google_calendar"), now - DAY, slice_only).await;
-        seed_item(&conn, &key, 3, "calendar_event", "outlook old month", Some("outlook"), now - 400 * DAY, slice_only).await;
-        seed_item(&conn, &key, 4, "capture", "capture", None, now - DAY, slice_only).await;
+        seed_item(
+            &conn,
+            &key,
+            1,
+            "calendar_event",
+            "outlook in window",
+            Some("outlook"),
+            now - DAY,
+            slice_only,
+        )
+        .await;
+        seed_item(
+            &conn,
+            &key,
+            2,
+            "calendar_event",
+            "google in window",
+            Some("google_calendar"),
+            now - DAY,
+            slice_only,
+        )
+        .await;
+        seed_item(
+            &conn,
+            &key,
+            3,
+            "calendar_event",
+            "outlook old month",
+            Some("outlook"),
+            now - 400 * DAY,
+            slice_only,
+        )
+        .await;
+        seed_item(
+            &conn,
+            &key,
+            4,
+            "capture",
+            "capture",
+            None,
+            now - DAY,
+            slice_only,
+        )
+        .await;
         let opts = runner_calendar_options(60);
 
         let store = runner_store();
@@ -12172,18 +14298,27 @@ mod filtered_pull_tests {
         assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 4);
 
         // The same rows without their slice: the NULL kind tag fetches every one.
-        conn.execute("UPDATE sync_row SET slice_tag = NULL", ()).await.unwrap();
+        conn.execute("UPDATE sync_row SET slice_tag = NULL", ())
+            .await
+            .unwrap();
         let unsliced = runner_store();
         let base = pull(&conn, &key, &unsliced, &opts).await;
         assert_eq!(base.rows_fetched, 4);
-        assert_eq!(bodies(&unsliced, "calendar_event"), bodies(&store, "calendar_event"));
+        assert_eq!(
+            bodies(&unsliced, "calendar_event"),
+            bodies(&store, "calendar_event")
+        );
     }
 
     #[test]
     fn runner_no_such_slice_tag_column_is_recognized() {
-        assert!(is_no_such_slice_tag_column("SQLite failure: `no such column: slice_tag`"));
+        assert!(is_no_such_slice_tag_column(
+            "SQLite failure: `no such column: slice_tag`"
+        ));
         assert!(!is_no_such_slice_tag_column("no such column: kind_tag"));
-        assert!(!is_no_such_slice_tag_column("table sync_row has no column named slice_tag"));
+        assert!(!is_no_such_slice_tag_column(
+            "table sync_row has no column named slice_tag"
+        ));
     }
 
     /// The slices a pull asks for, at a fixed now (2026-11-24, bucket 322): each granted kind, each source class
@@ -12206,18 +14341,49 @@ mod filtered_pull_tests {
         };
         assert_eq!(sync::month_bucket(FIXED_NOW - 60 * DAY), 320);
         let runner = runner_calendar_options(60);
-        assert_eq!(slices(&runner), Some(expect(&[("calendar_event", &[Other])], 320)));
+        assert_eq!(
+            slices(&runner),
+            Some(expect(&[("calendar_event", &[Other])], 320))
+        );
         assert_eq!(slices(&runner).unwrap().len(), 40);
-        let every_source = PullOptions { non_google_calendar_only: false, ..runner_calendar_options(60) };
-        assert_eq!(slices(&every_source), Some(expect(&[("calendar_event", &[Google, Other])], 320)));
-        let two_kinds = PullOptions { item_window_ms: Some(60 * DAY), non_google_calendar_only: true, ..allow(&["items:transcript", "items:calendar_event"]) };
-        assert_eq!(slices(&two_kinds), Some(expect(&[("transcript", &[NoClass]), ("calendar_event", &[Other])], 320)));
+        let every_source = PullOptions {
+            non_google_calendar_only: false,
+            ..runner_calendar_options(60)
+        };
+        assert_eq!(
+            slices(&every_source),
+            Some(expect(&[("calendar_event", &[Google, Other])], 320))
+        );
+        let two_kinds = PullOptions {
+            item_window_ms: Some(60 * DAY),
+            non_google_calendar_only: true,
+            ..allow(&["items:transcript", "items:calendar_event"])
+        };
+        assert_eq!(
+            slices(&two_kinds),
+            Some(expect(
+                &[("transcript", &[NoClass]), ("calendar_event", &[Other])],
+                320
+            ))
+        );
         // No item window: every month, so Google events are still left out.
-        let unwindowed = PullOptions { item_window_ms: None, ..runner_calendar_options(60) };
-        assert_eq!(slices(&unwindowed), Some(expect(&[("calendar_event", &[Other])], 0)));
+        let unwindowed = PullOptions {
+            item_window_ms: None,
+            ..runner_calendar_options(60)
+        };
+        assert_eq!(
+            slices(&unwindowed),
+            Some(expect(&[("calendar_event", &[Other])], 0))
+        );
         // Never for a phone or desktop pull, nor without a kind restriction.
         assert_eq!(slices(&PullOptions::default()), None);
-        assert_eq!(slices(&PullOptions { item_window_ms: Some(DAY), ..allow(&[ROW_TYPE_ITEMS]) }), None);
+        assert_eq!(
+            slices(&PullOptions {
+                item_window_ms: Some(DAY),
+                ..allow(&[ROW_TYPE_ITEMS])
+            }),
+            None
+        );
         // Over 900 query variables (1,440 slices here): no slice clause, the kind tags stay.
         let too_many = allow(&["items:capture", "items:transcript", "items:calendar_event"]);
         let filter = RowFilter::new(&too_many, true, FIXED_NOW, &key);
@@ -12249,7 +14415,10 @@ mod filtered_pull_tests {
         assert!(!fetch_allowed_rows_sql(3, 2, 0).contains("slice_tag"));
         assert!(!fetch_allowed_gap_rows_sql(3, 2, 0).contains("slice_tag"));
         let (_dir, conn, _key) = relay().await;
-        for sql in [fetch_allowed_rows_sql(3, 2, 5), fetch_allowed_gap_rows_sql(3, 2, 5)] {
+        for sql in [
+            fetch_allowed_rows_sql(3, 2, 5),
+            fetch_allowed_gap_rows_sql(3, 2, 5),
+        ] {
             assert!(sql.contains("slice_tag IN (?"), "{sql}");
             super::relay_query_tests::assert_seeks(&conn, &sql).await;
         }
@@ -12269,8 +14438,14 @@ mod filtered_pull_tests {
              AND local_seq > ?3 AND row_type IN (?5, ?6) ORDER BY local_seq DESC LIMIT ?4"
         );
         let (_dir, conn, _key) = relay().await;
-        for sql in [fetch_allowed_rows_sql(3, 2, 0), fetch_allowed_gap_rows_sql(3, 2, 0)] {
-            let mut rows = conn.query(&format!("EXPLAIN QUERY PLAN {sql}"), ()).await.unwrap();
+        for sql in [
+            fetch_allowed_rows_sql(3, 2, 0),
+            fetch_allowed_gap_rows_sql(3, 2, 0),
+        ] {
+            let mut rows = conn
+                .query(&format!("EXPLAIN QUERY PLAN {sql}"), ())
+                .await
+                .unwrap();
             while let Some(row) = rows.next().await.unwrap() {
                 let detail: String = row.get(3).unwrap();
                 assert!(!detail.starts_with("SCAN"), "{detail}\nin: {sql}");
@@ -12311,15 +14486,30 @@ mod filtered_pull_tests {
     /// One row of every shape with its class: every allowed non-`items` type, `items` rows of asked and unasked
     /// slices (Google, an old month, another kind), old-client rows (NULL/NULL, kind only, slice only), and
     /// row types the pull does not ask for.
-    fn row_shapes(key: &GroupKey, filter: &RowFilter) -> Vec<(String, Option<String>, Option<String>, Class)> {
+    fn row_shapes(
+        key: &GroupKey,
+        filter: &RowFilter,
+    ) -> Vec<(String, Option<String>, Option<String>, Class)> {
         let now = now_unix_ms();
         let ev = Some(sync::kind_tag(key, "calendar_event"));
         let cap = Some(sync::kind_tag(key, "capture"));
         let asked = Some(slice_of(key, "calendar_event", Some("outlook"), now - DAY));
-        let google = Some(slice_of(key, "calendar_event", Some("google_calendar"), now - DAY));
-        let old = Some(slice_of(key, "calendar_event", Some("outlook"), now - 400 * DAY));
+        let google = Some(slice_of(
+            key,
+            "calendar_event",
+            Some("google_calendar"),
+            now - DAY,
+        ));
+        let old = Some(slice_of(
+            key,
+            "calendar_event",
+            Some("outlook"),
+            now - 400 * DAY,
+        ));
         let cap_slice = Some(slice_of(key, "capture", None, now - DAY));
-        let item = |k: &Option<String>, s: &Option<String>, class| (ROW_TYPE_ITEMS.to_string(), k.clone(), s.clone(), class);
+        let item = |k: &Option<String>, s: &Option<String>, class| {
+            (ROW_TYPE_ITEMS.to_string(), k.clone(), s.clone(), class)
+        };
         let mut shapes = vec![
             item(&ev, &asked, Class::Sliced),
             item(&ev, &google, Class::Unwanted),
@@ -12331,18 +14521,37 @@ mod filtered_pull_tests {
             item(&None, &asked, Class::Sliced),
             item(&None, &google, Class::Unwanted),
         ];
-        for t in filter.row_types.as_ref().unwrap().iter().filter(|t| *t != ROW_TYPE_ITEMS) {
+        for t in filter
+            .row_types
+            .as_ref()
+            .unwrap()
+            .iter()
+            .filter(|t| *t != ROW_TYPE_ITEMS)
+        {
             shapes.push((t.clone(), None, None, Class::NonItem));
         }
         for t in [ROW_TYPE_SKIN, "routine_run"] {
-            assert!(!filter.row_types.as_ref().unwrap().iter().any(|have| have == t), "{t} is not asked for");
+            assert!(
+                !filter
+                    .row_types
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|have| have == t),
+                "{t} is not asked for"
+            );
             shapes.push((t.to_string(), None, None, Class::Unwanted));
         }
         shapes
     }
 
     /// A row with junk ciphertext: the direct fetch tests never decrypt.
-    async fn raw(conn: &Connection, device: &str, seq: i64, (row_type, kind, slice): (&str, Option<&str>, Option<&str>)) {
+    async fn raw(
+        conn: &Connection,
+        device: &str,
+        seq: i64,
+        (row_type, kind, slice): (&str, Option<&str>, Option<&str>),
+    ) {
         conn.execute(
             "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, kind_tag, slice_tag) \
              VALUES (?1, ?2, ?3, 'junk', 0, ?4, ?5)",
@@ -12353,7 +14562,13 @@ mod filtered_pull_tests {
     }
 
     /// Seeds `rows` of `device` (one row of the first shape of `class` at each seq) and returns the seqs a pull fetches.
-    async fn seed_classes(conn: &Connection, key: &GroupKey, filter: &RowFilter, device: &str, rows: &[(i64, Class)]) -> Vec<i64> {
+    async fn seed_classes(
+        conn: &Connection,
+        key: &GroupKey,
+        filter: &RowFilter,
+        device: &str,
+        rows: &[(i64, Class)],
+    ) -> Vec<i64> {
         let shapes = row_shapes(key, filter);
         let mut wanted = Vec::new();
         for (seq, class) in rows {
@@ -12368,14 +14583,27 @@ mod filtered_pull_tests {
 
     /// Pages `device` from 0 to `top` as the windowed loop does (a full page continues from its last row), through
     /// the indexed fetch or the scan, and returns every `(local_seq, row_type)` read.
-    async fn page_through(conn: &Connection, filter: &RowFilter, device: &str, top: i64, limit: i64, indexed: bool) -> Vec<(i64, String)> {
+    async fn page_through(
+        conn: &Connection,
+        filter: &RowFilter,
+        device: &str,
+        top: i64,
+        limit: i64,
+        indexed: bool,
+    ) -> Vec<(i64, String)> {
         let mut from = 0;
         let mut out = Vec::new();
         loop {
             let page = if indexed {
-                fetch_rows_indexed(conn, device, from, top, limit, filter).await.unwrap().expect("the indexed fetch ran")
+                fetch_rows_indexed(conn, device, from, top, limit, filter)
+                    .await
+                    .unwrap()
+                    .expect("the indexed fetch ran")
             } else {
-                fetch_rows_since(conn, device, from, top, limit, true, filter).await.unwrap().0
+                fetch_rows_since(conn, device, from, top, limit, true, filter)
+                    .await
+                    .unwrap()
+                    .0
             };
             out.extend(page.iter().map(|e| (e.local_seq, e.row_type.clone())));
             if (page.len() as i64) < limit {
@@ -12387,13 +14615,28 @@ mod filtered_pull_tests {
 
     /// Rounds of the live range (oldest first, so the windowed loop reads every row) in pages of `rows`, until no
     /// more waits. Returns the rows fetched.
-    async fn pull_live(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions, rows: i64) -> usize {
-        let pace = Pace { rows, peer_budget: std::time::Duration::from_secs(60), round_budget: None };
+    async fn pull_live(
+        conn: &Connection,
+        key: &GroupKey,
+        store: &Store,
+        opts: &PullOptions,
+        rows: i64,
+    ) -> usize {
+        let pace = Pace {
+            rows,
+            peer_budget: std::time::Duration::from_secs(60),
+            round_budget: None,
+        };
         let mut fetched = 0;
         for _ in 0..500 {
             let mut stats = Vec::new();
-            let more = pull_round(conn, key, store, RUNNER, pace, opts, true, &mut stats).await.unwrap();
-            fetched += stats.iter().map(|s| s.fetched + s.gap_fetched).sum::<usize>();
+            let more = pull_round(conn, key, store, RUNNER, pace, opts, true, &mut stats)
+                .await
+                .unwrap();
+            fetched += stats
+                .iter()
+                .map(|s| s.fetched + s.gap_fetched)
+                .sum::<usize>();
             if !more {
                 return fetched;
             }
@@ -12406,8 +14649,22 @@ mod filtered_pull_tests {
         seed_slice_relay(conn, key).await;
         for i in 14..=15 {
             let (kind, opaque_id) = memory::client_forget::pulled_capture_identity("dev-a", i);
-            let json = serde_json::to_string(&memory::ClientItemForgotten { kind: kind.to_string(), opaque_id, forgotten_at_unix_ms: 1 }).unwrap();
-            seed(conn, key, "dev-a", i, ROW_TYPE_CLIENT_ITEM_FORGOTTEN, &json, None).await;
+            let json = serde_json::to_string(&memory::ClientItemForgotten {
+                kind: kind.to_string(),
+                opaque_id,
+                forgotten_at_unix_ms: 1,
+            })
+            .unwrap();
+            seed(
+                conn,
+                key,
+                "dev-a",
+                i,
+                ROW_TYPE_CLIENT_ITEM_FORGOTTEN,
+                &json,
+                None,
+            )
+            .await;
         }
     }
 
@@ -12436,7 +14693,10 @@ mod filtered_pull_tests {
             for limit in [1, 2, 3, 7, 500] {
                 let scan = page_through(&conn, &filter, device, 120, limit, false).await;
                 let indexed = page_through(&conn, &filter, device, 120, limit, true).await;
-                assert_eq!(scan, expected[device], "{device} limit {limit}: the scan reads every wanted row");
+                assert_eq!(
+                    scan, expected[device],
+                    "{device} limit {limit}: the scan reads every wanted row"
+                );
                 assert_eq!(indexed, scan, "{device} limit {limit}");
             }
         }
@@ -12451,10 +14711,16 @@ mod filtered_pull_tests {
         take_pull_sql();
         let with = runner_store();
         let fetched = pull_live(&conn, &key, &with, &opts, 2).await;
-        assert!(take_pull_sql().iter().any(|sql| sql.contains("INDEXED BY")), "the indexed fetch ran");
+        assert!(
+            take_pull_sql().iter().any(|sql| sql.contains("INDEXED BY")),
+            "the indexed fetch ran"
+        );
         assert_eq!(fetched, base);
         assert_eq!(fetched, 9, "seven items and two tombstones");
-        assert_eq!(bodies(&with, "calendar_event"), bodies(&without, "calendar_event"));
+        assert_eq!(
+            bodies(&with, "calendar_event"),
+            bodies(&without, "calendar_event")
+        );
         assert!(bodies(&with, "calendar_event").contains(&"outlook old client".to_string()));
         assert_eq!(with.get_sync_cursor("dev-a").unwrap(), 15);
         assert_eq!(without.get_sync_cursor("dev-a").unwrap(), 15);
@@ -12467,13 +14733,41 @@ mod filtered_pull_tests {
         use Class::*;
         let layouts: Vec<Vec<(i64, Class)>> = vec![
             // Q2 dense, Q1 and Q3 sparse.
-            (1..=9).map(|s| (s, Sliced)).chain([(5_000, NonItem), (12, NonItem), (20, NonItem), (25, Unsliced), (30, Unwanted)]).collect(),
+            (1..=9)
+                .map(|s| (s, Sliced))
+                .chain([
+                    (5_000, NonItem),
+                    (12, NonItem),
+                    (20, NonItem),
+                    (25, Unsliced),
+                    (30, Unwanted),
+                ])
+                .collect(),
             // Q1 dense, Q2 sparse.
-            (1..=9).map(|s| (s, NonItem)).chain([(4_000, Sliced), (11, Sliced), (13, Unsliced), (14, Unwanted)]).collect(),
+            (1..=9)
+                .map(|s| (s, NonItem))
+                .chain([
+                    (4_000, Sliced),
+                    (11, Sliced),
+                    (13, Unsliced),
+                    (14, Unwanted),
+                ])
+                .collect(),
             // Q3 dense, the others interleaved above.
-            (1..=9).map(|s| (s, Unsliced)).chain([(10, Sliced), (12, NonItem), (15, Sliced), (16, NonItem), (17, Unsliced)]).collect(),
+            (1..=9)
+                .map(|s| (s, Unsliced))
+                .chain([
+                    (10, Sliced),
+                    (12, NonItem),
+                    (15, Sliced),
+                    (16, NonItem),
+                    (17, Unsliced),
+                ])
+                .collect(),
             // Every sub-query full at once.
-            (1..=30).map(|s| (s, [NonItem, Sliced, Unsliced, Unwanted][(s % 4) as usize])).collect(),
+            (1..=30)
+                .map(|s| (s, [NonItem, Sliced, Unsliced, Unwanted][(s % 4) as usize]))
+                .collect(),
         ];
         for (n, layout) in layouts.into_iter().enumerate() {
             let (_dir, conn, key) = relay().await;
@@ -12486,13 +14780,22 @@ mod filtered_pull_tests {
             let mut from = 0;
             let mut visited: Vec<i64> = Vec::new();
             loop {
-                let page = fetch_rows_indexed(&conn, "dev-a", from, top, limit, &filter).await.unwrap().unwrap();
+                let page = fetch_rows_indexed(&conn, "dev-a", from, top, limit, &filter)
+                    .await
+                    .unwrap()
+                    .unwrap();
                 let seqs: Vec<i64> = page.iter().map(|e| e.local_seq).collect();
-                assert!(seqs.windows(2).all(|w| w[0] < w[1]), "layout {n}: ascending {seqs:?}");
+                assert!(
+                    seqs.windows(2).all(|w| w[0] < w[1]),
+                    "layout {n}: ascending {seqs:?}"
+                );
                 visited.extend(&seqs);
                 if (page.len() as i64) < limit {
                     let rest: Vec<i64> = wanted.iter().copied().filter(|s| *s > from).collect();
-                    assert_eq!(seqs, rest, "layout {n}: a short page holds every wanted row above {from}");
+                    assert_eq!(
+                        seqs, rest,
+                        "layout {n}: a short page holds every wanted row above {from}"
+                    );
                     break;
                 }
                 from = *seqs.last().unwrap();
@@ -12508,16 +14811,33 @@ mod filtered_pull_tests {
         use Class::*;
         let (_dir, conn, key) = relay().await;
         let filter = runner_filter(&key);
-        let layout = [(4, NonItem), (5, NonItem), (6, NonItem), (14, Sliced), (15, Sliced), (16, Sliced), (24, Unsliced), (25, Unsliced), (26, Unsliced)];
+        let layout = [
+            (4, NonItem),
+            (5, NonItem),
+            (6, NonItem),
+            (14, Sliced),
+            (15, Sliced),
+            (16, Sliced),
+            (24, Unsliced),
+            (25, Unsliced),
+            (26, Unsliced),
+        ];
         seed_classes(&conn, &key, &filter, "dev-a", &layout).await;
         create_pull_indexes(&conn).await;
-        let seqs = |page: Vec<RowEnvelope>| page.into_iter().map(|e| e.local_seq).collect::<Vec<_>>();
+        let seqs =
+            |page: Vec<RowEnvelope>| page.into_iter().map(|e| e.local_seq).collect::<Vec<_>>();
         let fetch = |since, hi| fetch_rows_indexed(&conn, "dev-a", since, hi, 500, &filter);
-        assert_eq!(seqs(fetch(4, 25).await.unwrap().unwrap()), [5, 6, 14, 15, 16, 24, 25]);
+        assert_eq!(
+            seqs(fetch(4, 25).await.unwrap().unwrap()),
+            [5, 6, 14, 15, 16, 24, 25]
+        );
         assert_eq!(seqs(fetch(25, 26).await.unwrap().unwrap()), [26]);
         assert_eq!(seqs(fetch(14, 16).await.unwrap().unwrap()), [15, 16]);
         assert_eq!(seqs(fetch(5, 5).await.unwrap().unwrap()), Vec::<i64>::new());
-        assert_eq!(seqs(fetch(26, 1_000).await.unwrap().unwrap()), Vec::<i64>::new());
+        assert_eq!(
+            seqs(fetch(26, 1_000).await.unwrap().unwrap()),
+            Vec::<i64>::new()
+        );
 
         // A whole live pull: small pages put rows on the cursor, the top row is on the window's edge.
         for rows in [1, 2, 3, 500] {
@@ -12526,11 +14846,37 @@ mod filtered_pull_tests {
             create_pull_indexes(&conn).await;
             let opts = runner_calendar_options(60);
             let store = runner_store();
-            assert_eq!(pull_live(&conn, &key, &store, &opts, rows).await, 9, "rows {rows}: each wanted row once");
+            assert_eq!(
+                pull_live(&conn, &key, &store, &opts, rows).await,
+                9,
+                "rows {rows}: each wanted row once"
+            );
             assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 15, "rows {rows}");
-            seed(&conn, &key, "dev-a", 16, ROW_TYPE_ITEMS, &item_json("calendar_event", "late ev"), Some("calendar_event")).await;
-            seed(&conn, &key, "dev-a", 17, ROW_TYPE_ITEMS, &item_json("capture", "late cap"), Some("capture")).await;
-            assert_eq!(pull_live(&conn, &key, &store, &opts, rows).await, 1, "rows {rows}: only the late event");
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                16,
+                ROW_TYPE_ITEMS,
+                &item_json("calendar_event", "late ev"),
+                Some("calendar_event"),
+            )
+            .await;
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                17,
+                ROW_TYPE_ITEMS,
+                &item_json("capture", "late cap"),
+                Some("capture"),
+            )
+            .await;
+            assert_eq!(
+                pull_live(&conn, &key, &store, &opts, rows).await,
+                1,
+                "rows {rows}: only the late event"
+            );
             assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 17, "rows {rows}");
             assert!(bodies(&store, "calendar_event").contains(&"late ev".to_string()));
         }
@@ -12591,20 +14937,32 @@ mod filtered_pull_tests {
         assert_eq!(pull_live(&conn, &key, &with, &opts, 2).await, 9);
 
         // The slice index by name only, on a relay whose slice_tag is gone.
-        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ())
+            .await
+            .unwrap();
         conn.execute("CREATE INDEX idx_sync_row_slice ON sync_row(device_id, local_seq) WHERE row_type = 'items'", ())
             .await
             .unwrap();
         conn.execute(CREATE_TYPE_INDEX, ()).await.unwrap();
         take_pull_sql();
         let store = runner_store();
-        assert_eq!(pull_live(&conn, &key, &store, &opts, 2).await, 13, "the kind filter alone: eleven items, two tombstones");
+        assert_eq!(
+            pull_live(&conn, &key, &store, &opts, 2).await,
+            13,
+            "the kind filter alone: eleven items, two tombstones"
+        );
         let filter = runner_filter(&key);
         let kind_only = fetch_allowed_rows_sql(filter.row_types.as_ref().unwrap().len(), 1, 0);
         let sql = take_pull_sql();
-        assert!(sql.iter().any(|s| s.contains("INDEXED BY")), "the indexed fetch was tried");
+        assert!(
+            sql.iter().any(|s| s.contains("INDEXED BY")),
+            "the indexed fetch was tried"
+        );
         assert!(sql.contains(&kind_only), "then the kind-only scan: {sql:?}");
-        assert_eq!(bodies(&store, "calendar_event"), bodies(&with, "calendar_event"));
+        assert_eq!(
+            bodies(&store, "calendar_event"),
+            bodies(&with, "calendar_event")
+        );
         assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 15);
     }
 
@@ -12633,14 +14991,27 @@ mod filtered_pull_tests {
 
     /// Pages `device`'s gap `(0, gap_hi)` downward as `pull_gaps` does (a full page lowers the gap's top to its last
     /// row), through the indexed gap fetch or the scan over the whole gap, and returns every `(local_seq, row_type)`.
-    async fn page_down(conn: &Connection, filter: &RowFilter, device: &str, gap_hi: i64, limit: i64, indexed: bool) -> Vec<(i64, String)> {
+    async fn page_down(
+        conn: &Connection,
+        filter: &RowFilter,
+        device: &str,
+        gap_hi: i64,
+        limit: i64,
+        indexed: bool,
+    ) -> Vec<(i64, String)> {
         let mut hi = gap_hi;
         let mut out = Vec::new();
         loop {
             let page = if indexed {
-                fetch_gap_rows_indexed(conn, device, 0, hi, limit, filter).await.unwrap().expect("the indexed gap fetch ran")
+                fetch_gap_rows_indexed(conn, device, 0, hi, limit, filter)
+                    .await
+                    .unwrap()
+                    .expect("the indexed gap fetch ran")
             } else {
-                fetch_gap_rows(conn, device, 0, 0, hi, limit, true, filter).await.unwrap().0
+                fetch_gap_rows(conn, device, 0, 0, hi, limit, true, filter)
+                    .await
+                    .unwrap()
+                    .0
             };
             out.extend(page.iter().map(|e| (e.local_seq, e.row_type.clone())));
             if (page.len() as i64) < limit {
@@ -12652,13 +15023,29 @@ mod filtered_pull_tests {
 
     /// Newest-first rounds (the runner's mode) in pages of `rows` until no more waits. Returns the rows fetched,
     /// live and gap.
-    async fn pull_newest_first(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions, rows: i64) -> usize {
-        let pace = Pace { rows, peer_budget: std::time::Duration::from_secs(60), round_budget: None };
+    async fn pull_newest_first(
+        conn: &Connection,
+        key: &GroupKey,
+        store: &Store,
+        opts: &PullOptions,
+        rows: i64,
+    ) -> usize {
+        let pace = Pace {
+            rows,
+            peer_budget: std::time::Duration::from_secs(60),
+            round_budget: None,
+        };
         let mut fetched = 0;
         for _ in 0..500 {
             let mut stats = Vec::new();
-            let more = pull_round_mode(conn, key, store, RUNNER, pace, opts, true, true, &mut stats).await.unwrap();
-            fetched += stats.iter().map(|s| s.fetched + s.gap_fetched).sum::<usize>();
+            let more =
+                pull_round_mode(conn, key, store, RUNNER, pace, opts, true, true, &mut stats)
+                    .await
+                    .unwrap();
+            fetched += stats
+                .iter()
+                .map(|s| s.fetched + s.gap_fetched)
+                .sum::<usize>();
             if !more {
                 return fetched;
             }
@@ -12700,7 +15087,10 @@ mod filtered_pull_tests {
             for limit in [1, 2, 3, 7, 500] {
                 let scan = page_down(&conn, &filter, device, 121, limit, false).await;
                 let indexed = page_down(&conn, &filter, device, 121, limit, true).await;
-                assert_eq!(scan, expected[device], "{device} limit {limit}: the scan reads every wanted row");
+                assert_eq!(
+                    scan, expected[device],
+                    "{device} limit {limit}: the scan reads every wanted row"
+                );
                 assert_eq!(indexed, scan, "{device} limit {limit}");
             }
         }
@@ -12714,10 +15104,18 @@ mod filtered_pull_tests {
         take_pull_sql();
         let with = runner_store();
         let fetched = pull_newest_first(&conn, &key, &with, &opts, 2).await;
-        assert!(take_pull_sql().iter().any(|sql| sql.contains("INDEXED BY") && sql.contains("DESC")), "the indexed gap fetch ran");
+        assert!(
+            take_pull_sql()
+                .iter()
+                .any(|sql| sql.contains("INDEXED BY") && sql.contains("DESC")),
+            "the indexed gap fetch ran"
+        );
         assert_eq!(fetched, base);
         assert_eq!(fetched, 9, "seven items and two tombstones");
-        assert_eq!(bodies(&with, "calendar_event"), bodies(&without, "calendar_event"));
+        assert_eq!(
+            bodies(&with, "calendar_event"),
+            bodies(&without, "calendar_event")
+        );
         assert_eq!(with.sync_gap("dev-a").unwrap(), None, "the gap is closed");
         assert_eq!(with.get_sync_cursor("dev-a").unwrap(), 15);
     }
@@ -12729,13 +15127,36 @@ mod filtered_pull_tests {
         use Class::*;
         let layouts: Vec<Vec<(i64, Class)>> = vec![
             // Q2 dense at the top, Q1 and Q3 sparse below.
-            (100..=108).map(|s| (s, Sliced)).chain([(1, NonItem), (88, NonItem), (80, NonItem), (75, Unsliced), (70, Unwanted)]).collect(),
+            (100..=108)
+                .map(|s| (s, Sliced))
+                .chain([
+                    (1, NonItem),
+                    (88, NonItem),
+                    (80, NonItem),
+                    (75, Unsliced),
+                    (70, Unwanted),
+                ])
+                .collect(),
             // Q1 dense at the top, Q2 sparse below.
-            (100..=108).map(|s| (s, NonItem)).chain([(1, Sliced), (89, Sliced), (87, Unsliced), (86, Unwanted)]).collect(),
+            (100..=108)
+                .map(|s| (s, NonItem))
+                .chain([(1, Sliced), (89, Sliced), (87, Unsliced), (86, Unwanted)])
+                .collect(),
             // Q3 dense at the top, the others interleaved below.
-            (100..=108).map(|s| (s, Unsliced)).chain([(99, Sliced), (97, NonItem), (95, Sliced), (94, NonItem), (93, Unsliced)]).collect(),
+            (100..=108)
+                .map(|s| (s, Unsliced))
+                .chain([
+                    (99, Sliced),
+                    (97, NonItem),
+                    (95, Sliced),
+                    (94, NonItem),
+                    (93, Unsliced),
+                ])
+                .collect(),
             // Every sub-query full at once.
-            (1..=30).map(|s| (s, [NonItem, Sliced, Unsliced, Unwanted][(s % 4) as usize])).collect(),
+            (1..=30)
+                .map(|s| (s, [NonItem, Sliced, Unsliced, Unwanted][(s % 4) as usize]))
+                .collect(),
         ];
         for (n, layout) in layouts.into_iter().enumerate() {
             let (_dir, conn, key) = relay().await;
@@ -12749,13 +15170,22 @@ mod filtered_pull_tests {
             let mut hi = gap_hi;
             let mut visited: Vec<i64> = Vec::new();
             loop {
-                let page = fetch_gap_rows_indexed(&conn, "dev-a", 0, hi, limit, &filter).await.unwrap().unwrap();
+                let page = fetch_gap_rows_indexed(&conn, "dev-a", 0, hi, limit, &filter)
+                    .await
+                    .unwrap()
+                    .unwrap();
                 let seqs: Vec<i64> = page.iter().map(|e| e.local_seq).collect();
-                assert!(seqs.windows(2).all(|w| w[0] > w[1]), "layout {n}: descending {seqs:?}");
+                assert!(
+                    seqs.windows(2).all(|w| w[0] > w[1]),
+                    "layout {n}: descending {seqs:?}"
+                );
                 visited.extend(&seqs);
                 if (page.len() as i64) < limit {
                     let rest: Vec<i64> = wanted.iter().copied().filter(|s| *s < hi).collect();
-                    assert_eq!(seqs, rest, "layout {n}: a short page holds every wanted row below {hi}");
+                    assert_eq!(
+                        seqs, rest,
+                        "layout {n}: a short page holds every wanted row below {hi}"
+                    );
                     break;
                 }
                 hi = *seqs.last().unwrap();
@@ -12771,13 +15201,30 @@ mod filtered_pull_tests {
         use Class::*;
         let (_dir, conn, key) = relay().await;
         let filter = runner_filter(&key);
-        let layout = [(4, NonItem), (5, NonItem), (6, NonItem), (14, Sliced), (15, Sliced), (16, Sliced), (24, Unsliced), (25, Unsliced), (26, Unsliced)];
+        let layout = [
+            (4, NonItem),
+            (5, NonItem),
+            (6, NonItem),
+            (14, Sliced),
+            (15, Sliced),
+            (16, Sliced),
+            (24, Unsliced),
+            (25, Unsliced),
+            (26, Unsliced),
+        ];
         seed_classes(&conn, &key, &filter, "dev-a", &layout).await;
         create_pull_indexes(&conn).await;
-        let seqs = |page: Vec<RowEnvelope>| page.into_iter().map(|e| e.local_seq).collect::<Vec<_>>();
+        let seqs =
+            |page: Vec<RowEnvelope>| page.into_iter().map(|e| e.local_seq).collect::<Vec<_>>();
         let fetch = |lo, hi| fetch_gap_rows_indexed(&conn, "dev-a", lo, hi, 500, &filter);
-        assert_eq!(seqs(fetch(4, 25).await.unwrap().unwrap()), [24, 16, 15, 14, 6, 5]);
-        assert_eq!(seqs(fetch(5, 27).await.unwrap().unwrap()), [26, 25, 24, 16, 15, 14, 6]);
+        assert_eq!(
+            seqs(fetch(4, 25).await.unwrap().unwrap()),
+            [24, 16, 15, 14, 6, 5]
+        );
+        assert_eq!(
+            seqs(fetch(5, 27).await.unwrap().unwrap()),
+            [26, 25, 24, 16, 15, 14, 6]
+        );
         assert_eq!(seqs(fetch(14, 16).await.unwrap().unwrap()), [15]);
         assert_eq!(seqs(fetch(5, 6).await.unwrap().unwrap()), Vec::<i64>::new());
         assert_eq!(seqs(fetch(0, 4).await.unwrap().unwrap()), Vec::<i64>::new());
@@ -12788,11 +15235,37 @@ mod filtered_pull_tests {
             create_pull_indexes(&conn).await;
             let opts = runner_calendar_options(60);
             let store = runner_store();
-            assert_eq!(pull_newest_first(&conn, &key, &store, &opts, rows).await, 9, "rows {rows}: each wanted row once");
+            assert_eq!(
+                pull_newest_first(&conn, &key, &store, &opts, rows).await,
+                9,
+                "rows {rows}: each wanted row once"
+            );
             assert_eq!(store.sync_gap("dev-a").unwrap(), None, "rows {rows}");
-            seed(&conn, &key, "dev-a", 16, ROW_TYPE_ITEMS, &item_json("calendar_event", "late ev"), Some("calendar_event")).await;
-            seed(&conn, &key, "dev-a", 17, ROW_TYPE_ITEMS, &item_json("capture", "late cap"), Some("capture")).await;
-            assert_eq!(pull_newest_first(&conn, &key, &store, &opts, rows).await, 1, "rows {rows}: only the late event");
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                16,
+                ROW_TYPE_ITEMS,
+                &item_json("calendar_event", "late ev"),
+                Some("calendar_event"),
+            )
+            .await;
+            seed(
+                &conn,
+                &key,
+                "dev-a",
+                17,
+                ROW_TYPE_ITEMS,
+                &item_json("capture", "late cap"),
+                Some("capture"),
+            )
+            .await;
+            assert_eq!(
+                pull_newest_first(&conn, &key, &store, &opts, rows).await,
+                1,
+                "rows {rows}: only the late event"
+            );
             assert!(bodies(&store, "calendar_event").contains(&"late ev".to_string()));
         }
     }
@@ -12804,21 +15277,36 @@ mod filtered_pull_tests {
         seed_slice_relay_with_tombstones(&conn, &key).await;
         let opts = runner_calendar_options(60);
         let filter = runner_filter(&key);
-        let (gap, live) = (today_gap_sql(&filter), fetch_allowed_rows_sql(
-            filter.row_types.as_ref().unwrap().len(),
-            filter.kind_tags.as_ref().unwrap().len(),
-            filter.slice_tags.as_ref().unwrap().len(),
-        ));
+        let (gap, live) = (
+            today_gap_sql(&filter),
+            fetch_allowed_rows_sql(
+                filter.row_types.as_ref().unwrap().len(),
+                filter.kind_tags.as_ref().unwrap().len(),
+                filter.slice_tags.as_ref().unwrap().len(),
+            ),
+        );
         let check = |label: &str, gap: &str, live: &str| {
             let sql = take_pull_sql();
-            assert!(sql.iter().any(|s| s == gap), "{label}: the gap scan ran: {sql:?}");
-            assert!(sql.iter().all(|s| s == gap || s == live), "{label}: {sql:?}");
+            assert!(
+                sql.iter().any(|s| s == gap),
+                "{label}: the gap scan ran: {sql:?}"
+            );
+            assert!(
+                sql.iter().all(|s| s == gap || s == live),
+                "{label}: {sql:?}"
+            );
         };
         take_pull_sql();
-        assert_eq!(pull_newest_first(&conn, &key, &runner_store(), &opts, 2).await, 9);
+        assert_eq!(
+            pull_newest_first(&conn, &key, &runner_store(), &opts, 2).await,
+            9
+        );
         check("no indexes", &gap, &live);
         conn.execute(CREATE_TYPE_INDEX, ()).await.unwrap();
-        assert_eq!(pull_newest_first(&conn, &key, &runner_store(), &opts, 2).await, 9);
+        assert_eq!(
+            pull_newest_first(&conn, &key, &runner_store(), &opts, 2).await,
+            9
+        );
         check("type index only", &gap, &live);
         conn.execute(CREATE_SLICE_INDEX, ()).await.unwrap();
         let wide = allow(&["items:capture", "items:transcript", "items:calendar_event"]);
@@ -12826,7 +15314,11 @@ mod filtered_pull_tests {
         assert_eq!(wide_filter.slice_tags, None);
         let types = wide_filter.row_types.as_ref().unwrap().len();
         pull_newest_first(&conn, &key, &runner_store(), &wide, 2).await;
-        check("no slice tags", &fetch_allowed_gap_rows_sql(types, 3, 0), &fetch_allowed_rows_sql(types, 3, 0));
+        check(
+            "no slice tags",
+            &fetch_allowed_gap_rows_sql(types, 3, 0),
+            &fetch_allowed_rows_sql(types, 3, 0),
+        );
     }
 
     /// Indexes by name on a relay without `slice_tag`: the gap pass falls back to the kind-only scan without an
@@ -12839,20 +15331,35 @@ mod filtered_pull_tests {
         let with = runner_store();
         assert_eq!(pull_newest_first(&conn, &key, &with, &opts, 2).await, 9);
 
-        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ())
+            .await
+            .unwrap();
         conn.execute("CREATE INDEX idx_sync_row_slice ON sync_row(device_id, local_seq) WHERE row_type = 'items'", ())
             .await
             .unwrap();
         conn.execute(CREATE_TYPE_INDEX, ()).await.unwrap();
         take_pull_sql();
         let store = runner_store();
-        assert_eq!(pull_newest_first(&conn, &key, &store, &opts, 2).await, 13, "the kind filter alone: eleven items, two tombstones");
+        assert_eq!(
+            pull_newest_first(&conn, &key, &store, &opts, 2).await,
+            13,
+            "the kind filter alone: eleven items, two tombstones"
+        );
         let filter = runner_filter(&key);
         let kind_only = fetch_allowed_gap_rows_sql(filter.row_types.as_ref().unwrap().len(), 1, 0);
         let sql = take_pull_sql();
-        assert!(sql.iter().any(|s| s.contains("INDEXED BY")), "the indexed fetch was tried");
-        assert!(sql.contains(&kind_only), "then the kind-only gap scan: {sql:?}");
-        assert_eq!(bodies(&store, "calendar_event"), bodies(&with, "calendar_event"));
+        assert!(
+            sql.iter().any(|s| s.contains("INDEXED BY")),
+            "the indexed fetch was tried"
+        );
+        assert!(
+            sql.contains(&kind_only),
+            "then the kind-only gap scan: {sql:?}"
+        );
+        assert_eq!(
+            bodies(&store, "calendar_event"),
+            bodies(&with, "calendar_event")
+        );
         assert_eq!(store.sync_gap("dev-a").unwrap(), None);
 
         for broken in [None, Some("CREATE INDEX idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'x'")] {
@@ -12878,16 +15385,38 @@ mod filtered_pull_tests {
         seed_slice_relay_with_tombstones(&conn, &key).await;
         let opts = runner_calendar_options(60);
         let scan_store = runner_store();
-        assert_eq!(pull_newest_first(&conn, &key, &scan_store, &opts, 2).await, 9);
+        assert_eq!(
+            pull_newest_first(&conn, &key, &scan_store, &opts, 2).await,
+            9
+        );
 
         create_pull_indexes(&conn).await;
         FILTERED_PULL_TEST_SPAN.with(|c| c.set(Some(2)));
-        let pace = Pace { rows: 2, peer_budget: std::time::Duration::from_secs(60), round_budget: None };
+        let pace = Pace {
+            rows: 2,
+            peer_budget: std::time::Duration::from_secs(60),
+            round_budget: None,
+        };
         let store = runner_store();
-        async fn one_round(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions, pace: Pace) -> (bool, usize) {
+        async fn one_round(
+            conn: &Connection,
+            key: &GroupKey,
+            store: &Store,
+            opts: &PullOptions,
+            pace: Pace,
+        ) -> (bool, usize) {
             let mut stats = Vec::new();
-            let more = pull_round_mode(conn, key, store, RUNNER, pace, opts, true, true, &mut stats).await.unwrap();
-            (more, stats.iter().map(|s| s.fetched + s.gap_fetched).sum::<usize>())
+            let more =
+                pull_round_mode(conn, key, store, RUNNER, pace, opts, true, true, &mut stats)
+                    .await
+                    .unwrap();
+            (
+                more,
+                stats
+                    .iter()
+                    .map(|s| s.fetched + s.gap_fetched)
+                    .sum::<usize>(),
+            )
         }
         // Two indexed rounds: each reads one full page of the gap and lowers its top.
         take_pull_sql();
@@ -12898,14 +15427,22 @@ mod filtered_pull_tests {
             fetched += n;
         }
         assert_eq!(fetched, 4);
-        let (_, hi) = store.sync_gap("dev-a").unwrap().expect("the gap is still open");
+        let (_, hi) = store
+            .sync_gap("dev-a")
+            .unwrap()
+            .expect("the gap is still open");
         assert!(hi < 16, "the indexed pages lowered the gap's top: {hi}");
         let sql = take_pull_sql();
         let gap_sql: Vec<&String> = sql.iter().filter(|s| s.contains("DESC")).collect();
-        assert!(!gap_sql.is_empty() && gap_sql.iter().all(|s| s.contains("INDEXED BY")), "{gap_sql:?}");
+        assert!(
+            !gap_sql.is_empty() && gap_sql.iter().all(|s| s.contains("INDEXED BY")),
+            "{gap_sql:?}"
+        );
 
         // The type index now has its name but not its shape: the indexed fetch gives way.
-        conn.execute("DROP INDEX idx_sync_row_type", ()).await.unwrap();
+        conn.execute("DROP INDEX idx_sync_row_type", ())
+            .await
+            .unwrap();
         conn.execute("CREATE INDEX idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'x'", ())
             .await
             .unwrap();
@@ -12920,10 +15457,16 @@ mod filtered_pull_tests {
         }
         FILTERED_PULL_TEST_SPAN.with(|c| c.set(None));
         assert!(done, "the pull finished on span windows");
-        assert!(take_pull_sql().contains(&today_gap_sql(&runner_filter(&key))), "the span-windowed gap scan ran");
+        assert!(
+            take_pull_sql().contains(&today_gap_sql(&runner_filter(&key))),
+            "the span-windowed gap scan ran"
+        );
         assert_eq!(fetched, 9, "every wanted row once");
         assert_eq!(store.sync_gap("dev-a").unwrap(), None);
-        assert_eq!(bodies(&store, "calendar_event"), bodies(&scan_store, "calendar_event"));
+        assert_eq!(
+            bodies(&store, "calendar_event"),
+            bodies(&scan_store, "calendar_event")
+        );
         assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 15);
     }
 
@@ -12944,11 +15487,29 @@ mod filtered_pull_tests {
         INDEXED_QUERY_FAILS.with(|c| c.set(true));
         let filter = runner_filter(&key);
         assert!(filter.use_pull_indexes(&conn).await);
-        assert!(fetch_rows_indexed(&conn, "dev-a", 0, 15, 500, &filter).await.unwrap().is_none(), "live gives way");
-        assert!(!filter.use_pull_indexes(&conn).await, "the rest of the round scans");
+        assert!(
+            fetch_rows_indexed(&conn, "dev-a", 0, 15, 500, &filter)
+                .await
+                .unwrap()
+                .is_none(),
+            "live gives way"
+        );
+        assert!(
+            !filter.use_pull_indexes(&conn).await,
+            "the rest of the round scans"
+        );
         let filter = runner_filter(&key);
-        assert!(fetch_gap_rows_indexed(&conn, "dev-a", 0, 16, 500, &filter).await.unwrap().is_none(), "gap gives way");
-        assert!(!filter.use_pull_indexes(&conn).await, "the rest of the round scans");
+        assert!(
+            fetch_gap_rows_indexed(&conn, "dev-a", 0, 16, 500, &filter)
+                .await
+                .unwrap()
+                .is_none(),
+            "gap gives way"
+        );
+        assert!(
+            !filter.use_pull_indexes(&conn).await,
+            "the rest of the round scans"
+        );
 
         take_pull_sql();
         let live = runner_store();
@@ -12957,11 +15518,23 @@ mod filtered_pull_tests {
         let gap_fetched = pull_newest_first(&conn, &key, &gap, &opts, 2).await;
         INDEXED_QUERY_FAILS.with(|c| c.set(false));
         let sql = take_pull_sql();
-        assert!(sql.contains(&today_gap_sql(&runner_filter(&key))), "the gap scan ran");
-        assert!(!sql.iter().any(|s| s.contains("INDEXED BY")), "no indexed query got through: {sql:?}");
+        assert!(
+            sql.contains(&today_gap_sql(&runner_filter(&key))),
+            "the gap scan ran"
+        );
+        assert!(
+            !sql.iter().any(|s| s.contains("INDEXED BY")),
+            "no indexed query got through: {sql:?}"
+        );
         assert_eq!((live_fetched, gap_fetched), (9, 9));
-        assert_eq!(bodies(&live, "calendar_event"), bodies(&live_scan, "calendar_event"));
-        assert_eq!(bodies(&gap, "calendar_event"), bodies(&gap_scan, "calendar_event"));
+        assert_eq!(
+            bodies(&live, "calendar_event"),
+            bodies(&live_scan, "calendar_event")
+        );
+        assert_eq!(
+            bodies(&gap, "calendar_event"),
+            bodies(&gap_scan, "calendar_event")
+        );
         assert_eq!(live.get_sync_cursor("dev-a").unwrap(), 15);
         assert_eq!(gap.sync_gap("dev-a").unwrap(), None);
     }
@@ -12985,12 +15558,24 @@ mod filtered_pull_tests {
         let sql = take_pull_sql();
         assert!(report.complete);
         let gap_sql: Vec<&String> = sql.iter().filter(|s| s.contains("DESC")).collect();
-        assert!(!gap_sql.is_empty(), "the backlog was read as a gap: {sql:?}");
-        assert!(gap_sql.iter().all(|s| s.contains("INDEXED BY")), "every gap page indexed: {gap_sql:?}");
-        assert!(!sql.contains(&today_gap_sql(&runner_filter(&key))), "never the gap scan");
+        assert!(
+            !gap_sql.is_empty(),
+            "the backlog was read as a gap: {sql:?}"
+        );
+        assert!(
+            gap_sql.iter().all(|s| s.contains("INDEXED BY")),
+            "every gap page indexed: {gap_sql:?}"
+        );
+        assert!(
+            !sql.contains(&today_gap_sql(&runner_filter(&key))),
+            "never the gap scan"
+        );
         assert_eq!(report.rows_fetched, scan.rows_fetched);
         assert_eq!(report.rows_applied, scan.rows_applied);
-        assert_eq!(bodies(&store, "calendar_event"), bodies(&scan_store, "calendar_event"));
+        assert_eq!(
+            bodies(&store, "calendar_event"),
+            bodies(&scan_store, "calendar_event")
+        );
         assert_eq!(store.sync_gap("dev-a").unwrap(), None);
         assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 15);
     }
@@ -13003,7 +15588,10 @@ mod defer_embedding_guard_tests {
     /// libsql's local backend must run `sqlite3_config` before any rusqlite connection
     /// initialises SQLite in this process, so each test opens a relay first (as the others do).
     async fn store_after_a_relay(dir: &tempfile::TempDir) -> Store {
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         drop(db.connect().unwrap());
         Store::open_in_memory().unwrap()
     }
@@ -13022,14 +15610,18 @@ mod defer_embedding_guard_tests {
         )
         .await;
         assert!(cancelled.is_err(), "the page future was dropped mid-await");
-        assert!(!store.set_defer_embedding(false), "the setting is back to off after the drop");
+        assert!(
+            !store.set_defer_embedding(false),
+            "the setting is back to off after the drop"
+        );
     }
 
     #[tokio::test]
     async fn a_page_that_finishes_puts_the_defer_setting_back() {
         let dir = tempfile::tempdir().unwrap();
         let store = store_after_a_relay(&dir).await;
-        let seen = with_defer_embedding(&store, true, async { store.set_defer_embedding(true) }).await;
+        let seen =
+            with_defer_embedding(&store, true, async { store.set_defer_embedding(true) }).await;
         assert!(seen, "deferred while the page ran");
         assert!(!store.set_defer_embedding(false), "back to off after");
     }
@@ -13051,17 +15643,36 @@ mod defer_embedding_guard_tests {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(2_000_000);
-        let other_types = ["meeting", "capture_item", "transcript_segment", "routine_run", "live_alert"];
-        let asked_slices: Vec<String> = ["slice-3", "slice-41"].iter().map(|s| s.to_string()).collect();
-        let asked_kinds: Vec<String> = ["kind-7", "kind-23"].iter().map(|s| s.to_string()).collect();
+        let other_types = [
+            "meeting",
+            "capture_item",
+            "transcript_segment",
+            "routine_run",
+            "live_alert",
+        ];
+        let asked_slices: Vec<String> = ["slice-3", "slice-41"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let asked_kinds: Vec<String> = ["kind-7", "kind-23"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let types: Vec<String> = std::iter::once("items".to_string())
             .chain(other_types.iter().map(|t| t.to_string()))
             .collect();
 
         let dir = tempfile::tempdir().unwrap();
-        let conn = libsql::Builder::new_local(dir.path().join("measure.db")).build().await.unwrap().connect().unwrap();
+        let conn = libsql::Builder::new_local(dir.path().join("measure.db"))
+            .build()
+            .await
+            .unwrap()
+            .connect()
+            .unwrap();
         ensure_content_schema(&conn).await.unwrap();
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = OFF;").await.ok();
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = OFF;")
+            .await
+            .ok();
 
         let build_started = Instant::now();
         conn.execute("BEGIN", ()).await.unwrap();
@@ -13100,10 +15711,18 @@ mod defer_embedding_guard_tests {
             let mut rows = conn.query(sql, ()).await.unwrap();
             rows.next().await.unwrap().unwrap().get(0).unwrap()
         }
-        let distinct_kinds = single_i64(&conn, "SELECT COUNT(DISTINCT kind_tag) FROM sync_row").await;
-        let null_kind_items = single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await;
+        let distinct_kinds =
+            single_i64(&conn, "SELECT COUNT(DISTINCT kind_tag) FROM sync_row").await;
+        let null_kind_items = single_i64(
+            &conn,
+            "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL",
+        )
+        .await;
         assert_eq!(distinct_kinds, 40, "every kind tag occurs");
-        assert!(null_kind_items > 0, "old-client rows (NULL kind) are exercised");
+        assert!(
+            null_kind_items > 0,
+            "old-client rows (NULL kind) are exercised"
+        );
         println!("distinct kinds {distinct_kinds}, items with NULL kind {null_kind_items}");
         println!(
             "built {} devices x {per_device} rows in {:.1}s",
@@ -13132,10 +15751,19 @@ mod defer_embedding_guard_tests {
             let mut from = 0i64;
             while from < top {
                 let hi = from.saturating_add(filtered_pull_span()).min(top);
-                let mut values = vec![Value::Text(dev.into()), Value::Integer(from), Value::Integer(PAGE)];
+                let mut values = vec![
+                    Value::Text(dev.into()),
+                    Value::Integer(from),
+                    Value::Integer(PAGE),
+                ];
                 values.extend(types.iter().map(|t| Value::Text(t.clone())));
                 values.push(Value::Integer(hi));
-                values.extend(asked_kinds.iter().chain(&asked_slices).map(|t| Value::Text(t.clone())));
+                values.extend(
+                    asked_kinds
+                        .iter()
+                        .chain(&asked_slices)
+                        .map(|t| Value::Text(t.clone())),
+                );
                 let got = run(&conn, &cur_sql, values).await;
                 cur_queries += 1;
                 let full = got.len() as i64 >= PAGE;
@@ -13181,7 +15809,11 @@ mod defer_embedding_guard_tests {
         ) {
             let mut from = 0i64;
             loop {
-                let mut values = vec![Value::Text(dev.into()), Value::Integer(from), Value::Integer(page)];
+                let mut values = vec![
+                    Value::Text(dev.into()),
+                    Value::Integer(from),
+                    Value::Integer(page),
+                ];
                 values.extend(extra.clone());
                 let got = run(conn, sql, values).await;
                 *queries += 1;
@@ -13204,13 +15836,40 @@ mod defer_embedding_guard_tests {
         let started = Instant::now();
         for dev in DEVICES {
             let t = Instant::now();
-            page_all(&conn, &non_items_sql, dev, PAGE, ntext(&other_types.map(String::from)), &mut b_set, &mut b_q).await;
+            page_all(
+                &conn,
+                &non_items_sql,
+                dev,
+                PAGE,
+                ntext(&other_types.map(String::from)),
+                &mut b_set,
+                &mut b_q,
+            )
+            .await;
             b_non += t.elapsed().as_millis();
             let t = Instant::now();
-            page_all(&conn, &sliced_sql(asked_slices.len()), dev, PAGE, ntext(&asked_slices), &mut b_set, &mut b_q).await;
+            page_all(
+                &conn,
+                &sliced_sql(asked_slices.len()),
+                dev,
+                PAGE,
+                ntext(&asked_slices),
+                &mut b_set,
+                &mut b_q,
+            )
+            .await;
             b_sliced += t.elapsed().as_millis();
             let t = Instant::now();
-            page_all(&conn, &unsliced_sql, dev, PAGE, ntext(&asked_kinds), &mut b_set, &mut b_q).await;
+            page_all(
+                &conn,
+                &unsliced_sql,
+                dev,
+                PAGE,
+                ntext(&asked_kinds),
+                &mut b_set,
+                &mut b_q,
+            )
+            .await;
             b_unsliced += t.elapsed().as_millis();
         }
         let b_ms = started.elapsed().as_millis();
@@ -13220,23 +15879,70 @@ mod defer_embedding_guard_tests {
         let mut a_sliced = 0u128;
         let started = Instant::now();
         for dev in DEVICES {
-            page_all(&conn, &non_items_sql, dev, PAGE, ntext(&other_types.map(String::from)), &mut a_set, &mut a_q).await;
+            page_all(
+                &conn,
+                &non_items_sql,
+                dev,
+                PAGE,
+                ntext(&other_types.map(String::from)),
+                &mut a_set,
+                &mut a_q,
+            )
+            .await;
             let t = Instant::now();
             for tag in &asked_slices {
-                page_all(&conn, &sliced_sql(1), dev, PAGE, vec![Value::Text(tag.clone())], &mut a_set, &mut a_q).await;
+                page_all(
+                    &conn,
+                    &sliced_sql(1),
+                    dev,
+                    PAGE,
+                    vec![Value::Text(tag.clone())],
+                    &mut a_set,
+                    &mut a_q,
+                )
+                .await;
             }
             a_sliced += t.elapsed().as_millis();
-            page_all(&conn, &unsliced_sql, dev, PAGE, ntext(&asked_kinds), &mut a_set, &mut a_q).await;
+            page_all(
+                &conn,
+                &unsliced_sql,
+                dev,
+                PAGE,
+                ntext(&asked_kinds),
+                &mut a_set,
+                &mut a_q,
+            )
+            .await;
         }
         let a_ms = started.elapsed().as_millis();
 
-        println!("rows/device={per_device} slices asked={} kinds asked={}", asked_slices.len(), asked_kinds.len());
-        println!("current : {cur_ms:>7} ms  {} rows  {cur_queries} queries", current.len());
+        println!(
+            "rows/device={per_device} slices asked={} kinds asked={}",
+            asked_slices.len(),
+            asked_kinds.len()
+        );
+        println!(
+            "current : {cur_ms:>7} ms  {} rows  {cur_queries} queries",
+            current.len()
+        );
         println!("shape B : {b_ms:>7} ms  {} rows  {b_q} queries (non-items {b_non} ms, sliced {b_sliced} ms, unsliced {b_unsliced} ms)", b_set.len());
-        println!("shape A : {a_ms:>7} ms  {} rows  {a_q} queries (sliced per-tag {a_sliced} ms)", a_set.len());
-        println!("B == current: {}   A == current: {}", b_set == current, a_set == current);
-        assert_eq!(b_set, current, "shape B returns the same set as the current pull");
-        assert_eq!(a_set, current, "shape A returns the same set as the current pull");
+        println!(
+            "shape A : {a_ms:>7} ms  {} rows  {a_q} queries (sliced per-tag {a_sliced} ms)",
+            a_set.len()
+        );
+        println!(
+            "B == current: {}   A == current: {}",
+            b_set == current,
+            a_set == current
+        );
+        assert_eq!(
+            b_set, current,
+            "shape B returns the same set as the current pull"
+        );
+        assert_eq!(
+            a_set, current,
+            "shape A returns the same set as the current pull"
+        );
     }
 }
 
@@ -13246,7 +15952,10 @@ mod pull_index_detection_tests {
 
     async fn relay() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let conn = db.connect().unwrap();
         ensure_content_schema(&conn).await.unwrap();
         (dir, conn)
@@ -13261,13 +15970,17 @@ mod pull_index_detection_tests {
         assert!(!relay_has_pull_indexes(&conn).await, "none");
         conn.execute(SLICE, ()).await.unwrap();
         assert!(!relay_has_pull_indexes(&conn).await, "slice only");
-        conn.execute("DROP INDEX idx_sync_row_slice", ()).await.unwrap();
+        conn.execute("DROP INDEX idx_sync_row_slice", ())
+            .await
+            .unwrap();
         conn.execute(TYPE, ()).await.unwrap();
         assert!(!relay_has_pull_indexes(&conn).await, "type only");
         conn.execute(SLICE, ()).await.unwrap();
         assert!(relay_has_pull_indexes(&conn).await, "both");
         // The name is the contract: a different predicate still counts.
-        conn.execute("DROP INDEX idx_sync_row_type", ()).await.unwrap();
+        conn.execute("DROP INDEX idx_sync_row_type", ())
+            .await
+            .unwrap();
         conn.execute(
             "CREATE INDEX idx_sync_row_type ON sync_row(device_id, row_type, local_seq) WHERE row_type != 'x'",
             (),
@@ -13298,7 +16011,9 @@ mod pull_index_detection_tests {
             ..Default::default()
         };
         assert!(filter.use_pull_indexes(&conn).await);
-        conn.execute("DROP INDEX idx_sync_row_type", ()).await.unwrap();
+        conn.execute("DROP INDEX idx_sync_row_type", ())
+            .await
+            .unwrap();
         assert!(filter.use_pull_indexes(&conn).await, "read once per pull");
     }
 }

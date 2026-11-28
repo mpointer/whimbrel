@@ -5,7 +5,7 @@ import SwiftUI
 import WhimbrelUI
 
 /// Sync & Devices in the redesigned Settings window. This file feeds the package's `WSyncDevicesSettingsView` from the app's
-/// state and calls the same functions `DevicesSettingsPane` calls (`SyncState.enableSync`, `approve`, `revoke`, `swap`,
+/// state and calls the functions the old Sync & Devices pane called (`SyncState.enableSync`, `approve`, `revoke`, `swap`,
 /// `joinWaitlist`, `saveDeviceName`, `deleteSyncAccount`, `registerRunner`, the content sync round and the pending-clients
 /// bridge). The classic pane is not changed. Billing, auth and sync are not touched here: this only shows what the server
 /// and `SyncState` say. The purchase choice comes from `PlanSettingsAdapter`, the same reading of the server's plan answer
@@ -238,6 +238,7 @@ private struct SyncDevicesSettingsRedesignBody: View {
     @StateObject private var pending: SyncPendingRuntime
     @State private var working = false
     @State private var joinedWaitlist = false
+    @State private var phoneWaitedOut = false
 
     init(appState: AppState, highlighted: String?) {
         self.appState = appState
@@ -275,6 +276,13 @@ private struct SyncDevicesSettingsRedesignBody: View {
         }
         .onDisappear { syncState.stopDevicesPolling() }
         .task(id: isReady) { await loadPending() }
+        // The phone card waits for the first device list; if it never comes, show the beta card after a few seconds.
+        .task(id: isReady) {
+            phoneWaitedOut = false
+            guard isReady else { return }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if !Task.isCancelled { phoneWaitedOut = true }
+        }
         .onChange(of: content.lastSyncedAt) { _, _ in Task { await loadPending() } }
         // The "Synced" line goes away by itself; an error stays until the next try.
         .task(id: syncNow.phase) {
@@ -316,7 +324,9 @@ private struct SyncDevicesSettingsRedesignBody: View {
         }
         return WSyncModel(
             labels: SyncDevicesAdapter.labels(), planLabels: PlanSettingsAdapter.labels(), phase: phase,
-            phone: PhoneCardState.state(devices: devices) == .connected
+            phone: PhoneCardState.isLoading(ready: isReady, loaded: syncState.devicesLoaded, waitedOut: phoneWaitedOut)
+                ? .loading
+                : PhoneCardState.state(devices: devices) == .connected
                 ? .connected : .beta(url: SyncDevicesAdapter.betaURL, qr: SyncDevicesAdapter.qrImage()),
             deviceName: syncState.deviceName, actionError: syncState.actionError, devices: rows,
             showsAddRunner: CloudRoutineCopy.showsAddRunner(flag: CloudRoutineCopy.uiFlag()), limit: limit, deleteMessage: deleteMessage,

@@ -182,87 +182,6 @@ extension EncryptionRecoveryModel.Actions {
     }
 }
 
-struct EncryptionRecoveryView: View {
-    @ObservedObject var model: EncryptionRecoveryModel
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.lg) {
-                Text(EncryptionCopy.recoveryTitle).font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
-                Text(model.explanation).font(.whimbrelBody()).foregroundStyle(Color.whimbrelTextPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(EncryptionCopy.recoveryUnchanged).font(.whimbrelBody()).foregroundStyle(Color.whimbrelTextSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Picker("", selection: $model.method) {
-                    Text(EncryptionCopy.methodFile).tag(EncryptionRecoveryModel.Method.file)
-                    Text(EncryptionCopy.methodWords).tag(EncryptionRecoveryModel.Method.words)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-
-                switch model.method {
-                case .file: fileForm
-                case .words: wordsForm
-                }
-
-                if let error = model.error {
-                    Text(error).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelError)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if model.restored {
-                    Label(EncryptionCopy.restored, systemImage: "checkmark.circle.fill")
-                        .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelSuccess)
-                }
-
-                Divider().overlay(Color.whimbrelBorder)
-                Text(EncryptionCopy.recoveryNeverDeletes).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(EncryptionCopy.recoveryLostBoth).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(Spacing.xl)
-        }
-        .background(Color.whimbrelBackgroundPage)
-        .onDisappear { model.clearSecrets() }
-    }
-
-    private var fileForm: some View {
-        VStack(alignment: .leading, spacing: Spacing.sm) {
-            HStack {
-                Button(EncryptionCopy.chooseFile) { Task { await model.perform(.chooseFile) } }.buttonStyle(.whimbrelSecondary)
-                if let name = model.chosenFileName {
-                    Label(name, systemImage: "doc.text").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
-                        .lineLimit(1).truncationMode(.middle)
-                }
-            }
-            SecureField(EncryptionCopy.passphraseField, text: $model.passphrase).textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 420)
-                .onSubmit { Task { await model.perform(.restoreFromFile) } }
-            Button(model.working ? EncryptionCopy.unlocking : EncryptionCopy.unlockWithFile) { Task { await model.perform(.restoreFromFile) } }
-                .buttonStyle(.whimbrelPrimary)
-                .disabled(!model.canRestore)
-        }
-    }
-
-    private var wordsForm: some View {
-        VStack(alignment: .leading, spacing: Spacing.sm) {
-            Text(EncryptionCopy.wordsHelp).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
-            TextEditor(text: $model.words)
-                .font(.system(.body, design: .monospaced))
-                // Spelling correction would change the words. (SwiftUI on macOS has no switch for
-                // smart quotes or text replacement; core ignores punctuation either way.)
-                .autocorrectionDisabled()
-                .frame(minHeight: 90, maxHeight: 120)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.whimbrelBorder))
-            Button(model.working ? EncryptionCopy.unlocking : EncryptionCopy.unlockWithWords) { Task { await model.perform(.restoreFromWords) } }
-                .buttonStyle(.whimbrelPrimary)
-                .disabled(!model.canRestore)
-        }
-    }
-}
-
 /// The Keychain could not be read at launch (locked, denied, failing). Not a lost key: the
 /// only action is Retry, and nothing is opened, changed or deleted.
 @MainActor
@@ -294,36 +213,5 @@ final class EncryptionKeyUnavailableModel: ObservableObject {
         let ok = await retryAction()
         retrying = false
         stillUnavailable = !ok
-    }
-}
-
-struct EncryptionKeyUnavailableView: View {
-    @ObservedObject var model: EncryptionKeyUnavailableModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text(EncryptionCopy.unavailableTitle).font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
-            Text(EncryptionCopy.unavailableBody).font(.whimbrelBody()).foregroundStyle(Color.whimbrelTextPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(EncryptionCopy.unavailableHint).font(.whimbrelBody()).foregroundStyle(Color.whimbrelTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(EncryptionCopy.unavailableTouchesNothing).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
-            if !model.detail.isEmpty {
-                Text(EncryptionCopy.unavailableDetail(model.detail)).font(.whimbrelBody(.caption))
-                    .foregroundStyle(Color.whimbrelTextSecondary).textSelection(.enabled)
-            }
-            if model.stillUnavailable {
-                Text(EncryptionCopy.stillUnavailable).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelError)
-            }
-            HStack {
-                Spacer()
-                Button(model.retrying ? EncryptionCopy.trying : EncryptionCopy.tryAgain) { Task { await model.perform(.retry) } }
-                    .buttonStyle(.whimbrelPrimary)
-                    .disabled(model.retrying)
-            }
-        }
-        .padding(Spacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.whimbrelBackgroundPage)
     }
 }

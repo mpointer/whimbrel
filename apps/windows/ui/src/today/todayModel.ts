@@ -1,12 +1,9 @@
 import type {
   BriefRecap,
-  DeviceCount,
   PrepBriefView,
-  NextMeetingView,
   PrepSourceView,
   ProviderKey,
   RoutingSettings,
-  ScheduleEvent,
   ThreadRow,
   TodayOverview,
   TodayRecap,
@@ -43,13 +40,6 @@ export function briefRecapNote(brief: BriefRecap, locale: string): string {
 export function recapNote(recap: TodayRecap): string {
   if (recap.emptyDay) return t("Nothing captured yet today. The recap writes itself once there is something to summarize.");
   return recap.cached ? t("Written earlier today.") : t("Just written.");
-}
-
-/** "1,204 captures · last 2:05 PM", or "Nothing yet today". */
-export function deviceLine(d: DeviceCount, locale: string): string {
-  if (d.captures === 0 || d.lastTsUnixMs == null) return t("Nothing yet today");
-  // t() writes the count as the language does ("1,204").
-  return t("{count} captures · last {time}", { count: d.captures, time: timeLabel(d.lastTsUnixMs, locale) });
 }
 
 export function threadLine(thread: ThreadRow): string {
@@ -116,12 +106,6 @@ export function askModelLabel(routing: RoutingSettings): string {
   }
 }
 
-/** What the composer sends: the trimmed text, or nothing for a blank field. */
-export function composerPrompt(text: string): string | null {
-  const trimmed = text.trim();
-  return trimmed === "" ? null : trimmed;
-}
-
 const MINUTE = 60_000;
 
 /**
@@ -135,29 +119,4 @@ export function relativeStart(startMs: number, endMs: number, nowMs: number): st
   const minutes = Math.ceil((startMs - nowMs) / MINUTE);
   if (minutes > 12 * 60) return null;
   return minutes < 60 ? t("In {minutes}m", { minutes }) : t("In {hours}h", { hours: Math.floor(minutes / 60) });
-}
-
-/** Up to two invitees, then "+N" for the rest; nothing for an event with none. */
-export function attendeesLine(attendees: string[]): string | null {
-  if (attendees.length === 0) return null;
-  const shown = attendees.slice(0, 2).join(", ");
-  return attendees.length > 2 ? t("{names} +{others}", { names: shown, others: attendees.length - 2 }) : shown;
-}
-
-/**
- * What a row offers: Open for an event that has a recording, Start for one that does not (hidden on every
- * row while a meeting is recording), nothing otherwise.
- */
-export function rowAction(event: ScheduleEvent, recording: boolean): "open" | "start" | null {
-  if (event.recordedMeetingId != null) return "open";
-  return recording ? null : "start";
-}
-
-/**
- * The prep line, on the next meeting's row only (the one event with prep data): "Prep ready" when its
- * brief exists, "No prep yet" when not. An event already recorded, or any other event, has none.
- */
-export function prepLine(event: ScheduleEvent, next: NextMeetingView | null): "ready" | "none" | null {
-  if (!next || next.eventId !== event.eventId || event.recordedMeetingId != null) return null;
-  return next.brief ? "ready" : "none";
 }

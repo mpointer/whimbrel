@@ -111,12 +111,6 @@ final class RedesignHomeAdapterTests: XCTestCase {
         XCTAssertEqual(none.endUnixMs, 0)
     }
 
-    func testPersonTermIsQuotedAndJoinedToTheQuery() {
-        XCTAssertEqual(TimelineView.searchTerm(query: "", person: "Priya Shah"), "\"Priya Shah\"")
-        XCTAssertEqual(TimelineView.searchTerm(query: "pricing", person: "Priya \"P\" Shah"), "pricing \"Priya P Shah\"")
-        XCTAssertEqual(TimelineView.searchTerm(query: "pricing", person: nil), "pricing")
-    }
-
     func testAppDotColorIsSteady() {
         XCTAssertEqual(HomeRedesignAdapter.kind("com.apple.mail"), HomeRedesignAdapter.kind("com.apple.mail"))
     }
@@ -226,18 +220,11 @@ final class RedesignHomeAdapterTests: XCTestCase {
         XCTAssertEqual(local.modelLabel, "llama3")
     }
 
-    func test_conversations_tab_only_with_the_redesign() {
-        XCTAssertEqual(WhimbrelTab.visibleTabs(redesign: false), [.today, .meetings, .library, .topics, .automations, .settings])
-        XCTAssertEqual(WhimbrelTab.visibleTabs(redesign: true), [.today, .meetings, .library, .topics, .conversations, .automations, .settings])
+    func test_conversations_tab_comes_after_topics() {
+        XCTAssertEqual(WhimbrelTab.visibleTabs, [.today, .meetings, .library, .topics, .conversations, .automations, .settings])
         XCTAssertEqual(WhimbrelTab.conversations.goKey, "7")
-    }
-
-    func test_conversations_tab_falls_back_to_today_with_the_redesign_off() {
-        XCTAssertEqual(WhimbrelTab.shown(.conversations, redesign: false), .today)
-        XCTAssertEqual(WhimbrelTab.shown(.conversations, redesign: true), .conversations)
-        XCTAssertEqual(WhimbrelTab.shown(.topics, redesign: false), .topics)
-        // With the flag off the Go keys stay today's six.
-        XCTAssertEqual(WhimbrelTab.visibleTabs(redesign: false).map(\.goKey), ["1", "2", "3", "6", "4", "5"])
+        // The Go keys keep their old numbers; Topics and Conversations took the next free ones.
+        XCTAssertEqual(WhimbrelTab.visibleTabs.map(\.goKey), ["1", "2", "3", "6", "7", "4", "5"])
     }
 
     // MARK: The conversation page's topic chip (Task 7)

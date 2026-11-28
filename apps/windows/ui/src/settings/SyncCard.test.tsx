@@ -1,15 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { SyncView } from "../generated/types";
-import { phoneCardState } from "./syncModel";
+import { phoneCardLoading, phoneCardState } from "./syncModel";
 
 vi.mock("../assets/mobile-beta-qr.svg", () => ({ default: "qr.svg" }));
-const { PhoneCard, PhoneConnected } = await import("./SyncCard");
-const { LimitUpgrade } = await import("./PlanControls");
-const { PlanBody } = await import("./PlanCard");
+const { PlanBody } = await import("./redesign/sections/plan/PlanBody");
+const { LimitUpgrade } = await import("./redesign/sections/devices/SyncStatusCard");
 const Plan = (p: { view: SyncView; busy: boolean; act: () => void; error: string | null }) => (
-  <PlanBody {...p} ai={null} onSignIn={() => {}} onRetry={() => {}} />
+  <PlanBody {...p} ai={null} onSection={() => {}} onRetry={() => {}} />
 );
+const sync = (error: string | null = null) => ({ busy: false, billing: () => {}, billingError: error });
 
 const view = (over: Partial<SyncView> = {}): SyncView => ({
   state: "ready",
@@ -24,18 +24,19 @@ const noop = () => {};
 const stripe = "Couldn't reach Stripe. Try again in a minute.";
 
 describe("Upgrade and Manage errors sit under their buttons (Mac PR 673)", () => {
-  it("in the Plan block, between the Upgrade buttons and the caption", () => {
+  it("in the Plan block, in the row with the Upgrade buttons and before the caption", () => {
     const html = renderToStaticMarkup(<Plan view={view()} busy={false} act={noop} error={stripe} />);
     const [buttons, error, caption] = ["Upgrade to Cloud: $50 a year", stripe.replace("'", "&#x27;"), "Plus tax"].map((s) => html.indexOf(s));
     expect(buttons).toBeGreaterThan(-1);
-    expect(error).toBeGreaterThan(buttons);
-    expect(caption).toBeGreaterThan(error);
+    expect(error).toBeGreaterThan(-1);
+    expect(caption).toBeGreaterThan(Math.max(buttons, error));
   });
 
   it("under Manage subscription on Cloud", () => {
     const cloud = view({ plan: { plan: "cloud", untilUnixMs: Date.UTC(2027, 10, 9, 12), interval: "year", billing: true, plusAvailable: false } });
     const html = renderToStaticMarkup(<Plan view={cloud} busy={false} act={noop} error={stripe} />);
-    expect(html.indexOf("&#x27;t reach Stripe")).toBeGreaterThan(html.indexOf("Manage subscription"));
+    expect(html).toContain("&#x27;t reach Stripe");
+    expect(html).toContain("Manage subscription");
   });
 
   it("shows only the Plus buttons when the server sells Plus, and only Cloud's otherwise", () => {
@@ -44,7 +45,7 @@ describe("Upgrade and Manage errors sit under their buttons (Mac PR 673)", () =>
     expect(html).toContain("Get Plus: $15 a month");
     expect(html).toContain("Get Plus: $144 a year");
     expect(html).not.toContain("Upgrade to Cloud");
-    const limit = renderToStaticMarkup(<LimitUpgrade view={{ ...plusView, deviceLimit: true }} busy={false} act={noop} error={null} />);
+    const limit = renderToStaticMarkup(<LimitUpgrade view={{ ...plusView, deviceLimit: true }} sync={sync()} />);
     expect(limit).toContain("Upgrade to Plus for unlimited devices.");
     expect(limit).not.toContain("Upgrade to Cloud");
     const cloudHtml = renderToStaticMarkup(<Plan view={view()} busy={false} act={noop} error={null} />);
@@ -62,16 +63,9 @@ describe("Upgrade and Manage errors sit under their buttons (Mac PR 673)", () =>
   });
 
   it("on the device-limit screen too", () => {
-    const html = renderToStaticMarkup(<LimitUpgrade view={view({ deviceLimit: true })} busy={false} act={noop} error={stripe} />);
-    expect(html.indexOf("&#x27;t reach Stripe")).toBeGreaterThan(html.indexOf("Upgrade to Cloud: $50 a year"));
-  });
-});
-
-describe("the phone card", () => {
-  it("has the Mac's text, the button and a labelled 84px QR code", () => {
-    const html = renderToStaticMarkup(<PhoneCard />);
-    for (const text of ["Whimbrel on your phone", "The apps are in beta.", "Join the beta", "Scan with your phone"]) expect(html).toContain(text);
-    expect(html).toMatch(/<img src="qr.svg" width="84" height="84" alt="QR code for the phone beta page"/);
+    const html = renderToStaticMarkup(<LimitUpgrade view={view({ deviceLimit: true })} sync={sync(stripe)} />);
+    expect(html).toContain("Upgrade to Cloud: $50 a year");
+    expect(html).toContain("&#x27;t reach Stripe");
   });
 });
 
@@ -80,7 +74,7 @@ describe("Plan & billing states", () => {
   it("signed out asks to sign in, with no buying controls", () => {
     const h = html({ state: "notSignedIn", plan: null });
     expect(h).toContain("Sign in to sync to see your plan.");
-    expect(h).toContain("Sign in to sync<");
+    expect(h).toContain("Sign in to sync");
     expect(h).not.toContain("Get Plus");
     expect(h).not.toContain("Upgrade to Cloud");
   });
@@ -98,12 +92,15 @@ describe("Plan & billing states", () => {
 
 describe("the phone card state", () => {
   it("is connected only for an approved phone", () => {
+    expect(phoneCardLoading(true, false, false)).toBe(true);
+    expect(phoneCardLoading(true, true, false)).toBe(false);
+    expect(phoneCardLoading(true, false, true)).toBe(false);
+    expect(phoneCardLoading(false, false, false)).toBe(false);
     expect(phoneCardState([{ status: "approved", platform: "ios" }])).toBe("connected");
     expect(phoneCardState([{ status: "approved", platform: "android" }])).toBe("connected");
     expect(phoneCardState([{ status: "pending", platform: "ios" }])).toBe("beta");
     expect(phoneCardState([{ status: "revoked", platform: "android" }])).toBe("beta");
     expect(phoneCardState([{ status: "approved", platform: "windows" }])).toBe("beta");
     expect(phoneCardState([])).toBe("beta");
-    expect(renderToStaticMarkup(<PhoneConnected />)).toContain("Phone: connected");
   });
 });

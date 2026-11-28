@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { meetingLiveAlerts, meetingSettings } from "../api";
-import { markdownComponents } from "../chat/AskView";
+import { markdownComponents } from "../chat/markdown";
 import { dateTimeLabel } from "../library/rows";
 import type { LiveAlertView } from "../generated/types";
 import { useL10n } from "../l10n";

@@ -290,7 +290,7 @@ struct WhimbrelMetadataChip: View {
 
     @ViewBuilder var body: some View {
         if look == .thread {
-            // A restyled screen (redesign switch on): the Thread chip.
+            // A restyled screen: the Thread chip.
             WStatusChip(text, tone: .neutral, glyph: systemImage)
         } else {
             classicBody
@@ -329,7 +329,7 @@ struct WhimbrelEmptyState: View {
 
     @ViewBuilder var body: some View {
         if look == .thread {
-            // A restyled screen (redesign switch on): the Thread empty state, same glyph, title, line and action.
+            // A restyled screen: the Thread empty state, same glyph, title, line and action.
             WEmptyState(glyph: systemImage, title: title, help: message, actionTitle: actionTitle, action: action)
         } else {
             classicBody

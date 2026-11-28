@@ -1,6 +1,6 @@
 import { describeError } from "../errors";
 import { t } from "../l10n";
-import type { ChatEvent, ChatSpend, ContextEntry, ContextItemRef, ConversationRow, ExchangeView } from "../generated/types";
+import type { ChatEvent, ChatSpend, ContextEntry, ContextItemRef, ConversationRow } from "../generated/types";
 
 export type TurnStatus = "starting" | "waiting" | "streaming" | "blocking" | "done" | "failed" | "cancelled";
 
@@ -32,12 +32,6 @@ export interface Turn {
 
 export function newTurn(query: string): Turn {
   return { query, status: "starting", runId: null, provider: null, model: null, text: "", progress: null, context: [], citations: [], error: null };
-}
-
-/** A saved exchange, with the entries it cited and the model that answered. */
-export function savedTurn(e: ExchangeView): Turn {
-  const citations = e.citations.map((c) => c.item);
-  return { ...newTurn(e.query), status: "done", text: e.answer, model: e.model ?? null, context: e.citations, citations };
 }
 
 /** How one event from the shell changes the turn it belongs to. */
@@ -139,22 +133,6 @@ export function statusLine(turn: Turn): string | null {
     default:
       return null;
   }
-}
-
-/** A question handed to Ask from elsewhere (Today's composer). `id` makes each hand-off distinct. */
-export interface AskRequest {
-  id: number;
-  prompt: string;
-}
-
-/**
- * The prompt Ask should send for this request, or null: none pending, a blank one, or one already
- * sent (`handledId`). Keeps a re-render or a return to the tab from sending the same question twice.
- */
-export function promptToSend(request: AskRequest | null | undefined, handledId: number | null): string | null {
-  if (!request || request.id === handledId) return null;
-  const prompt = request.prompt.trim();
-  return prompt === "" ? null : prompt;
 }
 
 /** The names of a conversation row's Star, Rename and Delete buttons. Each holds the conversation's title, so moving through the list

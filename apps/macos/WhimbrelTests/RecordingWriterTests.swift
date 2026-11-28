@@ -111,3 +111,76 @@ final class RecordingWriterTests: XCTestCase {
         XCTAssertEqual(try AVAudioFile(forReading: url).length, 8_000)
     }
 }
+
+/// System audio is converted and written on the stream's queue through `SystemAudioSink`
+/// (perf review, 2026-11-27): it drops buffers while paused or closed, stops at a format it
+/// can't convert, and otherwise writes the file's 16 kHz mono.
+final class SystemAudioSinkTests: XCTestCase {
+    private var dir: URL!
+
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("sink-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    /// What ScreenCaptureKit delivers: 0.1 s of 48 kHz stereo Float32.
+    private func streamBuffer(format: AVAudioFormat = AudioCaptureService.systemStreamFormat) -> AVAudioPCMBuffer {
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_800)!
+        buffer.frameLength = 4_800
+        for c in 0..<Int(format.channelCount) { for i in 0..<4_800 { buffer.floatChannelData![c][i] = 0.2 } }
+        return buffer
+    }
+
+    private func makeSink() throws -> (SystemAudioSink, RecordingWriter) {
+        let writer = RecordingWriter(file: try RecordingWriter.makeFile(at: dir.appendingPathComponent("s.caf")))
+        let converter = AudioCaptureService.makeConverter(from: AudioCaptureService.systemStreamFormat, to: writer.file.processingFormat)!
+        let sink = SystemAudioSink()
+        sink.setOutput(writer: writer, converter: converter)
+        return (sink, writer)
+    }
+
+    func testWritesConvertedAudio() throws {
+        let (sink, writer) = try makeSink()
+        for _ in 0..<10 { _ = sink.consume(streamBuffer()) }
+        // One second of 48 kHz in; about one second of 16 kHz out (the resampler may hold a few frames).
+        XCTAssertGreaterThan(writer.framesWritten, 15_000)
+        XCTAssertLessThanOrEqual(writer.framesWritten, 16_000)
+    }
+
+    func testDropsBuffersWhilePausedOrClosed() throws {
+        let (sink, writer) = try makeSink()
+        sink.setPaused(true)
+        guard case .ignored = sink.consume(streamBuffer()) else { return XCTFail("paused must drop") }
+        sink.setPaused(false)
+        sink.setOutput(writer: nil, converter: nil)
+        guard case .ignored = sink.consume(streamBuffer()) else { return XCTFail("closed must drop") }
+        XCTAssertEqual(writer.framesWritten, 0)
+    }
+
+    func testAFormatItCannotConvertStopsTheWriting() throws {
+        let (sink, writer) = try makeSink()
+        let mono44 = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+        guard case .formatMismatch(let reported, _, _) = sink.consume(streamBuffer(format: mono44)) else {
+            return XCTFail("a mismatched format must be reported")
+        }
+        XCTAssertTrue(reported === writer)
+        // Every later buffer is dropped until the main actor sets a new output.
+        guard case .ignored = sink.consume(streamBuffer()) else { return XCTFail("must stop after a mismatch") }
+        XCTAssertEqual(writer.framesWritten, 0)
+    }
+
+    func testPaddingFromMainWaitsForAWriteInFlight() throws {
+        let (sink, writer) = try makeSink()
+        let queue = DispatchQueue(label: "test.stream")
+        let group = DispatchGroup()
+        for _ in 0..<50 { queue.async(group: group) { _ = sink.consume(self.streamBuffer()) } }
+        for _ in 0..<20 { sink.withWriterLocked { _ = writer.writeSilence(frames: 160) } }
+        group.wait()
+        let total = sink.withWriterLocked { writer.framesWritten }
+        XCTAssertGreaterThan(total, 20 * 160 + 70_000)
+    }
+}

@@ -89,11 +89,4 @@ final class SkinImageryFixture {
         OffscreenRender.bitmap(of: view, size: size, colorScheme: dark ? .dark : .light, scale: 1)?
             .colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
     }
-
-    static func chrome(_ content: TodayContent = .sample) -> some View {
-        TodayChrome(
-            content: content, actions: .noop,
-            slots: TodaySlots(live: nil, decisionCount: content.pendingApprovalCount, actions: .noop, composer: TodayFixtures.composer)
-        )
-    }
 }

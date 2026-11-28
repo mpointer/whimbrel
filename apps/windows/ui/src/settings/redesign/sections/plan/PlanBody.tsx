@@ -33,11 +33,15 @@ export function PlanBody({ view, ai, busy, error, act, onRetry, onSection }: Pla
     switch (state) {
       case "signedOut":
         return (
-          <WSettingsControlRow label={t("Sign in to sync to see your plan.")}>
-            <WButton variant="primary" onClick={() => onSection("devices")}>
-              {t("Sign in to sync")}
-            </WButton>
-          </WSettingsControlRow>
+          <>
+            <WSettingsControlRow label={t("Sign in to sync to see your plan.")}>
+              <WButton variant="primary" onClick={() => onSection("devices")}>
+                {t("Sign in to sync")}
+              </WButton>
+            </WSettingsControlRow>
+            <WSettingsControlRow label={t("Plus: $15 a month or $144 a year. Hosted sync on all your devices and a monthly Whimbrel AI allowance.")}>{null}</WSettingsControlRow>
+            <WSettingsControlRow label={t("Cloud: $5 a month or $50 a year. Unlimited devices on our sync server.")}>{null}</WSettingsControlRow>
+          </>
         );
       case "loading":
         return <WSettingsControlRow label={t("Checking your plan…")}>{null}</WSettingsControlRow>;

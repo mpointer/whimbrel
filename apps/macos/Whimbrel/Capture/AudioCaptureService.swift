@@ -34,7 +34,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
     /// Loudest peak per track since the last `take()`, for the silence warning (`SilenceWatch`).
     let micPeak = PeakMeter()
     let systemPeak = PeakMeter()
-    /// A second reading of the same peaks for the level meter (redesign flag only). It has its own
+    /// A second reading of the same peaks for the level meter. It has its own
     /// state, so reading it never disturbs the silence meter above, and it records nothing until
     /// `startLevelSampling()` runs.
     private let micLevelPeak = LevelPeak()
@@ -43,9 +43,11 @@ final class AudioCaptureService: NSObject, ObservableObject {
     /// thrown away: nothing stores it.
     @Published private(set) var inputLevel: Float = 0
     private var levelTimer: Timer?
-    /// A recording pause (flag on only; nothing calls `pauseRecording()` with the flag off). The streams
+    /// A recording pause. The streams
     /// are closed and the files stay open. This is not work memory's capture pause.
-    @Published private(set) var isPaused = false
+    @Published private(set) var isPaused = false {
+        didSet { systemSink.setPaused(isPaused) }
+    }
     /// Between `resumeRecording()` starting and the streams being back.
     @Published private(set) var isResuming = false
     /// When `start()` began: the zero of the stored audio's clock, which paused spans are measured from.
@@ -59,6 +61,10 @@ final class AudioCaptureService: NSObject, ObservableObject {
     private let streamOutputQueue = DispatchQueue(label: "com.mpointer.kestrel.sck-audio-output")
 
     private var stream: SCStream?
+    /// The system stream's writer and converter as the stream's own queue sees them (see
+    /// `SystemAudioSink`). Changed only through `setSystemOutput`, which keeps it and the two
+    /// properties below in step.
+    private let systemSink = SystemAudioSink()
     private var systemWriter: RecordingWriter?
     /// 48 kHz stereo (what ScreenCaptureKit delivers) → the file's 16 kHz mono. One per
     /// recording: the resampler is stateful across buffers.
@@ -177,14 +183,13 @@ final class AudioCaptureService: NSObject, ObservableObject {
         }
         stream = nil
         systemAudioActive = false
-        systemWriter = nil
-        systemConverter = nil
+        setSystemOutput(nil, nil)
         if let systemAudioFileURL {
             cleanUpEmptySystemAudioFile(at: systemAudioFileURL)
         }
     }
 
-    // MARK: Recording pause (redesign flag only)
+    // MARK: Recording pause
 
     /// What a resume did. `failed` carries the existing degraded reasons, already set on this service.
     enum ResumeOutcome: Equatable { case resumed, failed(reason: String), notPaused }
@@ -272,10 +277,9 @@ final class AudioCaptureService: NSObject, ObservableObject {
         paused && now.timeIntervalSince(startedAt) >= cap
     }
 
-    // MARK: Level (redesign flag only)
+    // MARK: Level
 
-    /// Starts reading the level about 8 times a second. Called only with the redesign flag on, so with
-    /// the flag off no level is sampled and no timer runs.
+    /// Starts reading the level about 8 times a second.
     func startLevelSampling() {
         guard levelTimer == nil else { return }
         micLevelPeak.isEnabled = true
@@ -359,8 +363,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
                 return
             }
 
-            systemWriter = writer
-            systemConverter = converter
+            setSystemOutput(writer, converter)
             stream = newStream
             systemAudioActive = true
             systemAudioBytesWritten = 0
@@ -376,8 +379,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
             }
             log.error("System audio capture unavailable: \(error.localizedDescription, privacy: .public)")
             systemAudioActive = false
-            systemWriter = nil
-            systemConverter = nil
+            setSystemOutput(nil, nil)
             degradedReason = describeSystemAudioFailure(error)
             cleanUpEmptySystemAudioFile(at: fileURL)
         }
@@ -434,8 +436,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
 
     private func degradeSystemAudio(reason: String) {
         systemAudioActive = false
-        systemWriter = nil
-        systemConverter = nil
+        setSystemOutput(nil, nil)
         degradedReason = reason
         if let old = stream {
             stream = nil
@@ -443,10 +444,23 @@ final class AudioCaptureService: NSObject, ObservableObject {
         }
     }
 
+    /// The one place `systemWriter`/`systemConverter` change, so the stream's queue always sees
+    /// the same pair the main actor does.
+    private func setSystemOutput(_ writer: RecordingWriter?, _ converter: AVAudioConverter?) {
+        systemWriter = writer
+        systemConverter = converter
+        systemSink.setOutput(writer: writer, converter: converter)
+    }
+
     private func padSystemFile(_ writer: RecordingWriter, upTo now: Date) {
-        let gap = AVAudioFramePosition(now.timeIntervalSince(systemStartedAt) * writer.file.processingFormat.sampleRate) - writer.framesWritten
-        let written = writer.writeSilence(frames: gap)
-        systemAudioBytesWritten = Int(writer.framesWritten)
+        // Through the sink's lock: a buffer still in flight on the stream's queue must not write
+        // into the file at the same time.
+        let startedAt = systemStartedAt
+        let (written, total) = systemSink.withWriterLocked {
+            let gap = AVAudioFramePosition(now.timeIntervalSince(startedAt) * writer.file.processingFormat.sampleRate) - writer.framesWritten
+            return (writer.writeSilence(frames: gap), writer.framesWritten)
+        }
+        systemAudioBytesWritten = Int(total)
         log.notice("[system-reopen] padded \(written, privacy: .public) frames of silence")
     }
 
@@ -495,8 +509,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
             self.log.error("System audio stream started but delivered no audio within 5s — treating as degraded.")
             Task { try? await expectedStream.stopCapture() }
             self.stream = nil
-            self.systemWriter = nil
-            self.systemConverter = nil
+            self.setSystemOutput(nil, nil)
             self.systemAudioActive = false
             self.degradedReason = String(localized: "System audio started but no audio arrived after 5 seconds. Falling back to microphone only.")
             self.cleanUpEmptySystemAudioFile(at: fileURL)
@@ -792,24 +805,29 @@ final class AudioCaptureService: NSObject, ObservableObject {
 }
 
 extension AudioCaptureService: SCStreamOutput {
+    /// Runs on `streamOutputQueue`, about 48 times a second while recording. The conversion to
+    /// 16 kHz mono, the file write and the peak scan all happen here, off the main thread; on the
+    /// main actor they stalled the UI during every recording (perf review, 2026-11-27). Only the
+    /// small bookkeeping (timestamps, counters, the level meters' peaks) hops to the main actor.
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio, sampleBuffer.isValid,
               let pcmBuffer = AudioSampleConverter.pcmBuffer(from: sampleBuffer) else { return }
+        let outcome = systemSink.consume(pcmBuffer)
+        if case .ignored = outcome { return }
+        // Pre-conversion Float32 buffer: the silence check must never see the file's Int16.
+        let (isAudible, peak) = Self.audibilityCheck(pcmBuffer)
+        let arrivedAt = Date()
         Task { @MainActor in
-            guard !self.isPaused, let writer = self.systemWriter, let converter = self.systemConverter else { return }
-            // AVAudioConverter (like AVAudioFile.write(from:)) raises an Objective-C
-            // exception — NOT a Swift error — on a buffer whose format differs from the one
-            // it was built for, so `try?` would not catch it and the app would crash
-            // mid-meeting. The converter expects 48kHz/Float32/stereo (the file is 16 kHz
-            // mono, so compare against the converter's input, never the file) while the
-            // buffer comes from whatever ScreenCaptureKit actually delivers, and nothing
-            // guarantees those agree. Check first and degrade to mic-only instead.
-            guard pcmBuffer.format == converter.inputFormat else {
-                self.log.error("System audio format mismatch: stream delivered \(pcmBuffer.format, privacy: .public), converter expects \(converter.inputFormat, privacy: .public).")
-                // Clear the writer before anything else: this callback fires ~48x/sec
-                // and every subsequent buffer would otherwise re-enter this same teardown.
-                self.systemWriter = nil
-                self.systemConverter = nil
+            switch outcome {
+            case .ignored:
+                return
+            case .formatMismatch(let writer, let delivered, let expected):
+                // AVAudioConverter (like AVAudioFile.write(from:)) raises an Objective-C exception, not a
+                // Swift error, on a buffer whose format differs from the one it was built for, so the sink
+                // checks first and has already stopped writing. Degrade to mic-only here.
+                guard self.systemWriter === writer else { return }
+                self.log.error("System audio format mismatch: stream delivered \(delivered, privacy: .public), converter expects \(expected, privacy: .public).")
+                self.setSystemOutput(nil, nil)
                 self.systemAudioActive = false
                 self.systemAudioWatchdogTask?.cancel()
                 self.systemAudioWatchdogTask = nil
@@ -821,24 +839,77 @@ extension AudioCaptureService: SCStreamOutput {
                 if let url = self.systemAudioFileURL {
                     self.cleanUpEmptySystemAudioFile(at: url)
                 }
-                return
+            case .delivered(let writer, let framesWritten):
+                guard self.systemWriter === writer else { return }
+                if let framesWritten { self.systemAudioBytesWritten = Int(framesWritten) }
+                // A buffer arrived, so the stream is alive even if the write was capped or
+                // the resampler held this one back (as the mic tap already counts it).
+                self.lastSystemBufferAt = arrivedAt
+                self.systemPeak.record(peak)
+                self.systemLevelPeak.record(peak)
+                if isAudible {
+                    self.lastNonSilentAt = arrivedAt
+                }
+                self.logAmplitudeIfNeeded(source: "system", peak: peak, isAudible: isAudible, lastLogAt: &self.lastSystemAmplitudeLogAt)
             }
-            if let out = Self.downmixToRecordingFormat(pcmBuffer, converter: converter, target: writer.file.processingFormat) {
-                writer.write(out)
-                self.systemAudioBytesWritten = Int(writer.framesWritten)
-            }
-            // A buffer arrived, so the stream is alive even if the write was capped or
-            // the resampler held this one back (as the mic tap already counts it).
-            self.lastSystemBufferAt = Date()
-            // Pre-conversion Float32 buffer: the silence check must never see the file's Int16.
-            let (isAudible, peak) = Self.audibilityCheck(pcmBuffer)
-            self.systemPeak.record(peak)
-            self.systemLevelPeak.record(peak)
-            if isAudible {
-                self.lastNonSilentAt = Date()
-            }
-            self.logAmplitudeIfNeeded(source: "system", peak: peak, isAudible: isAudible, lastLogAt: &self.lastSystemAmplitudeLogAt)
         }
+    }
+}
+
+/// The system-audio stream's writer and converter, shared between the main actor (which opens,
+/// pads, pauses and closes) and the stream's own serial queue (which converts and writes every
+/// buffer). One lock serializes the two: a write on the queue and a pad or close on main never
+/// touch the file at once. `RecordingWriter` and `AVAudioConverter` are not thread-safe, which is
+/// exactly what the lock covers.
+final class SystemAudioSink: @unchecked Sendable {
+    enum Outcome {
+        /// Paused, or no writer (stopped, degraded, not started): the buffer is dropped.
+        case ignored
+        /// The buffer's format is not the converter's input. The sink has stopped writing.
+        case formatMismatch(writer: RecordingWriter, delivered: AVAudioFormat, expected: AVAudioFormat)
+        /// The buffer went to `writer`; `framesWritten` is nil when the resampler held it back.
+        case delivered(writer: RecordingWriter, framesWritten: AVAudioFramePosition?)
+    }
+
+    private let lock = NSLock()
+    private var writer: RecordingWriter?
+    private var converter: AVAudioConverter?
+    private var paused = false
+
+    func setOutput(writer: RecordingWriter?, converter: AVAudioConverter?) {
+        lock.lock(); defer { lock.unlock() }
+        self.writer = writer
+        self.converter = converter
+    }
+
+    func setPaused(_ paused: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        self.paused = paused
+    }
+
+    /// Runs `body` while no buffer can be written, for padding the file from the main actor.
+    func withWriterLocked<T>(_ body: () -> T) -> T {
+        lock.lock(); defer { lock.unlock() }
+        return body()
+    }
+
+    func consume(_ buffer: AVAudioPCMBuffer) -> Outcome {
+        lock.lock(); defer { lock.unlock() }
+        guard !paused, let writer, let converter else { return .ignored }
+        // The converter expects 48kHz/Float32/stereo (the file is 16 kHz mono, so compare against the
+        // converter's input, never the file) while the buffer is whatever ScreenCaptureKit delivers.
+        guard buffer.format == converter.inputFormat else {
+            // Stop writing before anything else: the stream delivers ~48 buffers a second and every
+            // one would otherwise hit the same mismatch until the main actor tears down.
+            self.writer = nil
+            self.converter = nil
+            return .formatMismatch(writer: writer, delivered: buffer.format, expected: converter.inputFormat)
+        }
+        guard let out = AudioCaptureService.downmixToRecordingFormat(buffer, converter: converter, target: writer.file.processingFormat) else {
+            return .delivered(writer: writer, framesWritten: nil)
+        }
+        writer.write(out)
+        return .delivered(writer: writer, framesWritten: writer.framesWritten)
     }
 }
 

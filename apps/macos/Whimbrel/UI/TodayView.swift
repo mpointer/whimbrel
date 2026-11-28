@@ -6,14 +6,14 @@ import SwiftUI
 /// state when there is nothing to show), today's schedule card (events with Start and prep
 /// status, plus meetings already held) and an "Earlier" catch-up list, with approvals, open
 /// loops, the daily recap and a device footer below. Only the live call is
-/// embedded (`ActiveMeetingView`); finished meetings open the meeting-detail window.
+/// embedded (`LiveMeetingRedesignScreen`); finished meetings open the meeting-detail window.
 ///
 /// Every `CoreMemoryStore` call here (`refresh()`/`loadLiveDraft`) is dispatched via
 /// `CoreMemoryStore.accessQueue.async { ... }` + `DispatchQueue.main.async { ... }`, never
 /// synchronously from the view body. `hero` and `agenda` are pure computed properties
 /// over `TodayLogic`.
 struct TodayView: View {
-    /// Ticks once a minute so memory blocks grow while Home stays open. Made on first use, which only the redesign does.
+    /// Ticks once a minute so memory blocks grow while Home stays open.
     private static let homeTick = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     @EnvironmentObject var appState: AppState
@@ -25,7 +25,7 @@ struct TodayView: View {
     /// Until the first `refresh()` lands, an active meeting holds the live slot (a spinner) instead of
     /// the empty state, so a rebuild mid-meeting (a skin switch) does not flash "Start note".
     @State private var recentLoaded = false
-    /// Seeds `ActiveMeetingView` for the live call only; finished meetings are not embedded.
+    /// Seeds the live meeting screen for the live call only; finished meetings are not embedded.
     @State private var liveDraft: CoreMeetingNoteDraft?
     /// The meeting id `liveDraft` belongs to, nil until `loadLiveDraft` finishes.
     @State private var liveDraftMeetingId: Int64?
@@ -43,7 +43,7 @@ struct TodayView: View {
     @State private var topicsByEvent: [String: TopicRef] = [:]
     @State private var topicsByMeeting: [Int64: TopicRef] = [:]
     @State private var prepKeyByMeetingId: [Int64: String] = [:]
-    /// Today's memory blocks. Read only when the redesign flag is on.
+    /// Today's memory blocks.
     @State private var homeData = HomeRedesignData()
 
     /// Everything Today shows, read from this view's state and `AppState` at render time.
@@ -97,31 +97,11 @@ struct TodayView: View {
                   draft: liveDraft, actionItems: []
               )
         else { return nil }
-        if appState.redesignEnabled {
-            let next = content.events.filter { $0.startDate > content.now }.min { $0.startDate < $1.startDate }.map { (time: $0.startDate, title: $0.title) }
-            return AnyView(
-                LiveMeetingRedesignScreen(
-                    appState: appState, model: model, meeting: meeting, initialNotes: liveDraft?.personalNotes ?? "", nextMeeting: next,
-                    onSaveNotes: { text, now in saveLiveNotes(meetingId: meetingId, text: text, nowUnixMs: now) })
-                .id(meetingId)
-            )
-        }
+        let next = content.events.filter { $0.startDate > content.now }.min { $0.startDate < $1.startDate }.map { (time: $0.startDate, title: $0.title) }
         return AnyView(
-            ActiveMeetingView(
-                model: model, initialNotes: liveDraft?.personalNotes ?? "",
-                onSaveNotes: { text, now in saveLiveNotes(meetingId: meetingId, text: text, nowUnixMs: now) },
-                onStop: { appState.endActiveMeetingIfNeeded() },
-                liveSection: appState.liveTranscriptSettings.enabled
-                    ? AnyView(LiveMeetingSection(live: appState.liveTranscript, meeting: meeting))
-                    : nil,
-                noticeSection: AnyView(VStack(spacing: Spacing.sm) {
-                    SilenceWarningBanner()
-                    RecordingNoticeCard(
-                        settings: appState.recordingNoticeSettings, meetingId: meetingId, chat: appState.recordingNoticeChat
-                    )
-                }),
-                snapshotsSection: AnyView(LiveMeetingSnapshots(meetingId: meetingId, store: appState.coreStore))
-            )
+            LiveMeetingRedesignScreen(
+                appState: appState, model: model, meeting: meeting, initialNotes: liveDraft?.personalNotes ?? "", nextMeeting: next,
+                onSaveNotes: { text, now in saveLiveNotes(meetingId: meetingId, text: text, nowUnixMs: now) })
             .id(meetingId)
         )
     }
@@ -132,8 +112,7 @@ struct TodayView: View {
         VStack(spacing: Spacing.md) {
             BetterTranscriptsCard(download: appState.turboDownload)
                 .padding(.horizontal, Spacing.lg)
-            RedesignSwitch(enabled: appState.redesignEnabled) {
-                TodayHomeBandArea {
+            TodayHomeBandArea {
                 TodayHomeRedesignView(
                     content: content, actions: actions, live: liveView(content), data: homeData,
                     openBlock: { block in
@@ -143,21 +122,11 @@ struct TodayView: View {
                                 start: Date(timeIntervalSince1970: Double(block.startUnixMs) / 1000),
                                 end: Date(timeIntervalSince1970: Double(block.endUnixMs) / 1000))))
                     })
-                }
-            } old: {
-                TodayChrome(
-                    content: content, actions: actions,
-                    slots: TodaySlots(
-                        live: liveView(content), decisionCount: content.pendingApprovalCount, actions: actions,
-                        composer: AnyView(TodayComposer(placeholder: SkinStore.shared.selected.voice.text(.askPlaceholder, name: "")) { actions.ask($0) })
-                    ),
-                    banded: true
-                )
             }
         }
         .onAppear { refresh() }
-        // Memory blocks grow while Today stays open (redesign flag only; nothing is read with it off).
-        .onReceive(appState.redesignEnabled ? Self.homeTick.eraseToAnyPublisher() : Empty<Date, Never>().eraseToAnyPublisher()) { _ in
+        // Memory blocks grow while Today stays open.
+        .onReceive(Self.homeTick) { _ in
             refreshHomeData()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
@@ -218,10 +187,10 @@ struct TodayView: View {
         }
     }
 
-    /// Redesign flag only: today's memory blocks (cut around today's meetings).
+    /// Today's memory blocks (cut around today's meetings).
     /// Runs on the store's queue, never the main thread.
     private func refreshHomeData() {
-        guard appState.redesignEnabled, let store = appState.coreStore else { return }
+        guard let store = appState.coreStore else { return }
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: Date())
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
@@ -307,7 +276,7 @@ struct TodayView: View {
         }
     }
 
-    /// Saves the live call's personal notes. `ActiveMeetingView.onSaveNotes` must not call `CoreMemoryStore` synchronously off
+    /// Saves the live call's personal notes. The live screen's `onSaveNotes` must not call `CoreMemoryStore` synchronously off
     /// the view body/closure — dispatched onto `CoreMemoryStore.accessQueue` like every
     /// other store write here, per this task's boundary. Returns `true` optimistically
     /// (matching `ActiveNoteAutosaveController`'s save-state contract) since the actual

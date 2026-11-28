@@ -25,21 +25,10 @@ use crate::syncing::controller::SyncState;
 pub const TRAY_ID: &str = "whimbrel";
 /// The popup window's label (also listed in `capabilities/default.json`).
 pub const POPUP: &str = "popup";
-/// The popup's size, in logical pixels (taller by a line for the next meeting, topics piece 2).
-const POPUP_SIZE: (f64, f64) = (300.0, 272.0);
-/// The redesigned popup's size: Recording, Memory with its three choices, Needs attention and Next meeting, then Open
+/// The popup's size, in logical pixels: Recording, Memory with its three choices, Needs attention and Next meeting, then Open
 /// Whimbrel and Quit. The recording row with Stop, the memory state line and the footer are pinned and the rest scrolls between
 /// them, so at 200% text the pinned parts need the height, and the worst case at 100% (a paused recording with a problem, memory on, a next meeting) fits without scrolling: 560 (it was 480).
-const POPUP_SIZE_REDESIGN: (f64, f64) = (320.0, 560.0);
-
-/// The popup's size for the look in use.
-pub fn popup_size(redesign: bool) -> (f64, f64) {
-    if redesign {
-        POPUP_SIZE_REDESIGN
-    } else {
-        POPUP_SIZE
-    }
-}
+const POPUP_SIZE: (f64, f64) = (320.0, 560.0);
 
 /// A topic the popup asked the main window to open, until the main window takes it.
 static PENDING_TOPIC: Mutex<Option<i64>> = Mutex::new(None);
@@ -145,12 +134,6 @@ pub struct TrayStatus {
     pub google_sign_in_expired: bool,
 }
 
-/// Whether the popup warns about an expired Google sign-in: only with the redesign on, and only when an account is marked.
-/// The marker is asked for only when the switch is on.
-pub fn google_sign_in_warning(redesign: bool, any_expired: impl FnOnce() -> bool) -> bool {
-    redesign && any_expired()
-}
-
 pub fn sync_line(state: SyncState, last_synced_ms: Option<i64>, content_error: bool) -> SyncLine {
     match state {
         SyncState::NotConfigured | SyncState::NotSignedIn => SyncLine::Off,
@@ -202,11 +185,10 @@ pub fn sync_part(sync: SyncLine, time: impl Fn(i64) -> String) -> String {
     }
 }
 
-/// The icon for a state. A paused recording is still a recording, so with the redesign on it has an icon of its own;
-/// with it off it shows the capture-paused icon, which no other state uses while a meeting records.
-pub fn icon_for(capture: CaptureLine, sync: SyncLine, recording: bool, recording_paused: bool, redesign: bool) -> IconState {
+/// The icon for a state. A paused recording is still a recording, so it has an icon of its own.
+pub fn icon_for(capture: CaptureLine, sync: SyncLine, recording: bool, recording_paused: bool) -> IconState {
     if recording_paused {
-        return if redesign { IconState::RecordingPaused } else { IconState::Paused };
+        return IconState::RecordingPaused;
     }
     icon_state(capture, sync, recording)
 }
@@ -225,7 +207,7 @@ pub fn problem_shown(degraded: Option<&str>, paused: bool) -> bool {
 }
 
 /// The recording's words in the tooltip: "Recording since 10:02", "Recording paused" or "Recording problem". None when
-/// nothing records. `problem` is false with the redesign off.
+/// nothing records.
 pub fn recording_part(started_unix_ms: Option<i64>, paused: bool, problem: bool, time: impl Fn(i64) -> String) -> Option<String> {
     match started_unix_ms {
         // A problem that is still true while paused (`problem_shown`) is said as well as the pause, never instead of it.
@@ -234,14 +216,6 @@ pub fn recording_part(started_unix_ms: Option<i64>, paused: bool, problem: bool,
         Some(_) if problem => Some(tr("Recording problem", &[])),
         Some(ms) => Some(tr("Recording since {time}", &[("time", &time(ms))])),
         None => None,
-    }
-}
-
-/// The tooltip as it has always been: the product name, the recording if any, then the capture and sync line.
-pub fn tooltip_classic(recording: Option<&str>, line: &str) -> String {
-    match recording {
-        Some(r) => format!("Whimbrel · {r} · {line}"),
-        None => format!("Whimbrel · {line}"),
     }
 }
 
@@ -298,10 +272,10 @@ pub fn memory_text_with_problem(memory: MemoryState, problem: Option<ReadProblem
     }
 }
 
-/// The tooltip with the redesign on: the product name, the recording state if any, a sync problem if any, then the memory state,
-/// joined as `tooltip_classic` joins them. The name stays: the hover tooltip shows only this text, so without it nothing on screen
+/// The tooltip: the product name, the recording state if any, a sync problem if any, then the memory state, joined with
+/// a middle dot. The name stays: the hover tooltip shows only this text, so without it nothing on screen
 /// says which app the icon belongs to. Windows also puts the app name in front of a tray icon's accessible name, so a screen reader
-/// hears "Whimbrel Whimbrel · Memory off". That doubling is the same with the switch off (main has it) and is accepted.
+/// hears "Whimbrel Whimbrel · Memory off". That doubling is accepted.
 /// Windows cuts a tooltip at 127 characters, from the end: the sync problem sits before the memory part so a long language cuts
 /// the part that is least likely to be the reason a person looked. Every English tooltip is at most 111 characters
 /// (`every_tooltip_fits`, the name and its separator included); translators must keep these strings short, or a tooltip in their
@@ -511,24 +485,18 @@ pub fn refresh(app: &AppHandle) -> TrayStatus {
     let recording = state.meetings.as_ref().map(|m| m.status());
     let recording_started_unix_ms = recording.as_ref().and_then(|r| r.started_unix_ms);
     let recording_paused = recording.as_ref().is_some_and(|r| r.paused);
-    // The tooltip names a problem only with the redesign on; with it off the tooltip is what it was.
-    let redesign = state.settings.lock().unwrap().redesign_enabled();
-    let recording_problem = redesign && recording.as_ref().is_some_and(|r| problem_shown(r.degraded.as_deref(), r.paused));
+    let recording_problem = recording.as_ref().is_some_and(|r| problem_shown(r.degraded.as_deref(), r.paused));
     let paused_since_unix_ms = recording.as_ref().and_then(|r| r.paused_since_unix_ms);
     let capture_status = state.capture.as_ref().map(|c| c.status());
     let resume_at_unix_ms = capture_status.as_ref().and_then(|c| c.resume_at_unix_ms);
     let now_ms = chrono::Utc::now().timestamp_millis();
-    // Screen-text reading that is failing, said only with the redesign on.
-    let read_problem = if redesign { capture_status.as_ref().and_then(|c| c.read_problem(now_ms)) } else { None };
+    // Screen-text reading that is failing.
+    let read_problem = capture_status.as_ref().and_then(|c| c.read_problem(now_ms));
     let memory = memory_state(capture, resume_at_unix_ms, now_ms);
     let line = status_line(capture, sync, clock_time);
     let recording_text = recording_part(recording_started_unix_ms, recording_paused, recording_problem, clock_time);
-    let tooltip = if redesign {
-        tooltip_redesigned(recording_text, memory_text_with_problem(memory, read_problem, now_ms, clock_time, same_local_day), sync == SyncLine::Error)
-    } else {
-        tooltip_classic(recording_text.as_deref(), &line)
-    };
-    let icon = icon_for(capture, sync, recording_started_unix_ms.is_some(), recording_paused, redesign);
+    let tooltip = tooltip_redesigned(recording_text, memory_text_with_problem(memory, read_problem, now_ms, clock_time, same_local_day), sync == SyncLine::Error);
+    let icon = icon_for(capture, sync, recording_started_unix_ms.is_some(), recording_paused);
     let shown = (icon, taskbar_is_light(), tooltip.clone());
     // Decide under the lock, but never call the tray setters holding it. Off the main
     // thread they dispatch to the main thread and wait; a command running `refresh` on the
@@ -552,66 +520,64 @@ pub fn refresh(app: &AppHandle) -> TrayStatus {
             let _ = tray.set_tooltip(Some(tooltip));
         }
     }
-    // The menu's memory and recording items follow the same state (redesign only). Decided under the lock and applied after it is
+    // The menu's memory and recording items follow the same state. Decided under the lock and applied after it is
     // released, like the icon. A change of words alone (the memory line, or "tomorrow at" after midnight) is made in place on
     // the line's item, so an open menu is left alone; only a change of which items there are replaces the whole menu.
-    if redesign {
-        let ids = memory_menu_ids(memory, recording_menu(recording_started_unix_ms.is_some(), recording_paused));
-        let text = memory_text(memory, now_ms, clock_time, same_local_day);
-        let plan = {
-            let last = MENU_SHOWN.lock().unwrap();
-            let plan = menu_plan(last.shown.as_ref().map(|s| (s.ids.as_slice(), s.text.as_str(), s.memory_item.is_some())), &ids, &text);
-            (plan, last.generation)
-        };
-        let (plan, generation) = plan;
-        match plan {
-            MenuPlan::Keep => {}
-            MenuPlan::SetText => {
-                // The item is cloned out and the lock released before `set_text`, which waits on the main thread.
-                let item = {
-                    let last = MENU_SHOWN.lock().unwrap();
-                    let item = if last.generation == generation { last.shown.as_ref().and_then(|s| s.memory_item.clone()) } else { None };
-                    item
-                };
-                if let Some(item) = item {
-                    let _serial = SET_TEXT_LOCK.lock().unwrap();
-                    if item.set_text(&text).is_ok() {
-                        // Written back only into the menu this plan was made from: if a newer one was installed meanwhile,
-                        // `item` belonged to the old menu and its text says nothing about the new one.
-                        let mut last = MENU_SHOWN.lock().unwrap();
-                        if last.generation == generation {
-                            if let Some(shown) = last.shown.as_mut() {
-                                shown.text = text;
-                            }
+    let ids = memory_menu_ids(memory, recording_menu(recording_started_unix_ms.is_some(), recording_paused));
+    let text = memory_text(memory, now_ms, clock_time, same_local_day);
+    let plan = {
+        let last = MENU_SHOWN.lock().unwrap();
+        let plan = menu_plan(last.shown.as_ref().map(|s| (s.ids.as_slice(), s.text.as_str(), s.memory_item.is_some())), &ids, &text);
+        (plan, last.generation)
+    };
+    let (plan, generation) = plan;
+    match plan {
+        MenuPlan::Keep => {}
+        MenuPlan::SetText => {
+            // The item is cloned out and the lock released before `set_text`, which waits on the main thread.
+            let item = {
+                let last = MENU_SHOWN.lock().unwrap();
+                let item = if last.generation == generation { last.shown.as_ref().and_then(|s| s.memory_item.clone()) } else { None };
+                item
+            };
+            if let Some(item) = item {
+                let _serial = SET_TEXT_LOCK.lock().unwrap();
+                if item.set_text(&text).is_ok() {
+                    // Written back only into the menu this plan was made from: if a newer one was installed meanwhile,
+                    // `item` belonged to the old menu and its text says nothing about the new one.
+                    let mut last = MENU_SHOWN.lock().unwrap();
+                    if last.generation == generation {
+                        if let Some(shown) = last.shown.as_mut() {
+                            shown.text = text;
                         }
-                    }
-                }
-            }
-            MenuPlan::Rebuild => {
-                if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                    let rebuilt = menu_for(app, true, memory, recording_menu(recording_started_unix_ms.is_some(), recording_paused), now_ms);
-                    match rebuilt {
-                        Ok(menu) => {
-                            let memory_item = memory_line_item(&menu);
-                            // Remembered only once the menu is installed: a failure is retried on the next refresh. Replacing
-                            // the menu can still close one the person has open (tray menus cannot be edited in place when items
-                            // appear or go); that is why only a change of items takes this path.
-                            if tray.set_menu(Some(menu)).is_ok() {
-                                let mut last = MENU_SHOWN.lock().unwrap();
-                                // Recorded only if nothing else installed or cleared a menu since this plan: otherwise the tray
-                                // may hold either menu, so nothing is recorded and the next refresh builds a known one.
-                                let current = last.generation == generation;
-                                last.generation += 1;
-                                last.shown = if current { Some(MenuShown { ids, text, memory_item }) } else { None };
-                            }
-                        }
-                        Err(e) => tracing::warn!(error = %e, "could not rebuild the tray menu"),
                     }
                 }
             }
         }
+        MenuPlan::Rebuild => {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                let rebuilt = menu_for(app, memory, recording_menu(recording_started_unix_ms.is_some(), recording_paused), now_ms);
+                match rebuilt {
+                    Ok(menu) => {
+                        let memory_item = memory_line_item(&menu);
+                        // Remembered only once the menu is installed: a failure is retried on the next refresh. Replacing
+                        // the menu can still close one the person has open (tray menus cannot be edited in place when items
+                        // appear or go); that is why only a change of items takes this path.
+                        if tray.set_menu(Some(menu)).is_ok() {
+                            let mut last = MENU_SHOWN.lock().unwrap();
+                            // Recorded only if nothing else installed or cleared a menu since this plan: otherwise the tray
+                            // may hold either menu, so nothing is recorded and the next refresh builds a known one.
+                            let current = last.generation == generation;
+                            last.generation += 1;
+                            last.shown = if current { Some(MenuShown { ids, text, memory_item }) } else { None };
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "could not rebuild the tray menu"),
+                }
+            }
+        }
     }
-    // The in-meeting window follows the recording (redesign only).
+    // The in-meeting window follows the recording.
     crate::meetings::meeting_bar::sync(app, recording_started_unix_ms);
     TrayStatus {
         line,
@@ -622,7 +588,7 @@ pub fn refresh(app: &AppHandle) -> TrayStatus {
         paused_since_unix_ms,
         sync_error: sync == SyncLine::Error,
         sync_text: sync_part(sync, clock_time),
-        google_sign_in_expired: google_sign_in_warning(redesign, crate::connectors::accounts::any_sign_in_expired),
+        google_sign_in_expired: crate::connectors::accounts::any_sign_in_expired(),
     }
 }
 
@@ -681,63 +647,54 @@ fn menu_state(app: &AppHandle) -> (MemoryState, RecordingMenu, i64) {
 
 /// The right-click menu, in the current language.
 fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let redesign = app.state::<AppState>().settings.lock().unwrap().redesign_enabled();
-    if !redesign {
-        // The menu it always was: no status reads. The state arguments are not used with the switch off.
-        return menu_for(app, false, MemoryState::On, RecordingMenu::None, 0);
-    }
     let (memory, recording, now_ms) = menu_state(app);
-    menu_for(app, true, memory, recording, now_ms)
+    menu_for(app, memory, recording, now_ms)
 }
 
-/// The menu for a state. With the redesign off it is the menu it always was; the memory and recording items are the
-/// redesign's, above the existing ones.
-fn menu_for(app: &AppHandle, redesign: bool, memory: MemoryState, recording: RecordingMenu, now_ms: i64) -> tauri::Result<Menu<tauri::Wry>> {
+/// The menu for a state: the memory and recording items above the fixed ones.
+fn menu_for(app: &AppHandle, memory: MemoryState, recording: RecordingMenu, now_ms: i64) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItem::with_id(app, "open", tr("Open Whimbrel", &[]), true, None::<&str>)?;
     let ask_window = MenuItem::with_id(app, "ask-window", tr("Ask about this window…", &[]), true, None::<&str>)?;
     let feedback = MenuItem::with_id(app, "feedback", tr("Send Feedback…", &[]), true, None::<&str>)?;
     let discord = MenuItem::with_id(app, "discord", tr("Join the Whimbrel Discord…", &[]), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", tr("Quit Whimbrel", &[]), true, None::<&str>)?;
-    // "Show in-meeting window" brings the floating window back after it was closed (redesign only).
-    if redesign {
-        let bar = MenuItem::with_id(app, "meeting-bar", tr("Show in-meeting window", &[]), true, None::<&str>)?;
-        let menu = Menu::new(app)?;
-        for id in memory_menu_ids(memory, recording) {
-            match id {
-                "memory-state" => {
-                    let text = memory_text(memory, now_ms, clock_time, same_local_day);
-                    menu.append(&MenuItem::with_id(app, id, text, false, None::<&str>)?)?;
-                }
-                "pause-memory" => {
-                    let choices = Submenu::new(app, tr("Pause memory", &[]), true)?;
-                    choices.append(&MenuItem::with_id(app, "pause-15m", tr("Pause for 15 minutes", &[]), true, None::<&str>)?)?;
-                    choices.append(&MenuItem::with_id(app, "pause-1h", tr("Pause for 1 hour", &[]), true, None::<&str>)?)?;
-                    choices.append(&MenuItem::with_id(app, "pause-tomorrow", tr("Pause until tomorrow", &[]), true, None::<&str>)?)?;
-                    menu.append(&choices)?;
-                }
-                "resume-memory" => menu.append(&MenuItem::with_id(app, id, tr("Resume memory", &[]), true, None::<&str>)?)?,
-                "recording-pause" => menu.append(&MenuItem::with_id(app, id, tr("Pause recording", &[]), true, None::<&str>)?)?,
-                "recording-resume" => menu.append(&MenuItem::with_id(app, id, tr("Resume recording", &[]), true, None::<&str>)?)?,
-                "recording-stop" => menu.append(&MenuItem::with_id(app, id, tr("Stop recording", &[]), true, None::<&str>)?)?,
-                _ => menu.append(&PredefinedMenuItem::separator(app)?)?,
+    // "Show in-meeting window" brings the floating window back after it was closed.
+    let bar = MenuItem::with_id(app, "meeting-bar", tr("Show in-meeting window", &[]), true, None::<&str>)?;
+    let menu = Menu::new(app)?;
+    for id in memory_menu_ids(memory, recording) {
+        match id {
+            "memory-state" => {
+                let text = memory_text(memory, now_ms, clock_time, same_local_day);
+                menu.append(&MenuItem::with_id(app, id, text, false, None::<&str>)?)?;
             }
+            "pause-memory" => {
+                let choices = Submenu::new(app, tr("Pause memory", &[]), true)?;
+                choices.append(&MenuItem::with_id(app, "pause-15m", tr("Pause for 15 minutes", &[]), true, None::<&str>)?)?;
+                choices.append(&MenuItem::with_id(app, "pause-1h", tr("Pause for 1 hour", &[]), true, None::<&str>)?)?;
+                choices.append(&MenuItem::with_id(app, "pause-tomorrow", tr("Pause until tomorrow", &[]), true, None::<&str>)?)?;
+                menu.append(&choices)?;
+            }
+            "resume-memory" => menu.append(&MenuItem::with_id(app, id, tr("Resume memory", &[]), true, None::<&str>)?)?,
+            "recording-pause" => menu.append(&MenuItem::with_id(app, id, tr("Pause recording", &[]), true, None::<&str>)?)?,
+            "recording-resume" => menu.append(&MenuItem::with_id(app, id, tr("Resume recording", &[]), true, None::<&str>)?)?,
+            "recording-stop" => menu.append(&MenuItem::with_id(app, id, tr("Stop recording", &[]), true, None::<&str>)?)?,
+            _ => menu.append(&PredefinedMenuItem::separator(app)?)?,
         }
-        let tell_friend = MenuItem::with_id(app, TELL_FRIEND_ID, tell_friend_text(), true, None::<&str>)?;
-        for id in menu_tail_ids() {
-            let item = match id {
-                "open" => &open,
-                "ask-window" => &ask_window,
-                "meeting-bar" => &bar,
-                "feedback" => &feedback,
-                "discord" => &discord,
-                TELL_FRIEND_ID => &tell_friend,
-                _ => &quit,
-            };
-            menu.append(item)?;
-        }
-        return Ok(menu);
     }
-    Menu::with_items(app, &[&open, &ask_window, &feedback, &discord, &quit])
+    let tell_friend = MenuItem::with_id(app, TELL_FRIEND_ID, tell_friend_text(), true, None::<&str>)?;
+    for id in menu_tail_ids() {
+        let item = match id {
+            "open" => &open,
+            "ask-window" => &ask_window,
+            "meeting-bar" => &bar,
+            "feedback" => &feedback,
+            "discord" => &discord,
+            TELL_FRIEND_ID => &tell_friend,
+            _ => &quit,
+        };
+        menu.append(item)?;
+    }
+    Ok(menu)
 }
 
 /// After a language change: a new menu, and the tooltip re-rendered (its cached text differs).
@@ -906,9 +863,8 @@ fn toggle_popup(app: &AppHandle, anchor: Rect) {
 }
 
 fn open_popup(app: &AppHandle, anchor: Rect) -> tauri::Result<()> {
-    let redesign = app.state::<AppState>().settings.lock().unwrap().redesign_enabled();
-    // With the redesign on the popup grows with the Windows text scale (`text_scale.rs`); with it off this is `popup_size`, no read.
-    let (w, h) = crate::text_scale::size_for_look(popup_size(redesign), redesign);
+    // The popup grows with the Windows text scale (`text_scale.rs`).
+    let (w, h) = crate::text_scale::scaled_size(POPUP_SIZE);
     let popup = WebviewWindowBuilder::new(app, POPUP, WebviewUrl::App("index.html".into()))
         .title("Whimbrel")
         .inner_size(w, h)
@@ -928,31 +884,23 @@ fn open_popup(app: &AppHandle, anchor: Rect) -> tauri::Result<()> {
         let work = (area.position.x, area.position.y, area.size.width, area.size.height);
         let margin = (POPUP_MARGIN * scale).round() as i32;
         let wanted = ((w * scale).round() as u32, (h * scale).round() as u32);
-        // The redesigned popup is tall (560): on a short screen at a high scale it is shrunk to the work area (its body
-        // scrolls), so the recording row and Stop are on screen. The classic popup's size and position are as they were.
-        let origin = |size: (u32, u32)| {
-            popup_origin((icon_pos.x, icon_pos.y, icon_size.width, icon_size.height), size, work, margin)
-        };
-        if redesign {
-            let size = popup_fit(wanted, work, margin);
-            let clamped = |size: (u32, u32)| popup_origin_clamped((icon_pos.x, icon_pos.y, icon_size.width, icon_size.height), size, work, margin);
-            // Move to the tray's monitor FIRST: a size set while the window is still on the monitor it was created on is
-            // rescaled by Windows when the window then crosses to a monitor with another scale (480x672 can become 720x1008).
-            let (x, y) = clamped(size);
-            popup.set_position(PhysicalPosition::new(x, y))?;
-            if size != wanted {
-                popup.set_size(PhysicalSize::new(size.0, size.1))?;
-            }
-            // The origin is then computed from the size actually applied, and the window placed again.
-            let applied = popup.outer_size().map(|s| (s.width, s.height)).unwrap_or(size);
-            let (x, y) = clamped(applied);
-            popup.set_position(PhysicalPosition::new(x, y))?;
-            // Everything the placement used, in physical pixels, so a popup that lands away from the icon can be explained from the log.
-            tracing::info!(icon_x = icon_pos.x, icon_y = icon_pos.y, icon_w = icon_size.width, icon_h = icon_size.height, ?work, scale, ?wanted, ?applied, x, y, "tray popup placed");
-        } else {
-            let (x, y) = origin(wanted);
-            popup.set_position(PhysicalPosition::new(x, y))?;
+        // The popup is tall (560): on a short screen at a high scale it is shrunk to the work area (its body
+        // scrolls), so the recording row and Stop are on screen.
+        let size = popup_fit(wanted, work, margin);
+        let clamped = |size: (u32, u32)| popup_origin_clamped((icon_pos.x, icon_pos.y, icon_size.width, icon_size.height), size, work, margin);
+        // Move to the tray's monitor FIRST: a size set while the window is still on the monitor it was created on is
+        // rescaled by Windows when the window then crosses to a monitor with another scale (480x672 can become 720x1008).
+        let (x, y) = clamped(size);
+        popup.set_position(PhysicalPosition::new(x, y))?;
+        if size != wanted {
+            popup.set_size(PhysicalSize::new(size.0, size.1))?;
         }
+        // The origin is then computed from the size actually applied, and the window placed again.
+        let applied = popup.outer_size().map(|s| (s.width, s.height)).unwrap_or(size);
+        let (x, y) = clamped(applied);
+        popup.set_position(PhysicalPosition::new(x, y))?;
+        // Everything the placement used, in physical pixels, so a popup that lands away from the icon can be explained from the log.
+        tracing::info!(icon_x = icon_pos.x, icon_y = icon_pos.y, icon_w = icon_size.width, icon_h = icon_size.height, ?work, scale, ?wanted, ?applied, x, y, "tray popup placed");
     }
     let closer = popup.clone();
     let opened = Instant::now();
@@ -1113,16 +1061,14 @@ mod tests {
     }
 
     #[test]
-    fn a_paused_recording_has_its_own_icon_only_with_the_redesign() {
-        assert_eq!(icon_for(CaptureLine::On, SyncLine::Synced(None), true, true, true), IconState::RecordingPaused);
+    fn a_paused_recording_has_its_own_icon() {
+        assert_eq!(icon_for(CaptureLine::On, SyncLine::Synced(None), true, true), IconState::RecordingPaused);
         // Recording wins over every other state, paused or not.
-        assert_eq!(icon_for(CaptureLine::Off, SyncLine::Error, true, true, true), IconState::RecordingPaused);
-        assert_eq!(icon_for(CaptureLine::Off, SyncLine::Error, true, false, true), IconState::Recording);
-        // With the switch off it borrows the capture-paused icon, as it always did.
-        assert_eq!(icon_for(CaptureLine::On, SyncLine::Synced(None), true, true, false), IconState::Paused);
-        // No recording: the icon follows capture and sync as before.
-        assert_eq!(icon_for(CaptureLine::On, SyncLine::Synced(None), false, false, true), IconState::Idle);
-        assert_eq!(icon_for(CaptureLine::Off, SyncLine::Error, false, false, true), IconState::SyncError);
+        assert_eq!(icon_for(CaptureLine::Off, SyncLine::Error, true, true), IconState::RecordingPaused);
+        assert_eq!(icon_for(CaptureLine::Off, SyncLine::Error, true, false), IconState::Recording);
+        // No recording: the icon follows capture and sync.
+        assert_eq!(icon_for(CaptureLine::On, SyncLine::Synced(None), false, false), IconState::Idle);
+        assert_eq!(icon_for(CaptureLine::Off, SyncLine::Error, false, false), IconState::SyncError);
     }
 
     #[test]
@@ -1165,18 +1111,6 @@ mod tests {
             assert_eq!(memory_text_with_problem(MemoryState::PausedUntil(5), Some(problem), 0, ten_past_three, today), "Memory paused until 3:10 PM");
         }
         assert_eq!(memory_text_with_problem(MemoryState::On, None, 0, ten_past_three, today), "Memory on");
-    }
-
-    #[test]
-    fn the_google_sign_in_warning_is_asked_for_only_with_the_redesign_on() {
-        let mut asked = 0;
-        assert!(!google_sign_in_warning(false, || {
-            asked += 1;
-            true
-        }));
-        assert_eq!(asked, 0, "with the switch off nothing new is read");
-        assert!(google_sign_in_warning(true, || true));
-        assert!(!google_sign_in_warning(true, || false));
     }
 
     #[test]
@@ -1225,9 +1159,8 @@ mod tests {
             }
         }
         assert!(longest > 50, "the test reached the long cases");
-        // The hover tooltip shows only our text, so it starts with the product name, as the classic one does.
+        // The hover tooltip shows only our text, so it starts with the product name.
         assert!(tooltip_redesigned(None, "Memory off".into(), false).starts_with("Whimbrel · "));
-        assert_eq!(tooltip_classic(None, "x").split(" · ").next(), tooltip_redesigned(None, "x".into(), false).split(" · ").next());
     }
 
     // One row per capture status the tray knows: (what `current` reads, the timed pause's end) to the words. The popup's
@@ -1309,12 +1242,6 @@ mod tests {
     }
 
     #[test]
-    fn the_classic_tooltip_is_what_it_always_was() {
-        assert_eq!(tooltip_classic(None, "Capturing · Sync on"), "Whimbrel · Capturing · Sync on");
-        assert_eq!(tooltip_classic(Some("Recording paused"), "Capturing · Sync on"), "Whimbrel · Recording paused · Capturing · Sync on");
-    }
-
-    #[test]
     fn tell_a_friend_has_its_own_id_and_words_and_sits_after_discord_above_quit() {
         assert_eq!(TELL_FRIEND_ID, "tell-friend");
         assert_eq!(tell_friend_text(), "Tell a friend");
@@ -1345,10 +1272,9 @@ mod tests {
     }
 
     #[test]
-    fn the_popup_is_taller_only_with_the_redesign() {
-        assert_eq!(popup_size(false), (300.0, 272.0));
-        let (w, h) = popup_size(true);
-        assert!(w >= 300.0 && h > 272.0);
+    fn the_popup_has_room_for_its_pinned_parts() {
+        let (w, h) = POPUP_SIZE;
+        assert!(w >= 300.0);
         // Room for the pinned parts at 200% text: the recording row with Stop, the memory line and the footer.
         assert!(h >= 560.0);
     }

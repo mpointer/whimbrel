@@ -2934,7 +2934,7 @@ pub extern "C" fn whimbrel_diarize_wav(
     };
     let expected_speaker_count = (expected_speaker_count > 0).then_some(expected_speaker_count);
     let Ok(speaker_segments) =
-        diarize::diarize(Path::new(&wav_path), &models, expected_speaker_count)
+        diarize::diarize_with_threads(Path::new(&wav_path), &models, expected_speaker_count, Some(speaker_names_ffi::diarize_threads()))
     else {
         return ptr::null_mut();
     };

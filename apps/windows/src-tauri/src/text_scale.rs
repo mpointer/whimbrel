@@ -2,10 +2,9 @@
 //!
 //! Measured on a real PC (2026-11-23): WebView2 multiplies `devicePixelRatio` by the text scale. The root font stays 16 px and the
 //! CSS viewport shrinks, so a fixed logical-size window gets 1/scale of the CSS space (a 360x230 alert at 200% lays out in 180x115
-//! CSS px, everything drawn twice as large). With the redesign on, every small window therefore multiplies its logical size by the
+//! CSS px, everything drawn twice as large). Every small window therefore multiplies its logical size by the
 //! scale when it is created, so it has its full design size in CSS px at any text size, and is then capped to the work area
-//! (`fit_to_work_area`). The UI's compact layout is the fallback for when that cap bit. With the redesign off nothing here is
-//! read and no size changes.
+//! (`fit_to_work_area`). The UI's compact layout is the fallback for when that cap bit.
 
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
@@ -48,14 +47,9 @@ pub fn scale_size(base: (f64, f64), scale: f64) -> (f64, f64) {
     (base.0 * scale, base.1 * scale)
 }
 
-/// A small window's logical size for the look in use: with the redesign on, the design size times the text scale (the registry is
-/// read here and only here); with it off, the size exactly as given and no read.
-pub fn size_for_look(base: (f64, f64), redesign: bool) -> (f64, f64) {
-    if redesign {
-        scale_size(base, text_scale())
-    } else {
-        base
-    }
+/// A small window's logical size: the design size times the text scale (the registry is read here and only here).
+pub fn scaled_size(base: (f64, f64)) -> (f64, f64) {
+    scale_size(base, text_scale())
 }
 
 /// A size in physical pixels capped to the work area less a margin on each side, so a window never needs more room than the
@@ -112,7 +106,7 @@ pub fn stack_slot(top: i32, height: u32, taken: &[(i32, u32)], gap: i32) -> i32 
     y
 }
 
-/// Places a redesigned corner alert (meeting alert, question, budget, disk, still-here) on the primary monitor: its top-right
+/// Places a corner alert (meeting alert, question, budget, disk, still-here) on the primary monitor: its top-right
 /// corner, clear of every other corner alert that is up (by their real places and heights, which may have been capped), the
 /// size capped to the work area and the position kept on screen. `logical` is the size the window was built with (already
 /// scaled by the text scale); `margin` is the gap in logical pixels.
@@ -159,7 +153,7 @@ pub fn screen_reader_running() -> bool {
     read.is_ok() && on != 0
 }
 
-/// Shows a redesigned corner alert. Without a screen reader it does not become the active window, so it does not close an open
+/// Shows a corner alert. Without a screen reader it does not become the active window, so it does not close an open
 /// tray menu or take the keyboard from the app in use (`WebviewWindow::show` activates the window even when it was built
 /// unfocused); a click or Alt+Tab still gives it the keyboard. With a screen reader running (`corner_alert_activates`) it is shown
 /// active and brought to the front, and the page puts focus on the alert's own content, so the reader says it as a focus change.

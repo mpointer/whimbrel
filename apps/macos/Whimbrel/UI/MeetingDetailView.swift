@@ -97,26 +97,6 @@ struct MeetingDetailView: View {
         .frame(minWidth: 480, idealWidth: 560, minHeight: 400, idealHeight: 560)
         .navigationTitle(loadedMeeting?.title ?? "Meeting")
         .background(Color.whimbrelBackgroundPage)
-        .overlay(alignment: .topTrailing) {
-            // The redesigned page has the options menu in its own header, and the window has its close button.
-            if !appState.redesignEnabled {
-                HStack(spacing: Spacing.sm) {
-                    if let loadedMeeting {
-                        MeetingOptionsMenu(meeting: loadedMeeting, appState: appState, onForgotten: { dismiss() })
-                    }
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 20))
-                            .foregroundStyle(Color.whimbrelTextSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Close")
-                }
-                .padding(Spacing.md)
-            }
-        }
         .onAppear { loadMeetingIfNeeded() }
         .onChange(of: appState.processingMeetingId) { old, new in
             guard old == meetingId, new == nil else { return }
@@ -254,7 +234,7 @@ struct MeetingDetailContentView: View {
     @State var pendingConflict: PendingRegenerationConflict?
 
     @State var tab: MeetingPageTab = .notes
-    // The redesigned note page (flag on): this device's line sources, the marked moments and the selected source.
+    // The redesigned note page: this device's line sources, the marked moments and the selected source.
     @State var noteSources: CoreNoteSources?
     @State var markers: [CoreMeetingMarker] = []
     /// The `id` of the selected source, which stays put when the numbers shift after an edit or a Regenerate.
@@ -503,11 +483,7 @@ struct MeetingDetailContentView: View {
     }
 
     var body: some View {
-        RedesignSwitch(enabled: appState.redesignEnabled) {
-            noteRedesignPage
-        } old: {
-            classicPage
-        }
+        noteRedesignPage
         .onAppear {
             snapshotsModel.store = appState.coreStore
             Task { await snapshotsModel.reload() }
@@ -574,68 +550,6 @@ struct MeetingDetailContentView: View {
                 newSummary: conflict.summary.tldr,
                 onChoose: { choice in resolveRegenerationConflict(choice, conflict: conflict) }
             )
-        }
-    }
-
-    /// The page as it is with the redesign flag off.
-    @ViewBuilder
-    var classicPage: some View {
-        VStack(spacing: 0) {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: Spacing.lg) {
-                    if let topic { TopicChip(topic: topic) }
-                    Text(verbatim: MeetingDetailLogic.displayTitle(meeting.title))
-                        .font(.whimbrelDisplay(.largeTitle))
-                        .foregroundStyle(Color.whimbrelTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let outcome = meeting.effectiveAwayOutcome {
-                        Text(AwayOutcomeLabel.text(outcome, at: meeting.awayOutcomeAt))
-                            .font(.whimbrelBody(.callout))
-                            .foregroundStyle(Color.whimbrelTextSecondary)
-                    }
-                    metadataChips
-                    MeetingSnapshotsStrip(model: snapshotsModel)
-                        .onReceive(NotificationCenter.default.publisher(for: MeetingSnapshotService.didChange)) { note in
-                            guard note.userInfo?["meetingId"] as? Int64 == meeting.id else { return }
-                            Task { await snapshotsModel.reload() }
-                        }
-                    LiveAlertsSection(
-                        rows: liveAlerts,
-                        paused: meeting.id == appState.activeMeetingId
-                            ? LiveAlertsSection.pausedLabel(
-                                status: liveStatus,
-                                alertsOn: LiveQuestionWatcher.shouldRun(settings: appState.liveQuestionSettings, names: appState.profile.liveQuestionNames))
-                            : nil,
-                        onJump: segments.isEmpty ? nil : { seekTranscript(to: $0) }
-                    )
-                    MeetingPrepSection(meetingId: meeting.id)
-                    if namesChanged {
-                        NamesChangedBanner(updating: isRegenerating, canUpdate: transcriptText != nil, error: regenerateError) { regenerate() }
-                    }
-                    Picker("", selection: $tab) {
-                        ForEach(MeetingPageTab.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(maxWidth: 260)
-
-                    switch tab {
-                    case .notes:
-                        notesTab
-                    case .transcript:
-                        transcriptTab(proxy: proxy)
-                    }
-                }
-                .frame(maxWidth: 760, alignment: .leading)
-                .padding(Spacing.xl)
-                .frame(maxWidth: .infinity)
-            }
-        }
-        MeetingAskBar(session: askSession, meeting: meeting, segmentCount: segments.count) { segmentId in
-            highlightSegment(segmentId)
-        }
-        .onDisappear { askSession.teardown() }
         }
     }
 
@@ -937,7 +851,7 @@ struct MeetingDetailContentView: View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             ZStack(alignment: .topLeading) {
                 if summaryDraftText.isEmpty {
-                    Text(appState.redesignEnabled ? noteSummaryPlaceholderText : summaryPlaceholderText)
+                    Text(noteSummaryPlaceholderText)
                         .font(.system(size: appState.readingFontSize + 2, design: .default))
                         .foregroundStyle(Color.whimbrelTextSecondary)
                         .padding(.top, 8)

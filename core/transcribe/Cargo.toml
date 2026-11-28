@@ -10,5 +10,12 @@ whisper-rs = "0.16"
 hound = "3"
 serde = { version = "1", features = ["derive"] }
 
+# whisper.cpp on the Mac's GPU. whisper-rs-sys turns Metal OFF unless this feature is on, so
+# without it the Mac app ran whisper on the CPU only (perf review, 2026-11-27). The Mac app is
+# arm64-only (apps/macos/project.yml). Windows turns on `vulkan` in its own manifest; iOS and
+# Android are not macOS, so they are unchanged.
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
+
 [dev-dependencies]
 serde_json = "1"

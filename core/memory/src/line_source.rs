@@ -1258,7 +1258,9 @@ mod tests {
             let loc = SourceLocator { offset_secs: 9_000_000, base: base ^ 1, anchor: anchor_of(&format!("Spoken line number {} about the plan.", 100 + k)) };
             assert!(index.resolve(&loc).is_some());
         }
-        assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
+        // A ceiling for a scan-every-row regression, not a benchmark: a debug build on the shared Windows runner,
+        // with the suite in parallel, took 8 to 12 s here (5 s failed on unrelated PRs).
+        assert!(started.elapsed() < std::time::Duration::from_secs(30), "took {:?}", started.elapsed());
     }
 
     #[test]

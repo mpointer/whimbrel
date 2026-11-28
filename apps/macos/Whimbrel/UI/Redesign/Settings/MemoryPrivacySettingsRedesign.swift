@@ -392,13 +392,8 @@ enum LibraryCopyRedesign {
 
     /// Classic sentences that say "memory database" and are not swapped: the launch screens' own "Encrypting" word only. The
     /// no-library notice (menu bar and banner), the two recording-refused messages and the printed recovery page now have
-    /// a redesigned sentence each, in `pairs`, and the shared code that draws them chooses by `forSkin`.
+    /// a redesigned sentence each, in `pairs`, and the shared code that draws them calls `map`.
     static let classicOnly: [String] = [EncryptionCopy.encrypting]
-
-    /// The sentence to show: the redesigned one when the switch is on, the classic one (untouched) when it is off. For the
-    /// strings that shared code builds (the recording gate, the banner, the printed page), where no redesigned view is in
-    /// between to call `map`.
-    static func forSkin(_ classic: String, redesign: Bool = RedesignFlag.isOn()) -> String { redesign ? map(classic) : classic }
 
     static let noStoreNotice = String(localized: "Your library could not be opened. Recording is off. Restart Whimbrel to try again.", comment: "Notice at the top of the window and the menu bar while Whimbrel runs without its library.")
     static let recordingBlockedNoStore = String(localized: "Whimbrel can't record meetings because your library could not be opened.", comment: "Notification and alert: a recording did not start because the library is not open.")
@@ -588,11 +583,7 @@ final class MemoryPrivacyRuntime: ObservableObject {
                 return
             }
         }
-        if appState.redesignEnabled {
-            appState.captureDidDeleteEverything()
-        } else if appState.activityCaptureEnabled {
-            appState.toggleActivityCapture()
-        }
+        appState.captureDidDeleteEverything()
         appState.endActiveMeetingIfNeeded()
         let entries = YourData.entriesToDelete(in: SpikePaths.root)
         do {

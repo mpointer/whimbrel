@@ -1,6 +1,6 @@
 import { useSkin } from "./useSkin";
 import { ICON_FONT, ICON_TABLE, iconGlyph, type IconRole } from "./skinIcons";
-import { SkinImage } from "./today/archetypes/parts";
+import { SkinImage } from "./today/skinImage";
 import type { TabId } from "./tabs";
 
 /** The role each sidebar tab draws (the Mac's shell: Library is the Ask screen). */

@@ -30,34 +30,31 @@ describe("recordingCardShown", () => {
   const paused: MeetingRecordingView = { ...view("recording"), startedUnixMs: 1_000, paused: true, pausedSinceUnixMs: 5_000 };
   const processing: MeetingRecordingView = { ...view("idle"), processing: { meetingId: 1, label: "Transcribing" } as MeetingRecordingView["processing"] };
 
-  it("with the redesign off the old card shows in every state, as before", () => {
-    for (const v of [view("idle"), view("starting"), view("recording"), paused, processing, null]) expect(recordingCardShown(v, false)).toBe(true);
-  });
-
   // The real-PC test: the old card ("Recording · 0:45", a status) sat above the new live screen, so a screen reader heard two
   // recording timers, and it still said Recording while the new bar said Paused.
-  it("with the redesign on it gives way while a meeting starts, records, pauses or is processed: the new bar owns that", () => {
-    for (const v of [view("starting"), view("recording"), paused, processing]) expect(recordingCardShown(v, true)).toBe(false);
+  it("gives way while a meeting starts, records, pauses or is processed: the bar and the live screen own that", () => {
+    for (const v of [view("starting"), view("recording"), paused, processing]) expect(recordingCardShown(v)).toBe(false);
   });
 
-  it("with the redesign on it still offers Record now when nothing records", () => {
-    expect(recordingCardShown(view("idle"), true)).toBe(true);
+  it("still offers Record now when nothing records", () => {
+    expect(recordingCardShown(view("idle"))).toBe(true);
   });
 
-  it("with the redesign on it waits for the first status, so it never flashes over a recording", () => {
-    expect(recordingCardShown(null, true)).toBe(false);
+  it("waits for the first status, so it never flashes over a recording", () => {
+    expect(recordingCardShown(null)).toBe(false);
   });
 });
 
-// The recording notice was drawn twice with the switch off: by the old card and by the open meeting. The switch is on for
-// everyone now, so it is pinned: while a meeting records, the old card is not drawn at all (the model above), and where
-// the Meetings screen draws it anyway it hands the notice to the open meeting (`hideNotice`), so one place draws it.
+// The recording notice stays on the Meetings screen, drawn once: the live screen draws it for the meeting being recorded, and
+// the Meetings screen draws it above the list when another meeting, or none, is selected (`meetingsNoticeFor`). The Record
+// now card never draws it.
 describe("the recording notice is drawn once on the Meetings screen", () => {
-  it("passes hideNotice to the card whenever the redesign is on, and the card honours it", async () => {
+  it("draws the Meetings screen's own notice from `meetingsNoticeFor`, and the Record now card draws none", async () => {
     const meetingsView = (await import("./MeetingsView.tsx?raw")).default;
-    expect(meetingsView).toMatch(/<RecordingCard.*hideNotice=\{redesign\}/);
+    expect(meetingsView).toMatch(/meetingsNoticeFor\(recordingId, selected, noticeState\.settings, noticeState\.dismissed\)/);
+    expect(meetingsView).toMatch(/<WConsentBanner/);
     const card = (await import("./RecordingCard.tsx?raw")).default;
-    expect(card).toMatch(/\{!hideNotice && <RecordingNoticeCard/);
+    expect(card).not.toMatch(/RecordingNoticeCard/);
   });
 
   it("draws the notice from the open meeting only, in the one place the live meeting has for it", async () => {

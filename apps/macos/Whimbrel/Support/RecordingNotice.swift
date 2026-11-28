@@ -21,12 +21,12 @@ final class RecordingNoticeSettings: ObservableObject {
         customText.isEmpty ? String(localized: "I'm recording this meeting with Whimbrel, on my own computer, for my notes.") : customText
     }
 
-    /// The value when nothing is stored: on with the redesign flag (always, in the app), off without. A stored value wins.
-    static func defaultEnabled(stored: Bool?, redesign: Bool) -> Bool { stored ?? redesign }
+    /// The value when nothing is stored: on. A stored value wins.
+    static func defaultEnabled(stored: Bool?) -> Bool { stored ?? true }
 
-    init(defaults: UserDefaults = .standard, redesign: Bool = RedesignFlag.isOn()) {
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        enabled = Self.defaultEnabled(stored: defaults.object(forKey: Self.enabledKey) == nil ? nil : defaults.bool(forKey: Self.enabledKey), redesign: redesign)
+        enabled = Self.defaultEnabled(stored: defaults.object(forKey: Self.enabledKey) == nil ? nil : defaults.bool(forKey: Self.enabledKey))
         customText = defaults.string(forKey: Self.textKey) ?? ""
     }
 }

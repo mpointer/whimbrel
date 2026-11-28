@@ -69,7 +69,7 @@ final class SkinDesignSystemTests: XCTestCase {
         let ui = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Whimbrel/UI")
-        let files = [ui.appendingPathComponent("Today/StandardTodayLayout.swift"), ui.appendingPathComponent("Today/Archetypes/TerminalTodayLayout.swift"), ui.appendingPathComponent("Today/Archetypes/GlassTodayLayout.swift"), ui.appendingPathComponent("Today/Archetypes/FieldTodayLayout.swift"), ui.appendingPathComponent("Today/Archetypes/AlmanacTodayLayout.swift"), ui.appendingPathComponent("Today/Archetypes/ReferenceTodayLayout.swift"), ui.appendingPathComponent("Today/Archetypes/SkinPrepLine.swift"), ui.appendingPathComponent("DesignSystem.swift")]
+        let files = [ui.appendingPathComponent("Redesign/HomeRedesign.swift"), ui.appendingPathComponent("DesignSystem.swift")]
         var offenders: [String] = []
         var buttons = 0
         for url in files {

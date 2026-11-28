@@ -161,8 +161,8 @@ fn scrim_sample(path: &Path) -> Option<Vec<u8>> {
 }
 
 /// The palettes any skin may name: the plain themes first, then the bundled skins' own; the first of an id wins.
-/// The Thread palette is in the pool like any other (the old redesign flag no longer hides it; the clean-up removes the argument).
-pub fn palette_pool(dirs: &BundledDirs, redesign: bool) -> Vec<Palette> {
+/// The Thread palette is in the pool like any other.
+pub fn palette_pool(dirs: &BundledDirs) -> Vec<Palette> {
     let fallback = default_palette();
     let mut pool = load_palettes(&dirs.themes, &fallback);
     for p in load_palettes(&dirs.skins.join("palettes"), &fallback) {
@@ -170,15 +170,15 @@ pub fn palette_pool(dirs: &BundledDirs, redesign: bool) -> Vec<Palette> {
             pool.push(p);
         }
     }
-    skins::visible_palettes(pool, redesign)
+    pool
 }
 
 /// Every skin: the built-ins first (Whimbrel, then by name), then the user's by name. The built-in Thread skin is
-/// listed like the others (the old redesign flag no longer hides it; the clean-up removes the argument).
-pub fn list_skins(dirs: &BundledDirs, user: &UserSkinStore, redesign: bool) -> Vec<SkinDto> {
-    let pool = palette_pool(dirs, redesign);
+/// listed like the others.
+pub fn list_skins(dirs: &BundledDirs, user: &UserSkinStore) -> Vec<SkinDto> {
+    let pool = palette_pool(dirs);
     // The built-ins carry no imagery.
-    let mut out: Vec<SkinDto> = skins::visible_skins(load_bundled(&dirs.skins), redesign)
+    let mut out: Vec<SkinDto> = load_bundled(&dirs.skins)
         .iter()
         .map(|s| dto(s, &offered_palettes(s, &[], &pool), true, BTreeMap::new()))
         .collect();
@@ -202,27 +202,12 @@ fn bundled(app: &AppHandle) -> Result<BundledDirs, CommandError> {
     Ok(BundledDirs::under(&dir))
 }
 
-/// The redesign switch: on for everyone (`Settings::redesign_enabled`). The old branches go in the clean-up.
-fn redesign_on(state: &AppState) -> bool {
-    state.settings.lock().unwrap().redesign_enabled()
-}
-
-/// Whether the hidden redesign switch is on, for the page (`redesignEnabled()` in `ui/src/redesign.ts`).
-/// Read from the launch's handle on THE settings file (the one `AppState` gets later), so the page has
-/// an answer before the store opened too: a fresh install asks while the onboarding still waits, and
-/// `State<AppState>` failed then, which the page took as off until a restart.
-#[tauri::command]
-pub fn redesign_enabled(launch: State<'_, crate::launch::app::LaunchState>) -> bool {
-    launch.settings.lock().unwrap_or_else(|p| p.into_inner()).redesign_enabled()
-}
-
 #[tauri::command]
 pub async fn skins_list(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<SkinDto>, CommandError> {
     let dirs = bundled(&app)?;
     let user = UserSkinStore::new(state.paths.skins.clone());
-    let redesign = redesign_on(&state);
     // File reads and contrast repair: off the async runtime's threads.
-    tauri::async_runtime::spawn_blocking(move || list_skins(&dirs, &user, redesign))
+    tauri::async_runtime::spawn_blocking(move || list_skins(&dirs, &user))
         .await
         .map_err(|e| CommandError::store(tr("Skins list failed: {error}", &[("error", &e.to_string())])))
 }
@@ -373,20 +358,13 @@ pub async fn skin_turn(app: AppHandle, state: State<'_, AppState>, skin_id: Stri
         return Err(CommandError::not_configured(set_up_line()));
     }
     let dirs = bundled(&app)?;
-    let redesign = redesign_on(&state);
-    // A skin the hidden switch keeps out of every list is not one to start a chat from either.
-    if !redesign && skins::is_redesign_skin(&skin_id) {
-        return Err(CommandError::invalid_input(tr("No skin {skin_id}", &[("skin_id", &skin_id.to_string())])));
-    }
     let user = UserSkinStore::new(state.paths.skins.clone());
     let origin = skin_maker::origin(&user, &dirs.skins, &skin_id).ok_or_else(|| CommandError::invalid_input(tr("No skin {skin_id}", &[("skin_id", &skin_id.to_string())])))?;
     let (provider, model, client) = skin_client(&routing, &keys)?;
     let caps = caps(&routing, &keys);
     let mut input = skin_maker::turn_input(&user, &origin, &request, &routing.output_language, sources);
-    // With the redesign on, the maker is also told the five Home element choices a skin can set.
-    if redesign {
-        input.catalogue = skins::catalogue_for(true);
-    }
+    // The maker is also told the five Home element choices a skin can set.
+    input.catalogue = skins::catalogue_for(true);
     let slow = state.slow_store()?.clone();
     RUNS.lock().unwrap().insert(run_id.clone(), false);
     // The provider call holds the slow lane, as Ask's blocking answer does, never the main store.
@@ -408,7 +386,7 @@ pub async fn skin_turn(app: AppHandle, state: State<'_, AppState>, skin_id: Stri
         return Ok(SkinTurnResult::stopped(&origin.id));
     }
     let sent = origin.assets();
-    let result = tauri::async_runtime::spawn_blocking(move || skin_maker::apply_reply(&user, &palette_pool(&dirs, redesign), &origin, &reply, &request, &sent, sources))
+    let result = tauri::async_runtime::spawn_blocking(move || skin_maker::apply_reply(&user, &palette_pool(&dirs), &origin, &reply, &request, &sent, sources))
         .await
         .map_err(blocking_failed)?;
     queue_sync(&state, result.saved_skin_id.clone()).await;
@@ -659,7 +637,7 @@ mod tests {
     #[test]
     fn skins_list_returns_eight_builtins_first() {
         let root = scratch("eight");
-        let list = list_skins(&dirs(), &UserSkinStore::new(&root), false);
+        let list = list_skins(&dirs(), &UserSkinStore::new(&root));
         let ids: Vec<&str> = list.iter().map(id_of).collect();
         // Whimbrel (shown as Classic), then the others by name, as the Mac's gallery orders them. Thread is one of them.
         assert_eq!(ids, ["whimbrel", "almanac", "game-day", "high-contrast", "hypermodern", "reference", "retro-terminal", "thread"]);
@@ -669,19 +647,17 @@ mod tests {
     }
 
     #[test]
-    fn thread_is_listed_whatever_the_old_redesign_flag_says() {
+    fn thread_is_listed_with_its_palette() {
         let root = scratch("flag");
         let user = UserSkinStore::new(&root);
         let expected = ["whimbrel", "almanac", "game-day", "high-contrast", "hypermodern", "reference", "retro-terminal", "thread"];
-        for flag in [false, true] {
-            let list = list_skins(&dirs(), &user, flag);
-            let ids: Vec<&str> = list.iter().map(id_of).collect();
-            assert_eq!(ids, expected, "flag {flag}");
-            assert!(list.iter().all(|d| d.built_in));
-            let thread = list.iter().find(|d| id_of(d) == "thread").unwrap();
-            assert_eq!(thread.palettes.iter().map(|p| p["id"].as_str().unwrap()).collect::<Vec<_>>(), ["thread"]);
-            assert!(palette_pool(&dirs(), flag).iter().any(|p| p.id == "thread"), "flag {flag}");
-        }
+        let list = list_skins(&dirs(), &user);
+        let ids: Vec<&str> = list.iter().map(id_of).collect();
+        assert_eq!(ids, expected);
+        assert!(list.iter().all(|d| d.built_in));
+        let thread = list.iter().find(|d| id_of(d) == "thread").unwrap();
+        assert_eq!(thread.palettes.iter().map(|p| p["id"].as_str().unwrap()).collect::<Vec<_>>(), ["thread"]);
+        assert!(palette_pool(&dirs()).iter().any(|p| p.id == "thread"));
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -695,8 +671,8 @@ mod tests {
             .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/e2e/.generated/skins.json"));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let root = scratch("matrix");
-        // The old flag is ignored, so the browser matrix draws Thread like every other skin.
-        let list = list_skins(&dirs(), &UserSkinStore::new(&root), true);
+        // The browser matrix draws Thread like every other skin.
+        let list = list_skins(&dirs(), &UserSkinStore::new(&root));
         std::fs::write(path, serde_json::to_string(&list).unwrap()).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -704,7 +680,7 @@ mod tests {
     #[test]
     fn whimbrel_offers_its_three_palettes_in_order() {
         let root = scratch("whimbrel");
-        let list = list_skins(&dirs(), &UserSkinStore::new(&root), false);
+        let list = list_skins(&dirs(), &UserSkinStore::new(&root));
         let ids: Vec<&str> = list[0].palettes.iter().map(|p| p["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["default", "slate", "sepia"]);
         // Both variants, all 15 colours.
@@ -717,7 +693,7 @@ mod tests {
     fn every_builtin_palette_resolves_and_passes_its_layout() {
         let root = scratch("pairs");
         // Thread's palette is checked against its layout too.
-        for d in list_skins(&dirs(), &UserSkinStore::new(&root), true) {
+        for d in list_skins(&dirs(), &UserSkinStore::new(&root)) {
             let skin: Skin = serde_json::from_value(d.skin.clone()).unwrap();
             assert!(!d.palettes.is_empty(), "{} has no palettes", skin.id);
             for p in &d.palettes {
@@ -783,7 +759,7 @@ mod tests {
         skin.name = "Mine".into();
         skin.palettes = vec!["slate".into()];
         store.save(&skin, &[], &[]).unwrap();
-        let list = list_skins(&dirs(), &store, false);
+        let list = list_skins(&dirs(), &store);
         assert_eq!(list.len(), 9);
         let mine = list.last().unwrap();
         assert_eq!((id_of(mine), mine.built_in), (id.as_str(), false));
@@ -829,13 +805,13 @@ mod tests {
         }
         let files: Vec<(String, Vec<u8>)> = ["bg.png", "badge.png", "old.png", "free.png"].iter().map(|n| ((*n).to_string(), white.clone())).collect();
         store.save(&skin, &[], &files).unwrap();
-        let list = list_skins(&dirs(), &store, false);
+        let list = list_skins(&dirs(), &store);
         let mine = list.last().unwrap();
         // Only a header image that is not text-free is measured (a badge sits beside the text, a background is never drawn, a
         // text-free image draws bare), and a missing file is left for the page to cover fully.
         assert_eq!(mine.image_scrims.keys().collect::<Vec<_>>(), ["bg.png"]);
         // White under Default's dark variant (light text) needs a strong scrim; under its light variant, little.
-        let palette = &offered_palettes(&skin, &[], &palette_pool(&dirs(), false))[0];
+        let palette = &offered_palettes(&skin, &[], &palette_pool(&dirs()))[0];
         let sample = scrim_sample(&store.image_path("user-pic", "bg.png").unwrap()).unwrap();
         let (light, dark) = (scrim_for(&sample, &palette.light, skin.today.archetype), scrim_for(&sample, &palette.dark, skin.today.archetype));
         assert!(dark > light, "{light} {dark}");

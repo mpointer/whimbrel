@@ -3,8 +3,8 @@ import SwiftUI
 import WhimbrelUI
 
 /// The in-meeting window's panel: a small always-on-top window with the recording controls. Built like the hotkey
-/// panel (`HotkeyPanel`), so it can take typing while the app the person was in stays active. Created only when a
-/// recording starts with the redesign flag on; with the flag off it is never built.
+/// panel (`HotkeyPanel`), so it can take typing while the app the person was in stays active. Created when a
+/// recording starts.
 final class MeetingBarPanel: NSPanel {
     var onCancel: (() -> Void)?
 
@@ -35,14 +35,13 @@ final class MeetingBarController {
 
     /// A recording started: shown, not made key (it must not take focus from the meeting).
     func show() {
-        guard appState.redesignEnabled else { return }
         closedByUser = false
         present()
     }
 
     /// "Show in-meeting window" in the menu bar menu.
     func showFromMenu() {
-        guard appState.redesignEnabled, appState.activeMeetingId != nil else { return }
+        guard appState.activeMeetingId != nil else { return }
         closedByUser = false
         present()
     }

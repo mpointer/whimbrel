@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatEvent, ContextEntry } from "../generated/types";
-import { applyEvent, citedEntries, isBusy, newTurn, promptToSend, savedTurn, spendLine, statusLine, type Turn } from "./chatModel";
+import { applyEvent, citedEntries, isBusy, newTurn, spendLine, statusLine, type Turn } from "./chatModel";
 
 const run = (events: ChatEvent[], start: Turn = newTurn("what did I plan?")) => events.reduce(applyEvent, start);
 
@@ -121,34 +121,7 @@ describe("spendLine and statusLine", () => {
   });
 });
 
-describe("savedTurn", () => {
-  it("brings back a saved answer's citations and model", () => {
-    const entry = { item: { kind: "episode", id: 7 }, label: "Figma", tsUnixMs: 1, open: { kind: "episode", id: 7 } } as const;
-    const turn = savedTurn({ query: "q", answer: "a", createdAtUnixMs: 0, citations: [entry], model: "llama3" });
-    expect(citedEntries(turn.citations, turn.context)).toEqual([entry]);
-    expect(turn.model).toBe("llama3");
-    expect(turn.status).toBe("done");
-  });
-});
 
-describe("promptToSend", () => {
-  it("sends a pending request's trimmed prompt once", () => {
-    const request = { id: 3, prompt: "  what changed this week?  " };
-    expect(promptToSend(request, null)).toBe("what changed this week?");
-    expect(promptToSend(request, 2)).toBe("what changed this week?");
-    expect(promptToSend(request, 3)).toBeNull();
-  });
-
-  it("sends a newer request even after an older one was handled", () => {
-    expect(promptToSend({ id: 4, prompt: "again" }, 3)).toBe("again");
-  });
-
-  it("sends nothing for no request or a blank prompt", () => {
-    expect(promptToSend(null, null)).toBeNull();
-    expect(promptToSend(undefined, null)).toBeNull();
-    expect(promptToSend({ id: 1, prompt: "   " }, null)).toBeNull();
-  });
-});
 
 describe("the left-out note (core's filtered_hosted; final review, Major 8)", () => {
   it("a completed answer keeps how many items were left out, and a saved one has none", () => {

@@ -13,7 +13,8 @@ Whimbrel combines things people search for separately: bot-free meeting notes, s
 | Screen memory (commercial) | rewind ai alternative, screen memory app, search everything i've seen on my computer | `/features/screen-memory/` | Get Whimbrel free |
 | Routines (commercial) | ai meeting prep, automatic daily recap, ai focus time calendar | `/features/routines/` | Get Whimbrel free |
 | Languages (commercial) | multilingual meeting notes, ai meeting notes spanish, transcribe meetings in other languages | `/features/languages/` |
-| Competitor comparison (high intent) | littlebird alternative, littlebird vs granola, ai work assistant comparison | `/compare/` | Download |
+| Competitor comparison (high intent) | whimbrel vs granola vs littlebird, ai work assistant comparison | `/compare/` | Download |
+| Head-to-head of two competitors | littlebird vs granola, granola vs littlebird | `/compare/littlebird-vs-granola/` (answer first, Whimbrel as a third option) | Download |
 | Competitor alternative (high intent) | granola alternative, granola for windows, granola vs … | `/compare/granola-alternative/` | Download |
 | Competitor alternatives (high intent) | littlebird alternative, shadow alternative, voicenotes alternative, bluedot alternative, grain alternative, fellow alternative | `/compare/<name>-alternative/` (six pages) | Download |
 | Open source (commercial, high intent) | open source ai meeting notes, open source granola alternative, self-hosted ai notetaker, local ai meeting assistant | `/open-source/` | Download free |

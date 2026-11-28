@@ -1,10 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { fold, SETTINGS_SEARCH_ENTRIES, searchSettings } from "./settingsSearch";
-import { sectionTitle } from "./settingsSections";
+import { searchRedesign } from "./redesign/search";
+import { fold, SETTINGS_SEARCH_ENTRIES } from "./settingsSearch";
 
-const search = (q: string) => searchSettings(q, sectionTitle).map((e) => e.id);
+const search = (q: string) => searchRedesign(q).map((e) => e.id);
 
 describe("Settings search", () => {
   it("matches nothing for an empty or blank query", () => {
@@ -42,29 +42,19 @@ describe("Settings search", () => {
     expect(search("sign out")).toEqual([]);
   });
 
-  it("has unique ids, each tagged on a Settings row in the code", () => {
+  it("has unique ids, each a card or row id in the Settings sections or tagged on a card they reuse", () => {
     const ids = SETTINGS_SEARCH_ENTRIES.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
-    const dir = join(__dirname);
-    const source = readdirSync(dir)
-      .filter((f) => f.endsWith(".tsx") && !f.includes(".test."))
-      .map((f) => readFileSync(join(dir, f), "utf8"))
-      .join("\n");
-    const tagged = [...source.matchAll(/data-settings-anchor="([a-zA-Z.]+)"/g)].map((m) => m[1]);
-    // An entry is tagged on a classic card, unless it is marked no-classic-card (checked in the next test).
-    for (const entry of SETTINGS_SEARCH_ENTRIES.filter((e) => !e.noClassicCard)) expect(tagged, entry.id).toContain(entry.id);
-    // A no-classic-card entry must not also be tagged in the classic cards: the mark is for cards that are not there.
-    for (const entry of SETTINGS_SEARCH_ENTRIES.filter((e) => e.noClassicCard)) expect(tagged, entry.id).not.toContain(entry.id);
-    // Every tag is in the index, so none is left behind by a renamed entry.
-    for (const id of new Set(tagged)) expect(ids, id).toContain(id);
-  });
-
-  it("has each no-classic-card entry as a card id in the redesigned sections", () => {
-    const only = SETTINGS_SEARCH_ENTRIES.filter((e) => e.noClassicCard);
-    expect(only.map((e) => e.id)).toEqual(["devices.tellAFriend"]);
     const walk = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(join(dir, d.name)) : d.name.endsWith(".tsx") && !d.name.includes(".test.") ? [join(dir, d.name)] : []));
-    const source = walk(join(__dirname, "redesign", "sections")).map((f) => readFileSync(f, "utf8")).join("\n");
-    for (const entry of only) expect(source, entry.id).toContain(`id="${entry.id}"`);
+    const read = (files: string[]) => files.map((f) => readFileSync(f, "utf8")).join("\n");
+    const reused = readdirSync(__dirname).filter((f) => f.endsWith(".tsx") && !f.includes(".test.")).map((f) => join(__dirname, f));
+    const source = read([...walk(join(__dirname, "redesign", "sections")), ...reused]);
+    const tagged = [...read(reused).matchAll(/data-settings-anchor="([a-zA-Z.]+)"/g)].map((m) => m[1]);
+    for (const entry of SETTINGS_SEARCH_ENTRIES) {
+      expect(source.includes(`id="${entry.id}"`) || source.includes(`"${entry.id}"`) || tagged.includes(entry.id), entry.id).toBe(true);
+    }
+    // Every tag is in the index, so none is left behind by a renamed entry.
+    for (const id of new Set(tagged)) expect(ids, id).toContain(id);
   });
 });

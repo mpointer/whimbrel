@@ -6,7 +6,7 @@ import type { FoundCard } from "../../generated/types";
 import { t } from "../../l10n";
 import { WButton, WIcon } from "../../system";
 import { appDot } from "../../today/redesign/homeModel";
-import { DeviceChip } from "../LibraryView";
+import { DeviceChip } from "../DeviceChip";
 import { cardApp, cardTitle, cardWhen, kindIcon, kindLabel, openHint, openName, openTarget, sourceMarkName, type FindOpen } from "./findModel";
 
 /** Whether the text is long enough to be worth a Show more, before the card has been measured. */

@@ -52,10 +52,53 @@ pub extern "C" fn whimbrel_diarize_wav_voices(
     };
     let models = diarize::DiarizationModelPaths { segmentation_model_path: seg.into(), embedding_model_path: emb.into() };
     let expected = (expected_speaker_count > 0).then_some(expected_speaker_count);
-    let Ok(d) = diarize::diarize_with_voices(std::path::Path::new(&wav), &models, expected, None) else {
+    let Ok(d) = diarize::diarize_with_voices(std::path::Path::new(&wav), &models, expected, Some(diarize_threads())) else {
         return ptr::null_mut();
     };
     json_to_c_string(serde_json::json!({ "segments": d.segments, "voices": d.voices }).to_string())
+}
+
+/// Most ONNX threads diarization asks for, the same cap Windows uses. The crate's bench gained
+/// little past 8 (`diarize::diarize_with_threads`: 1 thread 47 s, 4 threads 20.6 s, 8 threads
+/// 15.3 s on a 57 s clip).
+#[cfg(feature = "diarize")]
+const MAX_DIARIZE_THREADS: usize = 8;
+
+/// ONNX threads for diarization: the performance cores, at most [`MAX_DIARIZE_THREADS`]. Passing
+/// none kept sherpa-onnx's default of one thread, so speaker labels took about 3x longer than they
+/// needed to (perf review, 2026-11-27). Efficiency cores are left free so the rest of the machine
+/// stays responsive while a meeting is processed.
+#[cfg(feature = "diarize")]
+pub(crate) fn diarize_threads() -> i32 {
+    let cores = performance_cores().unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get() / 2));
+    cores.clamp(1, MAX_DIARIZE_THREADS) as i32
+}
+
+/// Physical performance cores (`hw.perflevel0.physicalcpu`, Apple silicon), or `None` where the
+/// key does not exist.
+#[cfg(all(feature = "diarize", target_os = "macos"))]
+fn performance_cores() -> Option<usize> {
+    unsafe extern "C" {
+        fn sysctlbyname(
+            name: *const c_char,
+            oldp: *mut std::ffi::c_void,
+            oldlenp: *mut usize,
+            newp: *mut std::ffi::c_void,
+            newlen: usize,
+        ) -> std::ffi::c_int;
+    }
+    let mut value: i32 = 0;
+    let mut len = std::mem::size_of::<i32>();
+    // SAFETY: a NUL-terminated name, and `value`/`len` describe one writable i32.
+    let rc = unsafe {
+        sysctlbyname(c"hw.perflevel0.physicalcpu".as_ptr(), (&mut value as *mut i32).cast(), &mut len, ptr::null_mut(), 0)
+    };
+    (rc == 0 && value > 0).then_some(value as usize)
+}
+
+#[cfg(all(feature = "diarize", not(target_os = "macos")))]
+fn performance_cores() -> Option<usize> {
+    None
 }
 
 /// Names the meeting's speakers from `voices_json` (`Diarization.voices`) and returns
@@ -179,6 +222,22 @@ mod tests {
     use super::*;
     use memory::speaker_match::NameStatus;
     use std::ffi::{CStr, CString};
+
+    #[cfg(feature = "diarize")]
+    #[test]
+    fn diarization_uses_more_than_one_thread_where_there_are_cores_and_never_more_than_eight() {
+        let n = diarize_threads();
+        assert!((1..=MAX_DIARIZE_THREADS as i32).contains(&n), "{n}");
+        if std::thread::available_parallelism().map_or(1, |p| p.get()) >= 4 {
+            assert!(n > 1, "a 4+ core machine diarizes on more than one thread, got {n}");
+        }
+    }
+
+    #[cfg(all(feature = "diarize", target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn apple_silicon_reports_its_performance_cores() {
+        assert!(performance_cores().is_some_and(|n| n >= 1));
+    }
 
     fn meeting(store: &Store, invitees: &[(&str, Option<&str>)]) -> i64 {
         let id = store

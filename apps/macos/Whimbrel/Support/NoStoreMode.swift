@@ -42,9 +42,9 @@ final class RecordingStartGate {
     /// Whether `source` may start a recording now; when not, says why. The on-screen Start
     /// controls are disabled without a store (`RecordingControls`), so this mostly catches
     /// prompts, Away Mode and links.
-    func allow(_ source: Source, redesign: Bool = RedesignFlag.isOn()) -> Bool {
+    func allow(_ source: Source) -> Bool {
         if storeOpen { return true }
-        notify(LibraryCopyRedesign.forSkin(EncryptionCopy.recordingBlockedNoStore, redesign: redesign))
+        notify(LibraryCopyRedesign.map(EncryptionCopy.recordingBlockedNoStore))
         return false
     }
 
@@ -69,8 +69,8 @@ enum RecordingStartInsert {
         case refuse(message: String)
     }
 
-    static func outcome(insertedMeetingId: Int64?, redesign: Bool = RedesignFlag.isOn()) -> Outcome {
-        guard let insertedMeetingId else { return .refuse(message: LibraryCopyRedesign.forSkin(EncryptionCopy.recordingNotSaved, redesign: redesign)) }
+    static func outcome(insertedMeetingId: Int64?) -> Outcome {
+        guard let insertedMeetingId else { return .refuse(message: LibraryCopyRedesign.map(EncryptionCopy.recordingNotSaved)) }
         return .proceed(meetingId: insertedMeetingId)
     }
 }
@@ -240,7 +240,7 @@ struct NoStoreNotice: View {
 private extension NoStoreNotice {
     var icon: some View { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.whimbrelWarning) }
     var message: some View {
-        Text(LibraryCopyRedesign.forSkin(EncryptionCopy.noStoreNotice)).font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextPrimary)
+        Text(LibraryCopyRedesign.map(EncryptionCopy.noStoreNotice)).font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextPrimary)
             .fixedSize(horizontal: false, vertical: true)
     }
     var button: some View { Button(EncryptionCopy.openSettingsAction, action: openSettings).buttonStyle(.whimbrelSecondary) }

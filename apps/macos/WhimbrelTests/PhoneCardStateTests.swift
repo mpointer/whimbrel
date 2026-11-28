@@ -27,6 +27,13 @@ final class PhoneCardStateTests: XCTestCase {
         XCTAssertEqual(PhoneCardState.state(devices: [device("mac", status: "approved"), device(nil, status: "approved")]), .beta)
     }
 
+    func testTheCardWaitsForTheFirstDeviceListOnlyWhileSyncIsReady() {
+        XCTAssertTrue(PhoneCardState.isLoading(ready: true, loaded: false, waitedOut: false))
+        XCTAssertFalse(PhoneCardState.isLoading(ready: true, loaded: true, waitedOut: false))
+        XCTAssertFalse(PhoneCardState.isLoading(ready: true, loaded: false, waitedOut: true))
+        XCTAssertFalse(PhoneCardState.isLoading(ready: false, loaded: false, waitedOut: false))
+    }
+
     func testNoDevicesIsBeta() {
         XCTAssertEqual(PhoneCardState.state(devices: []), .beta)
     }

@@ -27,9 +27,9 @@ final class HotkeyPanel: NSPanel {
 @MainActor
 final class HotkeyPanelController {
     static let panelWidth: CGFloat = 520
-    /// With the redesign switch on, the panel asks macOS to leave it out of screen sharing and screen recordings, as the
+    /// The panel asks macOS to leave it out of screen sharing and screen recordings, as the
     /// in-meeting window does (`MeetingBarController.hidesFromScreenSharing`): it shows text read from the window in front and
-    /// the answer about it. Some sharing apps ignore the request, so it is not a promise. Off, the panel does not ask.
+    /// the answer about it. Some sharing apps ignore the request, so it is not a promise.
     static let hidesFromScreenSharing = true
 
     let model: HotkeyPanelModel
@@ -37,9 +37,6 @@ final class HotkeyPanelController {
     var openAIProviders: () -> Void = {}
 
     private var panel: HotkeyPanel?
-    /// Whether `panel` was built for the redesign. It is rebuilt when the switch changes, as the two alert panels are, so the
-    /// look and `sharingType` always agree.
-    private var panelIsRedesign = false
     private var openTask: Task<Void, Never>?
 
     init(model: HotkeyPanelModel) {
@@ -56,16 +53,12 @@ final class HotkeyPanelController {
 
     func open(frontmost: HotkeyPanelModel.Frontmost?) {
         let panel = ensurePanel()
-        panel.sharingType = RedesignFlag.isOn() && Self.hidesFromScreenSharing ? .none : .readOnly
-        if panelIsRedesign {
-            // Size to the content first, so the centre is the centre of the panel as drawn (the first open used the stand-in
-            // size) and a narrow screen keeps it on screen. The old panel is placed as before.
-            panel.contentViewController?.view.layoutSubtreeIfNeeded()
-            if let size = panel.contentViewController?.view.fittingSize, size.width > 0, size.height > 0 { panel.setContentSize(size) }
-            positionRedesign(panel, pid: frontmost?.pid)
-        } else {
-            position(panel, pid: frontmost?.pid)
-        }
+        panel.sharingType = Self.hidesFromScreenSharing ? .none : .readOnly
+        // Size to the content first, so the centre is the centre of the panel as drawn (the first open used the stand-in
+        // size) and a narrow screen keeps it on screen.
+        panel.contentViewController?.view.layoutSubtreeIfNeeded()
+        if let size = panel.contentViewController?.view.fittingSize, size.width > 0, size.height > 0 { panel.setContentSize(size) }
+        position(panel, pid: frontmost?.pid)
         panel.makeKeyAndOrderFront(nil)
         openTask?.cancel()
         // No frontmost app with a bundle id: pid 0 makes the model report it unreadable.
@@ -81,22 +74,12 @@ final class HotkeyPanelController {
     }
 
     private func ensurePanel() -> HotkeyPanel {
-        let redesign = RedesignFlag.isOn()
-        if let panel, panelIsRedesign == redesign { return panel }
-        panel?.orderOut(nil)
-        panelIsRedesign = redesign
+        if let panel { return panel }
         let host = NSHostingController(rootView: ThemedRoot {
-            RedesignSwitch(enabled: redesign) {
-                HotkeyPanelRedesignView(model: self.model, openAIProviders: { [weak self] in
-                    self?.close()
-                    self?.openAIProviders()
-                }, close: { [weak self] in self?.close() })
-            } old: {
-                HotkeyPanelView(model: self.model, openAIProviders: { [weak self] in
-                    self?.close()
-                    self?.openAIProviders()
-                }, close: { [weak self] in self?.close() })
-            }
+            HotkeyPanelRedesignView(model: self.model, openAIProviders: { [weak self] in
+                self?.close()
+                self?.openAIProviders()
+            }, close: { [weak self] in self?.close() })
         })
         host.sizingOptions = [.preferredContentSize]
 
@@ -121,17 +104,8 @@ final class HotkeyPanelController {
         return panel
     }
 
-    /// Centred near the top of the screen that shows the frontmost app's front window.
+    /// Where the panel goes: centred near the top of the screen, and always inside it.
     private func position(_ panel: NSPanel, pid: pid_t?) {
-        let screen = pid.flatMap(Self.screenOfFrontWindow(pid:)) ?? NSScreen.main ?? NSScreen.screens.first
-        guard let frame = screen?.visibleFrame else { return }
-        let size = panel.frame.size
-        let top = frame.maxY - frame.height * 0.2
-        panel.setFrameTopLeftPoint(NSPoint(x: frame.midX - size.width / 2, y: top))
-    }
-
-    /// Where the redesign's panel goes: centred near the top of the screen, and always inside it.
-    private func positionRedesign(_ panel: NSPanel, pid: pid_t?) {
         let screen = pid.flatMap(Self.screenOfFrontWindow(pid:)) ?? NSScreen.main ?? NSScreen.screens.first
         guard let frame = screen?.visibleFrame else { return }
         panel.setFrameTopLeftPoint(Self.topLeft(forPanelOf: panel.frame.size, in: frame))

@@ -3,15 +3,12 @@ import SwiftUI
 import OSLog
 import WhimbrelUI
 
-/// The meeting-first shell's sections: six, and a seventh (Conversations) with the redesign flag on replacing TimelineView's mode-strip-first entry
-/// point. TimelineView's own 5 search modes are NOT removed — they relocate into
-/// `.library` as filters (see TodayView/MeetingsListView/library filter wiring).
+/// The meeting-first shell's seven sections.
 enum WhimbrelTab: String, CaseIterable, Identifiable {
     case today = "Today"
     case meetings = "Meetings"
     case library = "Library"
     case topics = "Topics"
-    /// Redesign flag only: never listed, keyed or shown with it off (`visibleTabs`, `shown`).
     case conversations = "Conversations"
     case automations = "Automations"
     case settings = "Settings"
@@ -43,23 +40,10 @@ enum WhimbrelTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The sections the sidebar and the Go menu list. Flag off: exactly the six there have always been, in
-    /// their order. Flag on: Conversations comes after Topics.
-    static func visibleTabs(redesign: Bool) -> [WhimbrelTab] {
-        let old: [WhimbrelTab] = [.today, .meetings, .library, .topics, .automations, .settings]
-        guard redesign else { return old }
-        var tabs = old
-        tabs.insert(.conversations, at: (tabs.firstIndex(of: .topics) ?? tabs.count - 1) + 1)
-        return tabs
-    }
+    /// The sections the sidebar and the Go menu list, in order.
+    static let visibleTabs: [WhimbrelTab] = [.today, .meetings, .library, .topics, .conversations, .automations, .settings]
 
-    /// The section to draw for `tab`: Today when `tab` is one the flag hides (Conversations was selected, then the
-    /// flag was turned off).
-    static func shown(_ tab: WhimbrelTab, redesign: Bool) -> WhimbrelTab {
-        visibleTabs(redesign: redesign).contains(tab) ? tab : .today
-    }
-
-    /// Where a question from the shell's Ask bar goes with the redesign flag on (no search filter set).
+    /// Where a question from the shell's Ask bar goes (no search filter set).
     enum AskTarget: Equatable {
         /// Answered under the bar on Today.
         case today
@@ -80,18 +64,6 @@ enum WhimbrelTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The skin's icon for the tab; Library and Topics have no skin role.
-    var icon: Image {
-        switch self {
-        case .today: return Image(skinRole: .today)
-        case .meetings: return Image(skinRole: .meetings)
-        case .library: return Image(systemName: "books.vertical")
-        case .topics: return Image(systemName: "tag")
-        case .conversations: return Image(systemName: "bubble.left.and.bubble.right")
-        case .automations: return Image(skinRole: .routines)
-        case .settings: return Image(skinRole: .settings)
-        }
-    }
 }
 
 struct WhimbrelShellView: View {
@@ -102,7 +74,7 @@ struct WhimbrelShellView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var showFirstRun = false
     @StateObject private var homeBridge = HomeRedesignBridge()
-    /// The header field and chips Library's Find page shares with the shell (redesign flag only).
+    /// The header field and chips Library's Find page shares with the shell.
     @StateObject private var findBridge = FindBridge()
     @State private var homeApps: [CoreCaptureApp] = []
     @State private var showActiveRecordingWarning = false
@@ -129,44 +101,12 @@ struct WhimbrelShellView: View {
             // landing on the now-default Today tab instead of Library.
             updateReadyBanner
 
-            RedesignSwitch(enabled: appState.redesignEnabled) {
-                redesignShell
-            } old: {
-                NavigationSplitView {
-                    // The footer sits below the list. (Its text must stay height-bounded: see `StaleSyncLine`.)
-                    VStack(spacing: 0) {
-                        List(WhimbrelTab.visibleTabs(redesign: false), selection: $appState.selectedTab) { tab in
-                            Label {
-                                Text(tab.title)
-                                    .foregroundStyle(Color.whimbrelTextPrimary)
-                            } icon: {
-                                tab.icon
-                                    .symbolRenderingMode(.monochrome)
-                                    .foregroundStyle(appState.selectedTab == tab ? Color.whimbrelTextPrimary : Color.whimbrelTextSecondary)
-                            }
-                            .tag(tab)
-                            .listRowBackground(
-                                RoundedRectangle(cornerRadius: Radius.control)
-                                    .fill(appState.selectedTab == tab ? Color.whimbrelSelection : Color.clear)
-                                    .padding(.horizontal, Spacing.xs)
-                            )
-                        }
-                        .listStyle(.sidebar)
-                        .tint(Color.whimbrelAccentPrimary)
-                        sidebarFooter
-                    }
-                    .navigationSplitViewColumnWidth(min: 160, ideal: 180)
-                } detail: {
-                    detailView
-                }
-                // Conversations exists only with the redesign flag on: a selection left from then lands on Today.
-                .onAppear { if appState.selectedTab != WhimbrelTab.shown(appState.selectedTab, redesign: false) { appState.selectedTab = .today } }
-            }
+            shell
         }
         .background(Color.whimbrelBackgroundPage)
         .tint(Color.whimbrelAccentPrimary)
         .background(HideWindowTitle())
-        // Settings is the native `Settings { SettingsView() }` scene (⌘,), never embedded here:
+        // Settings is the native `Settings { SettingsRedesignView() }` scene (⌘,), never embedded here:
         // nesting its NavigationSplitView in the shell's once ballooned the window past the display.
         .onAppear {
             // `TimelineView` used to set this on `.onAppear` at launch (it was the root
@@ -193,36 +133,29 @@ struct WhimbrelShellView: View {
                 .environmentObject(appState)
         }
         .sheet(isPresented: $showFirstRun) {
-            RedesignSwitch {
-                FirstRunRedesignView {
-                    FirstRun.markDone(.standard)
-                    showFirstRun = false
-                }
-            } old: {
-                FirstRunView {
-                    FirstRun.markDone(.standard)
-                    showFirstRun = false
-                }
+            FirstRunRedesignView {
+                FirstRun.markDone(.standard)
+                showFirstRun = false
             }
             .environmentObject(appState.permissions)
         }
     }
 
-    /// The selected section's screen, shared by the old and the redesign shell.
+    /// The selected section's screen.
     @ViewBuilder
     private var detailView: some View {
-                switch WhimbrelTab.shown(appState.selectedTab, redesign: appState.redesignEnabled) {
-                case .today: TodayView()
-                case .meetings: banded { MeetingsListView() }
-                case .library: banded { RedesignSwitch(enabled: appState.redesignEnabled) { LibraryRedesignScreen() } old: { TimelineView() } }
-                case .topics: banded { TopicsView() }
-                case .conversations: banded { ConversationsHostView() }
-                case .automations: banded { AutomationsView() }
-                case .settings: StatusOverviewView(openSettings: openSettings)
-                }
+        switch appState.selectedTab {
+        case .today: TodayView()
+        case .meetings: banded { MeetingsListView() }
+        case .library: banded { LibraryRedesignScreen() }
+        case .topics: banded { TopicsView() }
+        case .conversations: banded { ConversationsHostView() }
+        case .automations: banded { AutomationsView() }
+        case .settings: StatusOverviewView(openSettings: openSettings)
+        }
     }
 
-    // MARK: Redesign shell (flag on)
+    // MARK: Shell
 
     /// The sidebar icon for a section: the selected skin's icon where the skin has a role for it, else the Thread symbol.
     private func glyph(_ tab: WhimbrelTab) -> String {
@@ -238,11 +171,11 @@ struct WhimbrelShellView: View {
         }
     }
 
-    private var redesignShell: some View {
+    private var shell: some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: appState.activeMeetingId == nil ? 30 : 1)) { context in
-            let onHome = WhimbrelTab.shown(appState.selectedTab, redesign: true) == .today
+            let onHome = appState.selectedTab == .today
             WShell(
-                items: WhimbrelTab.visibleTabs(redesign: true).map {
+                items: WhimbrelTab.visibleTabs.map {
                     WShellItem(id: $0.rawValue, glyph: glyph($0), title: $0.title, shortcut: "\u{2318}" + String($0.goKey))
                 },
                 selection: appState.selectedTab.rawValue,
@@ -276,7 +209,7 @@ struct WhimbrelShellView: View {
                 onPause: appState.canPauseRecording ? { appState.pauseRecording() } : nil,
                 onResume: appState.recordingPaused ? { appState.resumeRecording() } : nil,
                 // Also offered for a start still waiting on its meeting row with its audio on (`canStopStartingRecording`): the same
-                // action the old menu's End Meeting runs, which stops the audio at once and saves the meeting when its row lands.
+                // action the menu's End Meeting runs, which stops the audio at once and saves the meeting when its row lands.
                 onStop: appState.activeMeetingId == nil && !appState.canStopStartingRecording ? nil : { appState.endActiveMeetingIfNeeded() },
                 pauseChoices: {
                     let state = CapturePauseModel.state(captureOn: appState.activityCaptureEnabled, resumeAt: appState.captureResumeAt)
@@ -312,7 +245,7 @@ struct WhimbrelShellView: View {
                         } else {
                             // Where the answer goes, per section (screen 6): under the bar on Today, a new conversation from
                             // Conversations or a topic, and Find on a new conversation from anywhere else.
-                            switch WhimbrelTab.shown(appState.selectedTab, redesign: true).askTarget(topicId: appState.selectedTopicId) {
+                            switch appState.selectedTab.askTarget(topicId: appState.selectedTopicId) {
                             case .today where !findBridge.filter.isEmpty:
                                 // Asked on Today with People, Apps or Dates chips on: Today's answer does not read them, so the
                                 // question goes to Find, which asks under those filters (as Windows does). Never asked without them.
@@ -341,9 +274,9 @@ struct WhimbrelShellView: View {
         }
     }
 
-    /// The apps seen in the last 30 days, for the Apps chip. Read on the store's queue, only with the flag on.
+    /// The apps seen in the last 30 days, for the Apps chip. Read on the store's queue.
     private func loadHomeApps() {
-        guard appState.redesignEnabled, let store = appState.coreStore else { return }
+        guard let store = appState.coreStore else { return }
         let end = Int64(Date().timeIntervalSince1970 * 1000), start = end - 30 * 24 * 3600 * 1000
         CoreMemoryStore.accessQueue.async {
             let apps = store.captureApps(startUnixMs: start, endUnixMs: end)
@@ -351,7 +284,7 @@ struct WhimbrelShellView: View {
         }
     }
 
-    /// The bar shows while a meeting is recording or being processed, on every section. It offers Pause or Resume and Stop, with the level, and says Paused while the recording is paused (redesign flag only).
+    /// The bar shows while a meeting is recording or being processed, on every section. It offers Pause or Resume and Stop, with the level, and says Paused while the recording is paused.
     private func recording(at now: Date) -> WShellRecording? {
         // The live meeting screen draws the bar itself, at the top of its column: never a second time.
         if appState.activeMeetingId != nil, appState.selectedTab == .today, appState.liveScreenShowing { return nil }

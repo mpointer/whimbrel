@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 import XCTest
 @testable import Whimbrel
@@ -25,7 +24,7 @@ final class EncryptionScreenshotTests: XCTestCase {
     }
 
     private func write(_ view: some View, _ name: String, size: CGSize, scheme: ColorScheme = .light, to dir: URL) throws {
-        let pinned = view.environment(\.locale, Locale(identifier: "en_US"))
+        let pinned = view.redesignThemed().environment(\.locale, Locale(identifier: "en_US"))
         let rep = try XCTUnwrap(OffscreenRender.bitmap(of: pinned, size: size, colorScheme: scheme, scale: 2), name)
         let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]), name)
         try png.write(to: dir.appendingPathComponent("\(name).png"))
@@ -45,7 +44,7 @@ final class EncryptionScreenshotTests: XCTestCase {
         // Setup: passphrase typed, too short.
         let short = EncryptionSetupModel(actions: setupActions(), onContinue: { _ in })
         short.passphrase = "horse"
-        try write(EncryptionSetupView(model: short), "setup-1-passphrase", size: CGSize(width: 680, height: 560), to: dir)
+        try write(KeySetupRedesignView(model: short), "setup-1-passphrase", size: CGSize(width: 680, height: 560), to: dir)
 
         // Setup: key made, file saved, test passed, "I saved it" ticked.
         let done = EncryptionSetupModel(actions: setupActions(), continueTitle: EncryptionCopy.encryptContinue, onContinue: { _ in })
@@ -56,8 +55,8 @@ final class EncryptionScreenshotTests: XCTestCase {
         done.testPassphrase = "correct horse battery"
         await done.runTest()
         done.savedConfirmed = true
-        try write(EncryptionSetupView(model: done), "setup-2-ready", size: CGSize(width: 680, height: 1320), to: dir)
-        try write(EncryptionSetupView(model: done), "setup-2-ready-dark", size: CGSize(width: 680, height: 1320), scheme: .dark, to: dir)
+        try write(KeySetupRedesignView(model: done), "setup-2-ready", size: CGSize(width: 680, height: 1320), to: dir)
+        try write(KeySetupRedesignView(model: done), "setup-2-ready-dark", size: CGSize(width: 680, height: 1320), scheme: .dark, to: dir)
 
         // Setup: the test failed, so "I saved it" stays locked.
         let failed = EncryptionSetupModel(actions: setupActions(), continueTitle: EncryptionCopy.encryptContinue, onContinue: { _ in })
@@ -66,7 +65,7 @@ final class EncryptionScreenshotTests: XCTestCase {
         await failed.createRecoveryKey()
         failed.testPassphrase = "wrong one"
         await failed.runTest()
-        try write(EncryptionSetupView(model: failed), "setup-3-test-failed", size: CGSize(width: 680, height: 1320), to: dir)
+        try write(KeySetupRedesignView(model: failed), "setup-3-test-failed", size: CGSize(width: 680, height: 1320), to: dir)
 
         try write(EncryptionPrintPage(words: Self.words, qr: EncryptionQR.image(for: Self.words.joined(separator: " "))),
                   "setup-4-print-page", size: CGSize(width: 540, height: 720), to: dir)
@@ -81,7 +80,7 @@ final class EncryptionScreenshotTests: XCTestCase {
         await recovery.perform(.chooseFile)
         recovery.passphrase = "not it"
         await recovery.restore()
-        try write(EncryptionRecoveryView(model: recovery), "recovery-1-file", size: CGSize(width: 680, height: 640), to: dir)
+        try write(RecoveryRedesignView(model: recovery), "recovery-1-file", size: CGSize(width: 680, height: 640), to: dir)
 
         // Recovery: key rejected, words method.
         let words = EncryptionRecoveryModel(reason: .keyRejected, actions: .init(
@@ -92,12 +91,12 @@ final class EncryptionScreenshotTests: XCTestCase {
         ))
         words.method = .words
         words.words = Self.words.prefix(20).map { $0.capitalized }.joined(separator: "  ")
-        try write(EncryptionRecoveryView(model: words), "recovery-2-words", size: CGSize(width: 680, height: 640), to: dir)
+        try write(RecoveryRedesignView(model: words), "recovery-2-words", size: CGSize(width: 680, height: 640), to: dir)
 
         // Key unavailable, after one failed retry.
         let unavailable = EncryptionKeyUnavailableModel(detail: "Keychain read failed (status -25308)") { false }
         await unavailable.retry()
-        try write(EncryptionKeyUnavailableView(model: unavailable), "key-unavailable", size: CGSize(width: 680, height: 440), to: dir)
+        try write(KeyUnavailableRedesignView(model: unavailable), "key-unavailable", size: CGSize(width: 680, height: 440), to: dir)
 
         // Settings pane, each state.
         func actions(precheck: String? = nil, backup: Bool = false) -> EncryptionSettingsModel.Actions {
@@ -142,22 +141,21 @@ final class EncryptionScreenshotTests: XCTestCase {
         pdf.confirmation = "correct horse battery"
         await pdf.createRecoveryKey()
         pdf.printWords()
-        try write(EncryptionSetupView(model: pdf), "setup-5-print-to-pdf-refused", size: CGSize(width: 680, height: 1400), to: dir)
+        try write(KeySetupRedesignView(model: pdf), "setup-5-print-to-pdf-refused", size: CGSize(width: 680, height: 1400), to: dir)
     }
 
-    /// The launch window's screens and the Settings card's launch additions (Task 11b-2), at
-    /// the main window's smallest size.
+    /// The launch window's screens, at the main window's smallest size.
     func testRenderLaunchScreens() async throws {
         let dir = try folder()
         let window = CGSize(width: 900, height: 600)
         func screen(_ s: LaunchScreen, _ name: String, busy: Bool = false) throws {
-            try write(LaunchBlockingScreenView(screen: s, busy: busy) { _ in }, name, size: window, to: dir)
+            try write(LaunchBlockingRedesignView(screen: s, busy: busy) { _ in }, name, size: window, to: dir)
         }
 
         let onboarding = EncryptionSetupModel(actions: setupActions(), onContinue: { _ in })
-        try write(VStack(spacing: 0) { EncryptionSetupView(model: onboarding); LaunchQuitBar {} }, "launch-01-onboarding",
+        try write(KeySetupRedesignView(model: onboarding, leave: .init(title: EncryptionCopy.quitAction, isEscape: false, isEnabled: true, run: {})), "launch-01-onboarding",
                   size: CGSize(width: 900, height: 760), to: dir)
-        try write(LaunchMigrationView(fraction: 0.42), "launch-02-migration-progress", size: window, to: dir)
+        try write(LaunchMigrationRedesignView(fraction: 0.42), "launch-02-migration-progress", size: window, to: dir)
         let recovery = EncryptionRecoveryModel(reason: .keyRejected, actions: .init(
             chooseFile: { .chosen(name: "Whimbrel recovery key.txt", contents: "FILE") },
             restoreFromFile: { _, _ in .success(Data(count: 32)) }, restoreFromWords: { _ in .failure(.badWords) },
@@ -165,11 +163,11 @@ final class EncryptionScreenshotTests: XCTestCase {
         await recovery.perform(.chooseFile)
         recovery.passphrase = "correct horse battery"
         await recovery.restore()
-        try write(VStack(spacing: 0) { EncryptionRecoveryView(model: recovery); LaunchQuitBar {} }, "launch-03-recovery-wrong-key",
+        try write(RecoveryRedesignView(model: recovery, quit: {}), "launch-03-recovery-wrong-key",
                   size: CGSize(width: 900, height: 700), to: dir)
         let unavailable = EncryptionKeyUnavailableModel(detail: "") { false }
         await unavailable.retry()
-        try write(VStack(spacing: 0) { EncryptionKeyUnavailableView(model: unavailable); LaunchQuitBar {} }, "launch-04-key-unavailable",
+        try write(KeyUnavailableRedesignView(model: unavailable, quit: {}), "launch-04-key-unavailable",
                   size: window, to: dir)
         try screen(.keyStorageUnavailable, "launch-05-hard-stop-key-storage")
         try screen(.migrationInterrupted, "launch-06-interrupted")
@@ -187,7 +185,7 @@ final class EncryptionScreenshotTests: XCTestCase {
         // Running without the memory database: the notice at the top of the main window / menu bar.
         try write(VStack(spacing: 0) { NoStoreNotice {}; Spacer() }.background(Color.whimbrelBackgroundPage),
                   "launch-17-no-store-notice", size: CGSize(width: 900, height: 160), to: dir)
-        // The menu bar window is 320 points wide (`MenuBarContentView`).
+        // The menu bar window is 320 points wide.
         try write(VStack(alignment: .leading, spacing: 0) {
             NoStoreNotice {}
             VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -201,43 +199,5 @@ final class EncryptionScreenshotTests: XCTestCase {
         .background(Color.whimbrelBackgroundPage), "launch-18-no-store-menubar", size: CGSize(width: 320, height: 260), to: dir)
         try screen(.encryptedFileMissing(backupPresent: false, encryptedCopyPresent: false, lastAction: .reset(.failed)),
                    "launch-16-missing-no-copy-reset-failed")
-
-        // Settings: the launch's notes, Faster search and a finished speed check.
-        let suite = "screenshots.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let speed = SpeedCheckModel(actions: .init(run: { _ in EncryptionSettingsLiveTests.reportJSON }, text: { $0 },
-                                                   save: { _ in URL(fileURLWithPath: "/Users/you/Desktop/Whimbrel encryption speed.txt") }))
-        await speed.check()
-        speed.saveReport()
-        func live(_ notes: [LaunchNote], outcome: CoreOpenOutcome?) -> EncryptionSettingsLive {
-            EncryptionSettingsLive(
-                outcome: outcome, pendingNextLaunch: false,
-                actions: .init(exportEverything: {}, precheck: { nil }, plainBackupExists: { false }, pendingKey: { nil },
-                               setup: { _ in self.setupActions() }, restart: {}, encrypt: { _, _ in .finishesAtNextLaunch }),
-                notes: EncryptionNotesModel(notes: Just(notes).eraseToAnyPublisher(), cleanupRunning: Just(false).eraseToAnyPublisher(),
-                                            actions: .init(deletePlainBackup: { .done }, resetEncryptionStatus: { .done },
-                                                           retryAfterFailedBefore: { true })),
-                fastSearch: FastSearchSetting(defaults: defaults, physicalMemory: 32 << 30), speedCheck: speed)
-        }
-        func card(_ l: EncryptionSettingsLive) -> some View {
-            EncryptionSettingsCard(live: l).padding(Spacing.lg)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(Color.whimbrelBackgroundCard)
-        }
-        try write(card(live([.failedBefore(attempts: 3), .migrationSkipped(.stateUnreadable, skip: nil),
-                             .migrationSkipped(.precheck, skip: .init(reason: "recording", needBytes: nil, freeBytes: nil, phase: nil,
-                                                                      attempts: nil, last: nil))], outcome: nil)),
-                  "settings-11-failed-before-and-skipped", size: CGSize(width: 640, height: 900), to: dir)
-        try write(card(live([.plainBackupKept, .encryptionAvailable], outcome: nil)),
-                  "settings-12-plain-backup-kept-and-available", size: CGSize(width: 640, height: 900), to: dir)
-        try write(card(live([], outcome: .opened)),
-                  "settings-13-encrypted-fast-search-speed-check", size: CGSize(width: 640, height: 860), to: dir)
-        var noStore = live([.memoryDatabaseUnavailable], outcome: nil)
-        noStore.attention = EncryptionCopy.noteStoreUnavailable // hides Faster search and the speed check
-        try write(card(noStore), "settings-15-store-not-opened", size: CGSize(width: 640, height: 760), to: dir)
-        let pending = EncryptionSettingsModel(outcome: nil, actions: live([], outcome: nil).actions, pendingNextLaunch: true)
-        try write(EncryptionSettingsPane(model: pending).padding(Spacing.lg).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .background(Color.whimbrelBackgroundCard), "settings-14-pending-after-relaunch", size: CGSize(width: 640, height: 340), to: dir)
     }
 }

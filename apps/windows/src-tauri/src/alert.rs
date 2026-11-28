@@ -6,7 +6,7 @@
 //! survive losing focus — the user is in a call when it appears — so it closes only on a
 //! button, on the countdown, or when the call is gone.
 
-use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::error::CommandError;
 use crate::meetings::service::{alert_view, AlertView};
@@ -15,24 +15,9 @@ use crate::l10n::tr;
 
 /// The alert window's label (also listed in `capabilities/default.json`).
 pub const ALERT: &str = "alert";
-/// Its size in logical pixels.
-const SIZE: (f64, f64) = (360.0, 190.0);
-/// Its size with the redesign on: the countdown line is a row more.
-const SIZE_REDESIGN: (f64, f64) = (360.0, 230.0);
+/// Its size in logical pixels: the countdown line is a row more than it once was.
+const SIZE: (f64, f64) = (360.0, 230.0);
 
-/// The alert's size for the look in use.
-pub fn alert_size(redesign: bool) -> (f64, f64) {
-    if redesign {
-        SIZE_REDESIGN
-    } else {
-        SIZE
-    }
-}
-
-/// The alert's height now, for the windows that sit below it (`question_alert`, `budget_alert`, `disk_alert`, `still_here`).
-pub fn alert_height(app: &AppHandle) -> f64 {
-    alert_size(app.state::<AppState>().settings.lock().unwrap().redesign_enabled()).1
-}
 /// The gap from the work area's top-right corner.
 const MARGIN: f64 = 12.0;
 
@@ -62,9 +47,8 @@ pub fn hide(app: &AppHandle) {
 }
 
 fn open(app: &AppHandle) -> tauri::Result<()> {
-    let redesign = app.state::<AppState>().settings.lock().unwrap().redesign_enabled();
-    // With the redesign on the window grows with the Windows text scale (`text_scale.rs`); with it off this is `alert_size` as before.
-    let (w, h) = crate::text_scale::size_for_look(alert_size(redesign), redesign);
+    // The window grows with the Windows text scale (`text_scale.rs`).
+    let (w, h) = crate::text_scale::scaled_size(SIZE);
     let alert = WebviewWindowBuilder::new(app, ALERT, WebviewUrl::App("index.html".into()))
         .title(crate::l10n::tr("Meeting detected", &[]))
         .inner_size(w, h)
@@ -75,22 +59,8 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
         .focused(false)
         .visible(false)
         .build()?;
-    if redesign {
-        crate::text_scale::place_corner_alert(app, &alert, (w, h), MARGIN)?;
-        crate::text_scale::show_corner_alert(&alert)?;
-        return Ok(());
-    }
-    if let Some(monitor) = alert.primary_monitor()? {
-        let scale = monitor.scale_factor();
-        let area = monitor.work_area();
-        let (x, y) = alert_origin(
-            ((w * scale).round() as u32, (h * scale).round() as u32),
-            (area.position.x, area.position.y, area.size.width, area.size.height),
-            (MARGIN * scale).round() as i32,
-        );
-        alert.set_position(PhysicalPosition::new(x, y))?;
-    }
-    alert.show()?;
+    crate::text_scale::place_corner_alert(app, &alert, (w, h), MARGIN)?;
+    crate::text_scale::show_corner_alert(&alert)?;
     Ok(())
 }
 
@@ -146,11 +116,8 @@ mod tests {
     const WORK: (i32, i32, u32, u32) = (0, 0, 1920, 1032);
 
     #[test]
-    fn the_alert_is_taller_only_with_the_redesign() {
-        assert_eq!(alert_size(false), (360.0, 190.0));
-        let (w, h) = alert_size(true);
-        assert_eq!(w, 360.0);
-        assert!(h > 190.0);
+    fn the_alert_has_a_row_for_the_countdown() {
+        assert_eq!(SIZE, (360.0, 230.0));
     }
 
     #[test]

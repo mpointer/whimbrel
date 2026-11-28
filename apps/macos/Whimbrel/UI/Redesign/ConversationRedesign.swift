@@ -3,7 +3,7 @@ import SwiftUI
 import WhimbrelUI
 import os
 
-// The conversation page (redesign flag only; docs/ui-redesign/screens/conversations.md parts 3, 4 and 5). A header with the
+// The conversation page (docs/ui-redesign/screens/conversations.md parts 3, 4 and 5). A header with the
 // title (click to rename), the star, the topic chip and a menu with Delete; the scope line; the exchanges oldest
 // first in the same parts as Today's answer; a composer at the bottom. Provider and model are never picked here.
 
@@ -589,7 +589,7 @@ final class ConversationPageModel: ObservableObject {
     }
 }
 
-/// A conversation's page (redesign flag only): a stored conversation, or a new one not stored yet.
+/// A conversation's page: a stored conversation, or a new one not stored yet.
 struct ConversationRedesignView: View {
     private let conversationId: Int64
     private let draft: AppState.ConversationDraft?

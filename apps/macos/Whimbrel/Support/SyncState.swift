@@ -71,6 +71,8 @@ extension SyncStatus {
 final class SyncState: ObservableObject {
     @Published private(set) var status: SyncStatus = .notSignedIn
     @Published private(set) var devices: [SyncDeviceRecord] = []
+    /// True once a device list has been read this session, so an empty `devices` can be told from "not read yet".
+    @Published private(set) var devicesLoaded = false
     /// Error from a Devices-panel action (`approve`) that failed, kept
     /// separate from `status` so a transient failure re-approving/
     /// re-sending a key to one peer doesn't blow away an otherwise-healthy
@@ -748,6 +750,7 @@ final class SyncState: ObservableObject {
         lastAuthAt = nil
         lastRenewAttemptAt = nil
         setDevices([])
+        devicesLoaded = false
         planPollTask?.cancel()
         planPollTask = nil
         plan = nil
@@ -1139,6 +1142,7 @@ final class SyncState: ObservableObject {
     }
 
     private func setDevices(_ newValue: [SyncDeviceRecord]) {
+        if !devicesLoaded { devicesLoaded = true }
         guard devices != newValue else { return }
         devices = newValue
     }

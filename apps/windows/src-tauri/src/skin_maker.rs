@@ -809,7 +809,7 @@ mod tests {
     }
 
     fn pool() -> Vec<Palette> {
-        crate::commands::skins::palette_pool(&crate::commands::skins::BundledDirs { skins: repo().join("skins"), themes: repo().join("themes") }, false)
+        crate::commands::skins::palette_pool(&crate::commands::skins::BundledDirs { skins: repo().join("skins"), themes: repo().join("themes") })
     }
 
     struct Scratch(PathBuf);

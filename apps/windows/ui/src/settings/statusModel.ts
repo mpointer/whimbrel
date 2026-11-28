@@ -1,4 +1,4 @@
-import type { AiSettings, DeviceView, HostView, Provider, RetentionSettings, RunView, StatusView, SyncView, UpdateCheck } from "../generated/types";
+import type { AiSettings, DeviceView, HostView, Provider, RunView, StatusView, SyncView, UpdateCheck } from "../generated/types";
 import { t } from "../l10n";
 import { modelField, modelWarningLine, monthSpent, ollamaWarningLine, providerLabel, thisMonth } from "./aiModel";
 import { stateLabel } from "./syncModel";
@@ -94,17 +94,6 @@ export function aiLines(ai: AiSettings | null): string[] {
     const spent = monthSpent(ai.usage, id);
     if (spent <= 0 && !cents) continue;
     lines.push(`${providerName(ai, id)}: ${thisMonth(spent, cents).text}`);
-  }
-  return lines;
-}
-
-export function storageLines(status: Pick<StatusView, "audioBytes" | "imageBytes"> | null, retention: Pick<RetentionSettings, "meetingDays"> | null): string[] {
-  const lines: string[] = [];
-  if (status) lines.push(t("Audio: {audio}. Images: {images}.", { audio: diskSize(status.audioBytes), images: diskSize(status.imageBytes) }));
-  if (retention) {
-    lines.push(
-      retention.meetingDays == null ? t("Meetings are kept forever.") : t("Meetings are kept for {count} days.", { count: retention.meetingDays }),
-    );
   }
   return lines;
 }

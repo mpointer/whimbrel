@@ -458,7 +458,6 @@ pub fn run() {
             commands::schedule::today_upcoming,
             commands::schedule::meeting_record_start_event,
             commands::skins::skins_list,
-            commands::skins::redesign_enabled,
             commands::skins::skin_image,
             commands::skins::skin_sources,
             commands::skins::skin_turn,

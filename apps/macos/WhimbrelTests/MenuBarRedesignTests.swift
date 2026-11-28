@@ -62,8 +62,8 @@ final class MenuBarRedesignTests: XCTestCase {
         XCTAssertFalse(MenuBarAdapter.canStop(hasActiveMeeting: false, isStarting: false, audioLive: false))
     }
 
-    /// #992: a detected or calendar start turns its audio on before its meeting row is saved. With the flag on, the menu and the
-    /// main window's bar offer the Stop the old menu's End Meeting offers (`AppState.canStopStartingRecording`), and say Saving after
+    /// #992: a detected or calendar start turns its audio on before its meeting row is saved. The menu and the
+    /// main window's bar offer the Stop that End Meeting offers (`AppState.canStopStartingRecording`), and say Saving after
     /// it (`isStopPendingForRow`). Every row is a plain value here: no AppState, no clock, no defaults.
     func testStopOfferForEveryStateOfAStart() {
         func offer(meeting: Bool = false, starting: Bool, audio: Bool, canStopStarting: Bool, pending: Bool) -> WStopOffer {

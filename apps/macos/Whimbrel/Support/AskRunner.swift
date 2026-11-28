@@ -32,8 +32,7 @@ struct AskSourced: Equatable {
     var dateRange: CoreDateRange?
 }
 
-/// Asks one question at a time for the redesigned Ask screens (redesign flag only; the old Library Ask
-/// in `TimelineView+Ask.swift` is untouched). No picker: the account's routing
+/// Asks one question at a time for the Ask screens. No picker: the account's routing
 /// (`RoutingSettings.defaultSelection()`) and the prompt library's Ask instructions decide.
 ///
 /// The scope decides what is asked: `.everything` prepares with `prepareAsk` (the Library's pipeline,
@@ -603,7 +602,7 @@ final class AskRunner: ObservableObject {
     /// `askQuestionSourced`. An excluded client's question, and a spent streamed budget, go to the blocking call,
     /// which keeps an excluded client's question on this Mac or refuses it.
     private func startSourced(_ request: Request, token: UUID) {
-        guard let store = appState.coreStore else { return end(.failed(TimelineView.storeUnavailableMessage)) }
+        guard let store = appState.coreStore else { return end(.failed(AskShared.storeUnavailableMessage)) }
         let requireLocal = request.options.requireLocal
         let streams = WAskStreamEnd.mayStream(
             promisesLocal: requireLocal, streamIsOnDevice: Self.streamIsOnDevice(request.route, model: request.model),
@@ -686,7 +685,7 @@ final class AskRunner: ObservableObject {
 
     private func finalizeSourced(_ run: Run, text: String) {
         guard let store = appState.coreStore, let sourced = run.sourced else {
-            return end(.failed(TimelineView.storeUnavailableMessage))
+            return end(.failed(AskShared.storeUnavailableMessage))
         }
         let usage = streaming.usage
         let hosted = HostedModelDefaults.hostedProviders.contains(run.provider.rawValue)
@@ -712,7 +711,7 @@ final class AskRunner: ObservableObject {
     /// The blocking sourced call on the slow lane, with the waiting lines: the excluded-client check first, then
     /// `askQuestionSourced`. It cannot be stopped.
     private func answerSourcedBlocking(_ request: Request, token: UUID) {
-        guard let store = appState.slowStore else { return end(.failed(TimelineView.storeUnavailableMessage)) }
+        guard let store = appState.slowStore else { return end(.failed(AskShared.storeUnavailableMessage)) }
         stage = .blocking
         progress.streaming = false
         progress.canStop = false
@@ -813,7 +812,7 @@ enum ConversationTitleJob {
         _ defaults: (provider: RoutingSettings.Provider, ollamaModel: String, hostedModel: String)
     ) -> (provider: RoutingSettings.Provider, modelLabel: String) {
         effectiveAskRoutingProvider(
-            query: TimelineView.nonTimeCriticalSentinelQuery, pickerProvider: defaults.provider,
+            query: AskShared.nonTimeCriticalSentinelQuery, pickerProvider: defaults.provider,
             pickerModelLabel: defaults.provider == .ollama ? defaults.ollamaModel : defaults.hostedModel,
             pickerTouched: false, defaults: defaults)
     }

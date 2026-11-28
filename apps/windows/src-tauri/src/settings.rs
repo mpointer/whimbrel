@@ -177,9 +177,6 @@ pub mod keys {
     /// Cloud" before a Whimbrel Cloud is on the account (author-only phase). Off unless set to `true` by hand
     /// in settings.json, as the Mac's `com.mpointer.whimbrel.cloudRoutines.enabled` default.
     pub const CLOUD_ROUTINES_ENABLED: &str = "cloudRoutines.enabled";
-    /// Device-local, never synced, no UI: the old hidden switch for the redesign. Nothing reads it any more
-    /// (`redesign_enabled()` is always true); the key stays so a stored value is left alone.
-    pub const REDESIGN_ENABLED: &str = "redesign.enabled";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -679,12 +676,6 @@ impl SettingsFile {
         self.get(keys::CLOUD_ROUTINES_ENABLED).unwrap_or(false)
     }
 
-    /// The redesign switch: on for everyone. The stored [`keys::REDESIGN_ENABLED`] value is no longer read and is left
-    /// in the file. The old branches that test this go in the clean-up (docs/ui-redesign/screens/switch-removal.md, B).
-    pub fn redesign_enabled(&self) -> bool {
-        true
-    }
-
     /// Whether the user has the MCP server switched on. Off by default: it opens memory to other programs.
     pub fn mcp_server_enabled(&self) -> bool {
         self.get(keys::MCP_SERVER_ENABLED).unwrap_or(false)
@@ -868,9 +859,9 @@ impl SettingsFile {
         self.get(keys::RECORDING_NOTICE_ENABLED).unwrap_or(false)
     }
 
-    /// What the notice shows: a stored choice always wins; with none stored it is on (the redesign switch is on for everyone).
+    /// What the notice shows: a stored choice always wins; with none stored it is on.
     pub fn recording_notice_on(&self) -> bool {
-        self.get(keys::RECORDING_NOTICE_ENABLED).unwrap_or_else(|| self.redesign_enabled())
+        self.get(keys::RECORDING_NOTICE_ENABLED).unwrap_or(true)
     }
 
     /// The custom wording, or "" for the default.
@@ -1345,22 +1336,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("settings.json")
-    }
-
-    #[test]
-    fn the_redesign_switch_is_on_for_everyone_whatever_is_stored_and_never_synced() {
-        let path = temp_path("redesign");
-        let mut s = SettingsFile::load(&path);
-        assert!(s.redesign_enabled(), "on with nothing stored");
-        assert_eq!(keys::REDESIGN_ENABLED, "redesign.enabled");
-        s.set(keys::REDESIGN_ENABLED, Some(false));
-        assert!(s.redesign_enabled(), "a stored false is no longer read");
-        s.set(keys::REDESIGN_ENABLED, Some("yes"));
-        assert!(s.redesign_enabled(), "a stored value that is not a bool does not turn it off");
-        s.set(keys::REDESIGN_ENABLED, Some(true));
-        assert!(s.redesign_enabled());
-        assert_eq!(s.get::<bool>(keys::REDESIGN_ENABLED), Some(true), "the stored value is left alone");
-        assert!(!crate::syncing::settings::synced_keys().iter().any(|k| k == keys::REDESIGN_ENABLED));
     }
 
     #[test]

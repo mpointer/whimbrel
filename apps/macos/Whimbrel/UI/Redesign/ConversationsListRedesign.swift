@@ -2,7 +2,7 @@ import SwiftUI
 import WhimbrelUI
 import os
 
-// The Conversations section's list (redesign flag only; docs/ui-redesign/screens/conversations.md part 6). New conversation
+// The Conversations section's list (docs/ui-redesign/screens/conversations.md part 6). New conversation
 // at the top, a search over titles, then every conversation, starred first and then most recently updated. Each row
 // shows its title, its topic, when it was last updated and the first line of its latest answer; its menu stars,
 // renames and deletes it.

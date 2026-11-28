@@ -2,12 +2,11 @@ import SwiftUI
 import WhimbrelUI
 
 // The restyle pass (step 10, docs/ui-redesign/screens/restyle.md) on the Mac: Topics, Automations, the Meetings list and the capture,
-// episode and thread windows keep their layout, controls and words and take the Thread look while the hidden redesign switch is on.
+// episode and thread windows keep their layout, controls and words and take the Thread look.
 //
-// One mechanism. A restyled screen's root calls `.restyledScreen(redesign:)`, which with the switch on gives it the app's theme
-// (`redesignThemed`) and the `threadLook` environment value, and with it off returns the view untouched. Everything below reads
-// `threadLook` and, with it `.classic` (the default, and the only value anywhere with the switch off), draws exactly what the old
-// code drew. The rules (which role, which radius, which button) are pure and live in the WhimbrelUI package (`WRestyle`), where
+// One mechanism. A restyled screen's root calls `.restyledScreen()`, which gives it the app's theme (`redesignThemed`) and the
+// `threadLook` environment value. Everything below reads `threadLook` and, with it `.classic` (the default, outside a restyled
+// screen), draws exactly what the screen drew before the pass. The rules (which role, which radius, which button) are pure and live in the WhimbrelUI package (`WRestyle`), where
 // they are tested.
 
 private struct ThreadLookKey: EnvironmentKey {
@@ -15,7 +14,7 @@ private struct ThreadLookKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// `.thread` inside a restyled screen with the redesign switch on; `.classic` everywhere else.
+    /// `.thread` inside a restyled screen; `.classic` everywhere else.
     var threadLook: WLook {
         get { self[ThreadLookKey.self] }
         set { self[ThreadLookKey.self] = newValue }
@@ -23,20 +22,14 @@ extension EnvironmentValues {
 }
 
 private struct RestyledScreenRoot: ViewModifier {
-    let redesign: Bool
-
-    @ViewBuilder func body(content: Content) -> some View {
-        if redesign {
-            content.redesignThemed().environment(\.threadLook, .thread)
-        } else {
-            content
-        }
+    func body(content: Content) -> some View {
+        content.redesignThemed().environment(\.threadLook, .thread)
     }
 }
 
 extension View {
-    /// The root of a screen that takes the Thread look. Pass `appState.redesignEnabled`. With the switch off this is the view itself.
-    func restyledScreen(redesign: Bool) -> some View { modifier(RestyledScreenRoot(redesign: redesign)) }
+    /// The root of a screen that takes the Thread look.
+    func restyledScreen() -> some View { modifier(RestyledScreenRoot()) }
 }
 
 // MARK: Text
@@ -171,8 +164,8 @@ extension View {
     func restyledButton(_ kind: WRestyleButtonKind) -> some View { modifier(RestyledButton(kind: kind)) }
 }
 
-/// A single line or multi-line text field: the system's rounded field with the switch off, the Thread field (control border, focus
-/// ring) with it on. Same label, same binding, same limits.
+/// A single line or multi-line text field: the system's rounded field outside a restyled screen, the Thread field (control border, focus
+/// ring) inside one. Same label, same binding, same limits.
 struct RestyledTextField: View {
     @Environment(\.threadLook) private var look
     let placeholder: LocalizedStringResource
@@ -199,7 +192,7 @@ struct RestyledTextField: View {
     }
 }
 
-/// A list section: the system's titled section with the switch off; with it on, a header in the theme's section label style.
+/// A list section: the system's titled section outside a restyled screen; inside one, a header in the theme's section label style.
 struct RestyledSection<Content: View>: View {
     @Environment(\.threadLook) private var look
     @Environment(\.wTheme) private var theme
@@ -219,7 +212,7 @@ struct RestyledSection<Content: View>: View {
     }
 }
 
-/// A window's loading state: the system's spinner with the switch off, the Thread quiet bar with it on.
+/// A window's loading state: the system's spinner outside a restyled screen, the Thread quiet bar inside one.
 struct RestyledProgress: View {
     @Environment(\.threadLook) private var look
 
@@ -246,8 +239,8 @@ extension View {
     func restyledList() -> some View { modifier(RestyledList()) }
 }
 
-/// A menu picker over a list of accounts: the system's menu picker with the switch off, the Thread picker (control border, focus
-/// ring) with it on. Same label, same choices, same binding.
+/// A menu picker over a list of accounts: the system's menu picker outside a restyled screen, the Thread picker (control border, focus
+/// ring) inside one. Same label, same choices, same binding.
 struct RestyledAccountPicker: View {
     @Environment(\.threadLook) private var look
     let label: LocalizedStringResource

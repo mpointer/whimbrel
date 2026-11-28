@@ -93,6 +93,14 @@ export function phoneCardState(devices: Pick<DeviceView, "status" | "platform">[
   return devices.some((d) => d.status === "approved" && (d.platform === "ios" || d.platform === "android")) ? "connected" : "beta";
 }
 
+/**
+ * True while sync is ready but the first device list has not arrived: the beta card would show for a moment and then collapse
+ * to "Phone: connected". Once `waitedOut` (the list never came, for instance offline) the beta card shows.
+ */
+export function phoneCardLoading(ready: boolean, loaded: boolean, waitedOut: boolean): boolean {
+  return ready && !loaded && !waitedOut;
+}
+
 /** Ids of pending devices whose comparison code is shared with another pending device. */
 export function collidingPendingIds(devices: DeviceView[]): Set<string> {
   const byCode = new Map<string, string[]>();

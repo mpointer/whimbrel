@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import { openAiSettings } from "../../api";
 import { statusLine } from "../../chat/chatModel";
-import { markdownComponents } from "../../chat/AskView";
+import { markdownComponents } from "../../chat/markdown";
 import type { FindFilterInput } from "../../generated/types";
 import { t, useL10n } from "../../l10n";
 import { WButton, WIcon, WSourceMark } from "../../system";

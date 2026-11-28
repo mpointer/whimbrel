@@ -123,7 +123,7 @@ private struct GeneralSettingsRedesignBody: View {
             writeIn: writeIn, writeInTags: AppLanguage.writeInOptions, localModelNote: note,
             appearance: appearance.choice, appearanceLockedCaption: appearance.lockedCaption,
             skins: SkinGalleryAdapter.model(
-                skins: skins.skins, redesign: RedesignFlag.isOn(), selectedSkinId: skins.selected.id,
+                skins: skins.skins, selectedSkinId: skins.selected.id,
                 selectedPaletteId: skins.selectedPaletteId, palettes: { skins.palettes(for: $0) },
                 dark: colorScheme == .dark, isBusy: skinChat.isRunning)))
     }

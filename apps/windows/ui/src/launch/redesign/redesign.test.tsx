@@ -2,23 +2,22 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { LaunchAnswer, LaunchScreenView, LaunchStageView } from "../../generated/types";
 import { Tree, press, text, type TNode, type Tree as TreeT } from "../../testkit/tree";
 import { LaunchGate } from "../LaunchGate";
-import { MigratingScreen as OldMigrating } from "../LaunchScreens";
+import { recoveryExplanation } from "../recoveryModel";
+import { screenContent } from "../screenModel";
 import { SetupModel } from "../setupModel";
 import { StartingScreen as StartingScreenR } from "./screens";
 import { SetupScreen } from "./SetupScreen";
 
-// The launch's redesigned stages (flag on) against the old ones (flag off). The shell is faked at its one door,
-// `invoke`, so what is compared is the Tauri commands and their arguments, which is what must not change.
+// The launch's stages. The shell is faked at its one door, `invoke`, so what is checked is the Tauri commands and their
+// arguments, which is what must not change.
 vi.mock("react", async (actual) => (await import("../../testkit/tree")).withStubbedHooks(await actual<typeof import("react")>()));
 
 const h = vi.hoisted(() => ({
-  flag: false,
   view: { stage: { kind: "starting" } } as { stage: unknown },
   generation: 1,
   calls: [] as [string, unknown][],
   answers: {} as Record<string, unknown>,
 }));
-vi.mock("../../redesign", () => ({ useRedesign: () => h.flag }));
 vi.mock("../../App", () => ({ App: () => null }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: () => Promise.resolve(() => {}) }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -35,7 +34,6 @@ const GOOD = "a long passphrase";
 
 beforeEach(() => {
   vi.stubGlobal("document", { activeElement: null, body: { nodeType: 1 } });
-  h.flag = false;
   h.calls = [];
   h.generation += 1;
   h.answers = {
@@ -53,21 +51,13 @@ beforeEach(() => {
   };
 });
 
-async function gate(stage: LaunchStageView, flag: boolean): Promise<TreeT> {
-  h.flag = flag;
+async function gate(stage: LaunchStageView): Promise<TreeT> {
   h.view = { stage };
   const tree = new Tree(() => <LaunchGate />).render();
   await tree.settle();
   return tree;
 }
 const commands = () => h.calls.filter(([c]) => c !== "launch_state" && c !== "launch_fresh_library_notice");
-
-/** A tree as the page would hold it, without the functions: for "the same DOM". */
-function shape(tree: TreeT): string {
-  const strip = (n: TNode | string): unknown =>
-    typeof n === "string" ? n : { tag: n.tag, props: Object.fromEntries(Object.entries(n.props).filter(([k]) => k !== "children").map(([k, v]) => [k, typeof v === "function" ? "[fn]" : v])), children: n.children.map(strip) };
-  return JSON.stringify(tree.root.map(strip));
-}
 
 /** A field by its visible label, as either look draws it: tied with `for`, wrapped in the label, or named by aria-label. `nth` picks among several. */
 function named(tree: TreeT, label: string, nth = 0): TNode {
@@ -85,41 +75,21 @@ function box(tree: TreeT, label: string): TNode {
 }
 const click = (b: TNode) => {
   if (b.props.onClick) return (b.props.onClick as () => void)();
-  // The old screens put some buttons in a form; pressing one submits it.
-  let form = b.parent;
-  while (form && form.tag !== "form") form = form.parent;
-  if (b.props.type !== "submit" || !form) throw new Error(`nothing to press on ${text(b)}`);
-  (form.props.onSubmit as (e: unknown) => void)({ preventDefault() {} });
+  throw new Error(`nothing to press on ${text(b)}`);
 };
 const tick = (c: TNode, on = true) => (c.props.onChange as (e: unknown) => void)({ target: { checked: on } });
 const type = (f: TNode, value: string) => (f.props.onChange as (e: unknown) => void)({ target: { value } });
 const enter = (tree: TreeT, tag = "div", inputType?: string) => press(tree.one((n) => n.tag === "main"), "Enter", { tag, type: inputType });
 const escape = (tree: TreeT) => press(tree.one((n) => n.tag === "main"), "Escape", { tag: "div" });
 
-describe("the switch", () => {
+describe("the launch's page", () => {
   const SCREENS: { name: string; stage: LaunchStageView }[] = [
     { name: "damaged", stage: { kind: "screen", lastAction: null, offers: ["retry", "quit"], screen: { kind: "damaged", reason: "noAccess" } } },
     { name: "key storage", stage: { kind: "screen", lastAction: null, offers: ["retry", "quit"], screen: { kind: "keyStorageUnavailable" } } },
     { name: "migrating", stage: { kind: "migrating", overall: 0.42 } },
   ];
 
-  it.each(SCREENS)("flag off: $name is the old screen, in the old wrapper, with no new class", async ({ stage }) => {
-    const tree = await gate(stage, false);
-    expect(tree.all((n) => String(n.props.className ?? "").split(" ").includes("launch"))).toHaveLength(1);
-    expect(tree.all((n) => /\bw-(flow|sys)\b/.test(String(n.props.className ?? "")))).toHaveLength(0);
-  });
-
-  it("flag off: the migration is exactly what the old screen draws, wrapped as before", async () => {
-    const tree = await gate({ kind: "migrating", overall: 0.42 }, false);
-    const expected = new Tree(() => (
-      <div className="launch">
-        <OldMigrating overall={0.42} />
-      </div>
-    )).render();
-    expect(shape(tree)).toBe(shape(expected));
-  });
-
-  it("flag on: every stage draws on the new page, never the old launch classes", async () => {
+  it("every stage draws on the page, never the old launch classes", async () => {
     const stages: LaunchStageView[] = [
       { kind: "onboarding", reusesKey: false },
       { kind: "migrating", overall: 0.3 },
@@ -129,26 +99,22 @@ describe("the switch", () => {
       ...SCREENS.filter((s) => s.stage.kind === "screen").map((s) => s.stage),
     ];
     for (const stage of stages) {
-      const tree = await gate(stage, true);
+      const tree = await gate(stage);
       expect(tree.all((n) => n.tag === "main" && n.props.className === "w-flow"), stage.kind).toHaveLength(1);
       expect(tree.all((n) => /\blaunch(-screen|-starting)?\b|\bsetup\b/.test(String(n.props.className ?? ""))), stage.kind).toHaveLength(0);
     }
   });
 
-  it("the start waits a second before it shows anything, in either look, and has no buttons", async () => {
-    for (const flag of [false, true]) {
-      const tree = await gate({ kind: "starting" }, flag);
-      expect(tree.all((n) => n.tag === "button")).toHaveLength(0);
-      expect(tree.has("Starting Whimbrel…")).toBe(false);
-    }
+  it("the start waits a second before it shows anything, and has no buttons", async () => {
+    const tree = await gate({ kind: "starting" });
+    expect(tree.all((n) => n.tag === "button")).toHaveLength(0);
+    expect(tree.has("Starting Whimbrel…")).toBe(false);
   });
 
-  it("quitting draws the start screen in either look, with no buttons", async () => {
-    const now = await gate({ kind: "quitting" }, true);
+  it("quitting draws the start screen, with no buttons", async () => {
+    const now = await gate({ kind: "quitting" });
     expect(now.all((n) => String(n.props.className ?? "").includes("w-flow-root"))).toHaveLength(1);
     expect(now.all((n) => n.tag === "button")).toHaveLength(0);
-    const old = await gate({ kind: "quitting" }, false);
-    expect(old.all((n) => n.props.className === "launch-starting")).toHaveLength(1);
   });
 
   it("the start with no delay shows its words on the new look's wait page", () => {
@@ -160,8 +126,8 @@ describe("the switch", () => {
 });
 
 describe("the migration", () => {
-  it("shows a progress bar that holds its value, a page title and no button, as the old one", async () => {
-    const tree = await gate({ kind: "migrating", overall: 0.42 }, true);
+  it("shows a progress bar that holds its value, a page title and no button", async () => {
+    const tree = await gate({ kind: "migrating", overall: 0.42 });
     const bar = tree.one((n) => n.props.role === "progressbar");
     expect(bar.props["aria-valuenow"]).toBe(42);
     expect(tree.all((n) => n.tag === "button")).toHaveLength(0);
@@ -175,34 +141,29 @@ describe("the migration", () => {
 describe("the key-unavailable screen", () => {
   const stage = (stillUnavailable: boolean): LaunchStageView => ({ kind: "keyUnavailable", stillUnavailable });
 
-  it("has Try again and Quit and sends the same answers as the old screen", async () => {
+  it("has Try again and Quit and sends the matching answers", async () => {
     for (const [label, answer] of [["Try again", "retry"], ["Quit Whimbrel", "quit"]] as const) {
-      const per: unknown[][] = [];
-      for (const flag of [false, true]) {
-        h.calls = [];
-        const tree = await gate(stage(false), flag);
-        click(tree.button(label));
-        per.push(commands());
-      }
-      expect(per[1]).toEqual(per[0]);
-      expect(per[1]).toEqual([["launch_respond", { answer }]]);
+      h.calls = [];
+      const tree = await gate(stage(false));
+      click(tree.button(label));
+      expect(commands()).toEqual([["launch_respond", { answer }]]);
     }
   });
 
   it("says the key still can't be read, as an alert, only on the second identical stage", async () => {
-    expect((await gate(stage(false), true)).has("still can't be read")).toBe(false);
-    const again = await gate(stage(true), true);
+    expect((await gate(stage(false))).has("still can't be read")).toBe(false);
+    const again = await gate(stage(true));
     expect(again.one((n) => n.props.role === "alert").children.map(text).join("")).toContain("The key still can't be read.");
   });
 
   it("Return is Try again", async () => {
-    const tree = await gate(stage(false), true);
+    const tree = await gate(stage(false));
     expect(enter(tree).prevented).toBe(true);
     expect(commands()).toEqual([["launch_respond", { answer: "retry" }]]);
   });
 
   it("keeps its fine print and the sentence that nothing was changed", async () => {
-    const tree = await gate(stage(false), true);
+    const tree = await gate(stage(false));
     expect(tree.has("Whimbrel has not opened, changed or deleted anything.")).toBe(true);
     expect(tree.has("you do not need your recovery key for it.")).toBe(true);
   });
@@ -221,43 +182,47 @@ describe("the blocking screens", () => {
   const stageOf = (c: (typeof CASES)[number]): LaunchStageView => ({ kind: "screen", lastAction: null, offers: c.offers, screen: c.screen });
   const labels = (tree: TreeT) => tree.all((n) => n.tag === "button" && n.props["data-answer"] !== undefined).map((n) => `${n.props["data-answer"]}:${text(n)}`).sort();
 
-  it.each(CASES)("$name: the same answers and the same words on the buttons as the old screen", async (c) => {
-    const old = await gate(stageOf(c), false);
-    const now = await gate(stageOf(c), true);
-    expect(labels(now)).toEqual(labels(old));
+  it.each(CASES)("$name: the buttons are exactly what the shell offers, Quit always among them", async (c) => {
+    const now = await gate(stageOf(c));
+    expect(labels(now).map((l) => l.split(":")[0])).toEqual([...c.offers].sort());
     expect(labels(now).some((l) => l.startsWith("quit:"))).toBe(true);
-    // The title and every paragraph are the old screen's words.
-    expect(now.one((n) => n.tag === "h1").children.join("")).toBe(old.one((n) => n.tag === "h1").children.join(""));
-    for (const p of old.all((n) => n.tag === "p")) expect(now.has(text(p)), text(p)).toBe(true);
+    expect(now.one((n) => n.tag === "h1")).toBeTruthy();
   });
 
-  it.each(CASES)("$name: each answer that needs no question sends the same command as the old one", async (c) => {
+  it.each(CASES)("$name: the title, the paragraphs and the button words are the screen model's", async (c) => {
+    const now = await gate(stageOf(c));
+    const content = screenContent(c.screen, c.offers);
+    expect(now.one((n) => n.tag === "h1").children.join("")).toBe(content.title);
+    for (const p of content.paragraphs) expect(now.has(p), p).toBe(true);
+    expect(labels(now)).toEqual(content.buttons.map((b) => `${b.answer}:${b.label}`).sort());
+  });
+
+  it("draws no button the shell did not offer, even on a screen that could have it", async () => {
+    const plain = CASES.find((c) => c.name === "plain open failed")!;
+    const now = await gate({ kind: "screen", lastAction: null, offers: ["quit"], screen: plain.screen });
+    expect(labels(now).map((l) => l.split(":")[0])).toEqual(["quit"]);
+  });
+
+  it.each(CASES)("$name: each answer that needs no question sends its command", async (c) => {
     for (const answer of c.offers) {
-      const sent: unknown[][] = [];
-      for (const flag of [false, true]) {
-        h.calls = [];
-        const tree = await gate(stageOf(c), flag);
-        const b = tree.one((n) => n.tag === "button" && n.props["data-answer"] === answer);
-        click(b);
-        sent.push(commands());
-        if (answer === "restoreRollbackCopy" || answer === "resetEncryptionStatus") {
-          // It asks first: nothing is sent until the question is answered.
-          expect(commands(), `${c.name} ${answer} flag=${flag}`).toEqual([]);
-          tree.render();
-          const dialog = tree.one((n) => n.props.role === "alertdialog");
-          expect(dialog).toBeTruthy();
-          click(tree.all((n) => n.tag === "button" && text(n).trim() === (answer === "restoreRollbackCopy" ? "Put it back" : "Reset and start empty"))[0]);
-          sent[sent.length - 1] = commands();
-        }
+      h.calls = [];
+      const tree = await gate(stageOf(c));
+      click(tree.one((n) => n.tag === "button" && n.props["data-answer"] === answer));
+      if (answer === "restoreRollbackCopy" || answer === "resetEncryptionStatus") {
+        // It asks first: nothing is sent until the question is answered.
+        expect(commands(), `${c.name} ${answer}`).toEqual([]);
+        tree.render();
+        const dialog = tree.one((n) => n.props.role === "alertdialog");
+        expect(dialog).toBeTruthy();
+        click(tree.all((n) => n.tag === "button" && text(n).trim() === (answer === "restoreRollbackCopy" ? "Put it back" : "Reset and start empty"))[0]);
       }
-      expect(sent[1], `${c.name} ${answer}`).toEqual(sent[0]);
-      expect(sent[1]).toEqual([["launch_respond", { answer }]]);
+      expect(commands(), `${c.name} ${answer}`).toEqual([["launch_respond", { answer }]]);
     }
   });
 
   it("draws the one primary last, and one primary only", async () => {
     for (const c of CASES) {
-      const tree = await gate(stageOf(c), true);
+      const tree = await gate(stageOf(c));
       const row = tree.one((n) => n.props.className === "w-flow-actions");
       const buttons = row.children.flatMap((ch) => (typeof ch === "string" ? [] : ch.tag === "button" ? [ch] : [])).filter((b) => b.props["data-answer"] !== undefined);
       const primaries = buttons.filter((b) => String(b.props.className).includes("w-button-primary"));
@@ -268,7 +233,7 @@ describe("the blocking screens", () => {
 
   it("never shows more than three controls in a row: past three, the first go under More options", async () => {
     const offers: LaunchAnswer[] = ["retry", "restoreRollbackCopy", "resetEncryptionStatus", "continueWithoutStore", "quit"];
-    const tree = await gate({ kind: "screen", lastAction: null, offers, screen: { kind: "error", error: { kind: "plainOpenFailed" } } }, true);
+    const tree = await gate({ kind: "screen", lastAction: null, offers, screen: { kind: "error", error: { kind: "plainOpenFailed" } } });
     const row = tree.one((n) => n.props.className === "w-flow-actions");
     const controls = row.children.filter((c): c is TNode => typeof c !== "string");
     expect(controls.length).toBeLessThanOrEqual(3);
@@ -282,12 +247,12 @@ describe("the blocking screens", () => {
   });
 
   it("Return is the primary action, and on a question it only opens the question", async () => {
-    const quitOnly = await gate(stageOf(CASES[2]), true);
+    const quitOnly = await gate(stageOf(CASES[2]));
     enter(quitOnly);
     expect(commands()).toEqual([["launch_respond", { answer: "quit" }]]);
 
     h.calls = [];
-    const restore = await gate(stageOf(CASES[4]), true);
+    const restore = await gate(stageOf(CASES[4]));
     enter(restore);
     expect(commands()).toEqual([]);
     restore.render();
@@ -295,7 +260,7 @@ describe("the blocking screens", () => {
   });
 
   it("Escape closes the question and sends nothing", async () => {
-    const tree = await gate(stageOf(CASES[5]), true);
+    const tree = await gate(stageOf(CASES[5]));
     click(tree.one((n) => n.props["data-answer"] === "resetEncryptionStatus"));
     tree.render();
     const dialog = tree.one((n) => n.props.role === "alertdialog");
@@ -306,12 +271,12 @@ describe("the blocking screens", () => {
   });
 
   it("a question's confirming button is destructive only for the reset, and Cancel has the focus first on both", async () => {
-    const reset = await gate(stageOf(CASES[5]), true);
+    const reset = await gate(stageOf(CASES[5]));
     click(reset.one((n) => n.props["data-answer"] === "resetEncryptionStatus"));
     reset.render();
     expect(String(reset.button("Reset and start empty").props.className)).toContain("w-button-destructive");
     expect(reset.button("Cancel").props["data-initial"]).toBe("");
-    const restore = await gate(stageOf(CASES[4]), true);
+    const restore = await gate(stageOf(CASES[4]));
     click(restore.one((n) => n.props["data-answer"] === "restoreRollbackCopy"));
     restore.render();
     expect(String(restore.button("Put it back").props.className)).not.toContain("w-button-destructive");
@@ -320,7 +285,7 @@ describe("the blocking screens", () => {
   });
 
   it("a screen with nothing to show between its words and its buttons draws no empty body", async () => {
-    const tree = await gate(stageOf(CASES[0]), true);
+    const tree = await gate(stageOf(CASES[0]));
     expect(tree.all((n) => n.props.className === "w-flow-body")).toHaveLength(0);
   });
 
@@ -331,12 +296,12 @@ describe("the blocking screens", () => {
       offers: ["quit", "restoreRollbackCopy"],
       screen: CASES[4].screen,
     };
-    const tree = await gate(stage, true);
+    const tree = await gate(stage);
     expect(tree.one((n) => n.props.role === "alert").children.map(text).join("")).toBe("The copy could not be put back. Nothing was changed.");
   });
 
   it("buttons are off while an answer is in flight", async () => {
-    const tree = await gate(stageOf(CASES[0]), true);
+    const tree = await gate(stageOf(CASES[0]));
     click(tree.one((n) => n.props["data-answer"] === "retry"));
     tree.render();
     for (const b of tree.all((n) => n.tag === "button" && n.props["data-answer"] !== undefined)) expect(b.props.disabled).toBe(true);
@@ -350,46 +315,51 @@ describe("the blocking screens", () => {
 describe("recovery", () => {
   const stage = (reason: "needsKey" | "keyRejected"): LaunchStageView => ({ kind: "recovery", reason });
 
-  it("says why, in the old words, for both reasons, with the old fine print", async () => {
+  it("says why, for both reasons", async () => {
     for (const reason of ["needsKey", "keyRejected"] as const) {
-      const old = await gate(stage(reason), false);
-      const now = await gate(stage(reason), true);
-      for (const p of old.all((n) => n.tag === "p" && !String(n.props.className ?? "").includes("setup-error"))) expect(now.has(text(p)), text(p)).toBe(true);
+      const now = await gate(stage(reason));
+      expect(now.has(recoveryExplanation(reason)), reason).toBe(true);
       expect(now.one((n) => n.tag === "h1").children.join("")).toBe("Whimbrel can't open your memory database");
     }
   });
 
-  const walk = async (flag: boolean) => {
+  it("offers the two ways in and Quit, and nothing that starts fresh", async () => {
+    const now = await gate(stage("keyRejected"));
+    for (const label of ["Recovery file", "24 words", "Choose recovery file…", "Unlock with file", "Quit Whimbrel"]) expect(now.has(label), label).toBe(true);
+    expect(now.has("will not delete or replace this database")).toBe(true);
+    const buttons = now.all((n) => n.tag === "button").map(text);
+    expect(buttons.some((b) => /fresh|empty|reset|delete/i.test(b))).toBe(false);
+  });
+
+  const walk = async () => {
     h.calls = [];
-    const tree = await gate(stage("needsKey"), flag);
+    const tree = await gate(stage("needsKey"));
     click(tree.button("Choose recovery file…"));
     await tree.settle();
     type(named(tree, "Passphrase"), "my passphrase");
     tree.render();
-    flag ? enter(tree, "input", "password") : click(tree.button("Unlock with file"));
+    enter(tree, "input", "password");
     await tree.settle();
     // The other way in: the 24 words.
     click(tree.all((n) => n.props.role === "radio" && text(n) === "24 words")[0]);
     tree.render();
     type(named(tree, "24 words"), "abandon ability able");
     tree.render();
-    flag ? press(tree.one((n) => n.tag === "main"), "Enter", { tag: "textarea", ctrl: true }) : click(tree.button("Unlock with words"));
+    press(tree.one((n) => n.tag === "main"), "Enter", { tag: "textarea", ctrl: true });
     await tree.settle();
     click(tree.button("Quit Whimbrel"));
     return { calls: commands(), tree };
   };
 
-  it("calls the same commands, with the same arguments, in the same order as the old screen", async () => {
-    const old = await walk(false);
-    const now = await walk(true);
-    expect(now.calls).toEqual(old.calls);
+  it("calls the same commands, with the same arguments, in the same order as it always has", async () => {
+    const now = await walk();
     expect(now.calls.map(([c]) => c)).toEqual(["launch_recovery_choose_file", "launch_recovery_unlock_file", "launch_recovery_unlock_words", "launch_respond"]);
     expect(now.calls[1]).toEqual(["launch_recovery_unlock_file", { passphrase: "my passphrase" }]);
     expect(now.calls[2]).toEqual(["launch_recovery_unlock_words", { words: "abandon ability able" }]);
   });
 
   it("unlock is off until there is something to unlock with, and Return does nothing then", async () => {
-    const tree = await gate(stage("needsKey"), true);
+    const tree = await gate(stage("needsKey"));
     expect(tree.button("Unlock with file").props.disabled).toBe(true);
     h.calls = [];
     expect(enter(tree, "input", "password").prevented).toBe(false);
@@ -397,7 +367,7 @@ describe("recovery", () => {
   });
 
   it("a plain Return in the words box is a new line, not an unlock", async () => {
-    const tree = await gate(stage("needsKey"), true);
+    const tree = await gate(stage("needsKey"));
     click(tree.all((n) => n.props.role === "radio" && text(n) === "24 words")[0]);
     tree.render();
     type(named(tree, "24 words"), "abandon");
@@ -408,7 +378,7 @@ describe("recovery", () => {
   });
 
   it("puts the error directly under the field it belongs to, in the right method", async () => {
-    const tree = await gate(stage("needsKey"), true);
+    const tree = await gate(stage("needsKey"));
     click(tree.button("Choose recovery file…"));
     await tree.settle();
     type(named(tree, "Passphrase"), "my passphrase");
@@ -424,7 +394,7 @@ describe("recovery", () => {
   });
 
   it("every input has a visible label, and there is no step line", async () => {
-    const tree = await gate(stage("needsKey"), true);
+    const tree = await gate(stage("needsKey"));
     expect(tree.has("Step ")).toBe(false);
     for (const input of tree.all((n) => n.tag === "input" || n.tag === "textarea"))
       expect(tree.all((n) => n.tag === "label" && n.props.htmlFor === input.props.id).length, String(input.props.id)).toBe(1);
@@ -436,36 +406,30 @@ describe("the setup", () => {
   const stepLine = (tree: TreeT) => tree.all((n) => n.props.className === "w-flow-step").map(text)[0];
   const title = (tree: TreeT) => text(tree.one((n) => n.tag === "h1"));
 
-  /** The whole setup, in the old screen and in the new one. */
-  const walk = async (flag: boolean) => {
+  /** The whole setup. */
+  const walk = async () => {
     h.calls = [];
-    const tree = await gate(stage, flag);
-    const pass = flag ? () => named(tree, "Passphrase") : () => named(tree, "Passphrase", 0);
-    type(pass(), GOOD);
+    const tree = await gate(stage);
+    type(named(tree, "Passphrase"), GOOD);
     tree.render();
     type(named(tree, "Type it again"), GOOD);
     tree.render();
-    if (flag) enter(tree, "input", "password");
-    else click(tree.button("Create recovery key"));
+    enter(tree, "input", "password");
     await tree.settle();
-    if (flag) expect(stepLine(tree)).toBe("Step 2 of 4");
+    expect(stepLine(tree)).toBe("Step 2 of 4");
     click(tree.button("Save recovery file…"));
     await tree.settle();
-    if (flag) {
-      click(tree.button("Next step"));
-      tree.render();
-      expect(stepLine(tree)).toBe("Step 3 of 4");
-    }
+    click(tree.button("Next step"));
+    tree.render();
+    expect(stepLine(tree)).toBe("Step 3 of 4");
     tick(box(tree, "I wrote down all 24 words, in order"));
     tree.render();
-    if (flag) {
-      enter(tree);
-      tree.render();
-      expect(stepLine(tree)).toBe("Step 4 of 4");
-    }
-    type(named(tree, "Passphrase", flag ? 0 : 1), GOOD);
+    enter(tree);
     tree.render();
-    if (flag) press(tree.one((n) => n.tag === "main"), "Enter", { tag: "input", type: "password" });
+    expect(stepLine(tree)).toBe("Step 4 of 4");
+    type(named(tree, "Passphrase", 0), GOOD);
+    tree.render();
+    press(tree.one((n) => n.tag === "main"), "Enter", { tag: "input", type: "password" });
     click(tree.button("Test"));
     await tree.settle();
     tick(box(tree, "I have kept my recovery file or my 24 words somewhere other than this PC"));
@@ -473,10 +437,8 @@ describe("the setup", () => {
     return { calls: commands(), tree };
   };
 
-  it("calls the same commands, with the same arguments, in the same order as the old screen", async () => {
-    const old = await walk(false);
-    const now = await walk(true);
-    expect(now.calls).toEqual(old.calls);
+  it("calls the setup commands with the passphrase and scope", async () => {
+    const now = await walk();
     const names = now.calls.map(([c]) => c);
     expect(names).toContain("setup_begin");
     expect(names).toContain("setup_save_file");
@@ -485,19 +447,16 @@ describe("the setup", () => {
     expect(now.calls.find(([c]) => c === "setup_verify")![1]).toEqual({ scope: "launch", passphrase: GOOD });
   });
 
-  it("Continue, then Quit, send what the old ones sent", async () => {
-    for (const flag of [false, true]) {
-      const { tree } = await walk(flag);
-      h.calls = [];
-      if (flag) enter(tree);
-      else click(tree.button("Continue"));
-      await tree.settle();
-      expect(commands()).toEqual([["setup_continue", { scope: "launch" }]]);
-    }
+  it("Continue sends setup_continue", async () => {
+    const { tree } = await walk();
+    h.calls = [];
+    enter(tree);
+    await tree.settle();
+    expect(commands()).toEqual([["setup_continue", { scope: "launch" }]]);
   });
 
-  it("starts on step 1 of 4 with its title, the old paragraph, the rule before typing and the count tied to the field", async () => {
-    const tree = await gate(stage, true);
+  it("starts on step 1 of 4 with its title, its paragraph, the rule before typing and the count tied to the field", async () => {
+    const tree = await gate(stage);
     expect(stepLine(tree)).toBe("Step 1 of 4");
     expect(title(tree)).toBe("Create your recovery key");
     expect(tree.has("Whimbrel will encrypt the memory database on this PC with a key kept in Windows Credential Manager.")).toBe(true);
@@ -511,7 +470,7 @@ describe("the setup", () => {
   });
 
   it("puts the problem right under the field it belongs to", async () => {
-    const tree = await gate(stage, true);
+    const tree = await gate(stage);
     type(named(tree, "Passphrase"), "short");
     tree.render();
     const fields = tree.all((n) => n.props.className === "w-field");
@@ -526,7 +485,7 @@ describe("the setup", () => {
   });
 
   it("walks the four steps with Next step and Back, and Escape goes back", async () => {
-    const { tree } = await walk(true);
+    const { tree } = await walk();
     expect(stepLine(tree)).toBe("Step 4 of 4");
     expect(title(tree)).toBe("Test your passphrase");
     escape(tree);
@@ -549,7 +508,7 @@ describe("the setup", () => {
   });
 
   it("the words: 24 of them, numbered, in a list nobody can copy from, and no button copies them", async () => {
-    const tree = await gate(stage, true);
+    const tree = await gate(stage);
     type(named(tree, "Passphrase"), GOOD);
     type(named(tree, "Type it again"), GOOD);
     tree.render();
@@ -566,7 +525,7 @@ describe("the setup", () => {
   });
 
   it("every input has a visible label on every step", async () => {
-    const tree = await gate(stage, true);
+    const tree = await gate(stage);
     const check = (where: string) => {
       for (const input of tree.all((n) => n.tag === "input" && n.props.type !== "checkbox"))
         expect(tree.all((n) => n.tag === "label" && n.props.htmlFor === input.props.id).length, `${where} ${String(input.props.id)}`).toBe(1);
@@ -590,7 +549,7 @@ describe("the setup", () => {
 
   it("a failed test is an error under the passphrase field; a good one says so", async () => {
     h.answers.setup_verify = false;
-    const tree = await gate(stage, true);
+    const tree = await gate(stage);
     type(named(tree, "Passphrase"), GOOD);
     type(named(tree, "Type it again"), GOOD);
     tree.render();
@@ -612,7 +571,7 @@ describe("the setup", () => {
   });
 
   it("Continue stays off until the test passed and the key was kept somewhere, and Return does nothing then", async () => {
-    const tree = await gate(stage, true);
+    const tree = await gate(stage);
     type(named(tree, "Passphrase"), GOOD);
     type(named(tree, "Type it again"), GOOD);
     tree.render();
@@ -632,14 +591,14 @@ describe("the setup", () => {
   it("Quit asks first once there are words, with a question Escape closes, and quits at once before", async () => {
     // Before any words: it asks the shell, which holds none, and quits.
     h.answers.setup_has_fresh_material = false;
-    const first = await gate(stage, true);
+    const first = await gate(stage);
     click(first.button("Quit Whimbrel"));
     await first.settle();
     expect(commands().some(([c, a]) => c === "launch_respond" && (a as { answer: string }).answer === "quit")).toBe(true);
 
     h.calls = [];
     h.answers.setup_has_fresh_material = true;
-    const tree = await gate(stage, true);
+    const tree = await gate(stage);
     type(named(tree, "Passphrase"), GOOD);
     type(named(tree, "Type it again"), GOOD);
     tree.render();
@@ -660,7 +619,7 @@ describe("the setup", () => {
 
   it("keeps the sentence about losing both on every step, word for word", async () => {
     const lost = "nobody can unlock the memory database, including Whimbrel.";
-    const tree = await gate(stage, true);
+    const tree = await gate(stage);
     expect(tree.has(lost)).toBe(true);
     type(named(tree, "Passphrase"), GOOD);
     type(named(tree, "Type it again"), GOOD);

@@ -13,9 +13,8 @@ import { QuestionAlertView } from "./alert/QuestionAlertView";
 import { StillHereView } from "./alert/StillHereView";
 import { MeetingBarView } from "./meetingBar/MeetingBarView";
 import { HotkeyPanel } from "./hotkeyPanel/HotkeyPanel";
-import { PopupView } from "./popup/PopupView";
+import { RedesignedPopup } from "./popup/RedesignedPopup";
 import { startSkin } from "./skin";
-import { primeRedesign } from "./redesign";
 
 // Before the first render, so no window paints in the wrong skin. Every window runs it: the
 // popup and the alert share this bundle, and hear about a change through storage.
@@ -29,7 +28,7 @@ function Root() {
   const lang = useLanguage();
   const view =
     label === "popup" ? (
-      <PopupView />
+      <RedesignedPopup />
     ) : label === "alert" ? (
       <AlertView />
     ) : label === "question-alert" ? (
@@ -52,17 +51,14 @@ function Root() {
 }
 
 // The language first, so nothing paints in the wrong one. The popup and the alert are created fresh
-// each time they open, so they pick up a change made in Settings without being told. The redesign switch
-// answers on at once now (`redesign.ts`); its call stays here until the clean-up removes the switch.
-Promise.all([
-  languageSettings()
-    .then((s) => s && setLanguage(s.uiLanguage))
-    .catch(() => {}),
-  primeRedesign(),
-]).finally(() =>
-  createRoot(document.getElementById("root")!).render(
-    <StrictMode>
-      <Root />
-    </StrictMode>,
-  ),
-);
+// each time they open, so they pick up a change made in Settings without being told.
+languageSettings()
+  .then((s) => s && setLanguage(s.uiLanguage))
+  .catch(() => {})
+  .finally(() =>
+    createRoot(document.getElementById("root")!).render(
+      <StrictMode>
+        <Root />
+      </StrictMode>,
+    ),
+  );

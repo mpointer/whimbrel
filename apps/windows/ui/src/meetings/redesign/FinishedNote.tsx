@@ -9,7 +9,7 @@ import { meetingUpdateActionItem, recapDraft, recapSent, recapText, type RecapFo
 import { describeError, isCommandError } from "../../errors";
 import type { RecapDraft, RecapSentView, TopicRefView } from "../../generated/types";
 import { useL10n } from "../../l10n";
-import { DeviceChip } from "../../library/LibraryView";
+import { DeviceChip } from "../../library/DeviceChip";
 import { spanLabel } from "../../library/rows";
 import { setScreenTitle } from "../../shell/redesign/screenTitle";
 import { WActionItemRow, WButton, WNoteBlock, WSourceCard } from "../../system";

@@ -18,12 +18,8 @@ struct StatusIcon: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            if state.redesignEnabled {
-                // An accessible name for the icon (redesign flag only).
-                icon.accessibilityElement(children: .ignore).accessibilityLabel(accessibleName)
-            } else {
-                icon
-            }
+            // An accessible name for the icon.
+            icon.accessibilityElement(children: .ignore).accessibilityLabel(accessibleName)
             // Never a TimelineView here: see `AppState.menuBarElapsed`.
             if let elapsed = state.menuBarElapsed {
                 if Self.showsProblemMark(degraded: isDegraded, meetingRecording: state.activeMeetingId != nil) {
@@ -46,7 +42,7 @@ struct StatusIcon: View {
             .overlay(alignment: .topTrailing) {
                 if let badgeColor {
                     if state.recordingPaused {
-                        // Paused has its own shape (redesign flag only; a pause cannot exist without it).
+                        // Paused has its own shape.
                         Image(systemName: "pause.fill").font(.system(size: 6, weight: .bold)).foregroundStyle(badgeColor == .red ? Color.primary : badgeColor)
                             .offset(x: 2, y: -2)
                     } else {

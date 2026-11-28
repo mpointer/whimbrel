@@ -1,31 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { LibraryRow } from "../generated/types";
 import {
   dateTimeLabel,
   dayLabel,
   durationLabel,
-  formatOffset,
   fullDateTimeLabel,
-  groupByDay,
-  headline,
-  rowKey,
-  rowWhen,
   spanLabel,
 } from "./rows";
 
-const device = { deviceId: "k", label: "This PC", thisDevice: true };
 const now = new Date(2026, 8, 10, 15, 0); // Sep 10 2026, 15:00 local
 
-const capture = (id: number, ts: number, source: string | null = "uia"): LibraryRow => ({
-  kind: "capture",
-  id,
-  tsUnixMs: ts,
-  app: "code.exe",
-  title: "main.rs - Whimbrel",
-  snippet: "fn main()",
-  source,
-  device,
-});
 
 describe("dayLabel", () => {
   it("says Today and Yesterday by calendar day, not 24-hour windows", () => {
@@ -56,100 +39,7 @@ describe("date and time labels", () => {
     expect(durationLabel(2 * 3_600_000)).toBe("2 h");
   });
 
-  it("dates each kind of Library row", () => {
-    expect(rowWhen(capture(1, at(10, 14, 5)), now, en)).toBe("Thu, Sep 10 · 2:05 PM");
-    const meeting: LibraryRow = {
-      kind: "meeting",
-      id: 2,
-      tsUnixMs: at(10, 14, 5),
-      endUnixMs: at(10, 14, 50),
-      title: "Standup",
-      status: "summarized",
-      trigger: "manual",
-      hasSummary: true,
-      attendeeCount: 0,
-      actionItemCount: 0,
-      device,
-    };
-    expect(rowWhen(meeting, now, en)).toBe("Thu, Sep 10 · 2:05–2:50 PM (45 min)");
-    expect(rowWhen({ kind: "transcript", id: 3, meetingId: 2, meetingTitle: "M", startCs: 0, speaker: "A", snippet: "" }, now, en)).toBeNull();
-  });
 });
 
-describe("formatOffset", () => {
-  it("formats centiseconds as m:ss or h:mm:ss", () => {
-    expect(formatOffset(0)).toBe("0:00");
-    expect(formatOffset(6_150)).toBe("1:01");
-    expect(formatOffset(372_000)).toBe("1:02:00");
-  });
-});
 
-describe("headline", () => {
-  it("a meeting whose recording is paused reads paused, not recording", () => {
-    const live: LibraryRow = {
-      kind: "meeting",
-      id: 2,
-      tsUnixMs: 0,
-      endUnixMs: null,
-      title: "Standup",
-      status: "recording",
-      trigger: "manual",
-      hasSummary: false,
-      attendeeCount: 0,
-      actionItemCount: 0,
-      device,
-    };
-    expect(headline(live, 2).meta).toBe("Meeting · paused");
-    expect(headline(live, 9).meta).toBe("Meeting · recording");
-    expect(headline(live).meta).toBe("Meeting · recording");
-    expect(headline({ ...live, status: "completed" }, 2).meta).toBe("Meeting · completed");
-  });
-  it("labels each kind", () => {
-    expect(headline(capture(1, 0))).toEqual({ title: "main.rs - Whimbrel", meta: "code.exe" });
-    expect(headline(capture(1, 0, "ocr")).meta).toBe("code.exe · OCR");
-    expect(
-      headline({
-        kind: "episode",
-        id: 2,
-        tsUnixMs: 0,
-        endTsUnixMs: 1,
-        app: "msedge.exe",
-        title: null,
-        itemCount: 1,
-        status: "pending",
-        appHidden: false,
-        summary: null,
-        hidden: true,
-        device,
-      }),
-    ).toEqual({ title: "msedge.exe", meta: "msedge.exe · 1 capture · hidden" });
-    expect(
-      headline({ kind: "transcript", id: 3, meetingId: 9, meetingTitle: "Standup", startCs: 6_150, speaker: "Me", snippet: "hi" }),
-    ).toEqual({ title: "Standup", meta: "Me · 1:01" });
-    expect(headline({ kind: "snapshot", id: 5, meetingId: 9, meetingTitle: "Standup", snippet: "Roadmap" })).toEqual({
-      title: "Standup",
-      meta: "Slide",
-    });
-  });
-});
 
-describe("groupByDay", () => {
-  it("groups consecutive rows by day and keeps transcript hits together", () => {
-    const today = new Date(2026, 8, 10, 9).getTime();
-    const yesterday = new Date(2026, 8, 9, 9).getTime();
-    const rows: LibraryRow[] = [
-      capture(1, today),
-      capture(2, today - 1000),
-      capture(3, yesterday),
-      { kind: "transcript", id: 4, meetingId: 1, meetingTitle: "M", startCs: 0, speaker: "A", snippet: "" },
-      { kind: "snapshot", id: 5, meetingId: 1, meetingTitle: "M", snippet: "Roadmap" },
-    ];
-    expect(groupByDay(rows, now).map((g) => [g.day, g.rows.map(rowKey)])).toEqual([
-      ["Today", ["capture-1", "capture-2"]],
-      ["Yesterday", ["capture-3"]],
-      ["Transcript matches", ["transcript-4"]],
-      ["Slide matches", ["snapshot-5"]],
-    ]);
-    expect(rowWhen(rows[4], now)).toBeNull();
-  });
-});

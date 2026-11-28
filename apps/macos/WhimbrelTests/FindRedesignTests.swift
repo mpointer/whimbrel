@@ -2,7 +2,7 @@ import WhimbrelUI
 import XCTest
 @testable import Whimbrel
 
-/// Library's Find page adapter (redesign flag only): the core's JSON shapes, cards, the Open table, filters, routes, saved answers.
+/// Library's Find page adapter: the core's JSON shapes, cards, the Open table, filters, routes, saved answers.
 /// Pure values: no store, no `AppState`, no `NSWorkspace` (app names are injected).
 final class FindRedesignTests: XCTestCase {
     private var utc: Calendar {
@@ -305,7 +305,7 @@ final class FindRedesignTests: XCTestCase {
             FindAdapter.failureText(.spendCap(scope: .global, spentCents: 50, capCents: 50)),
             FindAdapter.failureText(.providerFailure),
             AskLocalRouteCopy.answered, AskLocalRouteCopy.inFlight, AskLocalRouteCopy.askingPlain, AskLocalRouteCopy.waiting,
-            ClientCopy.leftOut(2) ?? "", TimelineView.storeUnavailableMessage,
+            ClientCopy.leftOut(2) ?? "", AskShared.storeUnavailableMessage,
             String(localized: "Recording on speakers. The mic may pick up meeting audio. Headphones reduce this."),
         ]
         for line in lines {
@@ -320,15 +320,22 @@ final class FindRedesignTests: XCTestCase {
             FindAdapter.failureText(.spendCap(scope: .user, spentCents: 5, capCents: 9)), CoreLLMError.spendCap(scope: .user, spentCents: 5, capCents: 9).userFacingMessage)
     }
 
-    func testTheAnswerParsesMarkdownLikeTheOldPage() {
+    /// The reference parse: the whole answer through one Markdown parse, keeping what it can of a malformed one.
+    private func wholeTextParse(_ text: String) -> AttributedString {
+        var options = AttributedString.MarkdownParsingOptions()
+        options.failurePolicy = .returnPartiallyParsedIfPossible
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+
+    func testTheAnswerParsesMarkdownAsOneWholeTextParseDoes() {
         for text in ["This is **bold** text", "- item one\n- item two", "just plain text, no formatting", "this has an *unclosed emphasis marker", "a [1] b `c[2]`"] {
-            XCTAssertEqual(WAnswerAttributed.markdown(text), TimelineView.markdownAttributedString(text), text)
+            XCTAssertEqual(WAnswerAttributed.markdown(text), wholeTextParse(text), text)
         }
     }
 
-    /// The page's blocks, read one at a time, say the same words as the old page's one parse of the whole answer (twins of the package's
+    /// The page's blocks, read one at a time, say the same words as one parse of the whole answer (twins of the package's
     /// `OldPageEqualityTests`, which run under `swift test`).
-    func testBlocksReadAsTheOldPageReadsThem() {
+    func testBlocksReadAsOneWholeTextParseReadsThem() {
         func newPage(_ text: String) -> String {
             WAnswerBlocks.parse(text).map { block -> String in
                 switch block {
@@ -341,7 +348,7 @@ final class FindRedesignTests: XCTestCase {
             "line one\nline two", "line one\nline two\nline three\n\nnext paragraph", "Intro\n\n- x\n- y\n  - nested\n- z", "1. first\n   - inner\n2. second",
             "```code``` and then words\nmore words", "## Heading\ntext under it", "**bold** and\n*soft* breaks",
         ] {
-            XCTAssertEqual(newPage(text), String(TimelineView.markdownAttributedString(text).characters), text)
+            XCTAssertEqual(newPage(text), String(wholeTextParse(text).characters), text)
         }
     }
 

@@ -1417,15 +1417,16 @@ mod tests {
             prompt: "hi".to_string(),
             started_at_unix_ms: now(),
         };
+        // Built before the cancel timer starts: building the HTTP client can block for seconds on a
+        // Mac (#940), and on this single-threaded runtime that would hold the timer and the clock.
+        let chain = chain_for(&server.base_url);
         let cancel_clone = cancel.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(30)).await;
             cancel_clone.cancel();
         });
         let started = std::time::Instant::now();
-        supervisor
-            .drive(request, &chain_for(&server.base_url), cancel, now)
-            .await;
+        supervisor.drive(request, &chain, cancel, now).await;
         let elapsed = started.elapsed();
         assert!(
             elapsed < Duration::from_secs(2),
@@ -1473,14 +1474,15 @@ mod tests {
             prompt: "hi".to_string(),
             started_at_unix_ms: now(),
         };
+        // Built before the cancel timer starts: building the HTTP client can block for seconds on a
+        // Mac (#940), and on this single-threaded runtime that would hold the timer and the clock.
+        let chain = chain_for(&server.base_url);
         let cancel_clone = cancel.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(20)).await;
             cancel_clone.cancel();
         });
-        supervisor
-            .drive(request, &chain_for(&server.base_url), cancel, now)
-            .await;
+        supervisor.drive(request, &chain, cancel, now).await;
 
         // Give the fake server's later (post-cancel) write a chance to have happened if
         // it were somehow still being read.

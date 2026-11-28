@@ -44,7 +44,7 @@ struct CaptureDetailView: View {
             .help("Close")
         }
         .onAppear { loadItemIfNeeded() }
-        .restyledScreen(redesign: appState.redesignEnabled)
+        .restyledScreen()
     }
 
     private func loadItemIfNeeded() {

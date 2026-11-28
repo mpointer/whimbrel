@@ -242,20 +242,8 @@ struct EncryptionSettingsPane: View {
         }
         .sheet(isPresented: Binding(get: { model.setupModel != nil }, set: { if !$0 { model.cancel() } })) {
             if let setup = model.setupModel {
-                RedesignSwitch(enabled: RedesignFlag.isOn()) {
-                    KeySetupRedesignView(model: setup, leave: .init(title: EncryptionCopy.cancel, isEscape: true, isEnabled: true, run: { model.cancel() }))
-                        .frame(width: 680, height: 720)
-                } old: {
-                    VStack(spacing: 0) {
-                        EncryptionSetupView(model: setup)
-                        HStack {
-                            Button(EncryptionCopy.cancel) { model.cancel() }.buttonStyle(.whimbrelSecondary)
-                            Spacer()
-                        }
-                        .padding([.horizontal, .bottom], Spacing.lg)
-                    }
-                    .frame(width: 640, height: 720)
-                }
+                KeySetupRedesignView(model: setup, leave: .init(title: EncryptionCopy.cancel, isEscape: true, isEnabled: true, run: { model.cancel() }))
+                    .frame(width: 680, height: 720)
             }
         }
     }
@@ -334,36 +322,6 @@ struct EncryptionSettingsPane: View {
                 Text(message).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelError)
                     .fixedSize(horizontal: false, vertical: true)
                 Button(EncryptionCopy.dismiss) { model.dismissResult() }.buttonStyle(.whimbrelSecondary)
-            }
-        }
-    }
-}
-
-/// Mounts the pane in Settings only once the launch wiring has supplied its actions: the
-/// pane, the launch's notes, Faster search (when this Mac has the memory) and the speed check.
-struct EncryptionSettingsCard: View {
-    @StateObject private var model: EncryptionSettingsModel
-    private let live: EncryptionSettingsLive
-
-    init(live: EncryptionSettingsLive) {
-        self.live = live
-        _model = StateObject(wrappedValue: EncryptionSettingsModel(outcome: live.outcome, actions: live.actions,
-                                                                   pendingNextLaunch: live.pendingNextLaunch,
-                                                                   attention: live.attention))
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-            EncryptionSettingsPane(model: model)
-            EncryptionNotesView(model: live.notes)
-                .onReceive(live.notes.$rows) { rows in
-                    model.plainBackupKeptByNote = rows.contains { $0.action == .deletePlainBackup }
-                    model.refreshPlainBackup()
-                }
-            if live.showsStoreTools {
-                Divider().overlay(Color.whimbrelBorder)
-                if let fast = live.fastSearch { FastSearchToggleView(setting: fast) }
-                SpeedCheckView(model: live.speedCheck)
             }
         }
     }

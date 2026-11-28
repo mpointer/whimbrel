@@ -178,26 +178,6 @@ final class SkinStore: ObservableObject {
     }
 }
 
-/// The redesign switch. It is on for everyone: the stored value is no longer read, and there is no way back to the old layout.
-/// The type and its call sites stay until the clean-up (switch-removal.md, part B), which deletes the old branches and then this.
-/// The Thread skin ships as `skins/thread.json` and is listed in the gallery (`SkinGallery.orderedCards`); `ThreadMove` is the
-/// one-time move of the cream default to it. Windows has the same switch, also on.
-enum RedesignFlag {
-    /// The old defaults key. Not read any more; an old value left in the file does nothing.
-    static let key = "com.mpointer.whimbrel.redesign.enabled"
-
-    /// Bundled skins that were hidden while the switch could be off (core/skins `REDESIGN_SKIN_IDS`).
-    static let skinIds: Set<String> = ["thread"]
-
-    /// Always true. The parameter stays so call sites need no change before the clean-up.
-    static func isOn(_ defaults: UserDefaults = .standard) -> Bool { true }
-
-    /// `skins` as a list shows them: without the redesign skins unless `redesign` is on.
-    static func visible(_ skins: [Skin], redesign: Bool) -> [Skin] {
-        redesign ? skins : skins.filter { !skinIds.contains($0.id) }
-    }
-}
-
 /// The once-per-device move from the cream default to Thread (switch-removal.md, A2). Pure; `SkinStore.init` applies it.
 enum ThreadMove {
     /// Set once the check has run on this device, whether or not it moved anyone. Not synced.
@@ -210,17 +190,5 @@ enum ThreadMove {
     static func decide(skinId stored: String, paletteId: String, done: Bool) -> (skin: String, palette: String)? {
         guard !done, stored == SkinDefaults.whimbrel.id, paletteId == ThemeDefaults.theme.id else { return nil }
         return (skinId, Self.paletteId)
-    }
-}
-
-private struct RedesignEnabledKey: EnvironmentKey {
-    static let defaultValue = true
-}
-
-extension EnvironmentValues {
-    /// The redesign switch (`RedesignFlag`); on, also in a root that never sets it.
-    var redesignEnabled: Bool {
-        get { self[RedesignEnabledKey.self] }
-        set { self[RedesignEnabledKey.self] = newValue }
     }
 }

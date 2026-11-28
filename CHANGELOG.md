@@ -4,6 +4,27 @@ Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
 ## [Unreleased]
 
+## [0.9.85] - 2026-11-28
+
+### Mac and Windows
+- When the drafted answer starts with a heading such as "Answer", the live question alert now shows the first line of the answer itself. The heading shows only when the answer has no other text.
+- When you continue a meeting on the Mac, transcript lines of its earlier part that finish transcribing while you record the next part now reach your other devices, including ones that were already up to date. Before, those lines could stay missing there.
+- Sync with your other devices now uses a current, patched version of the encryption library for its secure connection. If the Mac's or PC's certificate store can't be read, sync uses a built-in set of trusted certificates instead of stopping.
+- Signed out, Plan & billing now lists the Plus and Cloud plans with their prices. Sync & devices no longer flashes the phone beta card before your device list loads.
+
+### Mac
+- When Whisper transcribes (multilingual meetings, a custom model or large-v3-turbo), it now runs on the Mac's GPU. Telling speakers apart now uses all the performance cores: a 3-minute recording went from about 100 seconds to under 35. Transcripts are unchanged.
+- Reading on-screen text and writing system audio no longer happen on the main thread, so a slow app or a large window no longer makes Whimbrel stall. An unchanged window is not read again.
+- The meeting brief opens at a fixed size and scrolls inside, and the meetings list builds only the rows on screen. This removes the likely cause of a crash seen after closing the brief with a long meetings list.
+- A meeting with no topic no longer logs an error each time the meetings list loads.
+
+### Windows
+- After you choose "Keep recording" on "Still recording?", the recording no longer stops at 4 hours. It goes on until the next check, as on the Mac, and always stops at 6 hours.
+- While screen capture is paused, idle or locked, Whimbrel no longer wakes 100 times a second. It checks once a second, which saves CPU and battery.
+
+### Website
+- New Littlebird vs Granola comparison page, a clearer title on the comparison page, and French search results now find the French pages outside Canada too.
+
 ## [0.9.84] - 2026-11-27
 
 ### Mac and Windows

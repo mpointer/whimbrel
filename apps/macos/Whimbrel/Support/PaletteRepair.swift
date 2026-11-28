@@ -211,10 +211,10 @@ enum ArchetypeContrast {
     static func passes(_ palette: ThemePalette, _ pairs: [Pair] = all) -> Bool { failures(palette, pairs).isEmpty }
 }
 
-// MARK: Home element pairs (redesign flag only)
+// MARK: Home element pairs
 
-/// The pairs the Home elements draw (docs/ui-redesign/skins.md). Opt-in: nothing in `ArchetypeContrast.pairs(for:)`
-/// or `all` changes, so with the redesign flag off every repair gives today's result.
+/// The pairs the Home elements draw (docs/ui-redesign/skins.md). Nothing in `ArchetypeContrast.pairs(for:)`
+/// or `all` changes: `repair(_:pairs:elements:)` adds these to the pairs it is given.
 extension ArchetypeContrast {
     /// Scoreboard digits are `textOnAccent` on `accentPrimary`; text links are `link` on the page; bracketed or small caps
     /// labels and the infobox put `textPrimary` and `textSecondary` on the card and the page. Other choices add none.
@@ -236,12 +236,10 @@ extension ArchetypeContrast {
 }
 
 extension PaletteRepair {
-    /// `repair(palette, pairs:)`, with the element pairs for `redesign` added when it is non-nil. With nil this is exactly
-    /// `repair(_:pairs:)`.
+    /// `repair(palette, pairs:)`, with the element pairs for `elements` added.
     static func repair(
-        _ palette: ThemePalette, pairs: [ArchetypeContrast.Pair] = ArchetypeContrast.all, redesign: [WHomeElements]?
+        _ palette: ThemePalette, pairs: [ArchetypeContrast.Pair] = ArchetypeContrast.all, elements: [WHomeElements]
     ) -> (palette: ThemePalette, changed: [ThemeToken]) {
-        guard let redesign else { return repair(palette, pairs: pairs) }
-        return repair(palette, pairs: ArchetypeContrast.withElementPairs(pairs, for: redesign))
+        repair(palette, pairs: ArchetypeContrast.withElementPairs(pairs, for: elements))
     }
 }

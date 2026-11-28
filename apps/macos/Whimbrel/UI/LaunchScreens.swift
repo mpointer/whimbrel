@@ -215,24 +215,17 @@ final class LaunchUIPresenter: ObservableObject, LaunchPresenter {
 /// The launch window's content for the presenter's stage.
 struct LaunchWindowView: View {
     @ObservedObject var presenter: LaunchUIPresenter
-    @Environment(\.redesignEnabled) private var redesign
-
     var body: some View {
         Group {
             switch presenter.stage {
             case .starting:
-                if redesign { LaunchStartingRedesignView() } else { LaunchStartingView() }
+                LaunchStartingRedesignView()
             case let .onboarding(model):
                 VStack(spacing: 0) {
                     if let notice = presenter.onboardingNotice {
                         LaunchOnboardingNotice(text: notice)
                     }
-                    if redesign {
-                        KeySetupRedesignView(model: model, leave: .init(title: EncryptionCopy.quitAction, isEscape: false, isEnabled: !presenter.busy, run: { presenter.requestQuit() }))
-                    } else {
-                        EncryptionSetupView(model: model)
-                        LaunchQuitBar(disabled: presenter.busy) { presenter.requestQuit() }
-                    }
+                    KeySetupRedesignView(model: model, leave: .init(title: EncryptionCopy.quitAction, isEscape: false, isEnabled: !presenter.busy, run: { presenter.requestQuit() }))
                 }
                 .alert(EncryptionCopy.quitSetupTitle, isPresented: Binding(
                     get: { presenter.confirmingQuit }, set: { if !$0 { presenter.cancelQuit() } })) {
@@ -242,31 +235,13 @@ struct LaunchWindowView: View {
                     Text(EncryptionCopy.quitSetupBody)
                 }
             case let .migrating(fraction):
-                if redesign { LaunchMigrationRedesignView(fraction: fraction) } else { LaunchMigrationView(fraction: fraction) }
+                LaunchMigrationRedesignView(fraction: fraction)
             case let .recovery(model):
-                if redesign {
-                    RecoveryRedesignView(model: model, quit: { presenter.quit() })
-                } else {
-                    VStack(spacing: 0) {
-                        EncryptionRecoveryView(model: model)
-                        LaunchQuitBar(disabled: model.working) { presenter.quit() }
-                    }
-                }
+                RecoveryRedesignView(model: model, quit: { presenter.quit() })
             case let .keyUnavailable(model):
-                if redesign {
-                    KeyUnavailableRedesignView(model: model, quit: { presenter.quit() })
-                } else {
-                    VStack(spacing: 0) {
-                        EncryptionKeyUnavailableView(model: model)
-                        LaunchQuitBar(disabled: model.retrying) { presenter.quit() }
-                    }
-                }
+                KeyUnavailableRedesignView(model: model, quit: { presenter.quit() })
             case let .screen(screen):
-                if redesign {
-                    LaunchBlockingRedesignView(screen: screen, busy: presenter.busy) { presenter.respond($0) }
-                } else {
-                    LaunchBlockingScreenView(screen: screen, busy: presenter.busy) { presenter.respond($0) }
-                }
+                LaunchBlockingRedesignView(screen: screen, busy: presenter.busy) { presenter.respond($0) }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -297,63 +272,6 @@ struct LaunchOnboardingNotice: View {
         .padding(.horizontal, Spacing.xl)
         .padding(.vertical, Spacing.sm)
         .background(Color.whimbrelBackgroundCard)
-    }
-}
-
-/// Before anything needs the user: the page colour, then a spinner if it takes a while.
-struct LaunchStartingView: View {
-    @State private var slow = false
-
-    var body: some View {
-        ZStack {
-            Color.whimbrelBackgroundPage
-            if slow {
-                VStack(spacing: Spacing.sm) {
-                    ProgressView().controlSize(.small)
-                    Text(EncryptionCopy.starting).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
-                }
-            }
-        }
-        .task {
-            try? await Task.sleep(for: .seconds(1))
-            slow = true
-        }
-    }
-}
-
-struct LaunchQuitBar: View {
-    var disabled = false
-    let quit: () -> Void
-
-    var body: some View {
-        HStack {
-            Button(EncryptionCopy.quitAction, action: quit).buttonStyle(.whimbrelSecondary).disabled(disabled)
-            Spacer()
-        }
-        .padding(.horizontal, Spacing.xl)
-        .padding(.vertical, Spacing.md)
-        .background(Color.whimbrelBackgroundPage)
-    }
-}
-
-/// The migration at launch: a determinate bar and plain words, no Quit (quitting mid-copy is
-/// what the progress text asks the user not to do; a crash is still safe).
-struct LaunchMigrationView: View {
-    let fraction: Double
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text(EncryptionCopy.migratingTitle).font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
-            ProgressView(value: min(max(fraction, 0), 1)).frame(maxWidth: 480)
-            Text(EncryptionCopy.migratingBody).font(.whimbrelBody()).foregroundStyle(Color.whimbrelTextPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(EncryptionCopy.migratingInterruptHint).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-        }
-        .padding(Spacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.whimbrelBackgroundPage)
     }
 }
 
@@ -448,65 +366,6 @@ struct LaunchScreenContent: Equatable {
         case .databaseMissingForRecoveredKey: return [EncryptionCopy.errorFileGoneForRecoveryKey]
         case .decisionUnavailable, .tooManyDecisions, .unknownStep, .stepOutOfOrder, .migrationCallFailed:
             return [EncryptionCopy.errorStoppedSafely]
-        }
-    }
-}
-
-/// Every screen but recovery and key-unavailable (which have their own views).
-struct LaunchBlockingScreenView: View {
-    let screen: LaunchScreen
-    var busy = false
-    let respond: (LaunchScreenResponse) -> Void
-    @State private var confirmRestore = false
-    @State private var confirmReset = false
-
-    var body: some View {
-        let c = LaunchScreenContent.of(screen)
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text(c.title).font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
-            ForEach(c.paragraphs, id: \.self) { p in
-                Text(p).font(.whimbrelBody()).foregroundStyle(Color.whimbrelTextPrimary).fixedSize(horizontal: false, vertical: true)
-            }
-            ForEach(c.hints, id: \.self) { h in
-                Text(h).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary).fixedSize(horizontal: false, vertical: true)
-            }
-            if let last = c.lastAction {
-                Text(last).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelError).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            HStack {
-                Button(EncryptionCopy.quitAction) { respond(.quit) }.buttonStyle(.whimbrelSecondary).disabled(busy)
-                Spacer()
-                if c.restoreCopy {
-                    Button(EncryptionCopy.restoreCopyAction) { confirmRestore = true }.buttonStyle(.whimbrelPrimary).disabled(busy)
-                }
-                if c.reset {
-                    Button(EncryptionCopy.resetStatusEllipsis) { confirmReset = true }.buttonStyle(.whimbrelSecondary).disabled(busy)
-                }
-                if c.continueWithoutStore {
-                    Button(EncryptionCopy.continueWithoutStore) { respond(.continueWithoutStore) }
-                        .buttonStyle(.whimbrelSecondary).disabled(busy)
-                }
-                if c.retry {
-                    Button(busy ? EncryptionCopy.trying : EncryptionCopy.tryAgain) { respond(.retry) }
-                        .buttonStyle(.whimbrelPrimary).disabled(busy)
-                }
-            }
-        }
-        .padding(Spacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.whimbrelBackgroundPage)
-        .alert(EncryptionCopy.restoreConfirmTitle, isPresented: $confirmRestore) {
-            Button(EncryptionCopy.restoreConfirm) { respond(.restoreRollbackCopy) }
-            Button(EncryptionCopy.cancel, role: .cancel) {}
-        } message: {
-            Text(EncryptionCopy.restoreConfirmBody)
-        }
-        .alert(EncryptionCopy.resetConfirmTitle, isPresented: $confirmReset) {
-            Button(EncryptionCopy.resetConfirm, role: .destructive) { respond(.resetEncryptionStatus) }
-            Button(EncryptionCopy.cancel, role: .cancel) {}
-        } message: {
-            Text(c.resetConfirmBody ?? EncryptionCopy.resetConfirmBody)
         }
     }
 }

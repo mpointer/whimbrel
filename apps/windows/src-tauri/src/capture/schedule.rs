@@ -147,8 +147,14 @@ impl Scheduler {
     }
 
     /// How long the loop may sleep before a read could come due. Capped at 1 s so the
-    /// loop still notices the session gate (idle, lock) changing.
-    pub fn next_wake(&self, now: Instant) -> Duration {
+    /// loop still notices the session gate (idle, lock) changing. While capture is
+    /// `paused` no read is taken, so every deadline is already past and would floor the
+    /// wait at 10 ms: about 100 wakeups a second while the person is away. A paused loop
+    /// only needs to notice the pause ending, so it sleeps the full second.
+    pub fn next_wake(&self, now: Instant, paused: bool) -> Duration {
+        if paused {
+            return Duration::from_secs(1);
+        }
         let deadlines = [
             self.trigger_at.map(|t| t + self.cadence.debounce),
             self.attach_repoll_at,
@@ -291,10 +297,25 @@ mod tests {
         let t0 = Instant::now();
         let mut s = Scheduler::new(Cadence::default());
         s.read(t0, None, false);
-        assert_eq!(s.next_wake(t0), Duration::from_secs(1), "capped at 1 s");
+        assert_eq!(s.next_wake(t0, false), Duration::from_secs(1), "capped at 1 s");
         s.on_trigger(t0);
-        assert_eq!(s.next_wake(t0 + ms(500)), ms(300));
-        assert_eq!(s.next_wake(t0 + ms(900)), ms(10), "floored so the loop never spins");
+        assert_eq!(s.next_wake(t0 + ms(500), false), ms(300));
+        assert_eq!(s.next_wake(t0 + ms(900), false), ms(10), "floored so the loop never spins");
+    }
+
+    #[test]
+    fn a_paused_loop_sleeps_a_full_second_although_its_deadlines_are_past() {
+        let t0 = Instant::now();
+        let mut s = Scheduler::new(Cadence::default());
+        s.read(t0, None, false);
+        s.on_trigger(t0);
+        // Minutes into a lock or idle pause: no read was taken, so the idle re-poll and the
+        // trigger are long overdue. Unpaused that floors at 10 ms; paused it must not.
+        let later = t0 + Duration::from_secs(600);
+        assert_eq!(s.next_wake(later, false), ms(10));
+        assert_eq!(s.next_wake(later, true), Duration::from_secs(1));
+        // The first pass after the pause ends still reads at once.
+        assert_eq!(s.take_due(later), Some(Reason::Trigger));
     }
 
     #[test]

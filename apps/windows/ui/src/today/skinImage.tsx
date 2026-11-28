@@ -1,9 +1,9 @@
-// A skin's header and badge image on Home: read once from the skin's folder, drawn decoratively. Kept in a file of its own so
-// the skin cards' preview of Home can use it without importing the Today layouts' parts.
+// A skin's header and badge image on Home: read once from the skin's folder, drawn decoratively.
 
 import { useEffect, useState } from "react";
 import { skinImage } from "../api";
 import { isDrawn, type Imagery, type ImagePlacement } from "./layoutModel";
+import "./skinImage.css";
 
 /** An approved image of the skin as an object URL, or null while it loads or when it cannot be read. */
 export function useSkinImage(skinId: string, asset: string | null): string | null {

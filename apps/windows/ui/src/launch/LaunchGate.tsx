@@ -24,16 +24,12 @@ import {
 import { App } from "../App";
 import type { LaunchAnswer, LaunchView } from "../generated/types";
 import { t } from "../l10n";
-import { recheckRedesign, useRedesign } from "../redesign";
 import { RedesignedLaunch } from "./redesign/RedesignedLaunch";
-import { StartingScreen as StartingScreenR } from "./redesign/screens";
-import { BlockingScreen, KeyUnavailableScreen, MigratingScreen, StartingScreen } from "./LaunchScreens";
+import { StartingScreen } from "./redesign/screens";
 import { NoStoreContext } from "./noStore";
 import { RecoveryModel } from "./recoveryModel";
-import { RecoveryView } from "./RecoveryView";
 import { NOT_PRESSED, isCurrentView, nextProgress, pressReducer } from "./screenModel";
 import { SetupModel } from "./setupModel";
-import { SetupView } from "./SetupView";
 
 // Asked once per window: the shell consumes the marker, so a remount (or React's strict-mode
 // double effect) must reuse the first answer.
@@ -57,8 +53,6 @@ function useFreshLibraryNotice(onboarding: boolean): string | null {
 }
 
 export function LaunchGate() {
-  // Known before the first render (main.tsx asks the shell first), so neither look flashes before the other.
-  const redesign = useRedesign();
   const [view, setView] = useState<LaunchView | null>(null);
   const [overall, setOverall] = useState(0);
   // Set when the user answered; cleared when the shell shows a screen again (its generation
@@ -140,9 +134,9 @@ export function LaunchGate() {
     [],
   );
 
-  if (!stage || stage.kind === "starting") return redesign ? <StartingScreenR /> : <StartingScreen />;
-  if (stage.kind === "opened" || stage.kind === "openedWithoutStore") return <Opened noStore={stage.kind === "openedWithoutStore"} />;
-  if (stage.kind === "quitting") return redesign ? <StartingScreenR delayMs={0} /> : <StartingScreen delayMs={0} />;
+  if (!stage || stage.kind === "starting") return <StartingScreen />;
+  if (stage.kind === "opened" || stage.kind === "openedWithoutStore") return <OpenedApp noStore={stage.kind === "openedWithoutStore"} />;
+  if (stage.kind === "quitting") return <StartingScreen delayMs={0} />;
   const busy = pressed || (view?.busy ?? false);
   const onContinue = () => {
     setPressed(true);
@@ -152,71 +146,21 @@ export function LaunchGate() {
     );
   };
 
-  if (redesign) {
-    return (
-      <RedesignedLaunch
-        stage={stage}
-        setup={setup}
-        recovery={recovery}
-        overall={overall}
-        busy={busy}
-        continuing={pressed}
-        onAnswer={answer}
-        onContinue={onContinue}
-        continueTitle={t("Continue")}
-        quitSignal={quitSignal}
-        notice={freshNotice}
-      />
-    );
-  }
-
   return (
-    <div className="launch">
-      {stage.kind === "onboarding" ? (
-        <SetupView
-          model={setup}
-          continueTitle={t("Continue")}
-          continuing={pressed}
-          onContinue={onContinue}
-          onQuit={() => answer("quit")}
-          quitSignal={quitSignal}
-          notice={freshNotice}
-        />
-      ) : stage.kind === "migrating" ? (
-        <MigratingScreen overall={overall} />
-      ) : stage.kind === "recovery" ? (
-        <RecoveryView reason={stage.reason} model={recovery} onQuit={() => answer("quit")} />
-      ) : stage.kind === "keyUnavailable" ? (
-        <KeyUnavailableScreen stillUnavailable={stage.stillUnavailable} busy={busy} onAnswer={answer} />
-      ) : (
-        <BlockingScreen screen={stage.screen} offers={stage.offers} lastAction={stage.lastAction} busy={busy} onAnswer={answer} />
-      )}
-    </div>
+    <RedesignedLaunch
+      stage={stage}
+      setup={setup}
+      recovery={recovery}
+      overall={overall}
+      busy={busy}
+      continuing={pressed}
+      onAnswer={answer}
+      onContinue={onContinue}
+      continueTitle={t("Continue")}
+      quitSignal={quitSignal}
+      notice={freshNotice}
+    />
   );
-}
-
-/** The app, once the launch opened, drawn after the redesign switch was asked again, so neither shell flashes
- *  before the other. main.tsx asked before the first render, which on a fresh install is before the onboarding,
- *  while the shell cannot answer yet; without this the early false held until a restart. A second ask (a remount,
- *  React's strict-mode double effect) only reads the same setting again. The good-launch counter runs after the
- *  app's first render. */
-function Opened({ noStore }: { noStore: boolean }) {
-  const [asked, setAsked] = useState(false);
-  useEffect(() => {
-    let live = true;
-    void recheckRedesign().finally(() => {
-      if (live) setAsked(true);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
-  return asked ? <OpenedApp noStore={noStore} /> : <StartingScreenFor />;
-}
-
-/** The starting screen in the look the switch has now. */
-function StartingScreenFor() {
-  return useRedesign() ? <StartingScreenR /> : <StartingScreen />;
 }
 
 function OpenedApp({ noStore }: { noStore: boolean }) {

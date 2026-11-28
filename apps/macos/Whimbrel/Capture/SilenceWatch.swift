@@ -67,7 +67,7 @@ extension PeakMeter {
 }
 
 /// The loudest sample since the last `take()`, for the level meter. Kept apart from `PeakMeter` so reading
-/// it never touches the silence meter, and it records nothing while it is off (redesign flag off).
+/// it never touches the silence meter, and it records nothing while it is off.
 final class LevelPeak: @unchecked Sendable {
     private let lock = NSLock()
     private var peak: Float = 0

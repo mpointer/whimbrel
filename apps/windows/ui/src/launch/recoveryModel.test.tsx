@@ -1,8 +1,6 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { ChosenFile, UseKeyResult } from "../generated/types";
 import { RecoveryModel, recoveryExplanation, unlockMessage, type RecoveryActions } from "./recoveryModel";
-import { RecoveryView } from "./RecoveryView";
 
 function actions(over: Partial<RecoveryActions> = {}): RecoveryActions {
   return {
@@ -80,14 +78,5 @@ describe("the recovery model", () => {
   it("the reason picks the explanation", () => {
     expect(recoveryExplanation("needsKey")).toContain("This PC has no key for the encrypted memory database.");
     expect(recoveryExplanation("keyRejected")).toBe("The key in Windows Credential Manager does not open this memory database.");
-  });
-
-  it("the screen offers the two ways in and Quit, and nothing that starts fresh", () => {
-    const html = renderToStaticMarkup(<RecoveryView model={new RecoveryModel(actions())} reason="keyRejected" onQuit={() => {}} />);
-    for (const s of ["Recovery file", "24 words", "Choose recovery file…", "Unlock with file", "Quit Whimbrel", "will not delete or replace this database"]) {
-      expect(html).toContain(s);
-    }
-    const buttons = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
-    expect(buttons).toEqual(["Recovery file", "24 words", "Choose recovery file…", "Unlock with file", "Quit Whimbrel"]);
   });
 });

@@ -4,7 +4,7 @@ import WhimbrelUI
 
 /// A floating panel for the redesigned small windows. It never takes focus when it appears (it is shown with
 /// `orderFrontRegardless`, as today), but it can take the keyboard once the person clicks it, so Return then activates the
-/// main action and Escape runs `onCancel`. Built only with the redesign switch on.
+/// main action and Escape runs `onCancel`.
 final class RedesignFloatingPanel: NSPanel {
     var onCancel: (() -> Void)?
 
@@ -158,7 +158,7 @@ enum AlertPanelAdapter {
     }
 }
 
-/// `MeetingAlertView` in the redesign: the same panel state, the same actions.
+/// The meeting alert: the panel state and the actions of `MeetingAlertPanelController`.
 struct MeetingAlertRedesignView: View {
     @ObservedObject var controller: MeetingAlertPanelController
 
@@ -210,7 +210,7 @@ final class AppIconCache {
     }
 }
 
-/// `RecordingCheckInView` in the redesign.
+/// The recording check-in.
 struct RecordingCheckInRedesignView: View {
     @ObservedObject var controller: RecordingCheckInPanelController
 

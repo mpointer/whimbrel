@@ -16,8 +16,9 @@ use sync::GroupKey;
 use crate::content::{
     all_peers_have_marker, all_peers_items_capable, content_row_aad, insert_with_tag_fallback,
     outbox_entity_identity, outbox_kind_tag, outbox_slice_tag, tag_for, CompactionBudget,
-    ENTITY_TAG_COLUMN_SEEN, KIND_TAG_COLUMN_SEEN, SLICE_TAG_COLUMN_SEEN,
-    MAX_SKIN_CHUNK_BYTES_PER_PASS, ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_PAGE_CAPABILITY, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
+    ENTITY_TAG_COLUMN_SEEN, KIND_TAG_COLUMN_SEEN, MAX_SKIN_CHUNK_BYTES_PER_PASS,
+    ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_PAGE_CAPABILITY, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
+    SLICE_TAG_COLUMN_SEEN,
 };
 use crate::SyncEngineError;
 
@@ -52,7 +53,10 @@ pub struct OutboxDispatchSummary {
 
 /// Row types the legacy `push_content` scan also sends, under the outbox op's own `local_seq`.
 fn legacy_twin(row_type: &str) -> bool {
-    matches!(row_type, memory::OUTBOX_ROW_TYPE_MEETING | memory::OUTBOX_ROW_TYPE_ITEMS)
+    matches!(
+        row_type,
+        memory::OUTBOX_ROW_TYPE_MEETING | memory::OUTBOX_ROW_TYPE_ITEMS
+    )
 }
 
 pub async fn dispatch_outbox(
@@ -94,7 +98,8 @@ pub(crate) async fn dispatch_outbox_until(
     // Topic rows are always enqueued, and left unclaimed while a peer can't apply them yet,
     // so a backlog of them never fills a pass. `push_content` backfills older rows once.
     let mut held: Vec<&str> = Vec::new();
-    let topics_lacking = crate::content::peers_without_marker(conn, device_id, ROW_TYPE_TOPICS_CAPABILITY).await?;
+    let topics_lacking =
+        crate::content::peers_without_marker(conn, device_id, ROW_TYPE_TOPICS_CAPABILITY).await?;
     // How many devices hold the seed rows back (a removed device too): the exclusion setting travels in them, so
     // the shells warn on the exclude toggle while any does (X6 final review, Major 22). Informational only.
     if let Err(e) = store.set_topic_rows_held_devices(topics_lacking.len()) {
@@ -210,7 +215,12 @@ pub(crate) async fn dispatch_outbox_until(
             // never sent.
             if store.outbox_op_forgotten(&op).map_err(query_error)? {
                 store
-                    .acknowledge_outbox_operation(&op.operation_id, &worker_id, "dropped:client_forgotten", now_unix_ms)
+                    .acknowledge_outbox_operation(
+                        &op.operation_id,
+                        &worker_id,
+                        "dropped:client_forgotten",
+                        now_unix_ms,
+                    )
                     .map_err(query_error)?;
                 summary.dropped += 1;
                 continue;
@@ -219,7 +229,12 @@ pub(crate) async fn dispatch_outbox_until(
                 if code == PARENT_MEETING_GONE {
                     // A line of a deleted meeting (forgotten, or by retention): nothing to send, ever.
                     store
-                        .acknowledge_outbox_operation(&op.operation_id, &worker_id, "dropped:parent_meeting_gone", now_unix_ms)
+                        .acknowledge_outbox_operation(
+                            &op.operation_id,
+                            &worker_id,
+                            "dropped:parent_meeting_gone",
+                            now_unix_ms,
+                        )
                         .map_err(query_error)?;
                     summary.dropped += 1;
                     continue;
@@ -241,15 +256,46 @@ pub(crate) async fn dispatch_outbox_until(
             // #600: rows only the outbox sends get a fresh number on every send, above any puller's cursor.
             // Meeting and transcript rows keep theirs: the legacy push sent the same row under it.
             if !legacy_twin(&op.row_type) {
-                op.local_seq = store.restamp_outbox_operation(&op.operation_id).map_err(query_error)?;
+                op.local_seq = store
+                    .restamp_outbox_operation(&op.operation_id)
+                    .map_err(query_error)?;
+            } else if op.row_type == memory::OUTBOX_ROW_TYPE_ITEMS
+                && op.local_seq <= store.get_sync_push_cursor().map_err(query_error)?
+                && !relay_has_row(conn, &op.device_id, op.local_seq, &op.row_type).await?
+            {
+                // #740: a transcript line held while its meeting was recording again (a continued meeting)
+                // waited past the push cursor, and the legacy scan skipped it. Under its old number it would
+                // land below every caught-up puller's cursor, so it gets a fresh one. A line the legacy scan
+                // already sent is on the relay under its number, and stays: a second copy would show twice.
+                op.local_seq = store
+                    .restamp_outbox_operation(&op.operation_id)
+                    .map_err(query_error)?;
             }
             let tag = epoch
                 .as_deref()
                 .zip(outbox_entity_identity(&op))
                 .map(|(epoch, id)| tag_for(group_key, &op.device_id, epoch, &id));
-            let kind = if kind_on { outbox_kind_tag(group_key, &op) } else { None };
-            let slice = if slice_on { outbox_slice_tag(group_key, &op) } else { None };
-            match write_sync_row(conn, group_key, &op, tag.as_deref(), kind.as_deref(), slice.as_deref(), now_unix_ms).await {
+            let kind = if kind_on {
+                outbox_kind_tag(group_key, &op)
+            } else {
+                None
+            };
+            let slice = if slice_on {
+                outbox_slice_tag(group_key, &op)
+            } else {
+                None
+            };
+            match write_sync_row(
+                conn,
+                group_key,
+                &op,
+                tag.as_deref(),
+                kind.as_deref(),
+                slice.as_deref(),
+                now_unix_ms,
+            )
+            .await
+            {
                 Ok((receipt, tagged, kind_tagged, slice_tagged)) => {
                     // The relay has no `kind_tag`: the rest of the pass goes without it.
                     if kind.is_some() && !kind_tagged {
@@ -265,7 +311,12 @@ pub(crate) async fn dispatch_outbox_until(
                     }
                     // Acknowledged before the batched DELETE (spec D8.2).
                     store
-                        .acknowledge_outbox_operation(&op.operation_id, &worker_id, &receipt, now_unix_ms)
+                        .acknowledge_outbox_operation(
+                            &op.operation_id,
+                            &worker_id,
+                            &receipt,
+                            now_unix_ms,
+                        )
                         .map_err(query_error)?;
                     summary.delivered += 1;
                     // Forgotten while it was being written (past the cancel and the check above): its row goes too.
@@ -336,13 +387,18 @@ const PARENT_MEETING_GONE: &str = "parent_meeting_gone";
 /// row about another device's meeting (`origin_device_id` set) names no meeting of this device.
 fn op_meeting_id(op: &ClaimedOutboxOperation) -> Option<i64> {
     let source_meeting_id = || {
-        serde_json::from_str::<serde_json::Value>(&op.payload_json).ok()?.get("source_meeting_id")?.as_i64()
+        serde_json::from_str::<serde_json::Value>(&op.payload_json)
+            .ok()?
+            .get("source_meeting_id")?
+            .as_i64()
     };
     match op.row_type.as_str() {
         memory::OUTBOX_ROW_TYPE_MEETING => op.aggregate_id.parse().ok(),
         memory::OUTBOX_ROW_TYPE_ITEMS | memory::OUTBOX_ROW_TYPE_LIVE_ALERT => source_meeting_id(),
         // Named `<origin>:<source id>:<speaker>`, with an empty origin for this device's own meeting.
-        memory::OUTBOX_ROW_TYPE_MEETING_SPEAKER if op.aggregate_id.starts_with(':') => source_meeting_id(),
+        memory::OUTBOX_ROW_TYPE_MEETING_SPEAKER if op.aggregate_id.starts_with(':') => {
+            source_meeting_id()
+        }
         // A step or step read of this device's own meeting, `meeting:{device}:{id}`.
         memory::OUTBOX_ROW_TYPE_TOPIC_STEP | memory::OUTBOX_ROW_TYPE_TOPIC_EXTRACTION => {
             let v = serde_json::from_str::<serde_json::Value>(&op.payload_json).ok()?;
@@ -371,7 +427,10 @@ fn deferral_reason(
     let meeting_id = op_meeting_id(op)?;
     let terminal = *parent_terminal.entry(meeting_id).or_insert_with(|| {
         match store.get_meeting(meeting_id) {
-            Ok(Some(m)) => Some(matches!(m.status, MeetingStatus::Completed | MeetingStatus::Cancelled)),
+            Ok(Some(m)) => Some(matches!(
+                m.status,
+                MeetingStatus::Completed | MeetingStatus::Cancelled
+            )),
             Ok(None) => None,
             // An unreadable meeting is held, never dropped.
             Err(_) => Some(false),
@@ -382,6 +441,23 @@ fn deferral_reason(
         Some(false) => Some("parent_meeting_not_terminal"),
         Some(true) => None,
     }
+}
+
+/// Whether the relay already holds this device's row under this number and type.
+async fn relay_has_row(
+    conn: &Connection,
+    device_id: &str,
+    local_seq: i64,
+    row_type: &str,
+) -> Result<bool, SyncEngineError> {
+    let mut rows = conn
+        .query(
+            "SELECT 1 FROM sync_row WHERE device_id = ?1 AND local_seq = ?2 AND row_type = ?3",
+            libsql::params![device_id, local_seq, row_type],
+        )
+        .await
+        .map_err(query_error)?;
+    Ok(rows.next().await.map_err(query_error)?.is_some())
 }
 
 /// Writes one op's row. The bools are true when it went in with the entity tag / kind tag / slice tag; a
@@ -396,7 +472,11 @@ async fn write_sync_row(
     now_unix_ms: i64,
 ) -> Result<(String, bool, bool, bool), SyncEngineError> {
     let aad = content_row_aad(&op.device_id, op.local_seq, &op.row_type);
-    let ciphertext = STANDARD.encode(sync::encrypt_payload(group_key, op.payload_json.as_bytes(), &aad));
+    let ciphertext = STANDARD.encode(sync::encrypt_payload(
+        group_key,
+        op.payload_json.as_bytes(),
+        &aad,
+    ));
     let row = [(
         op.local_seq,
         op.row_type.as_str(),
@@ -405,7 +485,8 @@ async fn write_sync_row(
         kind_tag.map(str::to_string),
         slice_tag.map(str::to_string),
     )];
-    let (mut with_entity, mut with_kind, mut with_slice) = (tag.is_some(), kind_tag.is_some(), slice_tag.is_some());
+    let (mut with_entity, mut with_kind, mut with_slice) =
+        (tag.is_some(), kind_tag.is_some(), slice_tag.is_some());
     insert_with_tag_fallback(
         conn,
         &op.device_id,
@@ -416,7 +497,7 @@ async fn write_sync_row(
         &mut with_slice,
     )
     .await
-        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
     Ok((
         format!("sync_row:{}:{}:{}", op.device_id, op.local_seq, op.row_type),
         with_entity,
@@ -437,8 +518,8 @@ fn query_error(e: impl std::fmt::Display) -> SyncEngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libsql::params;
     use crate::content::{ensure_content_schema, pull_content, ROW_TYPE_ITEMS, ROW_TYPE_MEETING};
+    use libsql::params;
     use memory::{MeetingTrigger, NewMeeting, NewTranscriptSegment};
 
     /// Outbox rows are stamped with the real clock at enqueue, so the injected clock
@@ -482,7 +563,12 @@ mod tests {
     }
 
     fn states(store: &Store) -> Vec<String> {
-        store.list_outbox_operations().unwrap().into_iter().map(|r| r.2).collect()
+        store
+            .list_outbox_operations()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.2)
+            .collect()
     }
 
     /// The outbox path alone (no legacy `push_content` in this test) delivers a row a
@@ -497,21 +583,36 @@ mod tests {
         store_a.complete_meeting(meeting_id, 2000, None).unwrap();
         let t0 = t0();
 
-        let summary = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0).await.unwrap();
-        assert_eq!(summary, OutboxDispatchSummary { delivered: 1, ..Default::default() });
+        let summary = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0)
+            .await
+            .unwrap();
+        assert_eq!(
+            summary,
+            OutboxDispatchSummary {
+                delivered: 1,
+                ..Default::default()
+            }
+        );
         assert_eq!(states(&store_a), vec!["delivered"]);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 1);
 
         let store_b = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         let local_seq = store_a.list_outbox_operations().unwrap()[0].0;
-        let applied_id = store_b.resolve_sync_row_map("device-a", local_seq, ROW_TYPE_MEETING).unwrap().unwrap();
+        let applied_id = store_b
+            .resolve_sync_row_map("device-a", local_seq, ROW_TYPE_MEETING)
+            .unwrap()
+            .unwrap();
         let applied = store_b.get_meeting(applied_id).unwrap().unwrap();
         assert_eq!(applied.title, "Outbox Standup");
         assert_eq!(applied.status, memory::MeetingStatus::Completed);
 
         // A second round has nothing left to claim.
-        let again = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0 + 1).await.unwrap();
+        let again = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0 + 1)
+            .await
+            .unwrap();
         assert_eq!(again, OutboxDispatchSummary::default());
     }
 
@@ -528,14 +629,20 @@ mod tests {
         let t0 = t0();
 
         let past = tokio::time::Instant::now() - std::time::Duration::from_millis(1);
-        let summary = dispatch_outbox_until(&conn, &group_key, &store_a, "device-a", t0, Some(past)).await.unwrap();
+        let summary =
+            dispatch_outbox_until(&conn, &group_key, &store_a, "device-a", t0, Some(past))
+                .await
+                .unwrap();
         assert_eq!(summary.delivered, 0);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 0);
         assert_eq!(states(&store_a), vec!["pending"]);
 
         // The next round, with time left, sends it.
         let later = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-        let next = dispatch_outbox_until(&conn, &group_key, &store_a, "device-a", t0 + 1, Some(later)).await.unwrap();
+        let next =
+            dispatch_outbox_until(&conn, &group_key, &store_a, "device-a", t0 + 1, Some(later))
+                .await
+                .unwrap();
         assert_eq!(next.delivered, 1);
         assert_eq!(states(&store_a), vec!["delivered"]);
     }
@@ -553,15 +660,27 @@ mod tests {
         let (store, meeting_id) = own_store("device-a");
         store.complete_meeting(meeting_id, 2000, None).unwrap();
         store
-            .update_meeting_summary(meeting_id, "tldr", &["d".into()], &["a".into()], &["q".into()], "ollama", "m")
+            .update_meeting_summary(
+                meeting_id,
+                "tldr",
+                &["d".into()],
+                &["a".into()],
+                &["q".into()],
+                "ollama",
+                "m",
+            )
             .unwrap();
 
         let legacy = store.unpushed_meeting_rows("device-a", 0).unwrap();
         assert_eq!(legacy.len(), 1);
-        let (legacy_seq, legacy_type, legacy_json) = crate::content::encode_row(&legacy[0]).unwrap();
+        let (legacy_seq, legacy_type, legacy_json) =
+            crate::content::encode_row(&legacy[0]).unwrap();
         let (outbox_seq, outbox_type, _, outbox_json) =
             store.list_outbox_operations().unwrap().pop().unwrap();
-        assert_eq!((legacy_seq, legacy_type), (outbox_seq, outbox_type.as_str()));
+        assert_eq!(
+            (legacy_seq, legacy_type),
+            (outbox_seq, outbox_type.as_str())
+        );
         let legacy_value: serde_json::Value = serde_json::from_str(&legacy_json).unwrap();
         let outbox_value: serde_json::Value = serde_json::from_str(&outbox_json).unwrap();
         assert_eq!(outbox_value, legacy_value);
@@ -597,26 +716,54 @@ mod tests {
             speaker_label: "Me".into(),
             text: text.into(),
         };
-        store_a.insert_transcript_segments(&[segment(0, "first"), segment(100, "second")]).unwrap();
+        store_a
+            .insert_transcript_segments(&[segment(0, "first"), segment(100, "second")])
+            .unwrap();
         let t0 = t0();
 
-        let held = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0).await.unwrap();
-        assert_eq!(held, OutboxDispatchSummary { deferred: 2, ..Default::default() });
+        let held = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0)
+            .await
+            .unwrap();
+        assert_eq!(
+            held,
+            OutboxDispatchSummary {
+                deferred: 2,
+                ..Default::default()
+            }
+        );
         assert_eq!(states(&store_a), vec!["pending", "pending"]);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
 
         store_a.complete_meeting(meeting_id, 2000, None).unwrap();
-        let released = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0 + DEFERRED_RECHECK_MS)
-            .await
-            .unwrap();
-        assert_eq!(released, OutboxDispatchSummary { delivered: 3, ..Default::default() });
+        let released = dispatch_outbox_at(
+            &conn,
+            &group_key,
+            &store_a,
+            "device-a",
+            t0 + DEFERRED_RECHECK_MS,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            released,
+            OutboxDispatchSummary {
+                delivered: 3,
+                ..Default::default()
+            }
+        );
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 2);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 1);
 
         let store_b = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         let hits = store_b.search_transcript_keyword("second", 10).unwrap();
-        assert_eq!(hits.len(), 1, "peer applied the transcript items under the pulled meeting");
+        assert_eq!(
+            hits.len(),
+            1,
+            "peer applied the transcript items under the pulled meeting"
+        );
     }
 
     /// A pre-cutover peer gets transcripts from the legacy scan in the old format; the
@@ -646,11 +793,24 @@ mod tests {
             .unwrap();
         store_a.complete_meeting(meeting_id, 2000, None).unwrap();
 
-        let summary = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        assert_eq!(summary, OutboxDispatchSummary { delivered: 1, legacy_owned: 1, ..Default::default() });
+        let summary = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            summary,
+            OutboxDispatchSummary {
+                delivered: 1,
+                legacy_owned: 1,
+                ..Default::default()
+            }
+        );
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 1);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
-        assert_eq!(states(&store_a), vec!["delivered", "delivered"], "the items row is closed out, never re-dispatched as items");
+        assert_eq!(
+            states(&store_a),
+            vec!["delivered", "delivered"],
+            "the items row is closed out, never re-dispatched as items"
+        );
     }
 
     /// SYNC-104 end to end: a relay write failure returns the row to pending with
@@ -674,20 +834,46 @@ mod tests {
         )
         .await
         .unwrap();
-        let failed = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0).await.unwrap();
-        assert_eq!(failed, OutboxDispatchSummary { failed: 1, ..Default::default() });
+        let failed = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0)
+            .await
+            .unwrap();
+        assert_eq!(
+            failed,
+            OutboxDispatchSummary {
+                failed: 1,
+                ..Default::default()
+            }
+        );
         assert_eq!(states(&store_a), vec!["pending"]);
 
         conn.execute("DROP TRIGGER relay_down", ()).await.unwrap();
-        let too_early = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0 + BASE_BACKOFF_MS - 1)
-            .await
-            .unwrap();
+        let too_early = dispatch_outbox_at(
+            &conn,
+            &group_key,
+            &store_a,
+            "device-a",
+            t0 + BASE_BACKOFF_MS - 1,
+        )
+        .await
+        .unwrap();
         assert_eq!(too_early, OutboxDispatchSummary::default());
 
-        let retried = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0 + BASE_BACKOFF_MS)
-            .await
-            .unwrap();
-        assert_eq!(retried, OutboxDispatchSummary { delivered: 1, ..Default::default() });
+        let retried = dispatch_outbox_at(
+            &conn,
+            &group_key,
+            &store_a,
+            "device-a",
+            t0 + BASE_BACKOFF_MS,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            retried,
+            OutboxDispatchSummary {
+                delivered: 1,
+                ..Default::default()
+            }
+        );
         assert_eq!(states(&store_a), vec!["delivered"]);
     }
 
@@ -711,8 +897,14 @@ mod tests {
         let (store_a, _) = own_store("device-a");
         store_a.seed_builtin_routines().unwrap();
         let routines = store_a.list_routines().unwrap();
-        let brief = routines.iter().find(|r| r.template == memory::RoutineTemplate::DailyBrief).unwrap();
-        let focus = routines.iter().find(|r| r.template == memory::RoutineTemplate::FocusTime).unwrap();
+        let brief = routines
+            .iter()
+            .find(|r| r.template == memory::RoutineTemplate::DailyBrief)
+            .unwrap();
+        let focus = routines
+            .iter()
+            .find(|r| r.template == memory::RoutineTemplate::FocusTime)
+            .unwrap();
         store_a
             .insert_routine_run(&memory::NewRoutineRun {
                 routine_id: brief.id,
@@ -731,11 +923,19 @@ mod tests {
             })
             .unwrap();
 
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ROUTINE_RUN).await, 1, "only the finished run is delivered");
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_ROUTINE_RUN).await,
+            1,
+            "only the finished run is delivered"
+        );
 
         let store_b = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         let runs = store_b.recent_routine_runs_across_all(10).unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].output_summary, "Daily brief from A");
@@ -753,16 +953,35 @@ mod tests {
         let (store_a, _) = own_store("device-a");
         store_a
             .save_meeting_prep(&memory::prep::MeetingPrepRow {
-                event_id: "ev1".into(), title: "Sync".into(), start_unix_ms: 2_000_000, generated_at_unix_ms: 9,
-                brief_json: "{}".into(), provider: "p".into(), model: "m".into(),
+                event_id: "ev1".into(),
+                title: "Sync".into(),
+                start_unix_ms: 2_000_000,
+                generated_at_unix_ms: 9,
+                brief_json: "{}".into(),
+                provider: "p".into(),
+                model: "m".into(),
             })
             .unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING_PREP).await, 1);
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_MEETING_PREP).await,
+            1
+        );
 
         let store_b = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        assert_eq!(store_b.get_meeting_prep("ev1").unwrap().unwrap().generated_at_unix_ms, 9);
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            store_b
+                .get_meeting_prep("ev1")
+                .unwrap()
+                .unwrap()
+                .generated_at_unix_ms,
+            9
+        );
     }
 
     #[tokio::test]
@@ -773,21 +992,45 @@ mod tests {
         ensure_content_schema(&conn).await.unwrap();
         let group_key = GroupKey::generate();
         let (store_a, _) = own_store("device-a");
-        store_a.add_profile_suggestion("Prefers mornings", None, 9).unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_PROFILE_SUGGESTION).await, 1);
+        store_a
+            .add_profile_suggestion("Prefers mornings", None, 9)
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_PROFILE_SUGGESTION).await,
+            1
+        );
 
         let store_b = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        assert_eq!(store_b.list_profile_suggestions("pending").unwrap().len(), 1);
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            store_b.list_profile_suggestions("pending").unwrap().len(),
+            1
+        );
 
         // Dismissed on A: B's copy is dismissed at its next pull.
         let id = store_a.list_profile_suggestions("pending").unwrap()[0].id;
-        store_a.set_profile_suggestion_status(id, "dismissed").unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        assert!(store_b.list_profile_suggestions("pending").unwrap().is_empty());
-        assert_eq!(store_b.list_profile_suggestions("dismissed").unwrap().len(), 1);
+        store_a
+            .set_profile_suggestion_status(id, "dismissed")
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        assert!(store_b
+            .list_profile_suggestions("pending")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store_b.list_profile_suggestions("dismissed").unwrap().len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -810,31 +1053,63 @@ mod tests {
                 created_at_unix_ms: now,
             })
             .unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_LIVE_ALERT).await, 1);
 
         let store_b = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         let taken = store_b.take_unnotified_peer_alerts(now, 1_800_000).unwrap();
         assert_eq!(taken.len(), 1);
         assert_eq!(taken[0].meeting_title, "Outbox Standup");
         assert_eq!(taken[0].meeting_id, None, "the meeting has not synced yet");
-        assert_eq!((taken[0].source_id, taken[0].source_meeting_id), (id, meeting_id));
+        assert_eq!(
+            (taken[0].source_id, taken[0].source_meeting_id),
+            (id, meeting_id)
+        );
 
-        store_a.set_live_alert_draft(id, r#"{"body":"Numbers attached"}"#).unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        store_a
+            .set_live_alert_draft(id, r#"{"body":"Numbers attached"}"#)
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         let row = store_b.get_live_alert(taken[0].id).unwrap().unwrap();
-        assert_eq!(row.draft_json.as_deref(), Some(r#"{"body":"Numbers attached"}"#));
-        assert!(store_b.take_unnotified_peer_alerts(now, 1_800_000).unwrap().is_empty(), "an update does not re-notify");
+        assert_eq!(
+            row.draft_json.as_deref(),
+            Some(r#"{"body":"Numbers attached"}"#)
+        );
+        assert!(
+            store_b
+                .take_unnotified_peer_alerts(now, 1_800_000)
+                .unwrap()
+                .is_empty(),
+            "an update does not re-notify"
+        );
     }
 
     fn has_line(store: &Store, word: &str) -> bool {
-        !store.search_transcript_keyword(word, 10).unwrap().is_empty()
+        !store
+            .search_transcript_keyword(word, 10)
+            .unwrap()
+            .is_empty()
+    }
+
+    fn line_count(store: &Store, word: &str) -> usize {
+        store.search_transcript_keyword(word, 10).unwrap().len()
     }
 
     /// Meeting 1_000-121_000 with lines at 0 s ("opening") and 90 s ("tangent"), all pushed.
-    async fn pushed_meeting_with_two_lines(conn: &Connection, group_key: &GroupKey) -> (Store, i64) {
+    async fn pushed_meeting_with_two_lines(
+        conn: &Connection,
+        group_key: &GroupKey,
+    ) -> (Store, i64) {
         let (store_a, meeting_id) = own_store("device-a");
         let line = |start_cs, text: &str| NewTranscriptSegment {
             meeting_id,
@@ -842,9 +1117,13 @@ mod tests {
             speaker_label: "Me".into(),
             text: text.into(),
         };
-        store_a.insert_transcript_segments(&[line(0, "opening"), line(9_000, "tangent")]).unwrap();
+        store_a
+            .insert_transcript_segments(&[line(0, "opening"), line(9_000, "tangent")])
+            .unwrap();
         store_a.complete_meeting(meeting_id, 121_000, None).unwrap();
-        dispatch_outbox_at(conn, group_key, &store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(conn, group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
         (store_a, meeting_id)
     }
 
@@ -855,21 +1134,43 @@ mod tests {
 
         // B pulls the lines before the trim; C only after it.
         let store_b = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         assert!(has_line(&store_b, "opening") && has_line(&store_b, "tangent"));
 
         store_a.trim_meeting(meeting_id, 60_000).unwrap().unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 2, "no tombstone: the relay keeps the late line");
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await,
+            2,
+            "no tombstone: the relay keeps the late line"
+        );
 
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         let store_c = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
-        for (name, peer) in [("B: lines then trim", &store_b), ("C: trim then lines", &store_c)] {
+        pull_content(&conn, &group_key, &store_c, "device-c")
+            .await
+            .unwrap();
+        for (name, peer) in [
+            ("B: lines then trim", &store_b),
+            ("C: trim then lines", &store_c),
+        ] {
             assert!(has_line(peer, "opening"), "{name}");
             assert!(!has_line(peer, "tangent"), "{name}");
-            let local = peer.resolve_sync_meeting_map("device-a", meeting_id).unwrap().unwrap();
-            assert_eq!(peer.get_meeting(local).unwrap().unwrap().end_unix_ms, Some(61_000), "{name}");
+            let local = peer
+                .resolve_sync_meeting_map("device-a", meeting_id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                peer.get_meeting(local).unwrap().unwrap().end_unix_ms,
+                Some(61_000),
+                "{name}"
+            );
         }
     }
 
@@ -887,20 +1188,36 @@ mod tests {
                 text: "afterwards".into(),
             }])
             .unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
         let store_b = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         assert!(has_line(&store_b, "afterwards"));
     }
 
     /// A's completed meeting synced to B; returns B's store and B's id for it.
-    async fn meeting_on_b(conn: &Connection, group_key: &GroupKey, store_a: &Store, a_meeting: i64) -> (Store, i64) {
+    async fn meeting_on_b(
+        conn: &Connection,
+        group_key: &GroupKey,
+        store_a: &Store,
+        a_meeting: i64,
+    ) -> (Store, i64) {
         store_a.complete_meeting(a_meeting, 2000, None).unwrap();
-        dispatch_outbox_at(conn, group_key, store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(conn, group_key, store_a, "device-a", t0())
+            .await
+            .unwrap();
         let store_b = Store::open_in_memory().unwrap();
         store_b.set_own_device_id("device-b");
-        pull_content(conn, group_key, &store_b, "device-b").await.unwrap();
-        let b_meeting = store_b.resolve_sync_meeting_map("device-a", a_meeting).unwrap().unwrap();
+        pull_content(conn, group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        let b_meeting = store_b
+            .resolve_sync_meeting_map("device-a", a_meeting)
+            .unwrap()
+            .unwrap();
         (store_b, b_meeting)
     }
 
@@ -921,19 +1238,48 @@ mod tests {
         use crate::content::ROW_TYPE_PERSON;
         let (_dir, conn, group_key) = relay_and_store().await;
         let (store_a, a_meeting) = own_store("device-a");
-        store_a.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
-        store_a.set_meeting_speaker(a_meeting, 0, Some("sam@x.com"), Some(memory::speaker_names::NameStatus::Confirmed)).unwrap();
+        store_a
+            .upsert_person("sam@x.com", "Sam", Some("sam@x.com"))
+            .unwrap();
+        store_a
+            .set_meeting_speaker(
+                a_meeting,
+                0,
+                Some("sam@x.com"),
+                Some(memory::speaker_names::NameStatus::Confirmed),
+            )
+            .unwrap();
         let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_PERSON).await, 1);
-        assert_eq!(store_b.meeting_speakers(b_meeting).unwrap()[0].name.as_deref(), Some("Sam"));
+        assert_eq!(
+            store_b.meeting_speakers(b_meeting).unwrap()[0]
+                .name
+                .as_deref(),
+            Some("Sam")
+        );
 
         tick();
-        store_a.upsert_person("sam@x.com", "Sam Lee", Some("sam@x.com")).unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        assert_eq!(store_b.meeting_speakers(b_meeting).unwrap()[0].name.as_deref(), Some("Sam Lee"));
+        store_a
+            .upsert_person("sam@x.com", "Sam Lee", Some("sam@x.com"))
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            store_b.meeting_speakers(b_meeting).unwrap()[0]
+                .name
+                .as_deref(),
+            Some("Sam Lee")
+        );
         assert!(
-            store_b.list_outbox_operations().unwrap().iter().all(|o| o.1 != ROW_TYPE_PERSON),
+            store_b
+                .list_outbox_operations()
+                .unwrap()
+                .iter()
+                .all(|o| o.1 != ROW_TYPE_PERSON),
             "an applied row is never re-enqueued"
         );
     }
@@ -961,16 +1307,33 @@ mod tests {
         };
         log(&store_a, 300);
         log(&store_b, 50);
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_PROVIDER_SPEND).await, 1);
-        assert_eq!(store_b.month_spend_by_provider("2026-11").unwrap(), vec![("anthropic".into(), 350)]);
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_PROVIDER_SPEND).await,
+            1
+        );
+        assert_eq!(
+            store_b.month_spend_by_provider("2026-11").unwrap(),
+            vec![("anthropic".into(), 350)]
+        );
 
         tick();
         log(&store_a, 100);
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        assert_eq!(store_b.month_spend_by_provider("2026-11").unwrap(), vec![("anthropic".into(), 450)]);
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            store_b.month_spend_by_provider("2026-11").unwrap(),
+            vec![("anthropic".into(), 450)]
+        );
     }
 
     fn topic_store(device_id: &str) -> Store {
@@ -1021,11 +1384,18 @@ mod tests {
 
     /// One full `sync_content` round (push with markers, pull, outbox) against the test relay.
     async fn topic_round(conn: &Connection, group_key: &GroupKey, store: &Store, device_id: &str) {
-        crate::content_round(conn, group_key, store, device_id, &|_| {}).await.unwrap();
+        crate::content_round(conn, group_key, store, device_id, &|_| {})
+            .await
+            .unwrap();
     }
 
     fn outbox_count(store: &Store, row_type: &str) -> usize {
-        store.list_outbox_operations().unwrap().iter().filter(|o| o.1 == row_type).count()
+        store
+            .list_outbox_operations()
+            .unwrap()
+            .iter()
+            .filter(|o| o.1 == row_type)
+            .count()
     }
 
     #[tokio::test]
@@ -1034,25 +1404,42 @@ mod tests {
         use memory::topics::seeds::SeedKind;
         let (_dir, conn, group_key) = relay_and_store().await;
         let (a, b) = (topic_store("device-a"), topic_store("device-b"));
-        let seed = a.create_seed_topic("Acme", &["Acme Corp".into()], Some(SeedKind::Customer)).unwrap();
+        let seed = a
+            .create_seed_topic("Acme", &["Acme Corp".into()], Some(SeedKind::Customer))
+            .unwrap();
         topic_round(&conn, &group_key, &a, "device-a").await;
         topic_round(&conn, &group_key, &b, "device-b").await;
         let got = b.list_seed_topics().unwrap();
         assert_eq!(got.len(), 1);
-        assert_eq!((got[0].key.as_str(), got[0].name.as_str()), (seed.key.as_str(), "Acme"));
-        assert_eq!((got[0].aliases.clone(), got[0].kind), (seed.aliases.clone(), Some(SeedKind::Customer)));
-        assert_eq!(outbox_count(&b, ROW_TYPE_TOPIC_SEED), 0, "an applied seed is never re-enqueued");
+        assert_eq!(
+            (got[0].key.as_str(), got[0].name.as_str()),
+            (seed.key.as_str(), "Acme")
+        );
+        assert_eq!(
+            (got[0].aliases.clone(), got[0].kind),
+            (seed.aliases.clone(), Some(SeedKind::Customer))
+        );
+        assert_eq!(
+            outbox_count(&b, ROW_TYPE_TOPIC_SEED),
+            0,
+            "an applied seed is never re-enqueued"
+        );
 
-        b.update_seed_topic(&seed.key, "Acme Co", &[], None).unwrap();
+        b.update_seed_topic(&seed.key, "Acme Co", &[], None)
+            .unwrap();
         tick();
-        a.update_seed_topic(&seed.key, "Acme Inc", &[], Some(SeedKind::Customer)).unwrap();
+        a.update_seed_topic(&seed.key, "Acme Inc", &[], Some(SeedKind::Customer))
+            .unwrap();
         for _ in 0..2 {
             topic_round(&conn, &group_key, &a, "device-a").await;
             topic_round(&conn, &group_key, &b, "device-b").await;
         }
         for s in [&a, &b] {
             let l = s.list_seed_topics().unwrap();
-            assert_eq!((l.len(), l[0].name.as_str(), l[0].kind), (1, "Acme Inc", Some(SeedKind::Customer)));
+            assert_eq!(
+                (l.len(), l[0].name.as_str(), l[0].kind),
+                (1, "Acme Inc", Some(SeedKind::Customer))
+            );
         }
     }
 
@@ -1061,21 +1448,33 @@ mod tests {
         use memory::topics::client_controls::ClientControl;
         let (_dir, conn, group_key) = relay_and_store().await;
         let (a, b) = (topic_store("device-a"), topic_store("device-b"));
-        let seed = a.create_seed_topic("Acme", &["Acme Corp".into()], None).unwrap();
-        let c = ClientControl { exclude_hosted: true, keep_months: Some(12) };
+        let seed = a
+            .create_seed_topic("Acme", &["Acme Corp".into()], None)
+            .unwrap();
+        let c = ClientControl {
+            exclude_hosted: true,
+            keep_months: Some(12),
+        };
         a.set_client_control(&seed.key, &c).unwrap();
         topic_round(&conn, &group_key, &a, "device-a").await;
         topic_round(&conn, &group_key, &b, "device-b").await;
         assert_eq!(b.client_control(&seed.key).unwrap(), c);
-        assert_eq!(b.excluded_terms().unwrap(), vec!["Acme".to_string(), "Acme Corp".to_string()]);
+        assert_eq!(
+            b.excluded_terms().unwrap(),
+            vec!["Acme".to_string(), "Acme Corp".to_string()]
+        );
 
         tick();
-        b.set_client_control(&seed.key, &ClientControl::default()).unwrap();
+        b.set_client_control(&seed.key, &ClientControl::default())
+            .unwrap();
         for _ in 0..2 {
             topic_round(&conn, &group_key, &b, "device-b").await;
             topic_round(&conn, &group_key, &a, "device-a").await;
         }
-        assert_eq!(a.client_control(&seed.key).unwrap(), ClientControl::default());
+        assert_eq!(
+            a.client_control(&seed.key).unwrap(),
+            ClientControl::default()
+        );
         assert!(a.excluded_terms().unwrap().is_empty());
     }
 
@@ -1086,15 +1485,30 @@ mod tests {
         let (a, b) = (topic_store("device-a"), topic_store("device-b"));
         let seed = a.create_seed_topic("Acme", &[], None).unwrap();
         // A holds an older control row (exclusion off), synced to B.
-        a.set_client_control(&seed.key, &ClientControl { exclude_hosted: false, keep_months: None }).unwrap();
+        a.set_client_control(
+            &seed.key,
+            &ClientControl {
+                exclude_hosted: false,
+                keep_months: None,
+            },
+        )
+        .unwrap();
         topic_round(&conn, &group_key, &a, "device-a").await;
         topic_round(&conn, &group_key, &b, "device-b").await;
         assert!(!b.client_control(&seed.key).unwrap().exclude_hosted);
         tick();
-        b.set_client_control(&seed.key, &ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        b.set_client_control(
+            &seed.key,
+            &ClientControl {
+                exclude_hosted: true,
+                keep_months: None,
+            },
+        )
+        .unwrap();
         tick();
         // A renames the seed later, before pulling B's change: its record carries the old row.
-        a.update_seed_topic(&seed.key, "Acme Inc", &[], None).unwrap();
+        a.update_seed_topic(&seed.key, "Acme Inc", &[], None)
+            .unwrap();
         for _ in 0..3 {
             topic_round(&conn, &group_key, &a, "device-a").await;
             topic_round(&conn, &group_key, &b, "device-b").await;
@@ -1112,7 +1526,14 @@ mod tests {
         let (a, b) = (topic_store("device-a"), topic_store("device-b"));
         let x = a.create_seed_topic("Xco", &[], None).unwrap();
         let y = a.create_seed_topic("Yco", &[], None).unwrap();
-        a.set_client_control(&x.key, &ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        a.set_client_control(
+            &x.key,
+            &ClientControl {
+                exclude_hosted: true,
+                keep_months: None,
+            },
+        )
+        .unwrap();
         tick();
         a.merge_topics(y.topic_id, x.topic_id).unwrap();
         for _ in 0..2 {
@@ -1127,7 +1548,9 @@ mod tests {
         let (_dir, conn, group_key) = relay_and_store().await;
         let (a, b) = (topic_store("device-a"), topic_store("device-b"));
         let x = a.create_seed_topic("Acme", &[], None).unwrap();
-        let y = a.create_seed_topic("Acme Inc", &["Acme Incorporated".into()], None).unwrap();
+        let y = a
+            .create_seed_topic("Acme Inc", &["Acme Incorporated".into()], None)
+            .unwrap();
         let z = a.create_seed_topic("Board", &[], None).unwrap();
         topic_round(&conn, &group_key, &a, "device-a").await;
         topic_round(&conn, &group_key, &b, "device-b").await;
@@ -1157,7 +1580,8 @@ mod tests {
 
         a.merge_topics(x.topic_id, y.topic_id).unwrap();
         tick();
-        b.update_seed_topic(&y.key, "Acme Incorporated", &[], None).unwrap();
+        b.update_seed_topic(&y.key, "Acme Incorporated", &[], None)
+            .unwrap();
         for _ in 0..2 {
             topic_round(&conn, &group_key, &a, "device-a").await;
             topic_round(&conn, &group_key, &b, "device-b").await;
@@ -1185,13 +1609,21 @@ mod tests {
         assert_eq!(b.next_judge_candidates(10).unwrap().len(), 1);
         let c = a.next_judge_candidates(10).unwrap();
         assert_eq!(c.len(), 1);
-        a.record_topic_verdict(c[0].source_id, Some(seed.topic_id), Some(0.9), "jev", 5).unwrap();
+        a.record_topic_verdict(c[0].source_id, Some(seed.topic_id), Some(0.9), "jev", 5)
+            .unwrap();
 
         topic_round(&conn, &group_key, &a, "device-a").await;
         topic_round(&conn, &group_key, &b, "device-b").await;
-        assert!(b.next_judge_candidates(10).unwrap().is_empty(), "the pulled verdict decides it on b");
+        assert!(
+            b.next_judge_candidates(10).unwrap().is_empty(),
+            "the pulled verdict decides it on b"
+        );
         assert_eq!(b.list_seed_topics().unwrap()[0].item_count, 1);
-        assert_eq!(outbox_count(&b, ROW_TYPE_TOPIC_VERDICT), 0, "an applied verdict is never re-enqueued");
+        assert_eq!(
+            outbox_count(&b, ROW_TYPE_TOPIC_VERDICT),
+            0,
+            "an applied verdict is never re-enqueued"
+        );
     }
 
     #[tokio::test]
@@ -1202,7 +1634,8 @@ mod tests {
         topic_event(&a, "e1", "Lunch plans");
         topic_index(&a);
         let c = a.next_judge_candidates(10).unwrap();
-        a.record_topic_verdict(c[0].source_id, Some(seed.topic_id), Some(0.9), "jev", 5).unwrap();
+        a.record_topic_verdict(c[0].source_id, Some(seed.topic_id), Some(0.9), "jev", 5)
+            .unwrap();
         topic_round(&conn, &group_key, &a, "device-a").await;
         topic_round(&conn, &group_key, &b, "device-b").await;
 
@@ -1236,50 +1669,100 @@ mod tests {
     /// Held topic rows never fill a pass: a person row queued behind 150 of them still goes out.
     #[tokio::test]
     async fn held_topic_rows_do_not_starve_other_rows() {
-        use crate::content::{push_marker, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_PERSON, ROW_TYPE_TOPIC_SEED};
+        use crate::content::{
+            push_marker, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_PERSON, ROW_TYPE_TOPIC_SEED,
+        };
         let (_dir, conn, group_key) = relay_and_store().await;
-        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
         let a = topic_store("device-a");
         for i in 0..150 {
-            a.create_seed_topic(&format!("Seed {i}"), &[], None).unwrap();
+            a.create_seed_topic(&format!("Seed {i}"), &[], None)
+                .unwrap();
         }
-        a.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
+        a.upsert_person("sam@x.com", "Sam", Some("sam@x.com"))
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_PERSON).await, 1);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED).await, 0);
     }
 
     #[tokio::test]
     async fn topic_rows_wait_for_every_device_capability() {
-        use crate::content::{push_marker, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_SEED};
+        use crate::content::{
+            push_marker, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_SEED,
+        };
         let (_dir, conn, group_key) = relay_and_store().await;
         // A peer on an older build: it announces items, not topics.
-        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
         let a = Store::open_in_memory().unwrap();
         a.create_seed_topic("Before sync", &[], None).unwrap(); // no device id yet: never enqueued
         a.set_own_device_id("device-a");
         a.create_seed_topic("Acme", &[], None).unwrap();
 
         let t = t0();
-        assert_eq!(a.topic_rows_held_devices().unwrap(), None, "not measured before a pass");
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t).await.unwrap();
+        assert_eq!(
+            a.topic_rows_held_devices().unwrap(),
+            None,
+            "not measured before a pass"
+        );
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t)
+            .await
+            .unwrap();
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED).await, 0);
         assert_eq!(states(&a), vec!["pending".to_string()], "held, untouched");
         // The shells' exclude-toggle warning (X6 final review, Major 22): one device holds the seed rows back.
         assert_eq!(a.topic_rows_held_devices().unwrap(), Some(1));
 
-        push_marker(&conn, &group_key, "device-old", ROW_TYPE_TOPICS_CAPABILITY).await.unwrap();
-        crate::content::push_content(&conn, &group_key, &a, "device-a").await.unwrap();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t + DEFERRED_RECHECK_MS + 1).await.unwrap();
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_TOPICS_CAPABILITY)
+            .await
+            .unwrap();
+        crate::content::push_content(&conn, &group_key, &a, "device-a")
+            .await
+            .unwrap();
+        dispatch_outbox_at(
+            &conn,
+            &group_key,
+            &a,
+            "device-a",
+            t + DEFERRED_RECHECK_MS + 1,
+        )
+        .await
+        .unwrap();
         assert_eq!(a.topic_rows_held_devices().unwrap(), Some(0));
         let b = topic_store("device-b");
-        pull_content(&conn, &group_key, &b, "device-b").await.unwrap();
-        assert_eq!(b.list_seed_topics().unwrap().len(), 2, "the backfill sends the seed made before sync");
+        pull_content(&conn, &group_key, &b, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            b.list_seed_topics().unwrap().len(),
+            2,
+            "the backfill sends the seed made before sync"
+        );
 
         let ops = outbox_count(&a, ROW_TYPE_TOPIC_SEED);
-        crate::content::push_content(&conn, &group_key, &a, "device-a").await.unwrap();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t + 2 * DEFERRED_RECHECK_MS).await.unwrap();
-        assert_eq!(outbox_count(&a, ROW_TYPE_TOPIC_SEED), ops, "the backfill runs once");
+        crate::content::push_content(&conn, &group_key, &a, "device-a")
+            .await
+            .unwrap();
+        dispatch_outbox_at(
+            &conn,
+            &group_key,
+            &a,
+            "device-a",
+            t + 2 * DEFERRED_RECHECK_MS,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outbox_count(&a, ROW_TYPE_TOPIC_SEED),
+            ops,
+            "the backfill runs once"
+        );
     }
 
     const DAY: i64 = 86_400_000;
@@ -1356,11 +1839,21 @@ mod tests {
             "an applied step is never re-enqueued"
         );
 
-        b.apply_step_action(&key, &StepAction::Note { text: "from b".into() })
-            .unwrap();
+        b.apply_step_action(
+            &key,
+            &StepAction::Note {
+                text: "from b".into(),
+            },
+        )
+        .unwrap();
         tick();
-        a.apply_step_action(&key, &StepAction::Note { text: "from a".into() })
-            .unwrap();
+        a.apply_step_action(
+            &key,
+            &StepAction::Note {
+                text: "from a".into(),
+            },
+        )
+        .unwrap();
         topic_rounds(&conn, &group_key, &a, &b).await;
         for s in [&a, &b] {
             assert_eq!(page(s).you_owe[0].note.as_deref(), Some("from a"));
@@ -1482,8 +1975,13 @@ mod tests {
             "forgetting deletes the pulled steps"
         );
         // a edits a step and sends it before it hears of the forget.
-        a.apply_step_action(&key, &StepAction::Note { text: "late".into() })
-            .unwrap();
+        a.apply_step_action(
+            &key,
+            &StepAction::Note {
+                text: "late".into(),
+            },
+        )
+        .unwrap();
         dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
             .await
             .unwrap();
@@ -1543,7 +2041,9 @@ mod tests {
             ROW_TYPE_TOPICS_CAPABILITY,
             "topic_page_capability",
         ] {
-            push_marker(&conn, &group_key, "device-old", marker).await.unwrap();
+            push_marker(&conn, &group_key, "device-old", marker)
+                .await
+                .unwrap();
         }
         let a = topic_store("device-a");
         a.create_seed_topic("Maximus", &[], None).unwrap();
@@ -1551,12 +2051,15 @@ mod tests {
         topic_index(&a);
         read_steps(&a);
         a.set_self_names(&["Mike P".into()]).unwrap();
-        a.publish_topic_page_snapshots("device-a", crate::now_unix_ms()).unwrap();
+        a.publish_topic_page_snapshots("device-a", crate::now_unix_ms())
+            .unwrap();
         assert_eq!(outbox_count(&a, "topic_page_snapshot"), 1);
         assert!(outbox_count(&a, "topic_step") >= 1);
 
         let t = t0();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t)
+            .await
+            .unwrap();
         assert_eq!(
             relay_rows(&conn, "device-a", "topic_page_snapshot").await,
             0,
@@ -1570,10 +2073,19 @@ mod tests {
         push_marker(&conn, &group_key, "device-old", "topic_snapshot_capability")
             .await
             .unwrap();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t + DEFERRED_RECHECK_MS + 1)
-            .await
-            .unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", "topic_page_snapshot").await, 1);
+        dispatch_outbox_at(
+            &conn,
+            &group_key,
+            &a,
+            "device-a",
+            t + DEFERRED_RECHECK_MS + 1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", "topic_page_snapshot").await,
+            1
+        );
     }
 
     /// Piece-1 builds announce `topics_capability` but drop unknown row types, so step, extraction,
@@ -1681,21 +2193,33 @@ mod tests {
         };
         let spend = |s: &Store| s.month_spend_by_provider("2026-11").unwrap();
         log(&store_a, 2000);
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         assert_eq!(spend(&store_b), vec![("anthropic".into(), 2000)]);
 
         drop(store_a);
         tick();
         let (store_a, _) = own_store("device-a");
         log(&store_a, 50);
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_a, "device-a")
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         assert!(spend(&store_b)[0].1 >= 2000, "B: {:?}", spend(&store_b));
         assert!(spend(&store_a)[0].1 >= 2050, "A: {:?}", spend(&store_a));
         // Pulling again doesn't count the restored month twice.
-        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        pull_content(&conn, &group_key, &store_a, "device-a")
+            .await
+            .unwrap();
         assert_eq!(spend(&store_a), vec![("anthropic".into(), 2050)]);
     }
 
@@ -1705,26 +2229,60 @@ mod tests {
         use memory::speaker_names::NameStatus;
         let (_dir, conn, group_key) = relay_and_store().await;
         let (store_a, a_meeting) = own_store("device-a");
-        store_a.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
-        store_a.save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0]), (1, vec![0.0, 1.0])], true).unwrap();
-        store_a.set_meeting_speaker(a_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        store_a
+            .upsert_person("sam@x.com", "Sam", Some("sam@x.com"))
+            .unwrap();
+        store_a
+            .save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0]), (1, vec![0.0, 1.0])], true)
+            .unwrap();
+        store_a
+            .set_meeting_speaker(a_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
         // The speaker rows reach B before their meeting does: they wait, then attach.
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
         let early = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &early, "device-b").await.unwrap();
-        assert!(early.resolve_sync_meeting_map("device-a", a_meeting).unwrap().is_none(), "the meeting is still recording");
+        pull_content(&conn, &group_key, &early, "device-b")
+            .await
+            .unwrap();
+        assert!(
+            early
+                .resolve_sync_meeting_map("device-a", a_meeting)
+                .unwrap()
+                .is_none(),
+            "the meeting is still recording"
+        );
         let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
-        pull_content(&conn, &group_key, &early, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &early, "device-b")
+            .await
+            .unwrap();
         assert!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING_SPEAKER).await >= 1);
         for store in [&early, &store_b] {
-            let b_id = store.resolve_sync_meeting_map("device-a", a_meeting).unwrap().unwrap();
+            let b_id = store
+                .resolve_sync_meeting_map("device-a", a_meeting)
+                .unwrap()
+                .unwrap();
             let speakers = store.meeting_speakers(b_id).unwrap();
             assert_eq!(speakers.len(), 2);
-            assert_eq!((speakers[0].name.as_deref(), speakers[0].status), (Some("Sam"), Some(NameStatus::Confirmed)));
+            assert_eq!(
+                (speakers[0].name.as_deref(), speakers[0].status),
+                (Some("Sam"), Some(NameStatus::Confirmed))
+            );
             assert_eq!(speakers[1].person_key, None);
-            assert_eq!(store.voice_print("sam@x.com").unwrap(), Some(vec![1.0, 0.0]), "the embedding came along");
+            assert_eq!(
+                store.voice_print("sam@x.com").unwrap(),
+                Some(vec![1.0, 0.0]),
+                "the embedding came along"
+            );
         }
-        assert_eq!(b_meeting, store_b.resolve_sync_meeting_map("device-a", a_meeting).unwrap().unwrap());
+        assert_eq!(
+            b_meeting,
+            store_b
+                .resolve_sync_meeting_map("device-a", a_meeting)
+                .unwrap()
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1734,18 +2292,34 @@ mod tests {
         let (store_a, a_meeting) = own_store("device-a");
         let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
         store_a.upsert_person("ana", "Ana", None).unwrap();
-        store_a.set_meeting_speaker(a_meeting, 0, Some("ana"), Some(NameStatus::Guess)).unwrap();
+        store_a
+            .set_meeting_speaker(a_meeting, 0, Some("ana"), Some(NameStatus::Guess))
+            .unwrap();
         tick();
         store_b.upsert_person("bo", "Bo", None).unwrap();
-        store_b.set_meeting_speaker(b_meeting, 0, Some("bo"), Some(NameStatus::Confirmed)).unwrap();
+        store_b
+            .set_meeting_speaker(b_meeting, 0, Some("bo"), Some(NameStatus::Confirmed))
+            .unwrap();
 
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_a, "device-a")
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         for (store, id) in [(&store_a, a_meeting), (&store_b, b_meeting)] {
             let s = &store.meeting_speakers(id).unwrap()[0];
-            assert_eq!((s.name.as_deref(), s.status), (Some("Bo"), Some(NameStatus::Confirmed)), "B's later edit wins");
+            assert_eq!(
+                (s.name.as_deref(), s.status),
+                (Some("Bo"), Some(NameStatus::Confirmed)),
+                "B's later edit wins"
+            );
         }
     }
 
@@ -1755,21 +2329,47 @@ mod tests {
         use memory::speaker_names::{AppliedMeetingSpeaker, NameStatus};
         let (_dir, conn, group_key) = relay_and_store().await;
         let (store_a, a_meeting) = own_store("device-a");
-        store_a.save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0])], true).unwrap();
+        store_a
+            .save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0])], true)
+            .unwrap();
         let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
         tick();
-        store_b.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
-        store_b.set_meeting_speaker(b_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        store_b
+            .upsert_person("sam@x.com", "Sam", Some("sam@x.com"))
+            .unwrap();
+        store_b
+            .set_meeting_speaker(b_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
         let ops = store_b.list_outbox_operations().unwrap();
-        let sent: AppliedMeetingSpeaker =
-            serde_json::from_str(&ops.iter().rev().find(|o| o.1 == ROW_TYPE_MEETING_SPEAKER).unwrap().3).unwrap();
-        assert_eq!((sent.origin_device_id.as_deref(), sent.source_meeting_id), (Some("device-a"), a_meeting));
+        let sent: AppliedMeetingSpeaker = serde_json::from_str(
+            &ops.iter()
+                .rev()
+                .find(|o| o.1 == ROW_TYPE_MEETING_SPEAKER)
+                .unwrap()
+                .3,
+        )
+        .unwrap();
+        assert_eq!(
+            (sent.origin_device_id.as_deref(), sent.source_meeting_id),
+            (Some("device-a"), a_meeting)
+        );
 
-        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_a, "device-a")
+            .await
+            .unwrap();
         let s = &store_a.meeting_speakers(a_meeting).unwrap()[0];
-        assert_eq!((s.name.as_deref(), s.status), (Some("Sam"), Some(NameStatus::Confirmed)));
-        assert_eq!(store_a.voice_print("sam@x.com").unwrap(), Some(vec![1.0, 0.0]), "A's embedding is B's row's too");
+        assert_eq!(
+            (s.name.as_deref(), s.status),
+            (Some("Sam"), Some(NameStatus::Confirmed))
+        );
+        assert_eq!(
+            store_a.voice_print("sam@x.com").unwrap(),
+            Some(vec![1.0, 0.0]),
+            "A's embedding is B's row's too"
+        );
     }
 
     #[tokio::test]
@@ -1777,32 +2377,60 @@ mod tests {
         use memory::speaker_names::NameStatus;
         let (_dir, conn, group_key) = relay_and_store().await;
         let (store_a, a_meeting) = own_store("device-a");
-        store_a.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
-        store_a.save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0])], true).unwrap();
-        store_a.set_meeting_speaker(a_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        store_a
+            .upsert_person("sam@x.com", "Sam", Some("sam@x.com"))
+            .unwrap();
+        store_a
+            .save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0])], true)
+            .unwrap();
+        store_a
+            .set_meeting_speaker(a_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
         let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
         assert!(store_b.voice_print("sam@x.com").unwrap().is_some());
 
         tick();
         store_a.forget_voice("sam@x.com").unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        assert_eq!(store_b.voice_print("sam@x.com").unwrap(), None, "B's embedding is gone");
-        assert_eq!(store_b.meeting_speakers(b_meeting).unwrap()[0].name.as_deref(), Some("Sam"), "the name stays");
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            store_b.voice_print("sam@x.com").unwrap(),
+            None,
+            "B's embedding is gone"
+        );
+        assert_eq!(
+            store_b.meeting_speakers(b_meeting).unwrap()[0]
+                .name
+                .as_deref(),
+            Some("Sam"),
+            "the name stays"
+        );
     }
 
     fn save_prep(store: &Store, event_id: &str, generated_at_unix_ms: i64) {
         store
             .save_meeting_prep(&memory::prep::MeetingPrepRow {
-                event_id: event_id.into(), title: "Sync".into(), start_unix_ms: 2_000_000, generated_at_unix_ms,
-                brief_json: "{}".into(), provider: "p".into(), model: "m".into(),
+                event_id: event_id.into(),
+                title: "Sync".into(),
+                start_unix_ms: 2_000_000,
+                generated_at_unix_ms,
+                brief_json: "{}".into(),
+                provider: "p".into(),
+                model: "m".into(),
             })
             .unwrap();
     }
 
     async fn relay_seqs(conn: &Connection, row_type: &str) -> Vec<i64> {
         let mut rows = conn
-            .query("SELECT local_seq FROM sync_row WHERE row_type = ?1 ORDER BY local_seq", params![row_type])
+            .query(
+                "SELECT local_seq FROM sync_row WHERE row_type = ?1 ORDER BY local_seq",
+                params![row_type],
+            )
             .await
             .unwrap();
         let mut seqs = Vec::new();
@@ -1813,7 +2441,14 @@ mod tests {
     }
 
     fn newest_op_seq(store: &Store, row_type: &str) -> i64 {
-        store.list_outbox_operations().unwrap().into_iter().filter(|r| r.1 == row_type).map(|r| r.0).max().unwrap()
+        store
+            .list_outbox_operations()
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.1 == row_type)
+            .map(|r| r.0)
+            .max()
+            .unwrap()
     }
 
     /// The legacy scan sends the newest meeting version first; the outbox delivers the
@@ -1827,11 +2462,22 @@ mod tests {
         store_a.complete_meeting(meeting_id, 2000, None).unwrap();
         store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
 
-        crate::content::push_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 1, "the legacy scan pushes only the newest");
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        crate::content::push_content(&conn, &group_key, &store_a, "device-a")
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await,
+            1,
+            "the legacy scan pushes only the newest"
+        );
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
 
-        assert_eq!(relay_seqs(&conn, ROW_TYPE_MEETING).await, vec![newest_op_seq(&store_a, ROW_TYPE_MEETING)]);
+        assert_eq!(
+            relay_seqs(&conn, ROW_TYPE_MEETING).await,
+            vec![newest_op_seq(&store_a, ROW_TYPE_MEETING)]
+        );
     }
 
     #[tokio::test]
@@ -1844,12 +2490,26 @@ mod tests {
         save_prep(&store_a, "ev1", 9);
         save_prep(&store_a, "ev1", 10);
 
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING_PREP).await, 1);
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_MEETING_PREP).await,
+            1
+        );
 
         let store_b = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        assert_eq!(store_b.get_meeting_prep("ev1").unwrap().unwrap().generated_at_unix_ms, 10);
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            store_b
+                .get_meeting_prep("ev1")
+                .unwrap()
+                .unwrap()
+                .generated_at_unix_ms,
+            10
+        );
     }
 
     #[tokio::test]
@@ -1862,10 +2522,16 @@ mod tests {
         }
         crate::content::take_compaction_deletes();
 
-        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0())
+            .await
+            .unwrap();
 
         assert_eq!(summary.delivered, 60);
-        assert_eq!(crate::content::take_compaction_deletes(), 2, "one at 50 tags, one at the end of the pass");
+        assert_eq!(
+            crate::content::take_compaction_deletes(),
+            2,
+            "one at 50 tags, one at the end of the pass"
+        );
     }
 
     /// The outbox shares one 5 s compaction budget across its pass (the legacy push has its
@@ -1881,14 +2547,21 @@ mod tests {
             save_prep(&store_a, &format!("ev{i}"), 9);
         }
         crate::content::take_compaction_deletes();
-        crate::content::INJECTED_DELETE_DELAY.with(|d| d.set(Some(std::time::Duration::from_secs(60))));
+        crate::content::INJECTED_DELETE_DELAY
+            .with(|d| d.set(Some(std::time::Duration::from_secs(60))));
 
         let started = tokio::time::Instant::now();
-        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0())
+            .await
+            .unwrap();
         let spent = started.elapsed();
 
         assert!(spent <= std::time::Duration::from_secs(6), "{spent:?}");
-        assert_eq!(crate::content::take_compaction_deletes(), 1, "after the timeout, the pass stops compacting");
+        assert_eq!(
+            crate::content::take_compaction_deletes(),
+            1,
+            "after the timeout, the pass stops compacting"
+        );
         assert_eq!(summary.delivered, 60);
         assert_eq!(states(&store_a), vec!["delivered"; 60]);
     }
@@ -1897,7 +2570,9 @@ mod tests {
     async fn an_old_schema_relay_still_takes_outbox_deliveries() {
         let dir = tempfile::tempdir().unwrap();
         let conn = local_connection(&dir.path().join("relay.db")).await;
-        conn.execute(crate::content::tests::OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        conn.execute(crate::content::tests::OLD_SYNC_ROW_DDL, ())
+            .await
+            .unwrap();
         // The account-switch case: this process saw the column on another relay, so it
         // still tries the tagged INSERT and must fall back.
         crate::content::ENTITY_TAG_COLUMN_SEEN.set();
@@ -1906,9 +2581,17 @@ mod tests {
         store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
         crate::content::take_compaction_deletes();
 
-        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0())
+            .await
+            .unwrap();
 
-        assert_eq!(summary, OutboxDispatchSummary { delivered: 2, ..Default::default() });
+        assert_eq!(
+            summary,
+            OutboxDispatchSummary {
+                delivered: 2,
+                ..Default::default()
+            }
+        );
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 2);
         assert_eq!(crate::content::take_compaction_deletes(), 0);
     }
@@ -1930,19 +2613,33 @@ mod tests {
             .unwrap();
         store_a.complete_meeting(meeting_id, 2000, None).unwrap();
 
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
 
         let tag = sync::kind_tag(&group_key, "transcript");
         let mut rows = conn
-            .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag = ?1", params![tag])
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag = ?1",
+                params![tag],
+            )
             .await
             .unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 1);
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            1
+        );
         let mut rows = conn
-            .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND kind_tag IS NOT NULL", ())
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND kind_tag IS NOT NULL",
+                (),
+            )
             .await
             .unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0);
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -1962,19 +2659,36 @@ mod tests {
             .unwrap();
         store_a.complete_meeting(meeting_id, 2000, None).unwrap();
 
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-
-        let mut rows = conn
-            .query("SELECT slice_tag FROM sync_row WHERE row_type = 'items'", ())
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
             .await
             .unwrap();
-        let tag = rows.next().await.unwrap().unwrap().get::<Option<String>>(0).unwrap();
-        assert!(tag.is_some_and(|t| t.len() == 24), "the transcript item is slice tagged");
+
+        let mut rows = conn
+            .query(
+                "SELECT slice_tag FROM sync_row WHERE row_type = 'items'",
+                (),
+            )
+            .await
+            .unwrap();
+        let tag = rows
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get::<Option<String>>(0)
+            .unwrap();
+        assert!(
+            tag.is_some_and(|t| t.len() == 24),
+            "the transcript item is slice tagged"
+        );
         let mut rows = conn
             .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND slice_tag IS NOT NULL", ())
             .await
             .unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0);
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -1982,7 +2696,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = local_connection(&dir.path().join("relay.db")).await;
         ensure_content_schema(&conn).await.unwrap();
-        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row DROP COLUMN slice_tag", ())
+            .await
+            .unwrap();
         let group_key = GroupKey::generate();
         let (store_a, meeting_id) = own_store("device-a");
         store_a
@@ -1995,16 +2711,25 @@ mod tests {
             .unwrap();
         store_a.complete_meeting(meeting_id, 2000, None).unwrap();
 
-        let summary = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        let summary = dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
 
         assert!(summary.delivered >= 1);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 1);
         let tag = sync::kind_tag(&group_key, "transcript");
         let mut rows = conn
-            .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag = ?1", params![tag])
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag = ?1",
+                params![tag],
+            )
             .await
             .unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 1, "kind_tag still written");
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            1,
+            "kind_tag still written"
+        );
     }
 
     #[tokio::test]
@@ -2019,11 +2744,23 @@ mod tests {
         store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
         crate::content::take_compaction_deletes();
 
-        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0())
+            .await
+            .unwrap();
 
-        assert_eq!(summary, OutboxDispatchSummary { delivered: 2, ..Default::default() });
+        assert_eq!(
+            summary,
+            OutboxDispatchSummary {
+                delivered: 2,
+                ..Default::default()
+            }
+        );
         assert_eq!(states(&store_a), vec!["delivered", "delivered"]);
-        assert_eq!(crate::content::take_compaction_deletes(), 1, "the DELETE was tried and failed");
+        assert_eq!(
+            crate::content::take_compaction_deletes(),
+            1,
+            "the DELETE was tried and failed"
+        );
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 2);
     }
 
@@ -2039,27 +2776,42 @@ mod tests {
         store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
         crate::content::take_compaction_deletes();
 
-        dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0())
+            .await
+            .unwrap();
 
         assert_eq!(crate::content::take_compaction_deletes(), 0);
         let mut rows = conn
             .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND entity_tag IS NOT NULL", ())
             .await
             .unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 2, "both versions stay, tagged");
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            2,
+            "both versions stay, tagged"
+        );
     }
 
     // ---- Deletion sync (docs/superpowers/specs/2026-11-05-deletion-sync-design.md) ----
 
-    use crate::content::{delete_forgotten_meeting_rows, pull_content_without_skins, push_content, PullOptions};
+    use crate::content::{
+        delete_forgotten_meeting_rows, pull_content_without_skins, push_content, PullOptions,
+    };
 
     const ROW_TYPE_MEETING_FORGOTTEN: &str = memory::OUTBOX_ROW_TYPE_MEETING_FORGOTTEN;
 
     /// A's completed meeting with two transcript lines, a live alert and a speaker, all delivered.
     async fn delivered_meeting(conn: &Connection, group_key: &GroupKey) -> (Store, i64) {
         let (store_a, meeting_id) = own_store("device-a");
-        let line = |start_cs, text: &str| NewTranscriptSegment { meeting_id, start_cs, speaker_label: "Me".into(), text: text.into() };
-        store_a.insert_transcript_segments(&[line(0, "pelican"), line(500, "heron")]).unwrap();
+        let line = |start_cs, text: &str| NewTranscriptSegment {
+            meeting_id,
+            start_cs,
+            speaker_label: "Me".into(),
+            text: text.into(),
+        };
+        store_a
+            .insert_transcript_segments(&[line(0, "pelican"), line(500, "heron")])
+            .unwrap();
         store_a
             .insert_live_alert(&memory::live_alert::NewLiveAlert {
                 meeting_id,
@@ -2071,9 +2823,13 @@ mod tests {
                 created_at_unix_ms: crate::now_unix_ms(),
             })
             .unwrap();
-        store_a.save_meeting_voices(meeting_id, &[(0, vec![1.0, 0.0])], true).unwrap();
+        store_a
+            .save_meeting_voices(meeting_id, &[(0, vec![1.0, 0.0])], true)
+            .unwrap();
         store_a.complete_meeting(meeting_id, 2000, None).unwrap();
-        dispatch_outbox_at(conn, group_key, &store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(conn, group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
         (store_a, meeting_id)
     }
 
@@ -2085,7 +2841,12 @@ mod tests {
 
     /// Whether `store` holds any trace of A's meeting `a_meeting`.
     fn has_a_meeting(store: &Store, a_meeting: i64) -> bool {
-        store.resolve_sync_meeting_map("device-a", a_meeting).unwrap().is_some() || has_line(store, "pelican") || has_line(store, "heron")
+        store
+            .resolve_sync_meeting_map("device-a", a_meeting)
+            .unwrap()
+            .is_some()
+            || has_line(store, "pelican")
+            || has_line(store, "heron")
     }
 
     /// #740 (known gap): a continued meeting (Mac `reopen_meeting`) goes back to recording, and
@@ -2093,13 +2854,14 @@ mod tests {
     /// again, while captures numbered after it reach the relay first. The line then lands below
     /// a caught-up puller's cursor, which never reads there again. To be fixed push-side.
     #[tokio::test]
-    #[ignore = "known gap, #740"]
     async fn a_caught_up_mac_gets_a_continued_meetings_late_line() {
         let (_dir, conn, group_key) = relay_and_store().await;
         let (store_a, meeting_id) = own_store("device-a");
         let mac = peer("device-b");
+        let phone = peer("device-c");
         let round = |at: i64| {
-            let (conn, group_key, store_a, mac) = (&conn, &group_key, &store_a, &mac);
+            let (conn, group_key, store_a, mac, phone) =
+                (&conn, &group_key, &store_a, &mac, &phone);
             async move {
                 push_content(conn, group_key, store_a, "device-a")
                     .await
@@ -2108,6 +2870,9 @@ mod tests {
                     .await
                     .unwrap();
                 pull_content(conn, group_key, mac, "device-b")
+                    .await
+                    .unwrap();
+                pull_content(conn, group_key, phone, "device-c")
                     .await
                     .unwrap();
             }
@@ -2153,6 +2918,16 @@ mod tests {
             has_line(&mac, "pelican"),
             "the caught-up Mac gets the continued meeting's line"
         );
+        assert!(
+            has_line(&phone, "pelican"),
+            "the caught-up phone gets the continued meeting's line"
+        );
+        // Sent once: later rounds add no relay row and no second copy on a puller.
+        let sent = relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await;
+        round(t0() + 3 * DEFERRED_RECHECK_MS).await;
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, sent);
+        assert_eq!(line_count(&mac, "pelican"), 1);
+        assert_eq!(line_count(&phone, "pelican"), 1);
     }
 
     /// #600: an outbox-only row that waits while the legacy push sends newer rows still reaches a puller whose
@@ -2174,14 +2949,32 @@ mod tests {
             .unwrap();
         store_a.complete_meeting(meeting_id, 2000, None).unwrap();
         // The legacy scan sends the meeting (numbered after the alert) before the outbox runs.
-        push_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        push_content(&conn, &group_key, &store_a, "device-a")
+            .await
+            .unwrap();
         let store_c = peer("device-c");
-        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
-        assert!(store_c.resolve_sync_meeting_map("device-a", meeting_id).unwrap().is_some());
+        pull_content(&conn, &group_key, &store_c, "device-c")
+            .await
+            .unwrap();
+        assert!(store_c
+            .resolve_sync_meeting_map("device-a", meeting_id)
+            .unwrap()
+            .is_some());
 
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
-        assert_eq!(store_c.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap().len(), 1, "the alert arrives");
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_c, "device-c")
+            .await
+            .unwrap();
+        assert_eq!(
+            store_c
+                .take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000)
+                .unwrap()
+                .len(),
+            1,
+            "the alert arrives"
+        );
     }
 
     #[tokio::test]
@@ -2189,34 +2982,74 @@ mod tests {
         let (_dir, conn, group_key) = relay_and_store().await;
         let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
         let store_b = peer("device-b");
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         assert!(has_a_meeting(&store_b, a_meeting));
         assert!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await >= 2);
-        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_LIVE_ALERT).await, 1);
+        assert_eq!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_LIVE_ALERT).await,
+            1
+        );
         assert!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_MEETING_SPEAKER).await >= 1);
 
         store_a.forget_meeting(a_meeting).unwrap().unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+            .await
+            .unwrap();
         delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
 
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 0);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
-        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_LIVE_ALERT).await, 0, "the alert quotes the meeting");
-        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_MEETING_SPEAKER).await, 0);
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING_FORGOTTEN).await, 1, "the tombstone stays");
-        assert!(store_a.forgotten_pushed_meeting_rows(100).unwrap().is_empty(), "records cleared once deleted");
+        assert_eq!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_LIVE_ALERT).await,
+            0,
+            "the alert quotes the meeting"
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_MEETING_SPEAKER).await,
+            0
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_MEETING_FORGOTTEN).await,
+            1,
+            "the tombstone stays"
+        );
+        assert!(
+            store_a
+                .forgotten_pushed_meeting_rows(100)
+                .unwrap()
+                .is_empty(),
+            "records cleared once deleted"
+        );
 
         crate::content::take_forgotten_meeting_files();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        assert!(!has_a_meeting(&store_b, a_meeting), "B applied the tombstone");
-        assert_eq!(crate::content::take_forgotten_meeting_files().len(), 1, "B's files go to the app to delete");
-        assert!(store_b.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap().is_empty());
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        assert!(
+            !has_a_meeting(&store_b, a_meeting),
+            "B applied the tombstone"
+        );
+        assert_eq!(
+            crate::content::take_forgotten_meeting_files().len(),
+            1,
+            "B's files go to the app to delete"
+        );
+        assert!(store_b
+            .take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000)
+            .unwrap()
+            .is_empty());
 
         // A phone joining later (pull-only path) never sees it.
         let phone = Store::open_in_memory().unwrap();
-        pull_content_without_skins(&conn, &group_key, &phone, "phone", &PullOptions::default()).await.unwrap();
+        pull_content_without_skins(&conn, &group_key, &phone, "phone", &PullOptions::default())
+            .await
+            .unwrap();
         assert!(!has_a_meeting(&phone, a_meeting));
-        assert!(phone.is_meeting_forgotten("device-a", None, a_meeting).unwrap());
+        assert!(phone
+            .is_meeting_forgotten("device-a", None, a_meeting)
+            .unwrap());
     }
 
     #[tokio::test]
@@ -2224,23 +3057,43 @@ mod tests {
         let (_dir, conn, group_key) = relay_and_store().await;
         let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
         let store_b = peer("device-b");
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
-        let b_meeting = store_b.resolve_sync_meeting_map("device-a", a_meeting).unwrap().unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
+        let b_meeting = store_b
+            .resolve_sync_meeting_map("device-a", a_meeting)
+            .unwrap()
+            .unwrap();
 
         store_b.forget_meeting(b_meeting).unwrap().unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0())
+            .await
+            .unwrap();
         delete_forgotten_meeting_rows(&conn, &group_key, &store_b, "device-b").await;
-        assert!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await >= 2, "B never deletes A's rows");
+        assert!(
+            relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await >= 2,
+            "B never deletes A's rows"
+        );
 
-        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
-        assert!(store_a.get_meeting(a_meeting).unwrap().is_none(), "A applied B's tombstone");
+        pull_content(&conn, &group_key, &store_a, "device-a")
+            .await
+            .unwrap();
+        assert!(
+            store_a.get_meeting(a_meeting).unwrap().is_none(),
+            "A applied B's tombstone"
+        );
         delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 0);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
-        assert_eq!(relay_rows(&conn, "device-b", ROW_TYPE_MEETING_FORGOTTEN).await, 1);
+        assert_eq!(
+            relay_rows(&conn, "device-b", ROW_TYPE_MEETING_FORGOTTEN).await,
+            1
+        );
 
         let store_c = peer("device-c");
-        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        pull_content(&conn, &group_key, &store_c, "device-c")
+            .await
+            .unwrap();
         assert!(!has_a_meeting(&store_c, a_meeting));
     }
 
@@ -2251,7 +3104,11 @@ mod tests {
         for (start_shift, reaches) in [(0, true), (1, false)] {
             let (_dir, conn, group_key) = relay_and_store().await;
             let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
-            let a_start = store_a.get_meeting(a_meeting).unwrap().unwrap().start_unix_ms;
+            let a_start = store_a
+                .get_meeting(a_meeting)
+                .unwrap()
+                .unwrap()
+                .start_unix_ms;
             let store_b = peer("device-b");
             let copy = store_b
                 .insert_meeting(&NewMeeting {
@@ -2265,16 +3122,34 @@ mod tests {
                     status: memory::MeetingStatus::Completed,
                 })
                 .unwrap();
-            store_b.record_sync_meeting_map("device-a", a_meeting, copy).unwrap();
+            store_b
+                .record_sync_meeting_map("device-a", a_meeting, copy)
+                .unwrap();
 
             store_b.forget_meeting(copy).unwrap().unwrap();
-            dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
-            pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+            dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0())
+                .await
+                .unwrap();
+            pull_content(&conn, &group_key, &store_a, "device-a")
+                .await
+                .unwrap();
             delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
 
-            assert_eq!(store_a.get_meeting(a_meeting).unwrap().is_none(), reaches, "shift {start_shift}");
-            assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await == 0, reaches, "shift {start_shift}");
-            assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await == 0, reaches, "shift {start_shift}");
+            assert_eq!(
+                store_a.get_meeting(a_meeting).unwrap().is_none(),
+                reaches,
+                "shift {start_shift}"
+            );
+            assert_eq!(
+                relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await == 0,
+                reaches,
+                "shift {start_shift}"
+            );
+            assert_eq!(
+                relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await == 0,
+                reaches,
+                "shift {start_shift}"
+            );
         }
     }
 
@@ -2293,30 +3168,73 @@ mod tests {
         // The tombstone first, then every row of the meeting: all dropped, nothing left waiting.
         let store_c = peer("device-c");
         store_c.apply_meeting_forgotten(&forgotten).unwrap();
-        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        pull_content(&conn, &group_key, &store_c, "device-c")
+            .await
+            .unwrap();
         assert!(!has_a_meeting(&store_c, a_meeting));
-        assert!(store_c.list_sync_pending_dependencies("device-a").unwrap().is_empty());
-        assert!(store_c.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap().is_empty(), "the alert is dropped");
+        assert!(store_c
+            .list_sync_pending_dependencies("device-a")
+            .unwrap()
+            .is_empty());
+        assert!(
+            store_c
+                .take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000)
+                .unwrap()
+                .is_empty(),
+            "the alert is dropped"
+        );
 
         // Lines that arrived before their meeting wait for it; the tombstone ends the wait, both while the
         // lines are still on the relay and after the recorder deleted them.
-        conn.execute("DELETE FROM sync_row WHERE device_id = 'device-a' AND row_type = 'meeting'", ()).await.unwrap();
+        conn.execute(
+            "DELETE FROM sync_row WHERE device_id = 'device-a' AND row_type = 'meeting'",
+            (),
+        )
+        .await
+        .unwrap();
         for clean_up_first in [false, true] {
             let store_d = peer("device-d");
-            pull_content(&conn, &group_key, &store_d, "device-d").await.unwrap();
-            assert_eq!(store_d.list_sync_pending_dependencies("device-a").unwrap().len(), 2, "lines wait for the meeting");
-            let waiting_alert = store_d.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap();
+            pull_content(&conn, &group_key, &store_d, "device-d")
+                .await
+                .unwrap();
+            assert_eq!(
+                store_d
+                    .list_sync_pending_dependencies("device-a")
+                    .unwrap()
+                    .len(),
+                2,
+                "lines wait for the meeting"
+            );
+            let waiting_alert = store_d
+                .take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000)
+                .unwrap();
             assert_eq!(waiting_alert.len(), 1, "the alert waits for its meeting");
             store_d.apply_meeting_forgotten(&forgotten).unwrap();
-            assert!(store_d.get_live_alert(waiting_alert[0].id).unwrap().is_none(), "the tombstone removes it");
+            assert!(
+                store_d
+                    .get_live_alert(waiting_alert[0].id)
+                    .unwrap()
+                    .is_none(),
+                "the tombstone removes it"
+            );
             if clean_up_first {
                 store_a.forget_meeting(a_meeting).unwrap();
-                dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+                dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0())
+                    .await
+                    .unwrap();
                 delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
                 assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
             }
-            pull_content(&conn, &group_key, &store_d, "device-d").await.unwrap();
-            assert!(store_d.list_sync_pending_dependencies("device-a").unwrap().is_empty(), "clean_up_first: {clean_up_first}");
+            pull_content(&conn, &group_key, &store_d, "device-d")
+                .await
+                .unwrap();
+            assert!(
+                store_d
+                    .list_sync_pending_dependencies("device-a")
+                    .unwrap()
+                    .is_empty(),
+                "clean_up_first: {clean_up_first}"
+            );
             assert!(!has_a_meeting(&store_d, a_meeting));
         }
     }
@@ -2334,12 +3252,33 @@ mod tests {
             source_start_unix_ms: None,
         };
         // The lines and alert arrive before their meeting: they carry their epoch, so they wait, not drop.
-        conn.execute("DELETE FROM sync_row WHERE device_id = 'device-a' AND row_type = 'meeting'", ()).await.unwrap();
+        conn.execute(
+            "DELETE FROM sync_row WHERE device_id = 'device-a' AND row_type = 'meeting'",
+            (),
+        )
+        .await
+        .unwrap();
         let store_c = peer("device-c");
         store_c.apply_meeting_forgotten(&old).unwrap();
-        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
-        assert_eq!(store_c.list_sync_pending_dependencies("device-a").unwrap().len(), 2, "lines wait for the meeting");
-        assert_eq!(store_c.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap().len(), 1, "the alert waits");
+        pull_content(&conn, &group_key, &store_c, "device-c")
+            .await
+            .unwrap();
+        assert_eq!(
+            store_c
+                .list_sync_pending_dependencies("device-a")
+                .unwrap()
+                .len(),
+            2,
+            "lines wait for the meeting"
+        );
+        assert_eq!(
+            store_c
+                .take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000)
+                .unwrap()
+                .len(),
+            1,
+            "the alert waits"
+        );
     }
 
     #[tokio::test]
@@ -2348,10 +3287,19 @@ mod tests {
         // B has rows of its own, and A a second meeting: neither is touched.
         let (store_b, b_meeting) = own_store("device-b");
         store_b.complete_meeting(b_meeting, 2000, None).unwrap();
-        push_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        push_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         let (store_a, kept) = own_store("device-a");
-        let line = |meeting_id, text: &str| NewTranscriptSegment { meeting_id, start_cs: 0, speaker_label: "Me".into(), text: text.into() };
-        store_a.insert_transcript_segments(&[line(kept, "kept")]).unwrap();
+        let line = |meeting_id, text: &str| NewTranscriptSegment {
+            meeting_id,
+            start_cs: 0,
+            speaker_label: "Me".into(),
+            text: text.into(),
+        };
+        store_a
+            .insert_transcript_segments(&[line(kept, "kept")])
+            .unwrap();
         store_a.complete_meeting(kept, 2000, None).unwrap();
         let gone = store_a
             .insert_meeting(&NewMeeting {
@@ -2365,36 +3313,74 @@ mod tests {
                 status: memory::MeetingStatus::Recording,
             })
             .unwrap();
-        store_a.insert_transcript_segments(&[line(gone, "gone")]).unwrap();
+        store_a
+            .insert_transcript_segments(&[line(gone, "gone")])
+            .unwrap();
         store_a.complete_meeting(gone, 6000, None).unwrap();
         // The legacy scan pushes A's rows, so only what it recorded names them for the cleanup.
-        push_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        push_content(&conn, &group_key, &store_a, "device-a")
+            .await
+            .unwrap();
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 2);
 
         store_a.forget_meeting(gone).unwrap().unwrap();
         delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
 
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 1, "only the kept meeting's row");
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await,
+            1,
+            "only the kept meeting's row"
+        );
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 1);
-        assert_eq!(relay_rows(&conn, "device-b", ROW_TYPE_MEETING).await, 1, "another device's rows stay");
+        assert_eq!(
+            relay_rows(&conn, "device-b", ROW_TYPE_MEETING).await,
+            1,
+            "another device's rows stay"
+        );
         let store_c = peer("device-c");
-        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        pull_content(&conn, &group_key, &store_c, "device-c")
+            .await
+            .unwrap();
         assert!(has_line(&store_c, "kept") && !has_line(&store_c, "gone"));
 
         // A delivery in flight at the forget (leased, acknowledged after it) is recorded and cleaned up too.
         let (store_e, late) = own_store("device-e");
-        store_e.insert_transcript_segments(&[line(late, "late")]).unwrap();
+        store_e
+            .insert_transcript_segments(&[line(late, "late")])
+            .unwrap();
         store_e.complete_meeting(late, 2000, None).unwrap();
         let now = t0();
-        store_e.claim_due_outbox_batch(memory::OUTBOX_CONNECTOR, "crashed", now, now + LEASE_MS, 100).unwrap();
+        store_e
+            .claim_due_outbox_batch(
+                memory::OUTBOX_CONNECTOR,
+                "crashed",
+                now,
+                now + LEASE_MS,
+                100,
+            )
+            .unwrap();
         store_e.forget_meeting(late).unwrap().unwrap();
-        let summary = dispatch_outbox_at(&conn, &group_key, &store_e, "device-e", now + LEASE_MS + 1).await.unwrap();
-        assert_eq!(summary.dropped, 1, "its line has no meeting to go with: acknowledged unsent");
+        let summary =
+            dispatch_outbox_at(&conn, &group_key, &store_e, "device-e", now + LEASE_MS + 1)
+                .await
+                .unwrap();
+        assert_eq!(
+            summary.dropped, 1,
+            "its line has no meeting to go with: acknowledged unsent"
+        );
         assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_ITEMS).await, 0);
-        assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await, 1, "the leased row still went out");
+        assert_eq!(
+            relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await,
+            1,
+            "the leased row still went out"
+        );
         delete_forgotten_meeting_rows(&conn, &group_key, &store_e, "device-e").await;
         assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await, 0);
-        assert!(states(&store_e).iter().all(|s| s == "delivered"), "{:?}", states(&store_e));
+        assert!(
+            states(&store_e).iter().all(|s| s == "delivered"),
+            "{:?}",
+            states(&store_e)
+        );
     }
 
     /// A row leased at the forget and acknowledged only after a cleanup round already finished (tag deleted,
@@ -2403,8 +3389,15 @@ mod tests {
     async fn a_late_acknowledged_row_is_cleaned_up_after_the_cleanup_finished() {
         let (_dir, conn, group_key) = relay_and_store().await;
         let (store_e, late) = own_store("device-e");
-        let line = |meeting_id, text: &str| NewTranscriptSegment { meeting_id, start_cs: 0, speaker_label: "Me".into(), text: text.into() };
-        store_e.insert_transcript_segments(&[line(late, "late")]).unwrap();
+        let line = |meeting_id, text: &str| NewTranscriptSegment {
+            meeting_id,
+            start_cs: 0,
+            speaker_label: "Me".into(),
+            text: text.into(),
+        };
+        store_e
+            .insert_transcript_segments(&[line(late, "late")])
+            .unwrap();
         store_e.complete_meeting(late, 2000, None).unwrap();
         let other = store_e
             .insert_meeting(&NewMeeting {
@@ -2419,15 +3412,35 @@ mod tests {
             })
             .unwrap();
         let now = t0();
-        store_e.claim_due_outbox_batch(memory::OUTBOX_CONNECTOR, "crashed", now, now + LEASE_MS, 100).unwrap();
+        store_e
+            .claim_due_outbox_batch(
+                memory::OUTBOX_CONNECTOR,
+                "crashed",
+                now,
+                now + LEASE_MS,
+                100,
+            )
+            .unwrap();
         store_e.forget_meeting(late).unwrap().unwrap();
         delete_forgotten_meeting_rows(&conn, &group_key, &store_e, "device-e").await;
         store_e.mark_meeting_tag_deleted(late).unwrap(); // as on a relay with entity tags
-        assert!(store_e.forgotten_pushed_meeting_rows(10).unwrap().is_empty(), "this round's work is done");
+        assert!(
+            store_e
+                .forgotten_pushed_meeting_rows(10)
+                .unwrap()
+                .is_empty(),
+            "this round's work is done"
+        );
         store_e.delete_meeting(other).unwrap(); // a delete path that prunes its own records
 
-        dispatch_outbox_at(&conn, &group_key, &store_e, "device-e", now + LEASE_MS + 1).await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await, 1, "the leased row went out late");
+        dispatch_outbox_at(&conn, &group_key, &store_e, "device-e", now + LEASE_MS + 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await,
+            1,
+            "the leased row went out late"
+        );
         delete_forgotten_meeting_rows(&conn, &group_key, &store_e, "device-e").await;
         assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await, 0);
     }
@@ -2462,7 +3475,8 @@ mod tests {
         let (store_a, id) = own_store("device-a");
         let epoch = store_a.sync_entity_epoch().unwrap();
         for (seq, epoch) in [(500, epoch.as_str()), (501, "an-earlier-database")] {
-            let tag = crate::content::tag_for(&group_key, "device-a", epoch, &format!("meeting:{id}"));
+            let tag =
+                crate::content::tag_for(&group_key, "device-a", epoch, &format!("meeting:{id}"));
             conn.execute(
                 "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, entity_tag) \
                  VALUES ('device-a', ?1, 'meeting', 'x', 0, ?2)",
@@ -2473,10 +3487,22 @@ mod tests {
         }
         store_a.forget_meeting(id).unwrap().unwrap();
         delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
-        let mut rows = conn.query("SELECT local_seq FROM sync_row WHERE row_type = 'meeting'", ()).await.unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 501);
+        let mut rows = conn
+            .query(
+                "SELECT local_seq FROM sync_row WHERE row_type = 'meeting'",
+                (),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            501
+        );
         assert!(rows.next().await.unwrap().is_none());
-        assert!(store_a.meetings_awaiting_tag_delete().unwrap().is_empty(), "done once");
+        assert!(
+            store_a.meetings_awaiting_tag_delete().unwrap().is_empty(),
+            "done once"
+        );
     }
 
     /// Review fix B: a re-created database reuses `local_seq`s, and the relay keeps the earlier database's row
@@ -2510,10 +3536,26 @@ mod tests {
         }
         store_a.forget_meeting(id).unwrap().unwrap();
         delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
-        let mut rows = conn.query("SELECT local_seq FROM sync_row WHERE row_type = 'items'", ()).await.unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 7, "the earlier database's row stays");
-        assert!(rows.next().await.unwrap().is_none(), "this meeting's row is gone");
-        assert!(store_a.forgotten_pushed_meeting_rows(10).unwrap().is_empty());
+        let mut rows = conn
+            .query(
+                "SELECT local_seq FROM sync_row WHERE row_type = 'items'",
+                (),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            7,
+            "the earlier database's row stays"
+        );
+        assert!(
+            rows.next().await.unwrap().is_none(),
+            "this meeting's row is gone"
+        );
+        assert!(store_a
+            .forgotten_pushed_meeting_rows(10)
+            .unwrap()
+            .is_empty());
     }
 
     /// Review fix C: an earlier database's tombstone for an id this database reuses never drops a peer's speaker
@@ -2523,7 +3565,9 @@ mod tests {
         use memory::speaker_names::NameStatus;
         let (_dir, conn, group_key) = relay_and_store().await;
         let (store_a, a_meeting) = own_store("device-a");
-        store_a.save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0])], true).unwrap();
+        store_a
+            .save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0])], true)
+            .unwrap();
         let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
         let stale = memory::MeetingForgotten {
             origin_device_id: "device-a".into(),
@@ -2533,14 +3577,32 @@ mod tests {
             source_start_unix_ms: None,
         };
         assert!(store_a.apply_meeting_forgotten(&stale).unwrap().is_none());
-        assert!(store_a.is_meeting_forgotten("device-a", None, a_meeting).unwrap(), "matches epoch-lessly");
+        assert!(
+            store_a
+                .is_meeting_forgotten("device-a", None, a_meeting)
+                .unwrap(),
+            "matches epoch-lessly"
+        );
 
         tick();
-        store_b.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
-        store_b.set_meeting_speaker(b_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
-        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
-        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
-        assert_eq!(store_a.meeting_speakers(a_meeting).unwrap()[0].name.as_deref(), Some("Sam"));
+        store_b
+            .upsert_person("sam@x.com", "Sam", Some("sam@x.com"))
+            .unwrap();
+        store_b
+            .set_meeting_speaker(b_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0())
+            .await
+            .unwrap();
+        pull_content(&conn, &group_key, &store_a, "device-a")
+            .await
+            .unwrap();
+        assert_eq!(
+            store_a.meeting_speakers(a_meeting).unwrap()[0]
+                .name
+                .as_deref(),
+            Some("Sam")
+        );
     }
 
     /// Review fix F: the cleanup runs after the outbox, so a forget's tombstone is on the relay before its
@@ -2551,9 +3613,26 @@ mod tests {
         let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
         store_a.forget_meeting(a_meeting).unwrap().unwrap();
         let phases = std::sync::Mutex::new(Vec::new());
-        crate::content_round(&conn, &group_key, &store_a, "device-a", &|p| phases.lock().unwrap().push(p)).await.unwrap();
-        assert_eq!(*phases.lock().unwrap(), ["schema", "push", "pull", "outbox", "forgotten cleanup", "kind backfill"]);
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING_FORGOTTEN).await, 1);
+        crate::content_round(&conn, &group_key, &store_a, "device-a", &|p| {
+            phases.lock().unwrap().push(p)
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            *phases.lock().unwrap(),
+            [
+                "schema",
+                "push",
+                "pull",
+                "outbox",
+                "forgotten cleanup",
+                "kind backfill"
+            ]
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_MEETING_FORGOTTEN).await,
+            1
+        );
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 0);
         assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
     }
@@ -2605,7 +3684,9 @@ mod tests {
             .export_items_page(kind, 0, 1_000)
             .unwrap()
             .into_iter()
-            .filter(|r| r.title.as_deref().unwrap_or("").contains(CLIENT) || r.body_text.contains(CLIENT))
+            .filter(|r| {
+                r.title.as_deref().unwrap_or("").contains(CLIENT) || r.body_text.contains(CLIENT)
+            })
             .collect()
     }
 
@@ -2623,7 +3704,12 @@ mod tests {
     fn forget_item(store: &Store, kind: ClientItemKind) {
         let before = client_items(store, items_kind(kind)).len();
         let id = client_items(store, items_kind(kind))[0].id;
-        assert_eq!(store.enqueue_client_item_forgotten(kind, &id.to_string()).unwrap(), TombstoneOutcome::Queued);
+        assert_eq!(
+            store
+                .enqueue_client_item_forgotten(kind, &id.to_string())
+                .unwrap(),
+            TombstoneOutcome::Queued
+        );
         let queued: memory::ClientItemForgotten = store
             .list_outbox_operations()
             .unwrap()
@@ -2641,7 +3727,10 @@ mod tests {
     async fn without_marker(conn: &Connection, device_id: &str) {
         conn.execute(
             "DELETE FROM sync_row WHERE device_id = ?1 AND row_type = ?2",
-            params![device_id, crate::content::ROW_TYPE_CLIENT_CONTROLS_CAPABILITY],
+            params![
+                device_id,
+                crate::content::ROW_TYPE_CLIENT_CONTROLS_CAPABILITY
+            ],
         )
         .await
         .unwrap();
@@ -2649,7 +3738,12 @@ mod tests {
 
     /// One round of `store` as a build from before client deletes: it skips the tombstone row types and
     /// announces no marker.
-    async fn old_build_round(conn: &Connection, group_key: &GroupKey, store: &Store, device_id: &str) {
+    async fn old_build_round(
+        conn: &Connection,
+        group_key: &GroupKey,
+        store: &Store,
+        device_id: &str,
+    ) {
         crate::content::OLD_BUILD_PULLER.with(|c| c.set(true));
         topic_round(conn, group_key, store, device_id).await;
         crate::content::OLD_BUILD_PULLER.with(|c| c.set(false));
@@ -2657,7 +3751,12 @@ mod tests {
     }
 
     /// Every plaintext `device_id` pushed of `row_type`.
-    async fn relay_plaintexts(conn: &Connection, group_key: &GroupKey, device_id: &str, row_type: &str) -> Vec<String> {
+    async fn relay_plaintexts(
+        conn: &Connection,
+        group_key: &GroupKey,
+        device_id: &str,
+        row_type: &str,
+    ) -> Vec<String> {
         let mut rows = conn
             .query(
                 "SELECT local_seq, ciphertext FROM sync_row WHERE device_id = ?1 AND row_type = ?2",
@@ -2670,7 +3769,10 @@ mod tests {
             let seq: i64 = row.get(0).unwrap();
             let ciphertext = STANDARD.decode(row.get::<String>(1).unwrap()).unwrap();
             let aad = content_row_aad(device_id, seq, row_type);
-            out.push(String::from_utf8(sync::decrypt_payload(group_key, &ciphertext, &aad).unwrap()).unwrap());
+            out.push(
+                String::from_utf8(sync::decrypt_payload(group_key, &ciphertext, &aad).unwrap())
+                    .unwrap(),
+            );
         }
         out
     }
@@ -2681,7 +3783,9 @@ mod tests {
         let (a, b) = (topic_store("device-a"), topic_store("device-b"));
         client_capture(&a, "device-a");
         client_event(&a, "device-a", &format!("{CLIENT} kickoff"));
-        let seed = a.create_seed_topic(CLIENT, &[format!("{CLIENT} Ltd")], None).unwrap();
+        let seed = a
+            .create_seed_topic(CLIENT, &[format!("{CLIENT} Ltd")], None)
+            .unwrap();
         // Mail is not synced: each computer fetches its own copy of the same message.
         recent_email(&a, "m1", &format!("{CLIENT} SOW"));
         recent_email(&b, "m1", &format!("{CLIENT} SOW"));
@@ -2690,23 +3794,45 @@ mod tests {
         assert_eq!(client_items(&b, "calendar_event").len(), 1);
         assert_eq!(b.list_seed_topics().unwrap().len(), 1);
 
-        for kind in [ClientItemKind::Capture, ClientItemKind::CalendarEvent, ClientItemKind::Email] {
+        for kind in [
+            ClientItemKind::Capture,
+            ClientItemKind::CalendarEvent,
+            ClientItemKind::Email,
+        ] {
             forget_item(&a, kind);
         }
-        assert_eq!(a.forget_seed_topic(&seed.key).unwrap(), TombstoneOutcome::Queued);
+        assert_eq!(
+            a.forget_seed_topic(&seed.key).unwrap(),
+            TombstoneOutcome::Queued
+        );
         topic_rounds(&conn, &group_key, &a, &b).await;
 
         for kind in ["capture", "calendar_event", "email"] {
             assert!(client_items(&a, kind).is_empty(), "{kind} on A");
             assert!(client_items(&b, kind).is_empty(), "{kind} on B");
         }
-        assert!(b.list_seed_topics().unwrap().is_empty(), "the seed is purged on B");
-        assert!(b.is_client_item_forgotten(memory::client_forget::FORGOTTEN_SEED_KIND, &seed.key).unwrap());
+        assert!(
+            b.list_seed_topics().unwrap().is_empty(),
+            "the seed is purged on B"
+        );
+        assert!(b
+            .is_client_item_forgotten(memory::client_forget::FORGOTTEN_SEED_KIND, &seed.key)
+            .unwrap());
         // B's full-text index pages keep no deleted term either, as on the deleting device (X6 final review,
         // Major 4): the pull ran the owed index clean-up once after applying.
-        assert_eq!(b.fts_pages_naming(&CLIENT.to_lowercase()).unwrap(), 0, "B's index pages still hold the name");
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await, 3);
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await, 1);
+        assert_eq!(
+            b.fts_pages_naming(&CLIENT.to_lowercase()).unwrap(),
+            0,
+            "B's index pages still hold the name"
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await,
+            3
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await,
+            1
+        );
         assert!(
             b.list_outbox_operations().unwrap().iter().all(|o| o.1 != ROW_TYPE_CLIENT_ITEM_FORGOTTEN && o.1 != ROW_TYPE_TOPIC_SEED_PURGED),
             "an applied tombstone is never sent on"
@@ -2719,17 +3845,31 @@ mod tests {
     async fn tombstones_are_sent_without_waiting_for_older_devices() {
         use crate::content::{push_marker, ROW_TYPE_ITEMS_CAPABILITY};
         let (_dir, conn, group_key) = relay_and_store().await;
-        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
         let a = topic_store("device-a");
         client_event(&a, "device-a", &format!("{CLIENT} kickoff"));
         let seed = a.create_seed_topic(CLIENT, &[], None).unwrap();
         forget_item(&a, ClientItemKind::CalendarEvent);
         a.forget_seed_topic(&seed.key).unwrap();
 
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await, 1);
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await, 1);
-        assert_eq!(a.pending_tombstone_devices().unwrap(), Some(1), "device-old still needs to update");
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await,
+            1
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await,
+            1
+        );
+        assert_eq!(
+            a.pending_tombstone_devices().unwrap(),
+            Some(1),
+            "device-old still needs to update"
+        );
     }
 
     #[tokio::test]
@@ -2747,14 +3887,25 @@ mod tests {
         forget_item(&a, ClientItemKind::CalendarEvent);
         a.forget_seed_topic(&seed.key).unwrap();
         topic_rounds(&conn, &group_key, &a, &b).await;
-        assert!(client_items(&b, "capture").is_empty(), "the recorder applied it too");
+        assert!(
+            client_items(&b, "capture").is_empty(),
+            "the recorder applied it too"
+        );
 
         let c = topic_store("device-c");
         for _ in 0..2 {
             topic_round(&conn, &group_key, &c, "device-c").await;
         }
         let phone = Store::open_in_memory().unwrap();
-        crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &PullOptions::default()).await.unwrap();
+        crate::pull_only_with_connection(
+            &conn,
+            &group_key,
+            &phone,
+            "phone",
+            &PullOptions::default(),
+        )
+        .await
+        .unwrap();
         for (name, store) in [("C", &c), ("phone", &phone)] {
             assert!(client_items(store, "capture").is_empty(), "{name}");
             assert!(client_items(store, "calendar_event").is_empty(), "{name}");
@@ -2775,7 +3926,11 @@ mod tests {
 
         forget_item(&a, ClientItemKind::CalendarEvent);
         topic_round(&conn, &group_key, &a, "device-a").await;
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await, 1, "sent at once");
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await,
+            1,
+            "sent at once"
+        );
         assert_eq!(a.pending_tombstone_devices().unwrap(), Some(1));
 
         // B, still old, pulls the tombstone (skips it) and pushes an edit of the event.
@@ -2783,13 +3938,23 @@ mod tests {
         tick();
         client_event(&b, "device-b", &format!("{CLIENT} kickoff, moved"));
         old_build_round(&conn, &group_key, &b, "device-b").await;
-        assert_eq!(client_items(&b, "calendar_event").len(), 1, "the old build kept it");
+        assert_eq!(
+            client_items(&b, "calendar_event").len(),
+            1,
+            "the old build kept it"
+        );
         topic_round(&conn, &group_key, &a, "device-a").await;
-        assert!(client_items(&a, "calendar_event").is_empty(), "an older device's row is dropped");
+        assert!(
+            client_items(&a, "calendar_event").is_empty(),
+            "an older device's row is dropped"
+        );
 
         // B updates: its first pull reads the skipped tombstone again.
         topic_round(&conn, &group_key, &b, "device-b").await;
-        assert!(client_items(&b, "calendar_event").is_empty(), "B applied it once updated");
+        assert!(
+            client_items(&b, "calendar_event").is_empty(),
+            "B applied it once updated"
+        );
         topic_round(&conn, &group_key, &a, "device-a").await;
         assert_eq!(a.pending_tombstone_devices().unwrap(), Some(0));
         assert!(client_items(&a, "calendar_event").is_empty());
@@ -2811,19 +3976,31 @@ mod tests {
         topic_round(&conn, &group_key, &a, "device-a").await;
         let phone = Store::open_in_memory().unwrap();
         let options = PullOptions::default();
-        let pull = || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
+        let pull =
+            || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
         crate::content::OLD_BUILD_PULLER.with(|c| c.set(true));
         pull().await.unwrap();
         forget_item(&a, ClientItemKind::CalendarEvent);
         topic_round(&conn, &group_key, &a, "device-a").await;
         pull().await.unwrap();
         crate::content::OLD_BUILD_PULLER.with(|c| c.set(false));
-        assert_eq!(client_items(&phone, "calendar_event").len(), 1, "the old build skipped the tombstone");
+        assert_eq!(
+            client_items(&phone, "calendar_event").len(),
+            1,
+            "the old build skipped the tombstone"
+        );
         let cursor = phone.get_sync_cursor("device-a").unwrap();
 
         pull().await.unwrap();
-        assert!(client_items(&phone, "calendar_event").is_empty(), "applied on the first pull after the update");
-        assert_eq!(phone.get_sync_cursor("device-a").unwrap(), cursor, "no cursor reset");
+        assert!(
+            client_items(&phone, "calendar_event").is_empty(),
+            "applied on the first pull after the update"
+        );
+        assert_eq!(
+            phone.get_sync_cursor("device-a").unwrap(),
+            cursor,
+            "no cursor reset"
+        );
     }
 
     /// This device's own relay rows of what it forgot are deleted, and those of a peer's tombstone naming them.
@@ -2855,12 +4032,34 @@ mod tests {
         a.forget_seed_topic(&seed.key).unwrap();
         topic_rounds(&conn, &group_key, &a, &b).await;
 
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0, "A's own capture and event rows");
-        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await, 0, "the named seed rows");
-        assert_eq!(relay_rows(&conn, "device-b", ROW_TYPE_ITEMS).await, 0, "B deleted its own on applying A's tombstone");
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await, 3, "the tombstones stay");
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await, 1);
-        assert!(a.client_relay_cleanup(10).unwrap().is_empty() && b.client_relay_cleanup(10).unwrap().is_empty());
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await,
+            0,
+            "A's own capture and event rows"
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await,
+            0,
+            "the named seed rows"
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-b", ROW_TYPE_ITEMS).await,
+            0,
+            "B deleted its own on applying A's tombstone"
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await,
+            3,
+            "the tombstones stay"
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await,
+            1
+        );
+        assert!(
+            a.client_relay_cleanup(10).unwrap().is_empty()
+                && b.client_relay_cleanup(10).unwrap().is_empty()
+        );
     }
 
     /// A row leased by a pass that timed out before the delete is not cancelled with the pending ones; it is
@@ -2872,16 +4071,34 @@ mod tests {
         let seed = a.create_seed_topic(CLIENT, &[], None).unwrap();
         let t = t0();
         let leased = a
-            .claim_due_outbox_batch_except(memory::OUTBOX_CONNECTOR, "dead-worker", t, t + 1, 10, &[])
+            .claim_due_outbox_batch_except(
+                memory::OUTBOX_CONNECTOR,
+                "dead-worker",
+                t,
+                t + 1,
+                10,
+                &[],
+            )
             .unwrap();
         assert_eq!(leased.len(), 1);
         a.forget_seed_topic(&seed.key).unwrap();
-        assert!(states(&a).contains(&"leased".to_string()), "the delete leaves a leased row alone");
+        assert!(
+            states(&a).contains(&"leased".to_string()),
+            "the delete leaves a leased row alone"
+        );
 
-        let summary = dispatch_outbox_at(&conn, &group_key, &a, "device-a", t + LEASE_MS + 1).await.unwrap();
+        let summary = dispatch_outbox_at(&conn, &group_key, &a, "device-a", t + LEASE_MS + 1)
+            .await
+            .unwrap();
         assert_eq!(summary.dropped, 1);
-        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await, 0);
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await, 1);
+        assert_eq!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await,
+            0
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await,
+            1
+        );
     }
 
     #[tokio::test]
@@ -2893,16 +4110,31 @@ mod tests {
         client_capture(&a, "device-a");
         client_event_with_id(&a, "device-a", &uid, &format!("{CLIENT} kickoff"));
         recent_email(&a, "m1", &format!("{CLIENT} SOW"));
-        let seed = a.create_seed_topic(CLIENT, &[format!("{CLIENT} Ltd")], None).unwrap();
-        for kind in [ClientItemKind::Capture, ClientItemKind::CalendarEvent, ClientItemKind::Email] {
+        let seed = a
+            .create_seed_topic(CLIENT, &[format!("{CLIENT} Ltd")], None)
+            .unwrap();
+        for kind in [
+            ClientItemKind::Capture,
+            ClientItemKind::CalendarEvent,
+            ClientItemKind::Email,
+        ] {
             forget_item(&a, kind);
         }
         a.forget_seed_topic(&seed.key).unwrap();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
 
         let client = CLIENT.to_lowercase();
-        let tombstones = relay_plaintexts(&conn, &group_key, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await;
-        let purges = relay_plaintexts(&conn, &group_key, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await;
+        let tombstones = relay_plaintexts(
+            &conn,
+            &group_key,
+            "device-a",
+            ROW_TYPE_CLIENT_ITEM_FORGOTTEN,
+        )
+        .await;
+        let purges =
+            relay_plaintexts(&conn, &group_key, "device-a", ROW_TYPE_TOPIC_SEED_PURGED).await;
         assert_eq!((tombstones.len(), purges.len()), (3, 1));
         for plaintext in tombstones.iter().chain(&purges) {
             assert!(!plaintext.to_lowercase().contains(&client), "{plaintext}");
@@ -2913,10 +4145,12 @@ mod tests {
             keys.sort();
             assert_eq!(keys, ["forgotten_at_unix_ms", "kind", "opaque_id"]);
         }
-        let purge: memory::topics::seeds::TopicSeedPayload = serde_json::from_str(&purges[0]).unwrap();
+        let purge: memory::topics::seeds::TopicSeedPayload =
+            serde_json::from_str(&purges[0]).unwrap();
         assert!(purge.purged && purge.name.is_empty() && purge.aliases.is_empty());
         for (_, row_type, _, payload) in a.list_outbox_operations().unwrap() {
-            if row_type == ROW_TYPE_CLIENT_ITEM_FORGOTTEN || row_type == ROW_TYPE_TOPIC_SEED_PURGED {
+            if row_type == ROW_TYPE_CLIENT_ITEM_FORGOTTEN || row_type == ROW_TYPE_TOPIC_SEED_PURGED
+            {
                 assert!(!payload.to_lowercase().contains(&client));
             }
         }
@@ -2934,15 +4168,39 @@ mod tests {
         topic_index(&a);
         read_steps(&a);
         let step = page(&a).you_owe[0].key.clone();
-        assert!(a.publish_topic_page_snapshots("device-a", crate::now_unix_ms()).unwrap() > 0);
-        b.apply_synced_topic_seed(&memory::topics::seeds::TopicSeedPayload::purged(&seed.key, 1)).unwrap();
+        assert!(
+            a.publish_topic_page_snapshots("device-a", crate::now_unix_ms())
+                .unwrap()
+                > 0
+        );
+        b.apply_synced_topic_seed(&memory::topics::seeds::TopicSeedPayload::purged(
+            &seed.key, 1,
+        ))
+        .unwrap();
 
         topic_rounds(&conn, &group_key, &a, &b).await;
         assert!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_STEP).await > 0);
-        assert!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_PAGE_SNAPSHOT).await > 0);
-        assert!(b.list_seed_topics().unwrap().is_empty(), "the named record is dropped");
-        assert!(!b.apply_step_action(&step, &StepAction::Done).unwrap(), "the step is dropped");
-        assert!(b.topic_page_snapshot(&seed.key).unwrap().is_none(), "the page snapshot is dropped");
+        assert!(
+            relay_rows(
+                &conn,
+                "device-a",
+                crate::content::ROW_TYPE_TOPIC_PAGE_SNAPSHOT
+            )
+            .await
+                > 0
+        );
+        assert!(
+            b.list_seed_topics().unwrap().is_empty(),
+            "the named record is dropped"
+        );
+        assert!(
+            !b.apply_step_action(&step, &StepAction::Done).unwrap(),
+            "the step is dropped"
+        );
+        assert!(
+            b.topic_page_snapshot(&seed.key).unwrap().is_none(),
+            "the page snapshot is dropped"
+        );
     }
 
     /// A peer that updates to a build reading client controls gets every client's settings again: its older
@@ -2951,37 +4209,81 @@ mod tests {
     #[tokio::test]
     async fn a_peer_that_updates_gets_the_client_settings_again() {
         use crate::content::{
-            push_marker, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPICS_CAPABILITY,
+            push_marker, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY, ROW_TYPE_ITEMS_CAPABILITY,
+            ROW_TYPE_TOPICS_CAPABILITY,
         };
         use memory::topics::client_controls::ClientControl;
         let (_dir, conn, group_key) = relay_and_store().await;
         let a = topic_store("device-a");
         let seed = a.create_seed_topic("Acme", &[], None).unwrap();
-        a.set_client_control(&seed.key, &ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        a.set_client_control(
+            &seed.key,
+            &ClientControl {
+                exclude_hosted: true,
+                keep_months: None,
+            },
+        )
+        .unwrap();
         // An older build that has topics (0.9.72) but not client controls.
         for marker in [ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPICS_CAPABILITY] {
-            push_marker(&conn, &group_key, "device-old", marker).await.unwrap();
+            push_marker(&conn, &group_key, "device-old", marker)
+                .await
+                .unwrap();
         }
-        let seeds = |s: &Store| s.list_outbox_operations().unwrap().iter().filter(|o| o.1 == "topic_seed").count();
+        let seeds = |s: &Store| {
+            s.list_outbox_operations()
+                .unwrap()
+                .iter()
+                .filter(|o| o.1 == "topic_seed")
+                .count()
+        };
 
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
         assert_eq!(a.pending_tombstone_devices().unwrap(), Some(1));
         let sent = seeds(&a);
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0() + 1).await.unwrap();
-        assert_eq!(seeds(&a), sent, "nothing new while the peer has not updated");
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0() + 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            seeds(&a),
+            sent,
+            "nothing new while the peer has not updated"
+        );
 
-        push_marker(&conn, &group_key, "device-old", ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await.unwrap();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0() + 2).await.unwrap();
+        push_marker(
+            &conn,
+            &group_key,
+            "device-old",
+            ROW_TYPE_CLIENT_CONTROLS_CAPABILITY,
+        )
+        .await
+        .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0() + 2)
+            .await
+            .unwrap();
         assert_eq!(a.pending_tombstone_devices().unwrap(), Some(0));
-        assert_eq!(seeds(&a), sent + 1, "the client's seed record goes out again");
+        assert_eq!(
+            seeds(&a),
+            sent + 1,
+            "the client's seed record goes out again"
+        );
         // Sent on the real clock (the test passes ran on a fixed one, before the record's due time).
         topic_round(&conn, &group_key, &a, "device-a").await;
-        let ops: Vec<_> = a.list_outbox_operations().unwrap().into_iter().map(|o| (o.1, o.2)).collect();
+        let ops: Vec<_> = a
+            .list_outbox_operations()
+            .unwrap()
+            .into_iter()
+            .map(|o| (o.1, o.2))
+            .collect();
         assert!(ops.iter().all(|o| o.1 == "delivered"), "{ops:?}");
         // A topic round queues its own seed records; count from after it.
         let after = seeds(&a);
 
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0() + 3).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0() + 3)
+            .await
+            .unwrap();
         assert_eq!(seeds(&a), after, "once, not every pass");
 
         // The updated peer applies it.
@@ -2992,22 +4294,54 @@ mod tests {
 
     #[tokio::test]
     async fn pending_devices_counts_peers_without_marker() {
-        use crate::content::{push_marker, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY, ROW_TYPE_ITEMS_CAPABILITY};
+        use crate::content::{
+            push_marker, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY, ROW_TYPE_ITEMS_CAPABILITY,
+        };
         let (_dir, conn, group_key) = relay_and_store().await;
         let a = topic_store("device-a");
-        assert_eq!(a.pending_tombstone_devices().unwrap(), None, "unknown until a pass measures it");
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
-        assert_eq!(a.pending_tombstone_devices().unwrap(), Some(0), "alone on the relay");
+        assert_eq!(
+            a.pending_tombstone_devices().unwrap(),
+            None,
+            "unknown until a pass measures it"
+        );
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            a.pending_tombstone_devices().unwrap(),
+            Some(0),
+            "alone on the relay"
+        );
 
         for old in ["device-old1", "device-old2"] {
-            push_marker(&conn, &group_key, old, ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+            push_marker(&conn, &group_key, old, ROW_TYPE_ITEMS_CAPABILITY)
+                .await
+                .unwrap();
         }
-        push_marker(&conn, &group_key, "device-new", ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await.unwrap();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
+        push_marker(
+            &conn,
+            &group_key,
+            "device-new",
+            ROW_TYPE_CLIENT_CONTROLS_CAPABILITY,
+        )
+        .await
+        .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
         assert_eq!(a.pending_tombstone_devices().unwrap(), Some(2));
 
-        push_marker(&conn, &group_key, "device-old1", ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await.unwrap();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
+        push_marker(
+            &conn,
+            &group_key,
+            "device-old1",
+            ROW_TYPE_CLIENT_CONTROLS_CAPABILITY,
+        )
+        .await
+        .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
         assert_eq!(a.pending_tombstone_devices().unwrap(), Some(1));
     }
 
@@ -3023,7 +4357,8 @@ mod tests {
         topic_round(&conn, &group_key, &store_a, "device-a").await;
         let phone = Store::open_in_memory().unwrap();
         let options = PullOptions::default();
-        let pull = || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
+        let pull =
+            || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
         pull().await.unwrap();
         assert_eq!(client_items(&phone, "calendar_event").len(), 1);
         assert!(has_a_meeting(&phone, a_meeting));
@@ -3032,25 +4367,43 @@ mod tests {
         store_a.forget_meeting(a_meeting).unwrap().unwrap();
         topic_round(&conn, &group_key, &store_a, "device-a").await;
         assert!(
-            markers_on_relay(&conn, "phone").await.0.iter().any(|m| m == crate::content::ROW_TYPE_CLIENT_CONTROLS_CAPABILITY),
+            markers_on_relay(&conn, "phone")
+                .await
+                .0
+                .iter()
+                .any(|m| m == crate::content::ROW_TYPE_CLIENT_CONTROLS_CAPABILITY),
             "the phone announced the marker"
         );
-        assert_eq!(store_a.pending_tombstone_devices().unwrap(), Some(0), "and is counted as current");
+        assert_eq!(
+            store_a.pending_tombstone_devices().unwrap(),
+            Some(0),
+            "and is counted as current"
+        );
 
         crate::content::take_forgotten_meeting_files();
         pull().await.unwrap();
         assert!(client_items(&phone, "calendar_event").is_empty());
         assert!(phone
-            .is_client_item_forgotten("calendar_event", &memory::client_forget::hashed("google_calendar:ev-1"))
+            .is_client_item_forgotten(
+                "calendar_event",
+                &memory::client_forget::hashed("google_calendar:ev-1")
+            )
             .unwrap());
         assert!(!has_a_meeting(&phone, a_meeting));
-        assert_eq!(crate::content::take_forgotten_meeting_files().len(), 1, "the phone's removed files go to the app");
+        assert_eq!(
+            crate::content::take_forgotten_meeting_files().len(),
+            1,
+            "the phone's removed files go to the app"
+        );
     }
 
     /// The marker rows `device_id` has on the relay, and how many of its rows are anything else.
     async fn markers_on_relay(conn: &Connection, device_id: &str) -> (Vec<String>, i64) {
         let mut rows = conn
-            .query("SELECT row_type, local_seq FROM sync_row WHERE device_id = ?1 ORDER BY row_type", params![device_id])
+            .query(
+                "SELECT row_type, local_seq FROM sync_row WHERE device_id = ?1 ORDER BY row_type",
+                params![device_id],
+            )
             .await
             .unwrap();
         let (mut markers, mut other) = (Vec::new(), 0);
@@ -3073,15 +4426,17 @@ mod tests {
     #[tokio::test]
     async fn phone_publishes_capability_marker() {
         use crate::content::{
-            push_marker, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPICS_CAPABILITY,
-            ROW_TYPE_TOPIC_PAGE_CAPABILITY, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
+            push_marker, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY, ROW_TYPE_ITEMS_CAPABILITY,
+            ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_PAGE_CAPABILITY,
+            ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
         };
         let (_dir, conn, group_key) = relay_and_store().await;
         let a = topic_store("device-a");
         topic_round(&conn, &group_key, &a, "device-a").await;
         let phone = Store::open_in_memory().unwrap();
         let options = PullOptions::default();
-        let pull = || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
+        let pull =
+            || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
         pull().await.unwrap();
 
         let (mut markers, other) = markers_on_relay(&conn, "phone").await;
@@ -3094,24 +4449,44 @@ mod tests {
             ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
         ];
         want.sort();
-        assert_eq!(markers, want, "no skins marker: the phone never applies skins");
+        assert_eq!(
+            markers, want,
+            "no skins marker: the phone never applies skins"
+        );
         assert_eq!(other, 0, "the phone writes no content");
-        assert_eq!(phone.pending_tombstone_devices().unwrap(), Some(0), "the phone keeps its own count");
+        assert_eq!(
+            phone.pending_tombstone_devices().unwrap(),
+            Some(0),
+            "the phone keeps its own count"
+        );
 
         // The desktop counts the phone and holds nothing back because of it.
         let seed = a.create_seed_topic(CLIENT, &[], None).unwrap();
         topic_round(&conn, &group_key, &a, "device-a").await;
-        assert!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await >= 1, "seed rows are not held");
+        assert!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await >= 1,
+            "seed rows are not held"
+        );
         assert_eq!(a.pending_tombstone_devices().unwrap(), Some(0));
         pull().await.unwrap();
-        assert!(phone.list_seed_topics().unwrap().iter().any(|s| s.key == seed.key));
+        assert!(phone
+            .list_seed_topics()
+            .unwrap()
+            .iter()
+            .any(|s| s.key == seed.key));
 
         // A device on an older build: the phone's line says one still needs to update.
-        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
         pull().await.unwrap();
         assert_eq!(phone.pending_tombstone_devices().unwrap(), Some(1));
         topic_round(&conn, &group_key, &a, "device-a").await;
-        assert_eq!(a.pending_tombstone_devices().unwrap(), Some(1), "the phone is not the one counted");
+        assert_eq!(
+            a.pending_tombstone_devices().unwrap(),
+            Some(1),
+            "the phone is not the one counted"
+        );
     }
 
     /// "Remove this device" (Task 13): a retired desktop that never updates stops being counted in "N devices still
@@ -3121,56 +4496,104 @@ mod tests {
     /// phone's pull-only round never publishes a removal.
     #[tokio::test]
     async fn a_removed_device_stops_being_counted_and_releases_nothing() {
-        use crate::content::{push_marker, ROW_TYPE_DEVICE_RETIRED, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPIC_SEED};
+        use crate::content::{
+            push_marker, ROW_TYPE_DEVICE_RETIRED, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPIC_SEED,
+        };
         let (_dir, conn, group_key) = relay_and_store().await;
         let a = topic_store("device-a");
         a.create_seed_topic(CLIENT, &[], None).unwrap();
         client_event(&a, "device-a", &format!("{CLIENT} kickoff"));
         // A desktop on an older build, long retired: it has rows on the relay, and no client marker.
-        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
         topic_round(&conn, &group_key, &a, "device-a").await;
         forget_item(&a, ClientItemKind::CalendarEvent);
         topic_round(&conn, &group_key, &a, "device-a").await;
         let phone = Store::open_in_memory().unwrap();
         let options = PullOptions::default();
-        let pull = || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
+        let pull =
+            || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
         pull().await.unwrap();
         topic_round(&conn, &group_key, &a, "device-a").await;
         assert_eq!(a.pending_tombstone_devices().unwrap(), Some(1));
-        assert_eq!(a.pending_tombstone_device_ids().unwrap(), Some(vec!["device-old".to_string()]));
+        assert_eq!(
+            a.pending_tombstone_device_ids().unwrap(),
+            Some(vec!["device-old".to_string()])
+        );
         assert_eq!(phone.pending_tombstone_devices().unwrap(), Some(1));
         let tombstones = relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await;
-        assert!(tombstones >= 1, "the tombstone was sent at once, not held for the old device");
+        assert!(
+            tombstones >= 1,
+            "the tombstone was sent at once, not held for the old device"
+        );
         let seeds = relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED).await;
 
         // Refused: this device, a device not in the list.
         assert!(!a.queue_retired_device("device-a").unwrap());
-        assert!(!a.queue_retired_device("phone").unwrap(), "a current device is not in the list");
+        assert!(
+            !a.queue_retired_device("phone").unwrap(),
+            "a current device is not in the list"
+        );
         assert!(!a.queue_retired_device("nope").unwrap());
         // A phone's own store may hold the request, but its pull-only round never publishes it.
         assert!(phone.queue_retired_device("device-old").unwrap());
         pull().await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-old", ROW_TYPE_DEVICE_RETIRED).await, 0, "a phone cannot remove a device");
-        assert_eq!(phone.pending_tombstone_devices().unwrap(), Some(1), "and its count is the relay's again");
+        assert_eq!(
+            relay_rows(&conn, "device-old", ROW_TYPE_DEVICE_RETIRED).await,
+            0,
+            "a phone cannot remove a device"
+        );
+        assert_eq!(
+            phone.pending_tombstone_devices().unwrap(),
+            Some(1),
+            "and its count is the relay's again"
+        );
 
         // The desktop removes it: counted out here at once, and on the relay at its next round.
         assert!(a.queue_retired_device("device-old").unwrap());
         assert_eq!(a.pending_tombstone_devices().unwrap(), Some(0));
         assert_eq!(a.pending_tombstone_device_ids().unwrap(), Some(vec![]));
         topic_round(&conn, &group_key, &a, "device-a").await;
-        assert_eq!(relay_rows(&conn, "device-old", ROW_TYPE_DEVICE_RETIRED).await, 1);
+        assert_eq!(
+            relay_rows(&conn, "device-old", ROW_TYPE_DEVICE_RETIRED).await,
+            1
+        );
         assert!(a.retired_device_queue().unwrap().is_empty(), "published");
-        assert_eq!(a.pending_tombstone_devices().unwrap(), Some(0), "the outbox pass leaves it out too");
+        assert_eq!(
+            a.pending_tombstone_devices().unwrap(),
+            Some(0),
+            "the outbox pass leaves it out too"
+        );
         pull().await.unwrap();
-        assert_eq!(phone.pending_tombstone_devices().unwrap(), Some(0), "the phone leaves it out too");
+        assert_eq!(
+            phone.pending_tombstone_devices().unwrap(),
+            Some(0),
+            "the phone leaves it out too"
+        );
         let b = topic_store("device-b");
         topic_round(&conn, &group_key, &b, "device-b").await;
-        assert_eq!(b.pending_tombstone_devices().unwrap(), Some(0), "so does another desktop");
+        assert_eq!(
+            b.pending_tombstone_devices().unwrap(),
+            Some(0),
+            "so does another desktop"
+        );
 
         // Nothing was released or removed: the tombstones are the same rows, the gates hold what they held.
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await, tombstones);
-        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED).await, seeds, "the topic gate is unchanged");
-        assert_eq!(relay_rows(&conn, "device-old", ROW_TYPE_ITEMS_CAPABILITY).await, 1, "the old device's rows stay");
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_CLIENT_ITEM_FORGOTTEN).await,
+            tombstones
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED).await,
+            seeds,
+            "the topic gate is unchanged"
+        );
+        assert_eq!(
+            relay_rows(&conn, "device-old", ROW_TYPE_ITEMS_CAPABILITY).await,
+            1,
+            "the old device's rows stay"
+        );
     }
 
     /// A phone that was offline while a desktop deleted a client (items and the seed) applies the whole delete
@@ -3186,7 +4609,8 @@ mod tests {
         topic_round(&conn, &group_key, &a, "device-a").await;
         let phone = Store::open_in_memory().unwrap();
         let options = PullOptions::default();
-        let pull = || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
+        let pull =
+            || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
         pull().await.unwrap();
         assert_eq!(client_items(&phone, "calendar_event").len(), 1);
         assert_eq!(phone.list_seed_topics().unwrap().len(), 1);
@@ -3198,15 +4622,31 @@ mod tests {
             topic_round(&conn, &group_key, &a, "device-a").await;
         }
         assert!(
-            markers_on_relay(&conn, "phone").await.0.iter().any(|m| m == crate::content::ROW_TYPE_CLIENT_CONTROLS_CAPABILITY),
+            markers_on_relay(&conn, "phone")
+                .await
+                .0
+                .iter()
+                .any(|m| m == crate::content::ROW_TYPE_CLIENT_CONTROLS_CAPABILITY),
             "the phone announced the marker"
         );
-        assert_eq!(a.pending_tombstone_devices().unwrap(), Some(0), "and is counted as current");
+        assert_eq!(
+            a.pending_tombstone_devices().unwrap(),
+            Some(0),
+            "and is counted as current"
+        );
 
         pull().await.unwrap();
         assert!(client_items(&phone, "calendar_event").is_empty());
-        assert!(phone.list_seed_topics().unwrap().is_empty(), "the seed is purged");
-        assert!(phone.is_client_item_forgotten("calendar_event", &memory::client_forget::hashed("google_calendar:ev-1")).unwrap());
+        assert!(
+            phone.list_seed_topics().unwrap().is_empty(),
+            "the seed is purged"
+        );
+        assert!(phone
+            .is_client_item_forgotten(
+                "calendar_event",
+                &memory::client_forget::hashed("google_calendar:ev-1")
+            )
+            .unwrap());
     }
 
     /// The catch-up never holds up the live pull: a peer whose catch-up fails is retried next round, and the
@@ -3220,7 +4660,8 @@ mod tests {
         topic_rounds(&conn, &group_key, &a, &b).await;
         let phone = Store::open_in_memory().unwrap();
         let options = PullOptions::default();
-        let pull = || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
+        let pull =
+            || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
         crate::content::OLD_BUILD_PULLER.with(|c| c.set(true));
         pull().await.unwrap();
         forget_item(&a, ClientItemKind::CalendarEvent);
@@ -3228,7 +4669,11 @@ mod tests {
         topic_rounds(&conn, &group_key, &a, &b).await;
         pull().await.unwrap();
         crate::content::OLD_BUILD_PULLER.with(|c| c.set(false));
-        assert_eq!(client_items(&phone, "calendar_event").len(), 2, "the old build skipped both tombstones");
+        assert_eq!(
+            client_items(&phone, "calendar_event").len(),
+            2,
+            "the old build skipped both tombstones"
+        );
 
         // Updated, but B's catch-up fails this round; a new event from A still arrives.
         client_event_with_id(&a, "device-a", "ev-new#1", &format!("{CLIENT} follow-up"));
@@ -3236,15 +4681,35 @@ mod tests {
         crate::content::CATCH_UP_FAILS_FOR.with(|c| *c.borrow_mut() = Some("device-b".into()));
         pull().await.unwrap();
         crate::content::CATCH_UP_FAILS_FOR.with(|c| *c.borrow_mut() = None);
-        let titles: Vec<String> = client_items(&phone, "calendar_event").into_iter().filter_map(|r| r.title).collect();
-        assert!(titles.iter().any(|t| t.ends_with("follow-up")), "the live pull ran: {titles:?}");
-        assert!(!titles.iter().any(|t| t.ends_with("kickoff A")), "A's catch-up applied");
+        let titles: Vec<String> = client_items(&phone, "calendar_event")
+            .into_iter()
+            .filter_map(|r| r.title)
+            .collect();
+        assert!(
+            titles.iter().any(|t| t.ends_with("follow-up")),
+            "the live pull ran: {titles:?}"
+        );
+        assert!(
+            !titles.iter().any(|t| t.ends_with("kickoff A")),
+            "A's catch-up applied"
+        );
         assert!(titles.iter().any(|t| t.ends_with("kickoff B")), "B's waits");
-        assert_eq!(phone.get_meta("sync_tombstone_types_caught_up").unwrap(), None);
+        assert_eq!(
+            phone.get_meta("sync_tombstone_types_caught_up").unwrap(),
+            None
+        );
 
         pull().await.unwrap();
-        assert!(!client_items(&phone, "calendar_event").iter().any(|r| r.title.as_deref().is_some_and(|t| t.ends_with("kickoff B"))));
-        assert_eq!(phone.get_meta("sync_tombstone_types_caught_up").unwrap().as_deref(), Some("1"));
+        assert!(!client_items(&phone, "calendar_event")
+            .iter()
+            .any(|r| r.title.as_deref().is_some_and(|t| t.ends_with("kickoff B"))));
+        assert_eq!(
+            phone
+                .get_meta("sync_tombstone_types_caught_up")
+                .unwrap()
+                .as_deref(),
+            Some("1")
+        );
     }
 
     /// X6 final review, Major 12: a relay so slow that every round runs out of catch-up time on its first page still
@@ -3254,12 +4719,18 @@ mod tests {
         let (_dir, conn, group_key) = relay_and_store().await;
         let a = topic_store("device-a");
         for i in 0..4 {
-            client_event_with_id(&a, "device-a", &format!("ev-{i}#1"), &format!("{CLIENT} kickoff {i}"));
+            client_event_with_id(
+                &a,
+                "device-a",
+                &format!("ev-{i}#1"),
+                &format!("{CLIENT} kickoff {i}"),
+            );
         }
         topic_round(&conn, &group_key, &a, "device-a").await;
         let phone = Store::open_in_memory().unwrap();
         let options = PullOptions::default();
-        let pull = || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
+        let pull =
+            || crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &options);
         crate::content::OLD_BUILD_PULLER.with(|c| c.set(true));
         pull().await.unwrap();
         for _ in 0..4 {
@@ -3268,29 +4739,49 @@ mod tests {
         topic_round(&conn, &group_key, &a, "device-a").await;
         pull().await.unwrap();
         crate::content::OLD_BUILD_PULLER.with(|c| c.set(false));
-        assert_eq!(client_items(&phone, "calendar_event").len(), 4, "the old build skipped the tombstones");
+        assert_eq!(
+            client_items(&phone, "calendar_event").len(),
+            4,
+            "the old build skipped the tombstones"
+        );
 
         // Every row takes longer than the whole budget; one query spans few rows.
         let budget = std::time::Duration::from_millis(40);
-        crate::content::CATCH_UP_TEST_PACE.with(|c| c.set(Some((budget, std::time::Duration::from_millis(60)))));
+        crate::content::CATCH_UP_TEST_PACE
+            .with(|c| c.set(Some((budget, std::time::Duration::from_millis(60)))));
         crate::content::CATCH_UP_TEST_SPAN.with(|c| c.set(Some(3)));
-        let progress = || phone.get_meta("sync_tombstone_catch_up:1:device-a").unwrap();
+        let progress = || {
+            phone
+                .get_meta("sync_tombstone_catch_up:1:device-a")
+                .unwrap()
+        };
         let mut seen: Vec<Option<String>> = Vec::new();
         let mut rounds = 0;
-        while phone.get_meta("sync_tombstone_types_caught_up").unwrap().is_none() {
+        while phone
+            .get_meta("sync_tombstone_types_caught_up")
+            .unwrap()
+            .is_none()
+        {
             rounds += 1;
             assert!(rounds <= 40, "the catch-up never finished: {seen:?}");
             pull().await.unwrap();
             let now = progress();
             if now.as_deref() != Some("done") {
-                assert_ne!(seen.last(), Some(&now), "a round moved nothing forward: {seen:?}");
+                assert_ne!(
+                    seen.last(),
+                    Some(&now),
+                    "a round moved nothing forward: {seen:?}"
+                );
             }
             seen.push(now);
         }
         crate::content::CATCH_UP_TEST_PACE.with(|c| c.set(None));
         crate::content::CATCH_UP_TEST_SPAN.with(|c| c.set(None));
         assert!(rounds > 2, "each round ran out of time: {seen:?}");
-        assert!(client_items(&phone, "calendar_event").is_empty(), "every skipped delete applied");
+        assert!(
+            client_items(&phone, "calendar_event").is_empty(),
+            "every skipped delete applied"
+        );
     }
 
     /// The relay cleanup of a purged seed's steps is bounded by the forget: a step re-filed for the same
@@ -3304,26 +4795,42 @@ mod tests {
         topic_index(&a);
         read_steps(&a);
         let step = page(&a).you_owe[0].key.clone();
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
         let sent = relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_STEP).await;
         assert!(sent > 0);
 
         a.forget_seed_topic(&seed.key).unwrap();
         let pending = a.client_relay_cleanup(100).unwrap();
-        assert!(pending.iter().any(|t| t.0.starts_with("seq:topic_step:")), "{pending:?}");
+        assert!(
+            pending.iter().any(|t| t.0.starts_with("seq:topic_step:")),
+            "{pending:?}"
+        );
         // The same source is filed again, on a new topic, before the cleanup runs.
         tick();
         let other = a.create_seed_topic("SOW", &[], None).unwrap();
         topic_index(&a);
         read_steps(&a);
         assert_eq!(page(&a).you_owe[0].key, step, "same step key");
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0() + 1).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0() + 1)
+            .await
+            .unwrap();
 
         crate::content::delete_forgotten_client_rows(&conn, &a, "device-a").await;
-        let steps = relay_plaintexts(&conn, &group_key, "device-a", crate::content::ROW_TYPE_TOPIC_STEP).await;
+        let steps = relay_plaintexts(
+            &conn,
+            &group_key,
+            "device-a",
+            crate::content::ROW_TYPE_TOPIC_STEP,
+        )
+        .await;
         assert!(!steps.is_empty(), "the re-filed step survives");
         for plaintext in &steps {
-            assert!(plaintext.contains(&other.key), "only the re-filed version is left: {plaintext}");
+            assert!(
+                plaintext.contains(&other.key),
+                "only the re-filed version is left: {plaintext}"
+            );
         }
     }
 
@@ -3337,21 +4844,46 @@ mod tests {
         client_event_with_id(&a, "device-a", &uid, &format!("{CLIENT} kickoff"));
         topic_rounds(&conn, &group_key, &a, &b).await;
         let phone = Store::open_in_memory().unwrap();
-        crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &PullOptions::default()).await.unwrap();
+        crate::pull_only_with_connection(
+            &conn,
+            &group_key,
+            &phone,
+            "phone",
+            &PullOptions::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(client_items(&phone, "calendar_event").len(), 1);
 
         forget_item(&a, ClientItemKind::CalendarEvent);
         topic_rounds(&conn, &group_key, &a, &b).await;
-        crate::pull_only_with_connection(&conn, &group_key, &phone, "phone", &PullOptions::default()).await.unwrap();
+        crate::pull_only_with_connection(
+            &conn,
+            &group_key,
+            &phone,
+            "phone",
+            &PullOptions::default(),
+        )
+        .await
+        .unwrap();
         assert!(client_items(&phone, "calendar_event").is_empty());
         let domain = CLIENT.to_lowercase();
         for (name, store) in [("A", &a), ("B", &b), ("phone", &phone)] {
             for (target, _, _) in store.client_relay_cleanup(100).unwrap() {
-                assert!(!target.contains(&domain) && !target.starts_with("raw:"), "{name}: {target}");
+                assert!(
+                    !target.contains(&domain) && !target.starts_with("raw:"),
+                    "{name}: {target}"
+                );
             }
         }
-        assert!(b.client_relay_cleanup(100).unwrap().is_empty(), "B pushed no row of the event");
-        assert!(phone.client_relay_cleanup(100).unwrap().is_empty(), "a phone pushes nothing");
+        assert!(
+            b.client_relay_cleanup(100).unwrap().is_empty(),
+            "B pushed no row of the event"
+        );
+        assert!(
+            phone.client_relay_cleanup(100).unwrap().is_empty(),
+            "a phone pushes nothing"
+        );
     }
 
     /// An op already being written when the delete commits: once acknowledged, it is seen to be forgotten, its
@@ -3364,20 +4896,41 @@ mod tests {
         let t = t0();
         let worker = "in-flight";
         let op = a
-            .claim_due_outbox_batch_except(memory::OUTBOX_CONNECTOR, worker, t, t + LEASE_MS, 10, &[])
+            .claim_due_outbox_batch_except(
+                memory::OUTBOX_CONNECTOR,
+                worker,
+                t,
+                t + LEASE_MS,
+                10,
+                &[],
+            )
             .unwrap()
             .remove(0);
         // The worker writes the row; the delete commits before it acknowledges.
-        write_sync_row(&conn, &group_key, &op, None, None, None, t).await.unwrap();
+        write_sync_row(&conn, &group_key, &op, None, None, None, t)
+            .await
+            .unwrap();
         a.forget_seed_topic(&seed.key).unwrap();
-        assert!(a.acknowledge_outbox_operation(&op.operation_id, worker, "sync_row:x", t).unwrap());
+        assert!(a
+            .acknowledge_outbox_operation(&op.operation_id, worker, "sync_row:x", t)
+            .unwrap());
         assert!(a.take_delivery_if_forgotten(&op, t).unwrap());
-        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await, 1);
+        assert_eq!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await,
+            1
+        );
 
         crate::content::delete_forgotten_client_rows(&conn, &a, "device-a").await;
-        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await, 0);
+        assert_eq!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await,
+            0
+        );
         let client = CLIENT.to_lowercase();
-        assert!(a.list_outbox_operations().unwrap().iter().all(|o| !o.3.to_lowercase().contains(&client)));
+        assert!(a
+            .list_outbox_operations()
+            .unwrap()
+            .iter()
+            .all(|o| !o.3.to_lowercase().contains(&client)));
     }
 
     /// The same, through the dispatcher itself: the delete commits while the pass is writing the seed's row,
@@ -3388,12 +4941,25 @@ mod tests {
         let a = topic_store("device-a");
         let seed = a.create_seed_topic(CLIENT, &[], None).unwrap();
         FORGET_SEED_DURING_WRITE.with(|c| *c.borrow_mut() = Some(seed.key.clone()));
-        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
-        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await, 1, "written before the delete");
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await,
+            1,
+            "written before the delete"
+        );
 
         crate::content::delete_forgotten_client_rows(&conn, &a, "device-a").await;
-        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await, 0);
+        assert_eq!(
+            relay_rows(&conn, "device-a", crate::content::ROW_TYPE_TOPIC_SEED).await,
+            0
+        );
         let client = CLIENT.to_lowercase();
-        assert!(a.list_outbox_operations().unwrap().iter().all(|o| !o.3.to_lowercase().contains(&client)));
+        assert!(a
+            .list_outbox_operations()
+            .unwrap()
+            .iter()
+            .all(|o| !o.3.to_lowercase().contains(&client)));
     }
 }

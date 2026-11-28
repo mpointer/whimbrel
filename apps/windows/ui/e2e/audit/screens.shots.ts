@@ -373,7 +373,7 @@ for (const mode of ["light", "dark"] as const) {
     });
 
     // The no-store banner, over the app and in the tray popup.
-    const noStore = { launch_state: { stage: { kind: "openedWithoutStore" }, busy: false, waitingForUser: false, generation: 1 }, redesign_enabled: true };
+    const noStore = { launch_state: { stage: { kind: "openedWithoutStore" }, busy: false, waitingForUser: false, generation: 1 } };
     test(`app no-store banner ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
       await open(page, mode, "main", noStore);
@@ -386,7 +386,6 @@ for (const mode of ["light", "dark"] as const) {
       await page.setViewportSize(LARGE);
       const now = NOW;
       await open(page, mode, "main", {
-        redesign_enabled: true,
         running_emulated: true,
         retention_settings: { acknowledged: false, lastRun: null, settings: { captureDays: 90, conversationDays: null, meetingDays: 365 } },
         retention_preview: { captures: 214, conversations: 0, meetings: 3, orphanBytes: 0, orphans: 0 },
@@ -410,8 +409,7 @@ for (const mode of ["light", "dark"] as const) {
             await shot(page, `launch-${name}-skin-${label}-${mode}-small`);
           });
 
-    // ===== Home and the app shell, redesigned (screen 2). The flag is on, so every picture below is the new look. ====
-    const ON = { redesign_enabled: true };
+    // ===== Home and the app shell, redesigned (screen 2). Every picture below is the new look. ====
     const THREAD: Skin = { id: "thread", palette: "thread" };
     const EMPTY_DAY = {
       today_schedule: { events: [], earlierToday: [], recording: false },
@@ -429,12 +427,12 @@ for (const mode of ["light", "dark"] as const) {
     for (const size of SIZES) {
       test(`home ${mode} ${size.name}`, async ({ page }) => {
         await page.setViewportSize(size);
-        await open(page, mode, "main", ON, 1100, THREAD);
+        await open(page, mode, "main", {}, 1100, THREAD);
         await shot(page, `home-${mode}-${size.name}`, size === LARGE);
       });
       test(`home skin whimbrel ${mode} ${size.name}`, async ({ page }) => {
         await page.setViewportSize(size);
-        await open(page, mode, "main", ON, 1100);
+        await open(page, mode, "main", {}, 1100);
         await shot(page, `home-skin-whimbrel-${mode}-${size.name}`, size === LARGE);
       });
     }
@@ -448,7 +446,7 @@ for (const mode of ["light", "dark"] as const) {
       test(`home variant ${key} ${value} ${mode}`, async ({ page }) => {
         await page.setViewportSize(LARGE);
         const options = { nextMeeting: "card", timeline: "line", labels: "plain", ask: "field", actions: "buttons", [key]: value };
-        await open(page, mode, "main", ON, 1100, { id: `made-up-${key}-${value}`, palette: "thread", options });
+        await open(page, mode, "main", {}, 1100, { id: `made-up-${key}-${value}`, palette: "thread", options });
         await shot(page, `home-variant-${key}-${value}-${mode}-large`, true);
       });
 
@@ -460,7 +458,7 @@ for (const mode of ["light", "dark"] as const) {
       if (!(mode === "dark" ? pal.dark : pal.light)) continue;
       test(`home skin ${id} ${mode}`, async ({ page }) => {
         await page.setViewportSize(LARGE);
-        await open(page, mode, "main", ON, 1100, { id, palette: pal.id });
+        await open(page, mode, "main", {}, 1100, { id, palette: pal.id });
         await shot(page, `home-skin-${id}-${mode}-large`, true);
       });
     }
@@ -468,48 +466,48 @@ for (const mode of ["light", "dark"] as const) {
     // States.
     test(`home empty ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, ...EMPTY_DAY }, 1100, THREAD);
+      await open(page, mode, "main", { ...EMPTY_DAY }, 1100, THREAD);
       await shot(page, `home-empty-${mode}-large`);
     });
     test(`home no calendar ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
       const none = { accessIssues: [], blocked: null, emails: [], lastSyncedUnixMs: null, nextMeeting: null, nextStartUnixMs: null, signInExpired: [], syncError: null, upcoming: 0 };
-      await open(page, mode, "main", { ...ON, ...EMPTY_DAY, calendar_accounts: none }, 1100, THREAD);
+      await open(page, mode, "main", { ...EMPTY_DAY, calendar_accounts: none }, 1100, THREAD);
       await shot(page, `home-no-calendar-${mode}-large`);
     });
     test(`home loading ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, today_overview: "__hang__" }, 700, THREAD);
+      await open(page, mode, "main", { today_overview: "__hang__" }, 700, THREAD);
       await shot(page, `home-loading-${mode}-large`);
     });
     test(`home error ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, today_overview: "__fail__:The memory database is busy." }, 900, THREAD);
+      await open(page, mode, "main", { today_overview: "__fail__:The memory database is busy." }, 900, THREAD);
       await shot(page, `home-error-${mode}-large`);
     });
     test(`home capture paused ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, ...paused, library_day_blocks: [] }, 1100, THREAD);
+      await open(page, mode, "main", { ...paused, library_day_blocks: [] }, 1100, THREAD);
       await shot(page, `home-capture-paused-${mode}-large`);
     });
     test(`home capture off ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, ...off, library_day_blocks: [] }, 1100, THREAD);
+      await open(page, mode, "main", { ...off, library_day_blocks: [] }, 1100, THREAD);
       await shot(page, `home-capture-off-${mode}-large`);
     });
     test(`home recording ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, ...recordingPatch(NOW) }, 1300, THREAD);
+      await open(page, mode, "main", { ...recordingPatch(NOW) }, 1300, THREAD);
       await shot(page, `home-recording-${mode}-large`, true);
     });
     test(`home processing ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, meeting_recording_status: { degraded: null, failure: null, meetingId: 1, processing: { label: "Writing the summary", meetingId: 1, stage: "summarizing" }, startedUnixMs: null, state: "idle" } }, 1300, THREAD);
+      await open(page, mode, "main", { meeting_recording_status: { degraded: null, failure: null, meetingId: 1, processing: { label: "Writing the summary", meetingId: 1, stage: "summarizing" }, startedUnixMs: null, state: "idle" } }, 1300, THREAD);
       await shot(page, `home-processing-${mode}-large`);
     });
     test(`home zoom 200 ${mode}`, async ({ page }) => {
       await page.setViewportSize(SMALL);
-      await open(page, mode, "main", ON, 1100, THREAD);
+      await open(page, mode, "main", {}, 1100, THREAD);
       await page.evaluate(() => (document.documentElement.style.fontSize = "200%"));
       await page.waitForTimeout(400);
       await shot(page, `home-zoom200-${mode}-small`, true);
@@ -527,7 +525,7 @@ for (const mode of ["light", "dark"] as const) {
         const name = kind === "idle" ? "home-text200-short" : "home-text200-short-recording";
         const recording = kind === "recording";
         try {
-          await open(page, mode, "main", { ...ON, ...patch }, 1400, THREAD);
+          await open(page, mode, "main", { ...patch }, 1400, THREAD);
           await page.screenshot({ path: `${OUT}${name}-${mode}.png` });
           const probe = () =>
             page.evaluate(() => {
@@ -576,21 +574,21 @@ for (const mode of ["light", "dark"] as const) {
     // Interactions: the capture menu, the filter menus, a filtered search that lands in Library, Ctrl+K and Ctrl+2.
     test(`home capture menu ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", ON, 1100, THREAD);
+      await open(page, mode, "main", {}, 1100, THREAD);
       await page.locator(".w-capture-button").click();
       await settle(page, 300);
       await shot(page, `home-capture-menu-${mode}-large`);
     });
     test(`home capture menu paused ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, ...paused }, 1100, THREAD);
+      await open(page, mode, "main", { ...paused }, 1100, THREAD);
       await page.locator(".w-capture-button").click();
       await settle(page, 300);
       await shot(page, `home-capture-menu-paused-${mode}-large`);
     });
     test(`home filters ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", ON, 1100, THREAD);
+      await open(page, mode, "main", {}, 1100, THREAD);
       await page.getByRole("button", { name: "Apps", exact: true }).click();
       await settle(page, 300);
       await shot(page, `home-filter-apps-${mode}-large`);
@@ -608,7 +606,7 @@ for (const mode of ["light", "dark"] as const) {
     });
     test(`shell shortcuts ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", ON, 1100, THREAD);
+      await open(page, mode, "main", {}, 1100, THREAD);
       await page.keyboard.press("Control+2");
       await settle(page, 500);
       await shot(page, `shell-meetings-${mode}-large`);
@@ -619,20 +617,20 @@ for (const mode of ["light", "dark"] as const) {
     for (const id of ["library", "settings"])
       test(`shell ${id} ${mode}`, async ({ page }) => {
         await page.setViewportSize(SMALL);
-        await open(page, mode, "main", ON, 1100, THREAD);
+        await open(page, mode, "main", {}, 1100, THREAD);
         await tab(page, id);
         await settle(page, 700);
         await shot(page, `shell-${id}-${mode}-small`);
       });
     test(`shell recording meetings ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, ...recordingPatch(NOW) }, 1100, THREAD);
+      await open(page, mode, "main", { ...recordingPatch(NOW) }, 1100, THREAD);
       await tab(page, "automations");
       await settle(page, 800);
       await shot(page, `shell-recording-automations-${mode}-large`);
     });
     // ===== The live meeting screen (screen 3). The flag is on; Home gives its place to the screen while a meeting records. ====
-    const live = (kind: LiveKind = "recording", more: Record<string, unknown> = {}) => ({ ...ON, ...livePatch(NOW, kind), ...more });
+    const live = (kind: LiveKind = "recording", more: Record<string, unknown> = {}) => ({ ...livePatch(NOW, kind), ...more });
     for (const size of SIZES)
       test(`live recording ${mode} ${size.name}`, async ({ page }) => {
         await page.setViewportSize(size);
@@ -704,7 +702,7 @@ for (const mode of ["light", "dark"] as const) {
     // ===== The menu and small windows, redesigned (screen 7). Each picture is at the size the shell opens the window. ====
     const popup = async (page: Page, patch: Record<string, unknown>, name: string, zoom = false) => {
       await page.setViewportSize(WIN.popup);
-      await open(page, mode, "popup", { ...ON, ...patch });
+      await open(page, mode, "popup", { ...patch });
       await page.waitForTimeout(300);
       if (zoom) {
         await page.evaluate(() => (document.documentElement.style.fontSize = "200%"));
@@ -804,7 +802,7 @@ for (const mode of ["light", "dark"] as const) {
       const page = await context.newPage();
       const shape = clamped ? "text200-clamped" : "text200";
       try {
-        await open(page, mode, label, { ...ON, ...patch });
+        await open(page, mode, label, { ...patch });
         await page.waitForTimeout(wait);
         await page.screenshot({ path: `${OUT}window-${name}-${shape}-${mode}.png` });
         const dpr = await page.evaluate(() => window.devicePixelRatio);
@@ -922,7 +920,7 @@ for (const mode of ["light", "dark"] as const) {
           const context = await browser.newContext({ deviceScaleFactor: 2, viewport: { width: 320, height: 448 }, reducedMotion: "reduce", timezoneId: "UTC", locale: "en-US" });
           const page = await context.newPage();
           try {
-            await open(page, mode, "popup", { ...ON, ...patch, ...(memory === "off" ? CAP200({ enabled: false }) : {}) });
+            await open(page, mode, "popup", { ...patch, ...(memory === "off" ? CAP200({ enabled: false }) : {}) });
             await page.waitForTimeout(400);
             await page.screenshot({ path: `${OUT}window-popup-${kind}-memory-${memory}-text200-real-${mode}.png` });
             const r = await page.evaluate(() => {
@@ -960,7 +958,7 @@ for (const mode of ["light", "dark"] as const) {
       const context = await browser.newContext({ deviceScaleFactor: 2, viewport: { width: WIN.popup.width / 2, height: WIN.popup.height / 2 }, reducedMotion: "reduce", timezoneId: "UTC", locale: "en-US" });
       const page = await context.newPage();
       try {
-        await open(page, mode, "popup", { ...ON, ...livePatch(NOW, "paused") });
+        await open(page, mode, "popup", { ...livePatch(NOW, "paused") });
         await page.waitForTimeout(500);
         // The body is focusable only while it has more below it (`tabIndex` goes at the end), so it is found by its class.
         const box = page.locator(".w-pop-body .w-win-scroll").first();
@@ -1002,7 +1000,7 @@ for (const mode of ["light", "dark"] as const) {
 
     test(`alert countdown ${mode}`, async ({ page }) => {
       await page.setViewportSize(WIN.alert);
-      await open(page, mode, "alert", { ...ON, alert_status: { autoStart: true, countdownSeconds: 8, meeting: { appId: "zoom", attendees: ["Sam Okafor", "Priya Shah"], id: "det-1", promptedUnixMs: NOW, rootPid: 4242, source: "Zoom", startUnixMs: NOW, title: "Northwind security review" } } });
+      await open(page, mode, "alert", { alert_status: { autoStart: true, countdownSeconds: 8, meeting: { appId: "zoom", attendees: ["Sam Okafor", "Priya Shah"], id: "det-1", promptedUnixMs: NOW, rootPid: 4242, source: "Zoom", startUnixMs: NOW, title: "Northwind security review" } } });
       await page.screenshot({ path: `${OUT}window-alert-countdown-${mode}.png` });
     });
     test(`still here normal ${mode}`, async ({ page }) => {
@@ -1014,7 +1012,7 @@ for (const mode of ["light", "dark"] as const) {
     // The hotkey panel: reading, blocked, and an ask typed and answered (window_ask is scripted like Find's ask).
     const hotkey = async (page: Page, patch: Record<string, unknown>, name: string, ask?: { script: { at: number; event: Record<string, unknown> }[]; wait: number }) => {
       await page.setViewportSize(WIN["hotkey-panel"]);
-      await open(page, mode, "hotkey-panel", { ...ON, ...patch, ...(ask ? { __ask_script: ask.script } : {}) });
+      await open(page, mode, "hotkey-panel", { ...patch, ...(ask ? { __ask_script: ask.script } : {}) });
       if (ask) {
         await page.getByRole("textbox", { name: "Ask about this window" }).fill("What does Sam need from me?");
         await page.keyboard.press("Enter");
@@ -1035,7 +1033,7 @@ for (const mode of ["light", "dark"] as const) {
       hotkey(page, {}, "failed", { script: [{ at: 60, event: { kind: "failed", error: { kind: "provider_failure", reason: { kind: "local_model_missing" } }, partial: false } }], wait: 700 }));
 
     // ===== The finished note (screen 4): the Northwind renewal call, made up. The flag is on; the Meetings tab opens it. ====
-    const note = (kind: NoteKind = "withSources", more: Record<string, unknown> = {}) => ({ ...ON, ...notePatch(NOW, kind), ...more });
+    const note = (kind: NoteKind = "withSources", more: Record<string, unknown> = {}) => ({ ...notePatch(NOW, kind), ...more });
     const openNote = async (page: Page, kind: NoteKind = "withSources", size = LARGE, skin: Skin = THREAD, more: Record<string, unknown> = {}) => {
       await page.setViewportSize(size);
       await open(page, mode, "main", note(kind, more), 1200, skin);
@@ -1210,7 +1208,7 @@ for (const mode of ["light", "dark"] as const) {
 
     // ===== Find, and the Ask with numbered sources (screen 5): the Library tab opens on it. The flag is on. ====
     const QUESTION = "What did Sam say about pricing last week?";
-    const find = (kind: FindKind = "default", script?: AskScript, more: Record<string, unknown> = {}) => ({ ...ON, ...findPatch(NOW, kind), ...(script ? { __ask_script: askScript(script) } : {}), ...more });
+    const find = (kind: FindKind = "default", script?: AskScript, more: Record<string, unknown> = {}) => ({ ...findPatch(NOW, kind), ...(script ? { __ask_script: askScript(script) } : {}), ...more });
     const openFind = async (page: Page, patch: Record<string, unknown>, size = LARGE) => {
       await page.setViewportSize(size);
       await open(page, mode, "main", patch, 1200, THREAD);
@@ -1525,9 +1523,8 @@ for (const mode of ["light", "dark"] as const) {
     });
   }
 
-  // ===== Settings, redesigned (screen 8). The flag is on and the Thread skin is drawn; every picture is `settings-*`. ==========
+  // ===== Settings, redesigned (screen 8). The Thread skin is drawn; every picture is `settings-*`. ==========
   if (AFTER) {
-    const ON = { redesign_enabled: true };
     const THREAD: Skin = { id: "thread", palette: "thread" };
     const WIDE = { width: 2560, height: 1100 };
     // The real-PC shape at Windows text 150%: the window is 734 x 481 CSS px at twice the pixel density.
@@ -1543,7 +1540,7 @@ for (const mode of ["light", "dark"] as const) {
     }
     async function openSettings(page: Page, mode: Mode, section: string, patch: Record<string, unknown> = {}, size: { width: number; height: number } = LARGE) {
       await page.setViewportSize(size);
-      await open(page, mode, "main", { ...ON, ...patch }, 1100, THREAD);
+      await open(page, mode, "main", { ...patch }, 1100, THREAD);
       await tab(page, "settings");
       await settle(page, 600);
       await goSection(page, section);
@@ -1635,7 +1632,7 @@ for (const mode of ["light", "dark"] as const) {
     });
     test(`settings redesigned topics empty tab ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", { ...ON, topics_page_list: [] }, 1100, THREAD);
+      await open(page, mode, "main", { topics_page_list: [] }, 1100, THREAD);
       await tab(page, "topics");
       await settle(page, 700);
       await shot(page, `settings-topics-empty-tab-${mode}-large`);
@@ -1765,16 +1762,15 @@ for (const mode of ["light", "dark"] as const) {
   }
 
   // ===== The restyle pass (step 10): Topics, Automations, the Meetings list, the capture and the episode, and the fixes from the real-PC
-  // checks. The flag is on and the Thread skin is drawn. Same layout and words as with the flag off; only the look changed. ===========
+  // checks. The Thread skin is drawn. ===========
   if (AFTER) {
-    const ON = { redesign_enabled: true };
     const THREAD: Skin = { id: "thread", palette: "thread" };
     /** The real-PC shapes: the main window at Windows text 150% (734 x 481 CSS px) and at 200% (550 x 360), twice the pixel density. */
     const TEXT150 = { width: 734, height: 481 };
     const TEXT200 = { width: 550, height: 360 };
     const openAt = async (page: Page, patch: Record<string, unknown>, size = LARGE, wait = 1100) => {
       await page.setViewportSize(size);
-      await open(page, mode, "main", { ...ON, ...patch }, wait, THREAD);
+      await open(page, mode, "main", { ...patch }, wait, THREAD);
     };
     /** What a restyled screen must hold at any size, asserted rather than eyeballed: nothing scrolls sideways, and nothing visible in
      *  the content area is wider than the window or cut off at its right edge. */
@@ -1801,7 +1797,7 @@ for (const mode of ["light", "dark"] as const) {
         const context = await browser.newContext({ deviceScaleFactor: 2, viewport: TEXT150, reducedMotion: "reduce", timezoneId: "UTC", locale: "en-US" });
         const page = await context.newPage();
         try {
-          await open(page, mode, "main", { ...ON, ...patch }, 1100, THREAD);
+          await open(page, mode, "main", { ...patch }, 1100, THREAD);
           await prepare(page);
           await sound(page, `${name} at 734x481`);
           await page.screenshot({ path: `${OUT}${name}-text150-${mode}.png` });
@@ -1813,7 +1809,7 @@ for (const mode of ["light", "dark"] as const) {
         const context = await browser.newContext({ deviceScaleFactor: 2, viewport: TEXT200, reducedMotion: "reduce", timezoneId: "UTC", locale: "en-US" });
         const page = await context.newPage();
         try {
-          await open(page, mode, "main", { ...ON, ...patch }, 1100, THREAD);
+          await open(page, mode, "main", { ...patch }, 1100, THREAD);
           await prepare(page);
           await sound(page, `${name} at 550x360`);
           await page.screenshot({ path: `${OUT}${name}-text200-short-${mode}.png` });
@@ -1823,7 +1819,7 @@ for (const mode of ["light", "dark"] as const) {
       });
       test(`${name} forced colors ${mode}`, async ({ page }) => {
         await page.setViewportSize(LARGE);
-        await open(page, mode, "main", { ...ON, ...patch }, 1100, THREAD);
+        await open(page, mode, "main", { ...patch }, 1100, THREAD);
         await page.emulateMedia({ colorScheme: mode, forcedColors: "active" });
         await prepare(page);
         await shot(page, `${name}-forced-${mode}-large`);
@@ -2095,7 +2091,7 @@ for (const mode of ["light", "dark"] as const) {
           const context = await browser.newContext({ deviceScaleFactor: 2, viewport: size, reducedMotion: "reduce", timezoneId: "UTC", locale: "en-US" });
           const page = await context.newPage();
           try {
-            await open(page, mode, "main", { ...ON, ...(kind === "recording" ? livePatch(NOW, "recording") : {}) }, 1400, THREAD);
+            await open(page, mode, "main", { ...(kind === "recording" ? livePatch(NOW, "recording") : {}) }, 1400, THREAD);
             const at = await page.evaluate(TOP_BAR);
             await page.screenshot({ path: `${OUT}top-bar-${shape}-${kind}-${mode}.png` });
             console.log(`[top bar ${shape} ${kind}] ${JSON.stringify(at)}`);
@@ -2149,7 +2145,6 @@ for (const mode of ["light", "dark"] as const) {
   // A device with nothing stored is moved to Thread before the first paint; the system's more-contrast setting draws High Contrast
   // whatever skin is picked, and the stored choice stays. These are the only pictures that start from anything but a picked skin.
   {
-    const ON = { redesign_enabled: true };
     const THREAD_PICKED: Skin = { id: "thread", palette: "thread" };
     const FRESH: Skin = { id: null, palette: null, moveDone: false };
     const highContrast = async (page: Page) => {
@@ -2160,7 +2155,7 @@ for (const mode of ["light", "dark"] as const) {
     };
     test(`home fresh device ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", ON, 1100, FRESH);
+      await open(page, mode, "main", {}, 1100, FRESH);
       // Nothing stored: the page moved the device to Thread, and says so in what it stored.
       await expect(page.locator("html")).toHaveAttribute("data-skin", "thread");
       expect(await page.evaluate(() => [localStorage.getItem("skinId"), localStorage.getItem("paletteId"), localStorage.getItem("skinThreadMoveDone")])).toEqual(["thread", "thread", "1"]);
@@ -2168,7 +2163,7 @@ for (const mode of ["light", "dark"] as const) {
     });
     test(`home classic picked ${mode}`, async ({ page }) => {
       await page.setViewportSize(LARGE);
-      await open(page, mode, "main", ON, 1100, WHIMBREL);
+      await open(page, mode, "main", {}, 1100, WHIMBREL);
       await expect(page.locator("html")).toHaveAttribute("data-skin", "whimbrel");
       await shot(page, `home-classic-${mode}-large`);
     });
@@ -2176,7 +2171,7 @@ for (const mode of ["light", "dark"] as const) {
       test(`home high contrast ${name} ${mode}`, async ({ page }) => {
         await page.setViewportSize(LARGE);
         await highContrast(page);
-        await open(page, mode, "main", ON, 1100, skin);
+        await open(page, mode, "main", {}, 1100, skin);
         await expect(page.locator("html")).toHaveAttribute("data-palette", "high-contrast");
         // The stored choice is untouched.
         expect(await page.evaluate(() => localStorage.getItem("skinId"))).toBe(skin.id);
@@ -2186,7 +2181,7 @@ for (const mode of ["light", "dark"] as const) {
       test(`${id} high contrast ${mode}`, async ({ page }) => {
         await page.setViewportSize(LARGE);
         await highContrast(page);
-        await open(page, mode, "main", ON, 1100, THREAD_PICKED);
+        await open(page, mode, "main", {}, 1100, THREAD_PICKED);
         await tab(page, id);
         await settle(page, 900);
         await expect(page.locator("html")).toHaveAttribute("data-palette", "high-contrast");

@@ -202,7 +202,7 @@ struct MenuSyncAction: View {
     }
 }
 
-/// The menu bar menu with the redesign switch on. It reads what the old menu read and calls what the old menu called.
+/// The menu bar menu. It reads what the old menu read and calls what the old menu called.
 struct MenuBarRedesignView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var coordinator: LaunchCoordinator<CoreMemoryStore>

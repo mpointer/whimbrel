@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { chatStop, meetingAsk, openAiSettings } from "../api";
-import { markdownComponents } from "../chat/AskView";
+import { markdownComponents } from "../chat/markdown";
 import { isBusy, statusLine } from "../chat/chatModel";
 import { describeError, isCommandError } from "../errors";
 import { useL10n } from "../l10n";

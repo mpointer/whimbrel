@@ -45,7 +45,7 @@ struct ThreadDetailView: View {
             .padding(Spacing.md)
         }
         .onAppear { loadThreadIfNeeded() }
-        .restyledScreen(redesign: appState.redesignEnabled)
+        .restyledScreen()
     }
 
     private func loadThreadIfNeeded() {

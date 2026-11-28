@@ -518,6 +518,8 @@ public struct WPlanSettingsView: View {
             switch model.state {
             case .signedOut:
                 WSettingsRow(label: l.signedOut) { WButton(l.signIn, kind: .primary, action: actions.signIn) }
+                WSettingsRow(label: l.plusPlan) { EmptyView() }
+                WSettingsRow(label: l.cloudPlan) { EmptyView() }
             case .loading:
                 WSettingsRow(label: l.loading) { EmptyView() }
             case .readFailed:

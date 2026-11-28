@@ -420,8 +420,6 @@ export const answers = (now: number): Record<string, unknown> => {
       { label: "Same as Ask", value: "" },
       { label: "Claude Haiku (cheapest)", value: "anthropic:claude-haiku" },
     ],
-    // Nothing asks for it any more (the switch is on for everyone); the answer is kept true so no screen can depend on a false one.
-    redesign_enabled: true,
     routines_cloud: { cloud_ui_enabled: false, devices: [], has_synced_key: false, local_only: false, routines: [], runner_last_run_ms: null, sync_ready: true },
     approvals_list: [
       {

@@ -5,7 +5,7 @@ import Foundation
 /// a fresh install on a new Mac where none of them exist yet. The manifest (URLs, size
 /// floors, the `.tar.bz2` unpack) and the download-verify-move sequence live in
 /// core/api::models (M3.0 Task 3); this is the polling shim over its job registry,
-/// shaped as one combined async operation so `ModelSetupView` reads exactly as before.
+/// shaped as one combined async operation so the model setup sheet reads exactly as before.
 enum ModelDownloadService {
     private static let pollInterval: Duration = .milliseconds(200)
 

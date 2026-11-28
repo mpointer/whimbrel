@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WhimbrelUI
 import XCTest
 @testable import Whimbrel
 
@@ -29,15 +30,15 @@ enum Pseudo {
     }
 }
 
-/// Every installed skin x each of its palettes x light/dark, against Today's content and widths.
+/// Every installed skin x each of its palettes x light/dark, against Home's content and widths.
 @MainActor
 final class SkinMatrixTests: XCTestCase {
     private let repo = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
 
-    /// Today's content width at the 900pt window (660 strict, 672 ideal sidebar, 692 minimum sidebar), the 700 and 712
-    /// seams the Reference layout switches around, and 760, the widest `TodayChrome` allows.
+    /// Home's content width at the 900pt window (660 strict, 672 ideal sidebar, 692 minimum sidebar), the 700 and 712
+    /// seams, and 760.
     private let widths: [CGFloat] = [660, 672, 692, 700, 712, 760]
 
     private var skins: [Skin] {
@@ -65,11 +66,13 @@ final class SkinMatrixTests: XCTestCase {
     private var fullMatrix: Bool { ProcessInfo.processInfo.environment["WHIMBREL_FULL_MATRIX"] == "1" }
     private let contents = [TodayContent.sample, .worstCase, .empty]
 
-    private func chrome(_ content: TodayContent) -> some View {
-        TodayChrome(
-            content: content, actions: .noop,
-            slots: TodaySlots(live: nil, decisionCount: content.pendingApprovalCount, actions: .noop, composer: TodayFixtures.composer)
-        )
+    /// The real Home (`WHomeView`, the model the Home screen draws) for `content`, under the skin and palette in force.
+    private func home(_ content: TodayContent) -> some View {
+        let skin = SkinStore.shared.selected
+        let model = HomeRedesignAdapter.model(
+            content: content, data: HomeRedesignData(), memory: .on, elapsedSeconds: nil, now: content.now, voice: skin.voice,
+            elements: WHomeElements.resolve(options: skin.archetypeOptions, archetype: skin.archetype.rawValue))
+        return WHomeView(model: model, actions: WHomeActions()).redesignThemed()
     }
 
     private func renderedWidth<V: View>(_ view: V, proposing width: CGFloat, dark: Bool) -> CGFloat {
@@ -102,7 +105,7 @@ final class SkinMatrixTests: XCTestCase {
         func check(_ skin: Skin, _ palette: Theme, dark: Bool, width: CGFloat) {
             SkinStore.shared.withOverride(skin: skin, paletteId: palette.id) {
                 for content in contents {
-                    let measured = renderedWidth(chrome(content), proposing: width, dark: dark)
+                    let measured = renderedWidth(home(content), proposing: width, dark: dark)
                     XCTAssertGreaterThan(measured, 0, "the probe measured nothing")
                     XCTAssertLessThanOrEqual(measured, width + 0.5, "\(skin.id)/\(palette.id) \(dark ? "dark" : "light") at \(width)")
                     cells += 1
@@ -136,7 +139,7 @@ final class SkinMatrixTests: XCTestCase {
             SkinStore.shared.withOverride(skin: skin, paletteId: palette.id) {
                 for width in [widths.first!, widths.last!] {
                     for content in contents {
-                        let measured = renderedWidth(chrome(content), proposing: width, dark: false)
+                        let measured = renderedWidth(home(content), proposing: width, dark: false)
                         XCTAssertGreaterThan(measured, 0, "the probe measured nothing")
                         XCTAssertLessThanOrEqual(measured, width + 0.5, "en-XA \(skin.id) at \(width)")
                     }
@@ -157,7 +160,7 @@ final class SkinMatrixTests: XCTestCase {
                 SkinStore.shared.withOverride(skin: skin, paletteId: palette.id) {
                     for width in [widths.first!, widths.last!] {
                         for content in contents {
-                            let measured = renderedWidth(chrome(content), proposing: width, dark: false)
+                            let measured = renderedWidth(home(content), proposing: width, dark: false)
                             XCTAssertLessThanOrEqual(measured, width + 0.5, "\(lang) \(skin.id) at \(width)")
                         }
                     }
@@ -178,7 +181,7 @@ final class SkinMatrixTests: XCTestCase {
                 SkinStore.shared.withOverride(skin: skin, paletteId: palette.id) {
                     for width in widths {
                         for content in contents {
-                            let measured = renderedWidth(chrome(content), proposing: width, dark: dark)
+                            let measured = renderedWidth(home(content), proposing: width, dark: dark)
                             XCTAssertGreaterThan(measured, 0, "the probe measured nothing")
                             XCTAssertLessThanOrEqual(measured, width + 0.5, "\(skin.id)/\(palette.id) with imagery \(dark ? "dark" : "light") at \(width)")
                             cells += 1
@@ -188,7 +191,7 @@ final class SkinMatrixTests: XCTestCase {
                     let image = SkinImageryFixture.image
                     let opacity = SkinImageryView(skinImage: skin.decoration.imagery[0], image: image).opacity(isDark: dark)
                     let (lightest, darkest) = SkinImageryView.extremes(of: image, page: colors.scrim)
-                    // Every colour Today draws text in (foregroundStyle in UI/Today), not just textPrimary.
+                    // Every colour Home draws text in, not just textPrimary.
                     for token in [ThemeToken.textPrimary, .textSecondary, .accentPrimary, .error, .link] {
                         let text = ThemeStore.shared.hex(token, isDark: dark)
                         for under in [lightest, darkest] {
@@ -202,42 +205,6 @@ final class SkinMatrixTests: XCTestCase {
             }
         }
         XCTAssertEqual(cells, all.count * 2 * widths.count * contents.count)
-    }
-
-    /// Glass lays its glow (the accent at 0.3 fading to the page) over the scrimmed background image, and the greeting
-    /// and date sit on it with no card. With every palette a user skin could pair with Glass, light and dark, they
-    /// still read at 4.5:1 over the image's lightest and darkest colours.
-    func test_glass_greeting_reads_over_the_image_under_the_glow() throws {
-        let fixture = try SkinImageryFixture(self)
-        let all = combos()
-        let skin = try fixture.skin(from: try XCTUnwrap(skins.first { $0.archetype == .glass }))
-        let image = SkinImageryFixture.image
-        var seen = Set<String>(), checked = 0, lowest = 1.0
-        for (_, palette) in all where seen.insert(palette.id).inserted {
-            for dark in [false, true] {
-                // A palette failing on the plain page is repaired or refused before it is saved; no scrim can help it.
-                guard ArchetypeContrast.passes(dark ? palette.dark : palette.light, ArchetypeContrast.pairs(for: .glass)) else { continue }
-                SkinStore.shared.withOverride(skin: skin, paletteId: palette.id) {
-                    let page = SkinImageryView.resolvedColors(isDark: dark).scrim
-                    let accent = ThemeStore.shared.hex(.accentPrimary, isDark: dark)
-                    let opacity = SkinImageryView(skinImage: skin.decoration.imagery[1], image: image).opacity(isDark: dark)
-                    lowest = min(lowest, opacity)
-                    let (lightest, darkest) = SkinImageryView.extremes(of: image, page: page)
-                    for under in [lightest, darkest] {
-                        let scrimmed = SkinImageryView.blend(under, over: page, opacity: opacity)
-                        for surface in GlassStyle.glow(accent: accent, page: page, over: scrimmed) {
-                            for token in [ThemeToken.textPrimary, .textSecondary] {
-                                let ratio = ThemeContrast.ratio(ThemeStore.shared.hex(token, isDark: dark), surface)
-                                XCTAssertGreaterThanOrEqual(ratio, ThemeContrast.minimum, "\(palette.id) \(dark ? "dark" : "light") \(token) on the glow over the image = \(ratio)")
-                            }
-                        }
-                    }
-                    checked += 1
-                }
-            }
-        }
-        XCTAssertGreaterThan(checked, 4, "too few palettes pass Glass on the plain page to test")
-        XCTAssertLessThan(lowest, 1, "a solid scrim everywhere would hide the image: the check is too strict")
     }
 
     /// Every catalogue string at its length limit, in wide glyphs with word breaks. Greetings are `<filler>, {name}`,
@@ -271,7 +238,6 @@ final class SkinMatrixTests: XCTestCase {
             named.name = name
             return named
         }
-        let composer = Self.longestComposer
         var cells = 0
         for skin in skins {
             var stressed = skin
@@ -280,11 +246,7 @@ final class SkinMatrixTests: XCTestCase {
             SkinStore.shared.withOverride(skin: stressed, paletteId: palette.id) {
                 for width in widths {
                     for content in contents {
-                        let view = TodayChrome(
-                            content: content, actions: .noop,
-                            slots: TodaySlots(live: nil, decisionCount: content.pendingApprovalCount, actions: .noop, composer: composer)
-                        )
-                        let measured = renderedWidth(view, proposing: width, dark: false)
+                        let measured = renderedWidth(home(content), proposing: width, dark: false)
                         XCTAssertGreaterThan(measured, 0, "the probe measured nothing")
                         XCTAssertLessThanOrEqual(measured, width + 0.5, "\(skin.id) with the longest voice at \(width)")
                         cells += 1
@@ -293,17 +255,6 @@ final class SkinMatrixTests: XCTestCase {
             }
         }
         XCTAssertEqual(cells, skins.count * widths.count * contents.count)
-    }
-
-    /// `TodayComposer` needs `AppState`; this stand-in draws the longest placeholder as the real one does.
-    private static var longestComposer: AnyView {
-        AnyView(
-            Text(longestVoice.text(.askPlaceholder, name: ""))
-                .font(.whimbrelBody(.body))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Spacing.lg)
-                .padding(.vertical, Spacing.md)
-        )
     }
 
     /// The widest face a manifest may name: every family at its regular, bold and black weights, measured once.
@@ -342,11 +293,7 @@ final class SkinMatrixTests: XCTestCase {
             SkinStore.shared.withOverride(skin: skin, paletteId: palette.id) {
                 for width in widths {
                     for content in contents {
-                        let view = TodayChrome(
-                            content: content, actions: .noop,
-                            slots: TodaySlots(live: nil, decisionCount: content.pendingApprovalCount, actions: .noop, composer: Self.longestComposer)
-                        )
-                        let measured = renderedWidth(view, proposing: width, dark: false)
+                        let measured = renderedWidth(home(content), proposing: width, dark: false)
                         XCTAssertGreaterThan(measured, 0, "the probe measured nothing")
                         XCTAssertLessThanOrEqual(measured, width + 0.5, "worst-case \(archetype) in \(face.family.rawValue) at \(width)")
                         cells += 1
@@ -357,42 +304,10 @@ final class SkinMatrixTests: XCTestCase {
         XCTAssertEqual(cells, SkinArchetype.allCases.count * widths.count * contents.count)
     }
 
-    func test_matrix_every_nonEmpty_section_rendered_once() {
-        for skin in skins {
-            let placed = Self.placed(for: skin.archetype)
-            for content in [TodayContent.sample, .worstCase, .empty] {
-                let leftovers = Set(TodayChrome.leftovers(of: content, placed: placed))
-                for section in content.nonEmptySections() {
-                    let times = (placed.contains(section) ? 1 : 0) + (leftovers.contains(section) ? 1 : 0)
-                    // `.schedule` is dropped from the leftovers when it has nothing beyond up next; up next must then draw that event.
-                    if section == .schedule, times == 0 {
-                        let upNextTimes = (placed.contains(.upNext) ? 1 : 0) + (leftovers.contains(.upNext) ? 1 : 0)
-                        XCTAssertEqual(upNextTimes, 1, "\(skin.id): up next must show the event the schedule dropped")
-                        XCTAssertNotNil(TodayRows.upNext(content), skin.id)
-                        continue
-                    }
-                    XCTAssertEqual(times, 1, "\(skin.id): \(section)")
-                }
-                XCTAssertTrue(leftovers.isSubset(of: Set(content.nonEmptySections())), skin.id)
-            }
-        }
-    }
-
     func test_every_skin_palette_passes_contrast() {
         for (skin, palette) in combos() {
             XCTAssertEqual(ThemeContrast.failures(palette.light), [], "\(skin.id)/\(palette.id) light")
             XCTAssertEqual(ThemeContrast.failures(palette.dark), [], "\(skin.id)/\(palette.id) dark")
-        }
-    }
-
-    private static func placed(for archetype: SkinArchetype) -> Set<TodaySection> {
-        switch archetype {
-        case .terminal: return TerminalTodayLayout.placedSections
-        case .glass: return GlassTodayLayout.placedSections
-        case .field: return FieldTodayLayout.placedSections
-        case .almanac: return AlmanacTodayLayout.placedSections
-        case .reference: return ReferenceTodayLayout.placedSections
-        case .standard: return Set(TodaySection.allCases)
         }
     }
 }

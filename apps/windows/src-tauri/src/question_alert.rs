@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::error::CommandError;
 use crate::l10n::tr;
@@ -44,8 +44,7 @@ fn hide(app: &AppHandle) {
 }
 
 fn open(app: &AppHandle) -> tauri::Result<()> {
-    let redesign = app.state::<AppState>().settings.lock().unwrap().redesign_enabled();
-    let (w, h) = crate::text_scale::size_for_look(SIZE, redesign);
+    let (w, h) = crate::text_scale::scaled_size(SIZE);
     let popup = WebviewWindowBuilder::new(app, QUESTION_ALERT, WebviewUrl::App("index.html".into()))
         .title(tr("Question for you", &[]))
         .inner_size(w, h)
@@ -56,26 +55,8 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
         .focused(false)
         .visible(false)
         .build()?;
-    if redesign {
-        crate::text_scale::place_corner_alert(app, &popup, (w, h), MARGIN)?;
-        crate::text_scale::show_corner_alert(&popup)?;
-        return Ok(());
-    }
-    if let Some(monitor) = popup.primary_monitor()? {
-        let scale = monitor.scale_factor();
-        let area = monitor.work_area();
-        let (x, mut y) = crate::alert::alert_origin(
-            ((w * scale).round() as u32, (h * scale).round() as u32),
-            (area.position.x, area.position.y, area.size.width, area.size.height),
-            (MARGIN * scale).round() as i32,
-        );
-        if app.get_webview_window(crate::alert::ALERT).is_some() {
-            // Below the meeting alert, whatever its height is for the look in use.
-            y += ((crate::alert::alert_height(app) + MARGIN) * scale).round() as i32;
-        }
-        popup.set_position(PhysicalPosition::new(x, y))?;
-    }
-    popup.show()?;
+    crate::text_scale::place_corner_alert(app, &popup, (w, h), MARGIN)?;
+    crate::text_scale::show_corner_alert(&popup)?;
     Ok(())
 }
 

@@ -1,8 +1,8 @@
-//! The in-meeting window (docs/ui-redesign/screens/live-meeting.md), redesign only: a small always-on-top window with the
+//! The in-meeting window (docs/ui-redesign/screens/live-meeting.md): a small always-on-top window with the
 //! meeting's title, state, recorded time, level meter, Pause or Resume, Stop and an ask box. Built like `still_here`: its own
 //! label, no decorations, not in the taskbar, one UI bundle that picks its view by label.
 //!
-//! It opens when a recording starts and is destroyed when it stops, only with the redesign switch on. The person can drag it
+//! It opens when a recording starts and is destroyed when it stops. The person can drag it
 //! (the page has a drag region), it remembers its place in a device-local setting, and closing it hides it for that recording
 //! only; "Show in-meeting window" in the tray menu brings it back. Closing it never stops the recording.
 //! The app's own screen capture skips every window of this process (`capture::exclusions`, `pid == own_pid`), and meeting
@@ -18,7 +18,7 @@ use crate::state::AppState;
 
 /// The window's label (also listed in `capabilities/default.json`).
 pub const MEETING_BAR: &str = "meeting-bar";
-/// The design size in CSS px at 100% text; with the redesign on (the only time this window exists) the Windows text scale multiplies it
+/// The design size in CSS px at 100% text; the Windows text scale multiplies it
 /// when the window is built (`text_scale.rs`), and it is capped to the work area. ui/src/system/window.tsx `WINDOW_DESIGN.meetingBar`.
 const SIZE: (f64, f64) = (320.0, 260.0);
 const MARGIN: f64 = 16.0;
@@ -73,9 +73,9 @@ pub fn is_reachable(at: (i32, i32), size: (u32, u32), areas: &[(i32, i32, u32, u
     })
 }
 
-/// Whether the window should exist now: a recording runs, the switch is on, and the person did not close it for this recording.
-pub fn wanted(redesign: bool, recording_started: Option<i64>, closed_for: i64) -> bool {
-    redesign && recording_started.is_some_and(|started| started != closed_for)
+/// Whether the window should exist now: a recording runs, and the person did not close it for this recording.
+pub fn wanted(recording_started: Option<i64>, closed_for: i64) -> bool {
+    recording_started.is_some_and(|started| started != closed_for)
 }
 
 /// Opens or destroys the window to match the recording. Called after every recording change (`tray::refresh`, also every 3 s);
@@ -88,11 +88,7 @@ pub fn wanted(redesign: bool, recording_started: Option<i64>, closed_for: i64) -
 /// answer and drew nothing, and Stop destroyed only the other: the empty window stayed on screen after the meeting (the
 /// real-PC test, 2026-11-22). For the same reason a stop that lands while the window is being built is checked once it is.
 pub fn sync(app: &AppHandle, recording_started: Option<i64>) {
-    let redesign = app.state::<AppState>().settings.lock().unwrap().redesign_enabled();
-    if !redesign && app.get_webview_window(MEETING_BAR).is_none() {
-        return;
-    }
-    let want = wanted(redesign, recording_started, CLOSED_FOR.load(Ordering::Relaxed));
+    let want = wanted(recording_started, CLOSED_FOR.load(Ordering::Relaxed));
     let exists = app.get_webview_window(MEETING_BAR).is_some();
     if change(want, exists) == Change::Leave {
         return;
@@ -112,9 +108,8 @@ pub fn sync(app: &AppHandle, recording_started: Option<i64>) {
 
 /// Decides from the recording now and makes the change. Run holding [`CHANGING`].
 fn apply(app: &AppHandle) -> Change {
-    let redesign = app.state::<AppState>().settings.lock().unwrap().redesign_enabled();
     let started = app.state::<AppState>().meetings().ok().and_then(|m| m.status().started_unix_ms);
-    let want = wanted(redesign, started, CLOSED_FOR.load(Ordering::Relaxed));
+    let want = wanted(started, CLOSED_FOR.load(Ordering::Relaxed));
     let exists = app.get_webview_window(MEETING_BAR).is_some();
     let todo = change(want, exists);
     match todo {
@@ -155,8 +150,7 @@ fn remember(app: &AppHandle, window: &tauri::WebviewWindow) {
 }
 
 fn open(app: &AppHandle) -> tauri::Result<()> {
-    // This window is only ever opened with the redesign on (`wanted`), so the text scale is read.
-    let (w, h) = crate::text_scale::size_for_look(SIZE, true);
+    let (w, h) = crate::text_scale::scaled_size(SIZE);
     let bar = WebviewWindowBuilder::new(app, MEETING_BAR, WebviewUrl::App("index.html".into()))
         .title(tr("Whimbrel, in-meeting window", &[]))
         .inner_size(w, h)
@@ -249,11 +243,10 @@ mod tests {
     }
 
     #[test]
-    fn the_window_follows_the_recording_unless_closed_for_it_or_the_switch_is_off() {
-        assert!(wanted(true, Some(5_000), 0));
-        assert!(!wanted(false, Some(5_000), 0), "never with the switch off");
-        assert!(!wanted(true, None, 0), "nothing records");
-        assert!(!wanted(true, Some(5_000), 5_000), "closed for this recording");
-        assert!(wanted(true, Some(9_000), 5_000), "a later recording opens it again");
+    fn the_window_follows_the_recording_unless_closed_for_it() {
+        assert!(wanted(Some(5_000), 0));
+        assert!(!wanted(None, 0), "nothing records");
+        assert!(!wanted(Some(5_000), 5_000), "closed for this recording");
+        assert!(wanted(Some(9_000), 5_000), "a later recording opens it again");
     }
 }

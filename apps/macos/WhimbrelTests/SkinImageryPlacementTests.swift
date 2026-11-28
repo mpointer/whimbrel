@@ -3,7 +3,7 @@ import SwiftUI
 import XCTest
 @testable import Whimbrel
 
-/// Skins draw their approved images: header and badge in every Today archetype (the background placement is dropped),
+/// Skins draw their approved images: header and badge on Home for every skin (the background placement is dropped),
 /// the header on top-level screens, nothing for a missing file or a bad name; and `SkinImageResolver`.
 @MainActor
 final class SkinImageryPlacementTests: XCTestCase {
@@ -22,7 +22,7 @@ final class SkinImageryPlacementTests: XCTestCase {
 
     // MARK: placements
 
-    func testEveryArchetypeDrawsHeaderAndBadge() throws {
+    func testHomeDrawsHeaderAndBadgeForEveryArchetypesSkin() throws {
         let fixture = try SkinImageryFixture(self)
         let skins = skinPerArchetype()
         XCTAssertEqual(Set(skins.keys), Set(SkinArchetype.allCases), "a shipped skin for every archetype")
@@ -31,7 +31,7 @@ final class SkinImageryPlacementTests: XCTestCase {
             for dark in [false, true] {
                 let expected: Set<SkinImagePlacement> = [.header, .badge]
                 let drawn = SkinStore.shared.withOverride(skin: skin, paletteId: "default") {
-                    SkinImageryFixture.drawnPlacements(SkinImageryFixture.chrome(), expecting: expected, dark: dark)
+                    SkinImageryFixture.drawnPlacements(SkinHomeImagesView(), expecting: expected, dark: dark)
                 }
                 XCTAssertEqual(drawn, expected, "\(archetype) \(dark ? "dark" : "light")")
             }
@@ -45,7 +45,7 @@ final class SkinImageryPlacementTests: XCTestCase {
             for (archetype, base) in skinPerArchetype() {
                 let skin = try fixture.skin(from: base, textFreeBackground: textFree)
                 let drawn = SkinStore.shared.withOverride(skin: skin, paletteId: "default") {
-                    SkinImageryFixture.drawnPlacements(SkinImageryFixture.chrome(), expecting: [.header, .badge])
+                    SkinImageryFixture.drawnPlacements(SkinHomeImagesView(), expecting: [.header, .badge])
                 }
                 XCTAssertEqual(drawn, [.header, .badge], "\(archetype) textFree \(textFree)")
             }
@@ -72,7 +72,7 @@ final class SkinImageryPlacementTests: XCTestCase {
             var skin = try fixture.skin(from: base)
             skin.decoration.imagery = skin.decoration.imagery.map { SkinImage(asset: "gone-\($0.asset)", placement: $0.placement, textFree: false) }
             let drawn = SkinStore.shared.withOverride(skin: skin, paletteId: "default") {
-                SkinImageryFixture.drawnPlacements(SkinImageryFixture.chrome(), expecting: [])
+                SkinImageryFixture.drawnPlacements(SkinHomeImagesView(), expecting: [])
             }
             XCTAssertEqual(drawn, [], "\(archetype)")
         }
@@ -123,27 +123,6 @@ final class SkinImageryPlacementTests: XCTestCase {
         XCTAssertTrue(src[home.lowerBound...].prefix(900).contains(".accessibilityHidden(true)"))
     }
 
-    /// Whimbrel with no imagery renders exactly as before: `TodayChrome` adds nothing around the standard layout,
-    /// and it still matches the standard Today baselines.
-    func testWhimbrelSkinWithoutImageryUnchanged() throws {
-        let size = CGSize(width: 900, height: 1400)
-        try SkinStore.shared.withOverride(skin: SkinDefaults.whimbrel, paletteId: "default") {
-            XCTAssertTrue(SkinDefaults.whimbrel.decoration.imagery.isEmpty)
-            // Built inside the override: the composer stand-in reads the skin's fonts when it is made.
-            let standard = StandardTodayLayout(
-                content: .sample, actions: .noop,
-                slots: TodaySlots(live: nil, decisionCount: TodayContent.sample.pendingApprovalCount, actions: .noop, composer: TodayFixtures.composer)
-            )
-            for scheme in [ColorScheme.light, .dark] {
-                let chrome = try XCTUnwrap(OffscreenRender.bitmap(of: SkinImageryFixture.chrome(), size: size, colorScheme: scheme, scale: 1))
-                let plain = try XCTUnwrap(OffscreenRender.bitmap(of: standard, size: size, colorScheme: scheme, scale: 1))
-                XCTAssertEqual(chrome.tiffRepresentation, plain.tiffRepresentation, "\(scheme)")
-            }
-            try assertSnapshot(SkinImageryFixture.chrome(), named: "standard-sample-light", size: size, colorScheme: .light, tolerance: 0.0001)
-            try assertSnapshot(SkinImageryFixture.chrome(), named: "standard-sample-dark", size: size, colorScheme: .dark, tolerance: 0.0001)
-        }
-    }
-
     // MARK: Home header band
 
     private func homeBandSkin(_ band: SkinHeaderBand) -> Skin {
@@ -152,12 +131,14 @@ final class SkinImageryPlacementTests: XCTestCase {
         return skin
     }
 
+    /// Home as the shell draws it: the sample day under the skin in force, with the band area around it when `banded`.
+    @ViewBuilder
     private func homeChrome(banded: Bool) -> some View {
-        TodayChrome(
-            content: .sample, actions: .noop,
-            slots: TodaySlots(live: nil, decisionCount: TodayContent.sample.pendingApprovalCount, actions: .noop, composer: TodayFixtures.composer),
-            banded: banded
-        )
+        if banded {
+            TodayHomeBandArea { SkinPreviewHome() }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        } else {
+            SkinPreviewHome().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
     }
 
     /// With no band Home is pixel-identical whether or not it asks for one, so `none` cannot move anything.
@@ -187,16 +168,6 @@ final class SkinImageryPlacementTests: XCTestCase {
                 for y in [0, 40, 200] {
                     for x in xs { XCTAssertEqual(banded.colorAt(x: x, y: y + height), plain.colorAt(x: x, y: y), "\(band) x \(x) y \(y)") }
                 }
-            }
-        }
-    }
-
-    /// Home with each band, for the eye (set WHIMBREL_SNAPSHOTS=1).
-    func testHomeBandSnapshots() throws {
-        let size = CGSize(width: 900, height: 1400)
-        for (band, name) in [(SkinHeaderBand.rule, "rule"), (.block, "block"), (.stripesDiagonal, "stripes")] {
-            try SkinStore.shared.withOverride(skin: homeBandSkin(band), paletteId: "default") {
-                try assertSnapshot(homeChrome(banded: true), named: "home-band-\(name)-light", size: size, colorScheme: .light, tolerance: 0.0001)
             }
         }
     }

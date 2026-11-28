@@ -67,11 +67,6 @@ export function capToDollars(cents: number | null | undefined): string {
 
 export const formatCents = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
-/** What a key row says. The shell sends only the masked form; the key never reaches the UI. */
-export function keyLine(key: Pick<ProviderKey, "masked">): string {
-  return key.masked ? t("Saved · {key}", { key: key.masked }) : t("Not set");
-}
-
 /** Why hosted providers won't be used right now, if they won't. `whimbrelSignedIn`: sync is ready,
  * which Whimbrel AI needs in place of a key. */
 export function hostedNotice(routing: RoutingSettings, keys: ProviderKey[], whimbrelSignedIn = false): string | null {

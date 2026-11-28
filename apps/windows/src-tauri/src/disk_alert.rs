@@ -6,7 +6,7 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::l10n::tr;
 use crate::paths::Paths;
@@ -81,8 +81,7 @@ fn hide(app: &AppHandle) {
 }
 
 fn open(app: &AppHandle) -> tauri::Result<()> {
-    let redesign = app.state::<crate::state::AppState>().settings.lock().unwrap().redesign_enabled();
-    let (w, h) = crate::text_scale::size_for_look(SIZE, redesign);
+    let (w, h) = crate::text_scale::scaled_size(SIZE);
     let popup = WebviewWindowBuilder::new(app, DISK_ALERT, WebviewUrl::App("index.html".into()))
         .title(tr("Your disk is almost full", &[]))
         .inner_size(w, h)
@@ -93,28 +92,8 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
         .focused(false)
         .visible(false)
         .build()?;
-    if redesign {
-        crate::text_scale::place_corner_alert(app, &popup, (w, h), MARGIN)?;
-        crate::text_scale::show_corner_alert(&popup)?;
-        return Ok(());
-    }
-    if let Some(monitor) = popup.primary_monitor()? {
-        let scale = monitor.scale_factor();
-        let area = monitor.work_area();
-        let (x, mut y) = crate::alert::alert_origin(
-            ((w * scale).round() as u32, (h * scale).round() as u32),
-            (area.position.x, area.position.y, area.size.width, area.size.height),
-            (MARGIN * scale).round() as i32,
-        );
-        // Below whichever alerts are up.
-        for (label, height) in [(crate::alert::ALERT, crate::alert::alert_height(app)), (crate::question_alert::QUESTION_ALERT, 210.0), (crate::budget_alert::BUDGET_ALERT, 170.0)] {
-            if app.get_webview_window(label).is_some() {
-                y += ((height + MARGIN) * scale).round() as i32;
-            }
-        }
-        popup.set_position(PhysicalPosition::new(x, y))?;
-    }
-    popup.show()?;
+    crate::text_scale::place_corner_alert(app, &popup, (w, h), MARGIN)?;
+    crate::text_scale::show_corner_alert(&popup)?;
     Ok(())
 }
 

@@ -51,7 +51,6 @@ import type {
   WindowAskReply,
   ChatSpend,
   ConversationRow,
-  ConversationView,
   SnapshotSettings,
   SnapshotsView,
   StarterPromptView,
@@ -196,11 +195,6 @@ export const setWriteIn = (tag: string) => invoke<LanguageSettings>("set_write_i
 
 export const libraryRecent = () => invoke<LibraryRow[]>("library_recent");
 export const libraryEpisodes = (includeHidden: boolean) => invoke<LibraryRow[]>("library_episodes", { includeHidden });
-export const librarySearch = (query: string, semantic: boolean) => invoke<LibraryRow[]>("library_search", { query, semantic });
-/** Captures matching a query, from one app and inside a time range (the Home filters). The core types are not in
- *  the generated schema; they are written here as the shell serializes them (snake_case, from core/memory). */
-export const librarySearchFiltered = (query: string, semantic: boolean, app: string | null, startUnixMs: number | null, endUnixMs: number | null) =>
-  invoke<LibraryRow[]>("library_search_filtered", { query, semantic, app, startUnixMs, endUnixMs });
 export interface CaptureApp {
   app_bundle_id: string;
   captures: number;
@@ -369,7 +363,6 @@ export const setSummaryInstructions = (text: string) => invoke<void>("set_summar
 export const providerModels = (provider: Provider) => invoke<string[]>("provider_models", { provider });
 // The key on-ramp and Model usage (plan part 5, cheap-first routing).
 export const keyCheck = (provider: Provider) => invoke<KeyCheckView>("key_check", { provider });
-export const keyFormatHint = (provider: Provider, key: string) => invoke<string | null>("key_format_hint", { provider, key });
 export const usageRows = (days?: number) => invoke<UsageRowView[]>("usage_rows", { days });
 /** Opens an https URL in the default browser (a provider's key page or data policy). */
 export const openExternal = (url: string) => invoke<void>("open_external", { url });
@@ -422,8 +415,6 @@ export const todaySchedule = () => invoke<ScheduleView>("today_schedule");
 
 // Skins (core/skins through src-tauri/src/commands/skins.rs). `SkinDto` is typed by hand in skin.ts.
 export const skinsList = () => invoke<SkinDto[]>("skins_list");
-/** The hidden redesign switch (`redesign.enabled` in settings.json, off unless set by hand); see `redesign.ts`. */
-export const redesignEnabledCommand = () => invoke<boolean>("redesign_enabled");
 /** Moves when a sync changed the skins folder (Task 15). */
 export const skinsRevision = () => invoke<number>("skins_revision");
 /** An approved image of one of the user's skins, as raw bytes. */
@@ -703,7 +694,6 @@ export interface KeptFindFilter {
 }
 /** The Dates and Apps filters a Find conversation was asked under (never a person), or null. */
 export const chatConversationFindFilter = (id: number) => invoke<KeptFindFilter | null>("chat_conversation_find_filter", { id });
-export const chatConversation = (id: number) => invoke<ConversationView | null>("chat_conversation", { id });
 export const chatRenameConversation = (id: number, title: string) => invoke<ConversationRow[]>("chat_rename_conversation", { id, title });
 export const chatStarConversation = (id: number, starred: boolean) => invoke<ConversationRow[]>("chat_star_conversation", { id, starred });
 export const chatDeleteConversation = (id: number) => invoke<ConversationRow[]>("chat_delete_conversation", { id });

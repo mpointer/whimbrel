@@ -289,6 +289,31 @@ describe("Delete everything", () => {
     expect(cmds("delete_everything_now")).toHaveLength(0);
   });
 
+  it("offers the sync account choice only with sync on, and says what it means", async () => {
+    const withSync = await open();
+    expect(withSync.has("Also delete my sync account")).toBe(true);
+    expect(withSync.has("download everything again from your other devices unless you also delete your sync account") || withSync.has("Your other devices keep their own data")).toBe(true);
+    h.answers.delete_everything_preview = { ...preview, syncOn: false };
+    const withoutSync = await show(() => <DeleteEverythingRows />);
+    call(withoutSync.button("Delete everything…"), "onClick");
+    await withoutSync.settle();
+    expect(withoutSync.has("Also delete my sync account")).toBe(false);
+  });
+
+  it("names a slides folder it will not delete from, and sends that the slides were left alone", async () => {
+    const refused = "Whimbrel will not delete the slide images because their folder is not safe to delete from (a link, or a top-level folder such as Documents). Remove them by hand from: C:\\Users\\me\\Documents";
+    h.answers.delete_everything_preview = { ...preview, snapshotsRefused: refused };
+    h.answers.delete_everything_now = null;
+    const tree = await show(() => <DeleteEverythingRows />);
+    call(tree.button("Delete everything…"), "onClick");
+    await tree.settle();
+    expect(tree.has("not safe to delete from")).toBe(true);
+    call(textInput(tree), "onChange", { target: { value: "DELETE" } });
+    tree.render();
+    call(tree.button("Delete and restart"), "onClick");
+    expect(cmds("delete_everything_now")).toEqual([["delete_everything_now", { confirm: "DELETE", alsoDeleteSyncAccount: false, slidesLeftAlone: true }]]);
+  });
+
   it("with DELETE typed, the command gets the old arguments, including the sync-account choice", async () => {
     const tree = await open();
     expect(tree.has("Also delete my sync account")).toBe(true);

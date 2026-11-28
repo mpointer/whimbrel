@@ -609,16 +609,14 @@ impl Pipeline {
     /// `whimbrel_only`: Whimbrel AI with the user's Whimbrel model and no fallback
     /// (`api::summary::summarize_meeting_preferred`); a failure is one sentence from its reason.
     fn summarize_with(&self, meeting_id: i64, transcript: &str, notes: &str, whimbrel_only: bool) -> Result<(), String> {
-        let (routing, ollama_model, instructions, want_sources) = {
+        let (routing, ollama_model, instructions) = {
             let settings = self.settings.lock().unwrap();
             let mut routing = settings.routing();
             if whimbrel_only {
                 routing.preferred_provider = crate::settings::Provider::Whimbrel;
             }
             let instructions = settings.instructions(PromptSurface::MeetingSummary);
-            // Read now, so a switch changed between runs applies to the next summary (redesign only).
-            let want_sources = settings.redesign_enabled();
-            (routing.clone(), routing.ollama_model.clone(), instructions, want_sources)
+            (routing.clone(), routing.ollama_model.clone(), instructions)
         };
         let keys = ApiKeys::load(&*self.secrets).map_err(|e| e.to_string())?;
         let config = routing.routing_config(&keys, &instructions);
@@ -629,34 +627,19 @@ impl Pipeline {
         self.slow_store
             .call_blocking(move |s| {
                 let transcript = with_names(s, meeting_id, &transcript);
-                if want_sources {
-                    // The redesign is on: the model is also asked where each line came from. Same chain and gate as below.
-                    return api::summary::summarize_meeting_options(s, meeting_id, &notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom, whimbrel_only, api::summary::SourceMode::Validate)
-                        .map(|_| ())
-                        .map_err(|e| {
-                            if !whimbrel_only {
-                                return crate::error::CommandError::from(e).to_string();
-                            }
-                            match api::summary::take_last_summary_failure_reason() {
-                                Some((reason, _status)) => resummarize_failure(reason),
-                                None => crate::error::CommandError::from(e).to_string(),
-                            }
-                        });
-                }
-                if whimbrel_only {
-                    return api::summary::summarize_meeting_preferred(s, meeting_id, &notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom)
-                        .map(|_| ())
-                        .map_err(|e| {
-                            // Thread-local: read on the store thread that just failed.
-                            match api::summary::take_last_summary_failure_reason() {
-                                Some((reason, _status)) => resummarize_failure(reason),
-                                None => crate::error::CommandError::from(e).to_string(),
-                            }
-                        });
-                }
-                api::summary::summarize_meeting(s, meeting_id, &notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom)
+                // The model is also asked where each line came from.
+                api::summary::summarize_meeting_options(s, meeting_id, &notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom, whimbrel_only, api::summary::SourceMode::Validate)
                     .map(|_| ())
-                    .map_err(|e| crate::error::CommandError::from(e).to_string())
+                    .map_err(|e| {
+                        if !whimbrel_only {
+                            return crate::error::CommandError::from(e).to_string();
+                        }
+                        // Thread-local: read on the store thread that just failed.
+                        match api::summary::take_last_summary_failure_reason() {
+                            Some((reason, _status)) => resummarize_failure(reason),
+                            None => crate::error::CommandError::from(e).to_string(),
+                        }
+                    })
             })
             .map_err(|e| e.to_string())?
     }
@@ -837,11 +820,11 @@ impl Pipeline {
         self.set_stage(meeting_id, Stage::Summarizing);
         let summarizing = Instant::now();
         let transcript = transcript_text(&lines, started);
-        let (routing, ollama_model, instructions, want_sources) = {
+        let (routing, ollama_model, instructions) = {
             let settings = self.settings.lock().unwrap();
             let routing = settings.routing();
             let instructions = settings.instructions(PromptSurface::MeetingSummary);
-            (routing.clone(), routing.ollama_model.clone(), instructions, settings.redesign_enabled())
+            (routing.clone(), routing.ollama_model.clone(), instructions)
         };
         let keys = ApiKeys::load(&*self.secrets).map_err(|e| e.to_string())?;
         let config = routing.routing_config(&keys, &instructions);
@@ -854,14 +837,10 @@ impl Pipeline {
             .slow_store
             .call_blocking(move |s| {
                 let transcript = with_names(s, meeting_id, &transcript);
-                if want_sources {
-                    // The redesign is on: the model is also asked where each line came from. The stored rows are
-                    // written after this (or are the previous pass's, about to be replaced), so the sources are
-                    // checked against this transcript alone; writing the rows prunes the ones they do not fit.
-                    return api::summary::summarize_meeting_options(s, meeting_id, &summary_notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom, false, api::summary::SourceMode::RowsPending)
-                        .map_err(|e| crate::error::CommandError::from(e).to_string());
-                }
-                api::summary::summarize_meeting(s, meeting_id, &summary_notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom)
+                // The model is also asked where each line came from. The stored rows are written after this (or are the
+                // previous pass's, about to be replaced), so the sources are checked against this transcript alone;
+                // writing the rows prunes the ones they do not fit.
+                api::summary::summarize_meeting_options(s, meeting_id, &summary_notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom, false, api::summary::SourceMode::RowsPending)
                     .map_err(|e| crate::error::CommandError::from(e).to_string())
             })
             .map_err(|e| e.to_string())?;
@@ -889,20 +868,15 @@ impl Pipeline {
             })
             .collect();
         let count = segments.len();
-        // With the redesign on, each line's end is kept on this device too (the speaker lanes). A line
+        // Each line's end is kept on this device too (the speaker lanes). A line
         // whose end is missing or not after its start has no end to keep.
-        let record_ends = self.settings.lock().unwrap().redesign_enabled();
         let ends: Vec<Option<i64>> = final_lines.iter().map(|line| (line.end_cs > line.start_cs).then_some(line.end_cs)).collect();
         // A replace, not an insert, so transcribing a meeting again doesn't add a second copy.
         // A Windows meeting is one part (core synthesizes part 1 at offset 0), so on a first
         // run this is the insert it always was.
         self.store
             .call_blocking(move |s| {
-                if record_ends {
-                    s.replace_part_transcript_segments_with_ends(meeting_id, 1, &segments, &ends).map_err(|e| e.to_string())?;
-                } else {
-                    s.replace_part_transcript_segments(meeting_id, 1, &segments).map_err(|e| e.to_string())?;
-                }
+                s.replace_part_transcript_segments_with_ends(meeting_id, 1, &segments, &ends).map_err(|e| e.to_string())?;
                 // The real transcript replaces the provisional live one (`live_rows`).
                 if let Err(e) = s.clear_live_segments(meeting_id) {
                     tracing::warn!(error = %e, "could not clear the live transcript");

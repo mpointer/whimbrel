@@ -4,11 +4,13 @@ import betaQr from "../../../../assets/mobile-beta-qr.svg";
 import type { DeviceView } from "../../../../generated/types";
 import { t } from "../../../../l10n";
 import { WSettingsCard, WSettingsLinkRow } from "../../../../system";
-import { phoneCardState } from "../../../syncModel";
+import { phoneCardLoading, phoneCardState } from "../../../syncModel";
 import "./devices.css";
 
 /** The phone app's beta sign-up. The backend opens only pages on its allowlist, and this is one. */
 const MOBILE_BETA_URL = "https://whimbrelapp.com/mobile-beta/";
+
+const PHONE_WAIT_MS = 3000;
 
 /**
  * Whimbrel on your phone: the beta card until an approved phone is on the account, then the same card saying so.
@@ -16,9 +18,22 @@ const MOBILE_BETA_URL = "https://whimbrelapp.com/mobile-beta/";
  */
 export function PhoneCard({ ready }: { ready: boolean }) {
   const [devices, setDevices] = useState<DeviceView[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [waitedOut, setWaitedOut] = useState(false);
   useEffect(() => {
-    if (ready) void syncDevices().then(setDevices, () => {});
+    if (!ready) return;
+    void syncDevices().then(
+      (d) => {
+        setDevices(d);
+        setLoaded(true);
+      },
+      () => {},
+    );
+    // If the list never comes (offline), show the beta card after a few seconds.
+    const timer = setTimeout(() => setWaitedOut(true), PHONE_WAIT_MS);
+    return () => clearTimeout(timer);
   }, [ready]);
+  if (phoneCardLoading(ready, loaded, waitedOut)) return null;
   if (phoneCardState(devices) === "connected") {
     return <WSettingsCard id="devices.phone" title={t("Whimbrel on your phone")} headingLevel={3} status={{ tone: "good", children: t("Phone: connected") }} />;
   }

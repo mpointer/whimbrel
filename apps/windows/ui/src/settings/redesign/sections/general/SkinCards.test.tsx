@@ -5,7 +5,7 @@ import { fakeWindow } from "../../../../testWindow";
 import { THEMES } from "../../../../themes";
 import { AppearanceCard, SkinGalleryCard } from "./SkinCards";
 
-// The same fixtures as SkinGallery.test.tsx: the bundled skins, without Thread (listed only with the redesign flag).
+// The bundled skins, without Thread, which these cases do not need.
 const manifests = Object.values(import.meta.glob("../../../../../../../../skins/*.json", { import: "default", eager: true }) as Record<string, SkinManifest>).filter(
   (m) => Array.isArray(m.palettes) && m.id !== "thread",
 );

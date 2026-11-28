@@ -96,7 +96,7 @@ final class ConversationStoreTests: XCTestCase {
         )
         XCTAssertNil(generated, "a nonexistent Ollama model must fail the provider chain, not silently succeed")
 
-        // Mirrors TimelineView.generateConversationTitle's own `guard let generated =
+        // Mirrors the conversation title job's own `guard let generated =
         // ... else { return }` -- on a nil result the caller never calls
         // setConversationTitleIfPlaceholder, so the placeholder must be untouched.
         XCTAssertEqual(store.getConversation(id: conversationId)?.title, placeholderTitle)

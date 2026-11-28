@@ -10,10 +10,10 @@ import WhimbrelUI
 enum SkinGalleryAdapter {
     /// The cards, in the classic gallery's order. Only the selected skin shows its palettes.
     static func model(
-        skins: [Skin], redesign: Bool, selectedSkinId: String, selectedPaletteId: String,
+        skins: [Skin], selectedSkinId: String, selectedPaletteId: String,
         palettes: (Skin) -> [Theme], dark: Bool, isBusy: Bool
     ) -> WSkinGalleryModel {
-        let cards = SkinGallery.orderedCards(skins: skins, redesign: redesign).map { skin -> WSkinGalleryModel.Card in
+        let cards = SkinGallery.orderedCards(skins: skins).map { skin -> WSkinGalleryModel.Card in
             let selected = skin.id == selectedSkinId
             return WSkinGalleryModel.Card(
                 id: skin.id, anchorID: SkinStore.galleryCardId(skin.id), name: skin.name,

@@ -7,7 +7,7 @@ struct TopicsView: View {
     @EnvironmentObject var appState: AppState
     @State private var topics: [TopicListEntry] = []
     @State private var page: TopicPage?
-    /// The shown topic's conversations, newest first; nil with the redesign flag off (the page shows none).
+    /// The shown topic's conversations, newest first; nil until they are read.
     @State private var conversations: [CoreMemoryStore.ConversationSummary]?
     @State private var hasLoaded = false
     /// The topic the last finished load was for (nil: the first topic), so a page that came back empty stops the spinner.
@@ -63,7 +63,7 @@ struct TopicsView: View {
                 try? await Task.sleep(for: .seconds(30))
             }
         }
-        .restyledScreen(redesign: appState.redesignEnabled)
+        .restyledScreen()
     }
 
     private var split: some View {
@@ -171,15 +171,14 @@ struct TopicsView: View {
     private func reload() {
         guard let store = appState.coreStore else { return }
         let wanted = appState.selectedTopicId
-        let redesign = appState.redesignEnabled
         CoreMemoryStore.accessQueue.async {
             let list = store.topicPageList()
             // Only the empty state uses the count.
             let suggested = list?.isEmpty == true ? store.topicSuggestions(limit: 100)?.count : nil
             let id = wanted ?? list?.first?.topic.topicId
             let p = id.flatMap { store.topicPage(topicId: $0) }
-            // Redesign flag only: the conversations asked on (or joined to) this topic.
-            let convs = redesign ? p.map { store.topicConversations(topicId: $0.topic.topicId) } : nil
+            // The conversations asked on (or joined to) this topic.
+            let convs = p.map { store.topicConversations(topicId: $0.topic.topicId) }
             let flag = try? store.clientReviewFlag().get()
             DispatchQueue.main.async {
                 reviewFlag = flag
@@ -292,7 +291,7 @@ private struct TopicPageView: View {
     /// Nil until the store opens: the page then shows no Client section.
     let clientBridge: ClientControlsBridge?
     let openClientReview: (ClientReviewModel.Mode) -> Void
-    /// Redesign flag only (nil with it off): the topic's conversations, newest first. (Its Ask is the shell's Ask
+    /// The topic's conversations, newest first. (Its Ask is the shell's Ask
     /// bar, which asks about the topic shown: `WhimbrelTab.askTarget`.)
     let conversations: [CoreMemoryStore.ConversationSummary]?
 
@@ -361,7 +360,7 @@ private struct TopicPageView: View {
         }
     }
 
-    // MARK: Conversations (redesign flag only)
+    // MARK: Conversations
 
     private func conversationRows(_ list: [CoreMemoryStore.ConversationSummary]) -> some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {

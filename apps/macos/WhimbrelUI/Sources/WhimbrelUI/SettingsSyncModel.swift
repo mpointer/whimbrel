@@ -177,6 +177,8 @@ public enum WPhoneCardModel {
     case beta(url: String, qr: Image?)
     /// An approved phone is on the account: one line.
     case connected
+    /// The first device list has not arrived: draw nothing rather than a card that may collapse a moment later.
+    case loading
 }
 
 public struct WWaitlistOption: Identifiable, Equatable, Sendable {

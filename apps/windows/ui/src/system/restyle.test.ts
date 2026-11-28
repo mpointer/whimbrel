@@ -1,7 +1,7 @@
 // Step 10, the restyle pass: Topics, Automations, the Meetings list and the capture and episode screens keep their layout and take the
-// Thread look, behind the redesign switch. These guard the two things CSS can get wrong without a layout engine: that nothing
-// applies with the switch off, and that every color pair the pass introduces meets its contrast rule (4.5:1 for text, 3:1 for
-// large text, control edges, focus and state marks) in light, dark and high contrast.
+// Thread look. These guard the two things CSS can get wrong without a layout engine: that the rules only reach the screens that
+// carry the `rt` class inside the shell, and that every color pair the pass introduces meets its contrast rule (4.5:1 for text,
+// 3:1 for large text, control edges, focus and state marks) in light, dark and high contrast.
 
 import { describe, expect, it } from "vitest";
 import tokensText from "../../../../../design/tokens/tokens.json?raw";
@@ -47,8 +47,8 @@ function rules(text: string): { selectors: string[]; body: string }[] {
   return out;
 }
 
-describe("the restyle stylesheet applies only with the redesign switch on", () => {
-  it("has rules, and every selector starts with .w-shell .rt (the shell's class and the class the screens carry only while the switch is on)", () => {
+describe("the restyle stylesheet reaches only the screens that carry rt inside the shell", () => {
+  it("has rules, and every selector starts with .w-shell .rt (the shell's class and the class the restyled screens carry)", () => {
     const all = rules(css);
     expect(all.length).toBeGreaterThan(60);
     const bad = all.flatMap((r) => r.selectors).filter((s) => !s.startsWith(".w-shell .rt"));
@@ -125,24 +125,24 @@ describe("no rule is dead: a class the screen puts on the same element as rt is 
   });
 });
 
-describe("each screen carries the class only inside a redesign branch, so the switch off draws the markup it always did", () => {
+describe("each restyled screen carries the rt class", () => {
   it("Topics: the list page, and the empty state", () => {
-    expect(topics).toContain('className={redesign ? "topics rt" : "topics"}');
-    expect(topics).toContain('className={redesign ? "empty-state topics-empty rt" : "card empty-state topics-empty"}');
+    expect(topics).toContain('className="topics rt"');
+    expect(topics).toContain('className="empty-state topics-empty rt"');
     expect(topics.match(/\brt\b/g)?.length).toBe(2);
   });
   it("Automations", () => {
-    expect(automations).toContain('className={redesign ? "stack rt" : "stack"}');
+    expect(automations).toContain('className="stack rt"');
     expect(automations.match(/"[^"]*\brt\b[^"]*"/g)).toHaveLength(1);
   });
   it("Meetings: the list, the record card and the empty note slot, not the finished note or the live screen", () => {
-    expect(meetings).toContain('className={redesign ? "card meeting-list rt" : "card meeting-list"}');
+    expect(meetings).toContain('className="card meeting-list rt"');
     expect(meetings).toContain('<section className="empty-state rt">');
-    expect(recording).toContain('className={redesign ? "card rt" : "card"}');
-    expect(meetings).not.toContain('className={redesign ? "stack rt"');
+    expect(recording).toContain('className="card rt"');
+    expect(meetings).not.toContain('className="stack rt"');
   });
   it("the capture and the episode (not the meeting branch of Detail)", () => {
-    expect(detail).toContain('className={redesign ? "detail rt" : "detail"}');
+    expect(detail).toContain('className="detail rt"');
     expect(detail.match(/\brt\b/g)?.length).toBe(1);
   });
   it("the stylesheet is loaded by the redesigned shell", () => {

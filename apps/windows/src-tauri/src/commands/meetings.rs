@@ -305,8 +305,8 @@ mod settings_tests {
         assert!(!file.recording_notice_on(), "a stored off stays off");
         file.set_recording_notice(true, "");
         assert!(file.recording_notice_on(), "a stored on is on");
-        // The old hidden switch is not read, so a stored false there changes nothing.
-        file.set(crate::settings::keys::REDESIGN_ENABLED, Some(false));
+        // The old hidden switch's key may still sit in the file; nothing reads it, so it changes nothing.
+        file.set("redesign.enabled", Some(false));
         assert!(file.recording_notice_on());
         std::fs::remove_dir_all(&dir).unwrap();
     }

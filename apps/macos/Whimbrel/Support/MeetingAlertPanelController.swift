@@ -10,10 +10,10 @@ import SwiftUI
 /// meeting.
 @MainActor
 final class MeetingAlertPanelController: ObservableObject {
-    /// `nil` when no alert is showing. Read by `MeetingAlertView`.
+    /// `nil` when no alert is showing. Read by `MeetingAlertRedesignView`.
     @Published fileprivate(set) var meeting: QualifyingMeeting?
     /// `nil` means "no countdown — wait indefinitely" (auto-start off). Read by
-    /// `MeetingAlertView` to show (or hide) the "Auto-starting in Ns…" caption.
+    /// `MeetingAlertRedesignView` to show (or hide) the "Auto-starting in Ns…" caption.
     @Published fileprivate(set) var secondsRemaining: Int?
     /// Set when the panel reports a split (`showKeepTogether`): the earlier meeting's title.
     @Published fileprivate(set) var earlierTitle: String?
@@ -24,12 +24,9 @@ final class MeetingAlertPanelController: ObservableObject {
     var onOpenPrep: ((String) -> Void)?
 
     private static let countdownSeconds = 10
-    private static let panelSize = NSSize(width: 440, height: 132)
     private static let screenMargin: CGFloat = 16
 
-    private var panel: NSPanel?
-    /// Whether `panel` is the redesign's (built only with the switch on; see `RedesignFloatingPanel`).
-    private var panelIsRedesign = false
+    private var panel: RedesignFloatingPanel?
     private var countdownTimer: Timer?
     private var onAccept: (() -> Void)?
     private var onAcceptAndOpenTimeline: (() -> Void)?
@@ -108,7 +105,7 @@ final class MeetingAlertPanelController: ObservableObject {
         panel?.orderOut(nil)
     }
 
-    /// Called from `MeetingAlertView.swift` (a separate file — deliberately not
+    /// Called from `AlertPanelsRedesign.swift` (a separate file — deliberately not
     /// `fileprivate`, since Swift's `fileprivate` is file-scoped, not class-scoped, and
     /// would otherwise block the view's button actions from calling these).
     func acceptTapped() {
@@ -164,21 +161,18 @@ final class MeetingAlertPanelController: ObservableObject {
         }
     }
 
-    private func ensurePanel() -> NSPanel {
-        let redesign = RedesignFlag.isOn()
-        if let panel, panelIsRedesign == redesign { return panel }
-        panel?.orderOut(nil)
-        panelIsRedesign = redesign
-        let built = redesign ? makeRedesignPanel() : makeLegacyPanel()
+    private func ensurePanel() -> RedesignFloatingPanel {
+        if let panel { return panel }
+        let built = makePanel()
         self.panel = built
         return built
     }
 
-    /// The redesign's panel: Escape dismisses once the panel has the keyboard. Return activates the main action only when that
+    /// The panel: Escape dismisses once the panel has the keyboard. Return activates the main action only when that
     /// action is marked as the safe default (`WAlertAction.isSafeDefault`), which Start Recording and Keep together are not, so
     /// Return never starts a recording. It is shown with `orderFrontRegardless`, so it never takes focus from the app in front
     /// when it appears.
-    private func makeRedesignPanel() -> NSPanel {
+    private func makePanel() -> RedesignFloatingPanel {
         let host = NSHostingController(rootView: ThemedRoot { MeetingAlertRedesignView(controller: self) })
         host.sizingOptions = [.preferredContentSize]
         let panel = RedesignFloatingPanel.make(content: host)
@@ -188,40 +182,7 @@ final class MeetingAlertPanelController: ObservableObject {
         return panel
     }
 
-    private func makeLegacyPanel() -> NSPanel {
-        let hostingView = NSHostingView(rootView: MeetingAlertView(controller: self))
-        hostingView.frame = NSRect(origin: .zero, size: Self.panelSize)
-
-        let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: Self.panelSize),
-            styleMask: [.nonactivatingPanel, .borderless],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        // `whimbrelCard()` on the SwiftUI content already draws its own shadow; disabling
-        // the panel's native window shadow avoids the two visibly doubling up.
-        panel.hasShadow = false
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-        panel.contentView = hostingView
-
-        return panel
-    }
-
-    private func positionPanel(_ panel: NSPanel) {
-        if panelIsRedesign, let panel = panel as? RedesignFloatingPanel {
-            panel.placeTopRight(margin: Self.screenMargin)
-            return
-        }
-        guard let screenFrame = NSScreen.main?.visibleFrame else { return }
-        let origin = NSPoint(
-            x: screenFrame.maxX - Self.panelSize.width - Self.screenMargin,
-            y: screenFrame.maxY - Self.panelSize.height - Self.screenMargin
-        )
-        panel.setFrameOrigin(origin)
+    private func positionPanel(_ panel: RedesignFloatingPanel) {
+        panel.placeTopRight(margin: Self.screenMargin)
     }
 }

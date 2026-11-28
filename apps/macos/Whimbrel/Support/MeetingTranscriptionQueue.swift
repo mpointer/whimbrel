@@ -211,10 +211,9 @@ final class MeetingTranscriptionQueue {
                 if multilingual, language == nil, let used, !lines.isEmpty {
                     store.setMeetingSpokenLanguage(meetingId: id, language: used)
                 }
-                // The line's end is kept only with the redesign flag on (the speaker lanes' exact spans); off writes what it always did.
-                let keepEnds = RedesignFlag.isOn()
+                // The line's end is kept (the speaker lanes' exact spans).
                 let segments = lines.map {
-                    NewTranscriptSegmentInput(startCs: $0.startCs, speakerLabel: $0.speakerLabel, text: $0.text, endCs: keepEnds && $0.endCs > $0.startCs ? $0.endCs : nil)
+                    NewTranscriptSegmentInput(startCs: $0.startCs, speakerLabel: $0.speakerLabel, text: $0.text, endCs: $0.endCs > $0.startCs ? $0.endCs : nil)
                 }
                 _ = store.replacePartTranscriptSegments(meetingId: id, partIndex: job.partIndex, segments: segments)
                 store.setMeetingPartTranscript(meetingId: id, partIndex: job.partIndex, transcriptPath: url.path)

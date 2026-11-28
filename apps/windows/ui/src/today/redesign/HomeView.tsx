@@ -30,7 +30,7 @@ import { elapsedSeconds } from "../../shell/redesign/recordingBar";
 import { useCapture } from "../../shell/redesign/useCapture";
 import { useSkin } from "../../useSkin";
 import { waitingLabel } from "../../automations/automationsModel";
-import { SkinImage } from "../archetypes/parts";
+import { SkinImage } from "../skinImage";
 import { BriefRecapBody } from "../BriefRecapBody";
 import { RecapBody } from "../DigestView";
 import { localizedVoice, recapModel, voiceText } from "../layoutModel";

@@ -236,7 +236,7 @@ final class SettingsRedesignTests: XCTestCase {
     }
 
     func testSkinGalleryWithNoSkinsHasNoCards() {
-        let m = SkinGalleryAdapter.model(skins: [], redesign: false, selectedSkinId: "x", selectedPaletteId: "y", palettes: { _ in [] }, dark: false, isBusy: false)
+        let m = SkinGalleryAdapter.model(skins: [], selectedSkinId: "x", selectedPaletteId: "y", palettes: { _ in [] }, dark: false, isBusy: false)
         XCTAssertTrue(m.cards.isEmpty)
         XCTAssertFalse(m.isBusy)
         XCTAssertEqual(m.labels.importTitle, String(localized: "Import Skin…"))
@@ -249,7 +249,7 @@ final class SettingsRedesignTests: XCTestCase {
         let yoursA = skin("user-a", "Able")
         let theme = ThemeDefaults.theme
         let m = SkinGalleryAdapter.model(
-            skins: [yoursB, builtIn, yoursA], redesign: false, selectedSkinId: "alpha", selectedPaletteId: theme.id,
+            skins: [yoursB, builtIn, yoursA], selectedSkinId: "alpha", selectedPaletteId: theme.id,
             palettes: { _ in [theme] }, dark: false, isBusy: true)
         XCTAssertEqual(m.cards.map(\.id), ["alpha", "user-a", "user-b"])
         XCTAssertEqual(m.cards.map(\.isYours), [false, true, true])
@@ -262,12 +262,10 @@ final class SettingsRedesignTests: XCTestCase {
         XCTAssertTrue(m.isBusy)
     }
 
-    func testTheThreadSkinIsListedOnlyWithTheSwitchOn() {
+    func testTheThreadSkinIsListed() {
         let thread = skin("thread", "Thread")
-        let off = SkinGalleryAdapter.model(skins: [thread], redesign: false, selectedSkinId: "", selectedPaletteId: "", palettes: { _ in [] }, dark: false, isBusy: false)
-        let on = SkinGalleryAdapter.model(skins: [thread], redesign: true, selectedSkinId: "", selectedPaletteId: "", palettes: { _ in [ThemeDefaults.theme] }, dark: false, isBusy: false)
-        XCTAssertTrue(off.cards.isEmpty)
-        XCTAssertEqual(on.cards.map(\.id), ["thread"])
+        let m = SkinGalleryAdapter.model(skins: [thread], selectedSkinId: "", selectedPaletteId: "", palettes: { _ in [ThemeDefaults.theme] }, dark: false, isBusy: false)
+        XCTAssertEqual(m.cards.map(\.id), ["thread"])
     }
 
     func testPaletteDotsFollowTheAppearance() {

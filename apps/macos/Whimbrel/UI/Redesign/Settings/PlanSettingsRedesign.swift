@@ -11,6 +11,8 @@ enum PlanSettingsAdapter {
         l.heading = String(localized: "Plan & billing")
         l.signedOut = String(localized: "Sign in to sync to see your plan.")
         l.signIn = String(localized: "Sign in to sync")
+        l.plusPlan = String(localized: "Plus: $15 a month or $144 a year. Hosted sync on all your devices and a monthly Whimbrel AI allowance.", comment: "Plan & billing, shown while signed out: what the Plus plan costs and includes. Keep the prices in step with the buy buttons.")
+        l.cloudPlan = String(localized: "Cloud: $5 a month or $50 a year. Unlimited devices on our sync server.", comment: "Plan & billing, shown while signed out: what the Cloud plan costs and includes. Keep the prices in step with the buy buttons.")
         l.loading = String(localized: "Checking your plan…")
         l.readFailed = String(localized: "Couldn't check your plan. Try again in a moment.")
         l.tryAgain = String(localized: "Try again")

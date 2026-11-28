@@ -15,11 +15,17 @@
 //! default, Off allowed), then an hour after each "Keep recording". "Stop now" stops it as it is;
 //! five minutes with no answer stops it and trims it to the last words, as "Still in a meeting?"
 //! does. When both are due, "Still in a meeting?" asks first and the hourly one waits.
+//!
+//! While "Still recording?" is due or up, and after a "Keep recording" until the next one, it holds
+//! off core's 4 h length cap, as on the Mac: a recording someone just kept is not cut off. The
+//! held cap is 6 h instead (`end_thresholds`), the Mac's own hard limit, which nothing holds off.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+
+use api::meetings::end_rule::EndThresholds;
 
 use super::live::{Accumulated, Listener};
 use super::speech_rule::{self, Tally};
@@ -34,6 +40,19 @@ pub const ANSWER_MS: i64 = 2 * 60_000;
 pub const HOURLY_COUNTDOWN_MS: i64 = 5 * 60_000;
 /// "Still recording?": asks again this long after "Keep recording".
 pub const HOURLY_REASK_MS: i64 = 60 * 60_000;
+/// The length cap while "Still recording?" holds core's 4 h one off: the Mac's 6 h, never held.
+pub const HELD_CAP_MS: i64 = 6 * 60 * 60_000;
+
+/// Core's end rules for this poll: its 4 h length cap, or 6 h while "Still recording?" holds it
+/// off (`hourly_holds_cap`). Every other rule is core's own.
+pub fn end_thresholds(cap_held: bool) -> EndThresholds {
+    let default = EndThresholds::default();
+    if cap_held {
+        EndThresholds { max_recording_duration_ms: HELD_CAP_MS.max(default.max_recording_duration_ms), ..default }
+    } else {
+        default
+    }
+}
 
 /// The popup's label (also listed in `capabilities/default.json`).
 pub const STILL_HERE: &str = "still-here";
@@ -84,12 +103,14 @@ pub struct Hourly {
     pub meeting_id: i64,
     next_prompt_ms: Option<i64>,
     shown_ms: Option<i64>,
+    /// "Keep recording" was chosen at least once.
+    kept: bool,
 }
 
 impl Hourly {
     /// `first_after_ms` None is Off: it never asks.
     pub fn new(meeting_id: i64, started_ms: i64, first_after_ms: Option<i64>) -> Self {
-        Hourly { meeting_id, next_prompt_ms: first_after_ms.map(|after| started_ms + after), shown_ms: None }
+        Hourly { meeting_id, next_prompt_ms: first_after_ms.map(|after| started_ms + after), shown_ms: None, kept: false }
     }
 
     pub fn asking(&self) -> bool {
@@ -123,7 +144,22 @@ impl Hourly {
     /// "Keep recording": asks again an hour from now.
     pub fn keep(&mut self, now_ms: i64) {
         self.shown_ms = None;
+        self.kept = true;
         self.next_prompt_ms = Some(now_ms + HOURLY_REASK_MS);
+    }
+
+    /// Whether core's 4 h cap is held off now (the Mac's `suppressesMaxDuration`): while a question
+    /// is up (its own countdown decides), once one is due but not yet polled, and after "Keep
+    /// recording" until the next question. The Mac bounds the last by 65 minutes after Keep; here
+    /// it lasts while that next question is still to come, since a pause moves it later.
+    pub fn holds_cap(&self, now_ms: i64) -> bool {
+        if self.shown_ms.is_some() {
+            return true;
+        }
+        match self.next_prompt_ms {
+            Some(next) => self.kept || now_ms >= next,
+            None => false,
+        }
     }
 
     /// A paused poll. "This recording is still paused." covers a pause, so the hourly check is held:
@@ -370,6 +406,12 @@ pub fn poll_hourly(meeting_id: i64, started_ms: i64, now_ms: i64, first_after_ms
     action
 }
 
+/// Whether "Still recording?" holds off the 4 h cap for this recording now (`Hourly::holds_cap`).
+/// Another recording's check, left in the slot, holds nothing.
+pub fn hourly_holds_cap(meeting_id: i64, now_ms: i64) -> bool {
+    hourly().lock().unwrap().as_ref().is_some_and(|h| h.meeting_id == meeting_id && h.holds_cap(now_ms))
+}
+
 /// A paused poll holds the hourly check (`Hourly::hold`). True when its question was up and the
 /// window should close.
 pub fn hold_hourly(now_ms: i64) -> bool {
@@ -440,8 +482,7 @@ pub fn prompt() -> Option<StillHerePrompt> {
 }
 
 fn open(app: &AppHandle, kind: PromptKind) -> tauri::Result<()> {
-    let redesign = app.state::<crate::state::AppState>().settings.lock().unwrap().redesign_enabled();
-    let (w, h) = crate::text_scale::size_for_look(if kind == PromptKind::Hourly { HOURLY_SIZE } else { SIZE }, redesign);
+    let (w, h) = crate::text_scale::scaled_size(if kind == PromptKind::Hourly { HOURLY_SIZE } else { SIZE });
     let title = match kind {
         PromptKind::Quiet => tr("Still in a meeting?", &[]),
         PromptKind::Hourly => tr("Still recording?", &[]),
@@ -457,27 +498,8 @@ fn open(app: &AppHandle, kind: PromptKind) -> tauri::Result<()> {
         .focused(false)
         .visible(false)
         .build()?;
-    if redesign {
-        crate::text_scale::place_corner_alert(app, &popup, (w, h), MARGIN)?;
-        crate::text_scale::show_corner_alert(&popup)?;
-        return Ok(());
-    }
-    if let Some(monitor) = popup.primary_monitor()? {
-        let scale = monitor.scale_factor();
-        let area = monitor.work_area();
-        let (x, mut y) = crate::alert::alert_origin(
-            ((w * scale).round() as u32, (h * scale).round() as u32),
-            (area.position.x, area.position.y, area.size.width, area.size.height),
-            (MARGIN * scale).round() as i32,
-        );
-        for (label, height) in [(crate::alert::ALERT, crate::alert::alert_height(app)), (crate::question_alert::QUESTION_ALERT, 210.0)] {
-            if app.get_webview_window(label).is_some() {
-                y += ((height + MARGIN) * scale).round() as i32;
-            }
-        }
-        popup.set_position(PhysicalPosition::new(x, y))?;
-    }
-    popup.show()?;
+    crate::text_scale::place_corner_alert(app, &popup, (w, h), MARGIN)?;
+    crate::text_scale::show_corner_alert(&popup)?;
     Ok(())
 }
 
@@ -638,6 +660,83 @@ mod tests {
         assert_eq!(poll_hourly(5, 0, 10 * HOUR, || None), HourlyAction::Nothing, "Off");
         *SHOWING.lock().unwrap() = None;
         reset();
+    }
+
+    #[test]
+    fn the_cap_is_held_only_after_keep_recording() {
+        // The Mac's testMaxDurationSuppressedOnlyAfterKeepRecording (2 h setting).
+        let mut h = Hourly::new(1, 0, check_in_after_ms(2));
+        assert!(!h.holds_cap(2 * HOUR - 1));
+        assert!(matches!(h.poll(2 * HOUR), HourlyAction::Ask { .. }));
+        h.keep(2 * HOUR + MIN);
+        assert!(matches!(h.poll(3 * HOUR + MIN), HourlyAction::Ask { .. }));
+        h.keep(3 * HOUR + MIN);
+        assert!(h.holds_cap(4 * HOUR), "kept at 3:01: the 4 h cap waits");
+        // From 4:01 the next question is due, then up: still held until it stops.
+        assert!(h.holds_cap(4 * HOUR + 7 * MIN));
+        assert!(matches!(h.poll(4 * HOUR + 7 * MIN), HourlyAction::Ask { .. }));
+        assert!(h.holds_cap(4 * HOUR + 11 * MIN));
+        assert_eq!(h.poll(4 * HOUR + 12 * MIN), HourlyAction::Stop);
+        assert!(!h.holds_cap(4 * HOUR + 12 * MIN));
+    }
+
+    #[test]
+    fn the_cap_is_held_while_the_question_is_up_until_it_stops() {
+        let mut h = Hourly::new(1, 0, check_in_after_ms(2));
+        assert!(!h.holds_cap(2 * HOUR - MIN));
+        assert!(matches!(h.poll(2 * HOUR), HourlyAction::Ask { .. }));
+        assert!(h.holds_cap(2 * HOUR + 4 * MIN));
+        assert_eq!(h.poll(2 * HOUR + 5 * MIN), HourlyAction::Stop);
+        assert!(!h.holds_cap(2 * HOUR + 5 * MIN));
+    }
+
+    #[test]
+    fn a_question_due_at_four_hours_wins_over_the_cap_before_its_poll() {
+        // Setting at 4 h: core's 4 h cap must not win the race with the question.
+        let h = Hourly::new(1, 0, check_in_after_ms(4));
+        assert!(!h.holds_cap(4 * HOUR - 1));
+        assert!(h.holds_cap(4 * HOUR));
+        // Off holds nothing, ever.
+        let mut off = Hourly::new(1, 0, check_in_after_ms(0));
+        assert!(!off.holds_cap(4 * HOUR));
+        off.hold(4 * HOUR);
+        assert!(!off.holds_cap(5 * HOUR));
+    }
+
+    #[test]
+    fn a_pause_after_keep_does_not_let_the_cap_stop_the_recording_unasked() {
+        // Kept at 3:01, paused 3:30 to 3:40: the next question moves to 4:40 (`hold`). The Mac's
+        // 65 minutes after Keep would end at 4:06 with nothing asked; here the hold lasts to it.
+        let mut h = Hourly::new(1, 0, check_in_after_ms(3));
+        assert!(matches!(h.poll(3 * HOUR), HourlyAction::Ask { .. }));
+        h.keep(3 * HOUR + MIN);
+        for paused in (30..=40).step_by(5) {
+            h.hold(3 * HOUR + paused * MIN);
+        }
+        assert!(h.holds_cap(4 * HOUR + 6 * MIN));
+        assert_eq!(h.poll(4 * HOUR + 39 * MIN), HourlyAction::Nothing);
+        assert!(matches!(h.poll(4 * HOUR + 40 * MIN), HourlyAction::Ask { .. }));
+        assert!(h.holds_cap(4 * HOUR + 44 * MIN));
+        assert_eq!(h.poll(4 * HOUR + 45 * MIN), HourlyAction::Stop);
+        assert!(!h.holds_cap(4 * HOUR + 45 * MIN));
+    }
+
+    #[test]
+    fn a_held_cap_is_six_hours_and_only_for_the_recording_that_was_kept() {
+        let _turn = serial();
+        reset();
+        let held = end_thresholds(true);
+        assert_eq!(held.max_recording_duration_ms, 6 * HOUR);
+        assert_eq!(end_thresholds(false), EndThresholds::default());
+        let default_cap = EndThresholds::default().max_recording_duration_ms;
+        assert_eq!(EndThresholds { max_recording_duration_ms: default_cap, ..held }, EndThresholds::default(), "only the length cap changes");
+        // The slot holds for its own recording, not a new one.
+        assert!(!hourly_holds_cap(4, 4 * HOUR), "nothing polled yet");
+        assert!(matches!(poll_hourly(4, 0, 4 * HOUR, || check_in_after_ms(4)), HourlyAction::Ask { .. }));
+        assert!(hourly_holds_cap(4, 4 * HOUR + MIN));
+        assert!(!hourly_holds_cap(5, 4 * HOUR + MIN), "another recording's question");
+        reset();
+        assert!(!hourly_holds_cap(4, 4 * HOUR + MIN));
     }
 
     #[test]

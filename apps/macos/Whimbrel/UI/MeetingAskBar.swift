@@ -342,7 +342,7 @@ struct MeetingAskBar: View {
         }
         .padding(Spacing.md)
         .frame(maxWidth: 760)
-        // A question typed in the in-meeting window (redesign flag only): the answer shows here, in the main window.
+        // A question typed in the in-meeting window: the answer shows here, in the main window.
         .onReceive(appState.$liveAskHandoff) { _ in takeHeldQuestion() }
         .onAppear { takeHeldQuestion() }
         .onChange(of: disabledReason) { _, _ in takeHeldQuestion() }
@@ -380,8 +380,8 @@ struct MeetingAskBar: View {
                                     Button("Copy") { Self.copy(exchange.answer) }
                                         .help("Copy the answer as Markdown")
                                     Button("Copy as plain text") { Self.copy(AskMarkdown.plainText(exchange.answer)) }
-                                    // Redesign flag only, and not during a live meeting (it would leave the live screen).
-                                    if appState.redesignEnabled, !liveContext {
+                                    // Not during a live meeting (it would leave the live screen).
+                                    if !liveContext {
                                         Button(String(localized: "Continue as a conversation", comment: "Button under the answer on Today: keeps the question and answer as a conversation and opens it.")) {
                                             session.continueAsConversation(index, meetingId: meeting.id, appState: appState)
                                         }

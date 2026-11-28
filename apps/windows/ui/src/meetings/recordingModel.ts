@@ -24,18 +24,16 @@ export function recordButtonDisabled(action: RecordAction, busy: boolean, noStor
   return busy || action === "wait" || (noStore && action !== "stop");
 }
 
-/** Whether the old "Record a meeting" card is drawn. With the redesign on, the shell's recording bar and the live screen own the
- *  recording state (and say Paused while paused), so the card gives way while a meeting starts, records, pauses or is processed,
- *  and before the first status is read; it only offers Record now when nothing records. Otherwise a screen reader heard two
- *  recording timers, one of them saying Recording during a pause. With the redesign off it is drawn as before. */
-export function recordingCardShown(view: MeetingRecordingView | null, redesign: boolean): boolean {
-  if (!redesign) return true;
+/** Whether the "Record a meeting" card is drawn. The shell's recording bar and the live screen own the recording state (and say
+ *  Paused while paused), so the card gives way while a meeting starts, records, pauses or is processed, and before the first
+ *  status is read; it only offers Record now when nothing records. Otherwise a screen reader heard two recording timers, one
+ *  of them saying Recording during a pause. */
+export function recordingCardShown(view: MeetingRecordingView | null): boolean {
   return view != null && view.state === "idle" && !view.processing;
 }
 
 /** The meeting whose recording is paused right now, or null. A paused meeting is still stored as "recording" (spec:
- *  docs/ui-redesign/screens/live-meeting.md), so a row only knows it is paused by matching this id. Read with the redesign
- *  on or off: a pause outlives the flag being turned off. */
+ *  docs/ui-redesign/screens/live-meeting.md), so a row only knows it is paused by matching this id. */
 export function pausedMeetingId(view: MeetingRecordingView | null): number | null {
   return view?.state === "recording" && view.paused ? (view.meetingId ?? null) : null;
 }

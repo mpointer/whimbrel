@@ -8,7 +8,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use api::meetings::end_rule::{self, EndReason, EndSignals, EndState, EndThresholds};
+use api::meetings::end_rule::{self, EndReason, EndSignals, EndState};
 use api::meetings::heuristic::Debounce;
 use tauri::AppHandle;
 
@@ -262,7 +262,7 @@ impl Detection {
         }
         let audible = self.controller.audio_active(now_ms()).unwrap_or(false);
         // A recording started by hand never ends on 60 s of silence: after 15 quiet minutes it
-        // asks "Still in a meeting?" instead (trim spec). The 4 h cap still applies.
+        // asks "Still in a meeting?" instead (trim spec). The length cap still applies.
         let manual = self.controller.recording_is_manual();
         // A browser call is asked about the same way once no meeting tab is in front and no one
         // has spoken for 15 minutes; its other end rules stay as they are (Mike, 2026-11-05).
@@ -326,7 +326,9 @@ impl Detection {
             audio_active: manual || audible,
             capture_session_active: (watching && app_running).then(|| sessions.tree_captures(&tree)),
         };
-        if let Some(reason) = end_rule::evaluate(&signals, &EndThresholds::default(), state) {
+        // "Still recording?" up, due, or kept: the 4 h cap waits, as on the Mac (6 h instead).
+        let thresholds = super::still_here::end_thresholds(super::still_here::hourly_holds_cap(meeting_id, signals.now_unix_ms));
+        if let Some(reason) = end_rule::evaluate(&signals, &thresholds, state) {
             tracing::info!(meeting_id, ?reason, "the meeting ended on its own");
             self.end(meeting_id, reason);
         }
@@ -349,7 +351,9 @@ impl Detection {
             audio_active: true,
             capture_session_active: None,
         };
-        if let Some(reason) = end_rule::evaluate(&signals, &EndThresholds::default(), state) {
+        // Checked before the pause puts a question away, so a kept recording's cap waits here too.
+        let thresholds = super::still_here::end_thresholds(super::still_here::hourly_holds_cap(meeting_id, now));
+        if let Some(reason) = end_rule::evaluate(&signals, &thresholds, state) {
             tracing::info!(meeting_id, ?reason, "the paused meeting reached the length cap");
             self.end(meeting_id, reason);
             return;

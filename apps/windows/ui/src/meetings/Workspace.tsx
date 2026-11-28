@@ -22,7 +22,7 @@ import type { ActionItemView, LiveTranscriptView, TrimInfo, WorkspaceView } from
 import { TrimSheet } from "./TrimSheet";
 import { RecapActions } from "./RecapActions";
 import { useL10n } from "../l10n";
-import { DeviceChip } from "../library/LibraryView";
+import { DeviceChip } from "../library/DeviceChip";
 import { spanLabel } from "../library/rows";
 import { ActionItems } from "./ActionItems";
 import { recordingLine } from "./recordingModel";

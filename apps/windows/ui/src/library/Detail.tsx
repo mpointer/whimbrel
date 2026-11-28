@@ -5,13 +5,12 @@ import type { CaptureDetail, EpisodeRow } from "../generated/types";
 import { t, useL10n } from "../l10n";
 import { Workspace } from "../meetings/Workspace";
 import { MeetingPane } from "../meetings/redesign/LiveGate";
-import { useRedesign } from "../redesign";
 import { WErrorState, WLoadingState } from "../system";
-import { DeviceChip } from "./LibraryView";
+import { DeviceChip } from "./DeviceChip";
 import { episodeSummaryText, fullDateTimeLabel, spanLabel } from "./rows";
 import { captureHeader } from "../today/redesign/homeModel";
 
-/** `line`: a meeting opened at one transcript line (a search result or an Ask source; the redesigned note only). */
+/** `line`: a meeting opened at one transcript line (a search result or an Ask source). */
 export type Selection = { kind: "capture" | "meeting" | "episode"; id: number; line?: number };
 
 type Loaded =
@@ -22,8 +21,6 @@ export function Detail({ selection, onBack }: { selection: Selection; onBack: ()
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { locale } = useL10n();
-  // The hidden redesign switch: with it off a meeting opens the old workspace, as before.
-  const redesign = useRedesign();
 
   useEffect(() => {
     // A meeting opens its workspace, which loads itself.
@@ -35,8 +32,7 @@ export function Detail({ selection, onBack }: { selection: Selection; onBack: ()
     else libraryEpisode(selection.id).then((d) => (d ? setLoaded({ kind: "episode", data: d }) : missing()), fail);
   }, [selection]);
 
-  // The Meetings tab's view: its stage, why it has no transcript (with Transcribe again), the summary.
-  if (selection.kind === "meeting" && redesign) {
+  if (selection.kind === "meeting") {
     // The same pane the Meetings tab shows: the live screen, the finished note, or the old workspace for what neither covers.
     const forgotten = () => meetingWorkspace(selection.id).then((view) => view ?? onBack(), () => {});
     return (
@@ -47,35 +43,15 @@ export function Detail({ selection, onBack }: { selection: Selection; onBack: ()
       </article>
     );
   }
-  if (selection.kind === "meeting")
-    return (
-      <article className="detail">
-        <button className="mode" onClick={onBack}>
-          {t("← Back")}
-        </button>
-        {/* The list behind reloads on Back; a forgotten meeting goes back to it. */}
-        <Workspace
-          meetingId={selection.id}
-          onChanged={() => meetingWorkspace(selection.id).then((view) => view ?? onBack(), () => {})}
-        />
-      </article>
-    );
 
   const header = loaded?.kind === "capture" ? captureHeader(loaded.data) : { app: "", how: null };
   return (
-    <article className={redesign ? "detail rt" : "detail"}>
+    <article className="detail rt">
       <button className="mode" onClick={onBack}>
         {t("← Back")}
       </button>
-      {error &&
-        (redesign ? (
-          <WErrorState title={error} />
-        ) : (
-          <p role="alert" className="card">
-            {error}
-          </p>
-        ))}
-      {!error && !loaded && (redesign ? <WLoadingState title={t("Loading…")} /> : <p className="muted">{t("Loading…")}</p>)}
+      {error && <WErrorState title={error} />}
+      {!error && !loaded && <WLoadingState title={t("Loading…")} />}
       {loaded?.kind === "capture" && (
         <>
           <h2 className="display">{loaded.data.title || header.app}</h2>

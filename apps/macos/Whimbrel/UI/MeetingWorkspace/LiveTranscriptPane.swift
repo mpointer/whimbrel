@@ -87,7 +87,7 @@ struct LiveTranscriptPane: View {
 
 /// What the During state shows when live transcription is on: the live pane and the meeting
 /// Ask bar over the transcript so far. Built where `appState` is in the environment and
-/// passed into `ActiveMeetingView` as a slot.
+/// passed into the live meeting screen.
 struct LiveMeetingSection: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var live: LiveTranscriptionService

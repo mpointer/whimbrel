@@ -11,29 +11,25 @@ sqlcipher = ["memory/sqlcipher"]
 [dependencies]
 sync = { path = "../sync" }
 memory = { path = "../memory" }
-libsql = { version = "0.9", default-features = false, features = ["remote", "tls"] }
+# `tls` is off: libsql's own connector is hyper-rustls 0.25 on rustls 0.22, which has
+# open advisories. src/tls.rs builds the connector on rustls 0.23 and every remote
+# Builder is handed it.
+libsql = { version = "0.9", default-features = false, features = ["remote"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 tracing = "0.1"
+hyper = { version = "0.14", features = ["client", "http1", "tcp"] }
+tower-service = "0.3"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+webpki-roots = "1"
 
-# Android has no system cert store that rustls-native-certs can read, so libsql's default
-# connector (native roots) fails with "no valid native root CA certificates found". On
-# Android the remote connector is built here with Mozilla's roots instead. Same versions
-# libsql 0.9 itself uses, so the connector type matches. Desktop and iOS keep native roots.
-[target.'cfg(target_os = "android")'.dependencies]
-hyper = "0.14"
-hyper-rustls = "0.25"
-rustls = "0.22"
-webpki-roots = "0.26"
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rustls-native-certs = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
 libsql = { version = "0.9", default-features = false, features = ["core"] }
 tokio = { version = "1", features = ["test-util"] }
-# Builds the Android connector in host tests too (see the target section above).
-hyper = "0.14"
-hyper-rustls = "0.25"
-rustls = "0.22"
-webpki-roots = "0.26"

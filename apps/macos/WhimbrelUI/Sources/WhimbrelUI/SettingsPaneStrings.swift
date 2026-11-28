@@ -59,6 +59,8 @@ public struct WPlanLabels: Equatable, Sendable {
     public var heading = "Plan & billing"
     public var signedOut = "Sign in to sync to see your plan."
     public var signIn = "Sign in to sync"
+    public var plusPlan = "Plus: $15 a month or $144 a year. Hosted sync on all your devices and a monthly Whimbrel AI allowance."
+    public var cloudPlan = "Cloud: $5 a month or $50 a year. Unlimited devices on our sync server."
     public var loading = "Checking your plan\u{2026}"
     public var readFailed = "Couldn\u{2019}t check your plan. Try again in a moment."
     public var tryAgain = "Try again"

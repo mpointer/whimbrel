@@ -319,9 +319,16 @@ function languageLinks(route, locale, indexable) {
     return `<a href="${href}" hreflang="${tag}" lang="${tag}"${tag === current ? ' aria-current="true"' : ""}>${label}</a>`;
   });
   const present = alternates.filter((a) => a[3]);
+  // A regional tag (fr-CA) only matches searchers in that region. When no other locale uses the
+  // same language, also tag the page with the bare language (fr) so French searchers elsewhere match.
+  const languagesUsed = alternates.map(([tag]) => tag.split("-")[0]);
+  const withBase = present.flatMap((a) => {
+    const base = a[0].split("-")[0];
+    return base !== a[0] && languagesUsed.filter((l) => l === base).length === 1 ? [a, [base, ...a.slice(1)]] : [a];
+  });
   const tags =
     indexable && present.length > 1
-      ? [...present.map(([tag, , path]) => `<link rel="alternate" hreflang="${tag}" href="${siteUrl}${path}">`),
+      ? [...withBase.map(([tag, , path]) => `<link rel="alternate" hreflang="${tag}" href="${siteUrl}${path}">`),
          `<link rel="alternate" hreflang="x-default" href="${siteUrl}${enRoute}">`].join("\n  ")
       : "";
   return { tags, picker: `<nav class="lang-switch" aria-label="Language">${links.join("")}</nav>` };

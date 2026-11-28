@@ -29,17 +29,15 @@ struct SummaryFailures: Equatable {
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var activityCaptureEnabled = false {
-        // Read only by the redesign's memory rule (`WMemoryHold`). The write is behind the switch, so with it off this observer
-        // reads one flag and does nothing else; nothing else changes.
-        didSet { if redesignEnabled, activityCaptureEnabled, !oldValue { memoryOnSince = Date() } }
+        // Read only by the memory rule (`WMemoryHold`).
+        didSet { if activityCaptureEnabled, !oldValue { memoryOnSince = Date() } }
     }
     /// When work memory was last switched on, or when the app launched. A memory that is on and not saving is called a problem
     /// only once this is a few seconds old (`WMemoryHold`), so the moment after launch, a turn-on or a timed pause is not alarmed.
     private(set) var memoryOnSince = Date()
-    /// Redesign flag only: when a timed pause of capture ends, device-local and never synced. Nil unless a timed
-    /// pause is in effect; with the flag off it is never set or read (docs/ui-redesign/screens/home.md).
-    @Published private(set) var captureResumeAt: Date? = RedesignFlag.isOn()
-        ? UserDefaults.standard.object(forKey: AppState.captureResumeAtKey) as? Date : nil
+    /// When a timed pause of capture ends, device-local and never synced. Nil unless a timed
+    /// pause is in effect (docs/ui-redesign/screens/home.md).
+    @Published private(set) var captureResumeAt: Date? = UserDefaults.standard.object(forKey: AppState.captureResumeAtKey) as? Date
     private var capturePauseTimer: Timer?
     static let captureResumeAtKey = "com.mpointer.whimbrel.capture.resumeAt"
     /// Set while a meeting is actively being recorded — the row id to complete when the
@@ -171,14 +169,14 @@ final class AppState: ObservableObject {
     /// in-meeting bar, live transcript) are not started for a recording that is already over.
     private var endingStoppedStart = false
     private var recordingGateTimer: Timer?
-    /// Set once by `TimelineView.swift`'s `.onAppear` (which has real access to
+    /// Set once by `WhimbrelShellView`'s `.onAppear` (which has real access to
     /// `@Environment(\.openWindow)`) — used by the meeting-alert panel's "Start
     /// Recording & Open Timeline" action. `AppState` itself has no SwiftUI environment
     /// access of its own.
     var openTimeline: (() -> Void)?
     /// Opens the Settings window; set by `WhimbrelShellView`'s `.onAppear` alongside `openTimeline`.
     var openSettingsWindow: (() -> Void)?
-    /// Opens a meeting's window; set by `TimelineView`'s `.onAppear` alongside `openTimeline`.
+    /// Opens a meeting's window; set by `WhimbrelShellView`'s `.onAppear` alongside `openTimeline`.
     private var openMeetingWindow: ((Int64) -> Void)?
     /// A meeting asked for (alert click, `whimbrel://` link) before the opener was set.
     private var meetingToOpen: Int64?
@@ -196,13 +194,13 @@ final class AppState: ObservableObject {
         selectedTab = .topics
         openTimeline?()
     }
-    /// The conversation the Conversations tab shows; nil shows the list (redesign flag only).
+    /// The conversation the Conversations tab shows; nil shows the list.
     @Published var selectedConversationId: Int64?
 
     /// Sends a conversation's id once its generated title replaced the placeholder, so an open page shows it.
     let conversationTitleUpdated = PassthroughSubject<Int64, Never>()
 
-    /// A conversation not stored yet, shown on the Conversations tab (redesign flag only): New conversation, or a
+    /// A conversation not stored yet, shown on the Conversations tab: New conversation, or a
     /// question asked on the Conversations tab or a topic page. Its row is made once its first answer is in, so a
     /// page left empty, or a first question that fails, leaves nothing behind.
     struct ConversationDraft: Identifiable, Equatable {
@@ -223,8 +221,8 @@ final class AppState: ObservableObject {
         openTimeline?()
     }
 
-    /// Opens a new conversation asking about `scope`, asking `question` first when there is one (redesign flag
-    /// only). Nothing is stored until an answer is in.
+    /// Opens a new conversation asking about `scope`, asking `question` first when there is one.
+    /// Nothing is stored until an answer is in.
     func startConversation(scope: CoreConversationScope, question: String?) {
         let text = question?.trimmingCharacters(in: .whitespacesAndNewlines)
         conversationDraft = ConversationDraft(scope: scope, question: text?.isEmpty == false ? text : nil)
@@ -238,11 +236,11 @@ final class AppState: ObservableObject {
         selectedConversationId = nil
     }
 
-    /// Today's answer under the Ask bar (redesign flag only). Here, not in the view, so the answer stays while
+    /// Today's answer under the Ask bar. Here, not in the view, so the answer stays while
     /// another section is shown, until it is cleared, replaced, or the app quits. Made on first use.
     private(set) lazy var todayAnswer = TodayAnswerModel(appState: self)
 
-    /// A question asked from Today's Ask bar with the redesign flag on: answered under the bar.
+    /// A question asked from Today's Ask bar: answered under the bar.
     func askOnToday(_ query: String) {
         selectedTab = .today
         todayAnswer.ask(query)
@@ -251,7 +249,7 @@ final class AppState: ObservableObject {
     /// Flags rather than events, so a request made before Library is on screen still
     /// lands when it appears.
     @Published var pendingLibrarySearch = false
-    /// Redesign flag only: Home's search chips carried into Library search (`requestLibrarySearch(query:filter:)`).
+    /// Home's search chips carried into Library search (`requestLibrarySearch(query:filter:)`).
     @Published var pendingLibraryFilter: (query: String, filter: LibraryCaptureFilter)?
     /// A Settings section to show the next time Settings is shown (or now, if it is open).
     @Published var pendingSettingsSection: SettingsSection?
@@ -669,7 +667,7 @@ final class AppState: ObservableObject {
     nonisolated static func liveTranscriptionWanted(transcript: Bool, alerts: Bool, names: [String]) -> Bool {
         transcript || (alerts && !names.isEmpty)
     }
-    let recordingNoticeSettings = RecordingNoticeSettings(redesign: RedesignFlag.isOn())
+    let recordingNoticeSettings = RecordingNoticeSettings()
     /// Nil until Task 7b's real Zoom chat poster: the notice is a reminder until then.
     let recordingNoticeChat: ZoomChatPosting? = nil
     /// "Ask if I'm still recording after N hours" and its panel
@@ -689,13 +687,13 @@ final class AppState: ObservableObject {
     /// same 5 s poll. `silenceWarning` is the inline banner's text; nil while sound is arriving.
     private var silenceWatch: SilenceWatch?
     @Published private(set) var silenceWarning: String?
-    /// The pause of the recording (redesign flag only; nothing calls `pauseRecording()` with the flag off).
+    /// The pause of the recording.
     /// Nil when nothing records. This is not work memory's capture pause (`captureResumeAt`).
     @Published private(set) var recordingPause: RecordingPauseModel?
     /// Why the recording is in a problem state after a resume that could not start capture again.
     @Published private(set) var recordingProblem: String?
     var recordingPaused: Bool { recordingPause?.isPaused ?? false }
-    /// Moments marked in the live meeting, oldest first (redesign flag only). Local to this device.
+    /// Moments marked in the live meeting, oldest first. Local to this device.
     @Published private(set) var liveMarks: [CoreMeetingMarker] = []
     /// The notes line being written, kept by the live meeting screen so Mark this moment can use it as the label.
     var liveNotesLastLine: String = ""
@@ -726,7 +724,7 @@ final class AppState: ObservableObject {
     /// The window gives up waiting; the question stays in its field.
     @discardableResult
     func giveUpLiveAsk() -> Bool { liveAskHandoff.isHolding ? liveAskHandoff.giveUp() : false }
-    /// The small always-on-top window (redesign flag only; never created with the flag off).
+    /// The small always-on-top window.
     lazy var meetingBar = MeetingBarController(appState: self)
     /// "Meeting snapshots": slide images from the meeting window (on by default).
     let snapshotSettings = SnapshotSettings()
@@ -796,8 +794,6 @@ final class AppState: ObservableObject {
     let recordingRefusal = RecordingRefusal()
     /// The Start and capture controls' state (disabled with a caption without a store).
     var recordingControls: RecordingControls { RecordingControls(storeOpen: recordingGate.storeOpen) }
-    /// The redesign switch (`RedesignFlag`), read where a window is built; always on. The old branches go in the clean-up.
-    var redesignEnabled: Bool { RedesignFlag.isOn() }
     /// A second connection for calls that hold the store across an LLM request (the slow
     /// lane). Used only on `CoreMemoryStore.slowLaneQueue`, so Ollama never blocks
     /// `accessQueue` and the UI reads behind it.
@@ -864,6 +860,11 @@ final class AppState: ObservableObject {
     private static let pendingLaunchTranscriptionKey = "com.mpointer.kestrel.pendingLaunchTranscription"
 
     init(launched: LaunchedStore) {
+        // Every Accessibility request this process makes waits at most this long for the other app,
+        // from launch on. The system default is about 6 s, and until screen capture first ran, the
+        // meeting detectors' requests (on the main thread) could hang that long on an app that had
+        // stopped answering (perf review, 2026-11-27). Elements that set their own limit keep it.
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), ScreenTextCaptureService.messagingTimeout)
         coreStore = launched.store
         mcpAllowedByLaunch = launched.mcpAllowed
         recordingGate = RecordingStartGate(storeOpen: launched.store != nil)
@@ -1048,7 +1049,7 @@ final class AppState: ObservableObject {
                     self.liveQuestionWatcher?.flush()
                     self.liveQuestionWatcher = nil
                 }
-                // Flag on: the recording pause and the level start with a live meeting row, and end with it.
+                // The recording pause and the level start with a live meeting row, and end with it.
                 if id != nil {
                     if !self.endingStoppedStart { self.recordingDidStart() }
                 } else if self.recordingPause != nil { self.finishRecordingPause(audioPath: nil) }
@@ -1669,19 +1670,11 @@ final class AppState: ObservableObject {
     }
 
     func toggleActivityCapture() {
-        if redesignEnabled {
-            // With a timed pause in effect the toggle means "resume now"; the model decides the rest.
-            switch CapturePauseModel.state(captureOn: activityCaptureEnabled, resumeAt: captureResumeAt) {
-            case .on: applyCapturePause(.turnOff)
-            case .paused: applyCapturePause(.resumeNow)
-            case .off: applyCapturePause(.turnOn)
-            }
-            return
-        }
-        if activityCaptureEnabled {
-            pauseActivityCapture()
-        } else {
-            resumeActivityCapture()
+        // With a timed pause in effect the toggle means "resume now"; the model decides the rest.
+        switch CapturePauseModel.state(captureOn: activityCaptureEnabled, resumeAt: captureResumeAt) {
+        case .on: applyCapturePause(.turnOff)
+        case .paused: applyCapturePause(.resumeNow)
+        case .off: applyCapturePause(.turnOn)
         }
     }
 
@@ -1701,16 +1694,15 @@ final class AppState: ObservableObject {
         screenText.stop()
     }
 
-    // MARK: Timed pause (redesign flag only)
+    // MARK: Timed pause
 
-    /// "Pause for 15 minutes", "Pause for 1 hour", "Pause until tomorrow". Does nothing with the flag off or capture off.
+    /// "Pause for 15 minutes", "Pause for 1 hour", "Pause until tomorrow". Does nothing with capture off.
     func pauseCapture(_ choice: CapturePauseChoice) { applyCapturePause(.pause(choice)) }
 
     func resumeCaptureNow() { applyCapturePause(.resumeNow) }
 
     /// Delete everything turns capture off for good and drops any stored pause time.
     func captureDidDeleteEverything() {
-        guard redesignEnabled else { return }
         applyCapturePause(.deleteEverything)
     }
 
@@ -1719,7 +1711,6 @@ final class AppState: ObservableObject {
     /// no-store mode) still gates it: a resume goes through `resumeActivityCapture`.
     @discardableResult
     private func applyCapturePause(_ event: CapturePauseEvent, now: Date = Date()) -> Bool {
-        guard redesignEnabled else { return false }
         let state = CapturePauseModel.state(captureOn: activityCaptureEnabled, resumeAt: captureResumeAt)
         let result = CapturePauseModel.next(state: state, resumeAt: captureResumeAt, now: now, event: event)
         switch result.action {
@@ -1890,7 +1881,7 @@ final class AppState: ObservableObject {
     /// The meeting row could not be written, so nothing starts: the refusal shows in the window and
     /// as a notification, as for a start with no store.
     private func refuseStartWithoutRow() {
-        recordingGate.notify(LibraryCopyRedesign.forSkin(EncryptionCopy.recordingNotSaved))
+        recordingGate.notify(LibraryCopyRedesign.map(EncryptionCopy.recordingNotSaved))
     }
 
     /// Mirrors `finishStartingCapture(for:insertedMeetingId:generation:)`'s exact
@@ -1958,7 +1949,7 @@ final class AppState: ObservableObject {
 
     private func refreshMenuBarElapsed() {
         guard let startedAt = activeMeetingStartedAt else { return }
-        // Recorded time: a paused stretch does not count (the pause exists only with the redesign flag).
+        // Recorded time: a paused stretch does not count
         let now = Date()
         let text = ElapsedLabel.text(now.timeIntervalSince(startedAt) - (recordingPause?.pausedSeconds(now: now) ?? 0))
         if text != menuBarElapsed { menuBarElapsed = text }
@@ -2048,16 +2039,16 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: Recording pause (redesign flag only)
+    // MARK: Recording pause
 
     /// Pause or Resume, for the bar, the floating window, the menu and the shortcut.
     func toggleRecordingPause() {
         if recordingPaused { resumeRecording() } else { pauseRecording() }
     }
 
-    /// Whether Pause is offered now: the redesign flag is on and a meeting is recording, not stopping or starting.
+    /// Whether Pause is offered now: a meeting is recording, not stopping or starting.
     var canPauseRecording: Bool {
-        redesignEnabled && activeMeetingId != nil && !isStartingMeeting && recordingPause?.state == .recording && processingMeetingId != activeMeetingId
+        activeMeetingId != nil && !isStartingMeeting && recordingPause?.state == .recording && processingMeetingId != activeMeetingId
     }
 
     func pauseRecording() {
@@ -2146,9 +2137,9 @@ final class AppState: ObservableObject {
         liveMarks = []
     }
 
-    /// Called when a meeting's row goes live (flag on): the pause model and the level sampling start.
+    /// Called when a meeting's row goes live: the pause model and the level sampling start.
     private func recordingDidStart() {
-        guard redesignEnabled, recordingPause == nil else { return }
+        guard recordingPause == nil else { return }
         let start = audio.recordingStartedAt ?? Date()
         recordingPause = RecordingPauseModel(startedAt: start)
         recordingProblem = nil
@@ -2161,7 +2152,7 @@ final class AppState: ObservableObject {
     /// Mark this moment: stores the time on the meeting-absolute clock (the one transcript seek and alerts use, which
     /// includes paused time, not the recorded time on screen) and, if a notes line is being written, that line.
     func markMoment() {
-        guard redesignEnabled, let model = recordingPause, model.state != .stopped, let id = activeMeetingId, let store = coreStore else { return }
+        guard let model = recordingPause, model.state != .stopped, let id = activeMeetingId, let store = coreStore else { return }
         let now = Date()
         let clockCs = Int64(model.clockSeconds(now: now) * 100)
         let line = liveNotesLastLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2742,7 +2733,7 @@ final class AppState: ObservableObject {
                     CoreMemoryStore.slowLaneQueue.async { [weak self] in
                         defer { UserModelGate.shared.leave(gateToken) }
                         let slides = slow?.meetingSlidesText(meetingId: meetingId) ?? ""
-                        let outcome = slow?.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: transcript, slides: slides, model: ollamaModel, routing: routingConfig.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: instructions, wantSources: RedesignFlag.isOn())
+                        let outcome = slow?.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: transcript, slides: slides, model: ollamaModel, routing: routingConfig.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: instructions, wantSources: true)
                         DispatchQueue.main.async {
                             self?.recordSummaryOutcome(outcome, meetingId: meetingId)
                             self?.clearProcessingState(for: meetingId)
@@ -3479,7 +3470,7 @@ final class AppState: ObservableObject {
             let text = named.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? transcript : named
             // Regenerate also sees what was typed on Today (a meeting stored before that was merged in).
             let withToday = LiveNotesMerge.combined(library: notes, draft: slow.getMeetingNoteDraft(meetingId: meetingId)?.personalNotes)
-            let outcome = slow.summarizeMeeting(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions, wantSources: RedesignFlag.isOn())
+            let outcome = slow.summarizeMeeting(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions, wantSources: true)
             DispatchQueue.main.async {
                 self?.regeneratingSummaryIds.remove(meetingId)
                 self?.recordSummaryOutcome(outcome, meetingId: meetingId)
@@ -3513,7 +3504,7 @@ final class AppState: ObservableObject {
             let text = named.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? transcript : named
             // Regenerate also sees what was typed on Today (a meeting stored before that was merged in).
             let withToday = LiveNotesMerge.combined(library: notes, draft: slow.getMeetingNoteDraft(meetingId: meetingId)?.personalNotes)
-            let outcome = slow.summarizeMeetingPreferred(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions, wantSources: RedesignFlag.isOn())
+            let outcome = slow.summarizeMeetingPreferred(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions, wantSources: true)
             DispatchQueue.main.async {
                 self?.regeneratingSummaryIds.remove(meetingId)
                 // Only a success is recorded: a failure is shown by the notice's own line, with its reason.

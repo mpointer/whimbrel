@@ -1,19 +1,18 @@
 import SwiftUI
 
 // The restyle pass (step 10, docs/ui-redesign/screens/restyle.md): Topics, Automations, the Meetings list and the capture, episode
-// and thread windows keep their layout, controls and words, and take the Thread look while the redesign switch is on. The rules
+// and thread windows keep their layout, controls and words, and take the Thread look. The rules
 // here are pure: each takes the look and, where the old screen had its own value, that old value, and hands the old value back
 // unchanged for `.classic`. The app (`UI/Redesign/Restyle.swift`) feeds in the old values and draws what these return, so a test
 // can say "off is the old style, on is Thread" without a view, a skin store or the real defaults.
 
 /// Which look a screen is drawn in.
 public enum WLook: Equatable, Sendable {
-    /// The old look: the screen as it was before the pass. The redesign switch is off.
+    /// The old look: the screen as it was before the pass. The default of the `threadLook` environment value, outside a
+    /// restyled screen.
     case classic
     /// The Thread look: type roles, shapes, buttons and fields of the design system.
     case thread
-
-    public init(redesign: Bool) { self = redesign ? .thread : .classic }
 }
 
 // MARK: Text

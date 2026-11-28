@@ -9,7 +9,6 @@ import {
   groupUsageByDay,
   hostedNotice,
   keyCheckLine,
-  keyLine,
   modelField,
   modelOptions,
   modelWarningLine,
@@ -240,11 +239,6 @@ describe("caps", () => {
 });
 
 describe("keys", () => {
-  it("shows only the masked form", () => {
-    expect(keyLine({ masked: "••••••••1234" })).toBe("Saved · ••••••••1234");
-    expect(keyLine({ masked: null })).toBe("Not set");
-    expect(keyLine({})).toBe("Not set");
-  });
 
   it("warns when the preferred hosted provider has no key, or local-only overrides it", () => {
     expect(hostedNotice(routing, [{ provider: "anthropic", masked: "••••••••1234", syncEnabled: false }])).toBeNull();

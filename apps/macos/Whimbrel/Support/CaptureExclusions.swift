@@ -71,8 +71,14 @@ final class CaptureExclusions: ObservableObject {
     /// True when `url`'s host is a listed domain or a subdomain of one. A URL with no
     /// host (a file path, a custom scheme) is never excluded by this list.
     func isExcluded(url: String) -> Bool {
+        Self.isExcluded(url: url, domains: excludedDomains)
+    }
+
+    /// `isExcluded(url:)` against a snapshot of the list, for work off the main actor (the screen
+    /// text reader checks a page's URL before OCR with the list as it was when the read started).
+    nonisolated static func isExcluded(url: String, domains: Set<String>) -> Bool {
         guard let host = Self.host(of: url) else { return false }
-        return excludedDomains.contains { Self.host(host, matches: $0) }
+        return domains.contains { Self.host(host, matches: $0) }
     }
 
     /// Adds a domain typed by the user; returns false for input that is not a host.
@@ -108,12 +114,12 @@ final class CaptureExclusions: ObservableObject {
         return s
     }
 
-    static func host(of url: String) -> String? {
+    nonisolated static func host(of url: String) -> String? {
         guard let parsed = URL(string: url), let host = parsed.host?.lowercased(), !host.isEmpty else { return nil }
         return host
     }
 
-    static func host(_ host: String, matches domain: String) -> Bool {
+    nonisolated static func host(_ host: String, matches domain: String) -> Bool {
         host == domain || host.hasSuffix("." + domain)
     }
 

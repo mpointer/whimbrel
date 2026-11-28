@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import catalogText from "../l10n/Localizable.xcstrings?raw";
-import { NoStoreContext } from "./noStore";
 import { NoStoreBanner } from "./NoStoreBanner";
 import { qrOfWords, QUIET_ZONE } from "./qr";
 import { PrintPage, WordsGrid, WordsQr } from "./RecoveryWords";
@@ -172,22 +171,5 @@ describe("no-store mode", () => {
     const html = renderToStaticMarkup(<NoStoreBanner onOpenSettings={() => {}} />);
     expect(html).toContain("The memory database could not be opened. Recording is off. Restart Whimbrel to try again.");
     expect(html).toContain("Open Settings");
-  });
-
-  it("Record now is disabled with the caption", async () => {
-    vi.doMock("../api", () => ({ meetingRecordStart: vi.fn(), meetingRecordStop: vi.fn(), meetingRecordingStatus: () => new Promise(() => {}) }));
-    vi.doMock("../meetings/RecordingNoticeCard", () => ({ RecordingNoticeCard: () => null }));
-    const { RecordingCard } = await import("../meetings/RecordingCard");
-    const off = renderToStaticMarkup(
-      <NoStoreContext.Provider value={true}>
-        <RecordingCard />
-      </NoStoreContext.Provider>,
-    );
-    expect(off).toMatch(/<button class="mode mode--active" disabled="">Record now<\/button>/);
-    expect(off).toContain("Recording is off because the memory database could not be opened.");
-    // With the database the caption is gone (the button waits for the status, which never comes here).
-    const on = renderToStaticMarkup(<RecordingCard />);
-    expect(on).toContain("Record now");
-    expect(on).not.toContain("Recording is off");
   });
 });

@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.84"
+version = "0.9.85"
 edition = "2021"
 publish = false
 # One binary, the app; the Tauri CLI builds and bundles it. Tauri puts every [[bin]] in the

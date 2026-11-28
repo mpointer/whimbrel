@@ -55,17 +55,4 @@ final class ActiveMeetingViewTests: XCTestCase {
         wait(for: [expectation], timeout: 2)
         XCTAssertEqual(controller.saveState, .error)
     }
-
-    @MainActor
-    func testActiveMeetingViewInstantiates() {
-        let meeting = CoreMeeting(
-            id: 1, deviceId: "d1", startUnixMs: 1_700_000_000_000, endUnixMs: nil, title: "Standup",
-            attendees: [], trigger: .manual, audioPath: nil, status: .recording, transcriptPath: nil,
-            notes: nil, summaryTldr: nil, summaryDecisions: [], summaryActionItems: [],
-            summaryOpenQuestions: [], summaryProvider: nil, summaryModel: nil, estimatedSpeakerCount: nil
-        )
-        let model = ActiveMeetingModel(meeting: meeting, elapsedSeconds: 30, isProcessing: false, processingStage: nil)
-        let view = ActiveMeetingView(model: model, initialNotes: "", onSaveNotes: { _, _ in true }, onStop: {})
-        XCTAssertNotNil(view.body)
-    }
 }

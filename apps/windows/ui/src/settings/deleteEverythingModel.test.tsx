@@ -1,12 +1,6 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { DeleteEverythingPreview } from "../generated/types";
 
-vi.mock("../api", () => {
-  const never = () => new Promise(() => {});
-  return { deleteEverythingNow: never, deleteEverythingPreview: never };
-});
-const { DeleteEverythingDialog, DeleteEverythingCard } = await import("./DeleteEverythingCard");
 const { canDelete, closed, confirmArgs, confirmLines, dialogReducer, syncAccountLine } = await import("./deleteEverythingModel");
 
 const preview = (over: Partial<DeleteEverythingPreview> = {}): DeleteEverythingPreview => ({
@@ -20,12 +14,6 @@ const preview = (over: Partial<DeleteEverythingPreview> = {}): DeleteEverythingP
   ...over,
 });
 const open = dialogReducer(closed, { kind: "open" });
-const noop = () => {};
-const render = (state = open, p: DeleteEverythingPreview | null = preview()) =>
-  renderToStaticMarkup(<DeleteEverythingDialog preview={p} state={state} onTyped={noop} onSyncAccount={noop} onCancel={noop} onConfirm={noop} />);
-/** The "Delete and restart" button's tag, to read its disabled attribute. */
-const deleteButton = (html: string) => html.match(/<button[^>]*>(Delete and restart|Deleting…)<\/button>/)?.[0] ?? "";
-const cancelButton = (html: string) => html.match(/<button[^>]*>Cancel<\/button>/)?.[0] ?? "";
 
 describe("Delete everything's confirmation", () => {
   it("says what goes and what stays: the data folder and its size, the slide images, never the models", () => {
@@ -81,21 +69,9 @@ describe("Delete everything's confirmation", () => {
     expect(confirmLines(preview()).join(" ")).toMatch(/Activity capture is turned off now and comes back on after the restart/);
   });
 
-  it("names a slide folder it will not delete from", () => {
-    const refused = "Whimbrel will not delete the slide images because their folder is not safe to delete from (a link, or a top-level folder such as Documents). Remove them by hand from: C:\\Users\\me\\Documents";
-    const html = render(open, preview({ snapshotsRefused: refused }));
-    expect(html).toContain("not safe to delete from");
-    expect(html).not.toContain("removes the meeting slide images");
-  });
-
-  it("offers to delete the sync account only when sync is on, and says what each choice means", () => {
-    expect(render(open, preview())).not.toContain("Also delete my sync account");
-    const html = render(open, preview({ syncOn: true }));
-    expect(html).toContain("Also delete my sync account");
-    expect(html).toContain("download everything again from your other devices unless you also delete your sync account");
+  it("records the sync account choice, and says what it means", () => {
     const on = dialogReducer(open, { kind: "syncAccount", on: true });
     expect(on.alsoDeleteSyncAccount).toBe(true);
-    expect(render(on, preview({ syncOn: true }))).toContain("every device is signed out of sync");
     expect(syncAccountLine(true)).toMatch(/Your other devices keep their own data/);
     // Not while it runs.
     const busy = dialogReducer(dialogReducer(on, { kind: "typed", text: "DELETE" }), { kind: "busy" });
@@ -110,26 +86,19 @@ describe("Delete everything's confirmation", () => {
   });
 
   it("turns Delete and restart on only once DELETE is typed exactly", () => {
-    expect(deleteButton(render())).toContain("disabled");
+    expect(canDelete(open, preview())).toBe(false);
     for (const typed of ["delete", "DELETE ", "DELET"]) {
       expect(canDelete(dialogReducer(open, { kind: "typed", text: typed }), preview())).toBe(false);
     }
     const typed = dialogReducer(open, { kind: "typed", text: "DELETE" });
     expect(canDelete(typed, preview())).toBe(true);
-    expect(deleteButton(render(typed))).not.toContain("disabled");
   });
 
-  it("keeps the buttons off while the delete runs and before the preview is in; a meeting is ended, not a block", () => {
+  it("keeps Delete off before the preview is in; a meeting is ended, not a block", () => {
     const typed = dialogReducer(open, { kind: "typed", text: "DELETE" });
-    const busy = dialogReducer(typed, { kind: "busy" });
-    const html = render(busy);
-    expect(deleteButton(html)).toContain("disabled");
-    expect(deleteButton(html)).toContain("Deleting…");
-    expect(cancelButton(html)).toContain("disabled");
     expect(canDelete(typed, null)).toBe(false);
     const meeting = preview({ endsMeeting: "A meeting is being recorded. Delete everything stops the recording first, and the meeting is deleted with the rest." });
     expect(canDelete(typed, meeting)).toBe(true);
-    expect(render(typed, meeting)).toContain("stops the recording first");
   });
 
   it("Cancel closes it and forgets what was typed and chosen, but not while the delete runs", () => {
@@ -139,16 +108,8 @@ describe("Delete everything's confirmation", () => {
     expect(dialogReducer(busy, { kind: "cancel" })).toBe(busy);
     const failed = dialogReducer(busy, { kind: "failed", error: "These slide image folders could not be removed" });
     expect(failed.busy).toBe(false);
-    expect(render(failed)).toContain("could not be removed");
+    expect(failed.error).toContain("could not be removed");
     expect(dialogReducer(failed, { kind: "cancel" })).toEqual(closed);
     expect(dialogReducer(failed, { kind: "open" })).toEqual(open);
-  });
-
-  it("the card starts closed, with only the button, and says what stays", () => {
-    const html = renderToStaticMarkup(<DeleteEverythingCard />);
-    expect(html).toContain("Delete everything on this PC…");
-    expect(html).toContain("Removes your meetings, memory, recordings and logs from this PC. Your settings (settings.json), downloaded models and API keys stay.");
-    expect(html).not.toContain("as new");
-    expect(html).not.toContain("Type DELETE");
   });
 });

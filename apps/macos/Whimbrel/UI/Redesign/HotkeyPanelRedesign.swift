@@ -36,7 +36,7 @@ enum HotkeyPanelAdapter {
     }
 }
 
-/// `HotkeyPanelView` in the redesign: the same model, the same asks, the same blocked buttons.
+/// The hotkey panel: the same model, the same asks, the same blocked buttons.
 struct HotkeyPanelRedesignView: View {
     @ObservedObject var model: HotkeyPanelModel
     /// Opens Settings, AI Providers, where a local model is installed.

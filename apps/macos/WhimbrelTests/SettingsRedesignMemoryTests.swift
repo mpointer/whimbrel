@@ -272,25 +272,22 @@ final class SettingsRedesignMemoryTests: XCTestCase {
         for text in shown { XCTAssertFalse(classic.contains(text), text) }
     }
 
-    /// The notice, the two recording-refused messages and the printed page say "your library" with the switch on and are the
-    /// classic sentences, untouched, with it off.
-    func testTheSharedLibrarySentencesFollowTheSwitch() {
+    /// The notice, the two recording-refused messages and the printed page say "your library".
+    func testTheSharedLibrarySentencesSayYourLibrary() {
         let sentences = [(EncryptionCopy.noStoreNotice, LibraryCopyRedesign.noStoreNotice), (EncryptionCopy.recordingBlockedNoStore, LibraryCopyRedesign.recordingBlockedNoStore),
                          (EncryptionCopy.recordingNotSaved, LibraryCopyRedesign.recordingNotSaved), (EncryptionCopy.printFooter, LibraryCopyRedesign.printFooter),
                          (EncryptionCopy.wordsAreTheKey, LibraryCopyRedesign.wordsAreTheKey)]
         for (classic, expected) in sentences {
-            XCTAssertEqual(LibraryCopyRedesign.forSkin(classic, redesign: false), classic)
-            let redesigned = LibraryCopyRedesign.forSkin(classic, redesign: true)
+            let redesigned = LibraryCopyRedesign.map(classic)
             XCTAssertNotEqual(redesigned, classic)
             // The redesigned sentence itself, from the same localized lookup the code uses, not a word of English.
             XCTAssertEqual(redesigned, expected)
             XCTAssertFalse(redesigned.lowercased().contains("memory database"), redesigned)
         }
-        XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: false), .refuse(message: EncryptionCopy.recordingNotSaved))
-        XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: true), .refuse(message: LibraryCopyRedesign.recordingNotSaved))
-        XCTAssertEqual(EncryptionPrintCopy.forSkin(redesign: false), EncryptionPrintCopy())
-        XCTAssertFalse(EncryptionPrintCopy.forSkin(redesign: true).footer.lowercased().contains("memory database"))
-        XCTAssertFalse(EncryptionPrintCopy.forSkin(redesign: true).notice.lowercased().contains("memory database"))
+        XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: nil), .refuse(message: LibraryCopyRedesign.recordingNotSaved))
+        XCTAssertNotEqual(EncryptionPrintCopy.forSkin(), EncryptionPrintCopy())
+        XCTAssertFalse(EncryptionPrintCopy.forSkin().footer.lowercased().contains("memory database"))
+        XCTAssertFalse(EncryptionPrintCopy.forSkin().notice.lowercased().contains("memory database"))
         XCTAssertEqual(MenuBarAdapter.noStoreNeed(openSettings: {}).title, LibraryCopyRedesign.noStoreNotice)
     }
 
@@ -322,7 +319,7 @@ final class SettingsRedesignMemoryTests: XCTestCase {
         for entry in SettingsSearch.entries where entry.section == .capture {
             XCTAssertTrue(redesigned.contains(entry.id), entry.id)
         }
-        // Switch off: the classic search is the classic function, untouched by the extra entries.
+        // The classic search is the classic function, untouched by the extra entries.
         XCTAssertFalse(classic.contains(SettingsAnchorID.captureScreenCaptures.rawValue))
     }
 }

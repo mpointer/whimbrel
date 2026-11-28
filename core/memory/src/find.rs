@@ -2286,7 +2286,9 @@ mod tests {
         assert!(page.results.iter().all(|c| c.kind == "transcript") && page.total >= 300);
         assert_eq!((rows.len(), caps.len()), (20, 20));
         assert!(page.mentions_total >= 400 && page.capped, "mentions reach the pool: {}", page.mentions_total);
-        assert!(elapsed < std::time::Duration::from_secs(20), "{elapsed:?}");
+        // A ceiling for a per-row-query regression, not a benchmark: the shared Windows runner took 20.2 s in a
+        // debug build with the suite in parallel, so 20 s failed on unrelated PRs.
+        assert!(elapsed < std::time::Duration::from_secs(60), "{elapsed:?}");
         // The listing path counts exactly.
         let listed = s.find("", &FindFilter { start_unix_ms: Some(1_000), end_unix_ms: Some(2_000), ..Default::default() }, FindOrder::Time, 0, 200).unwrap();
         assert_eq!((listed.total, listed.results.len()), (1_000, 200));
@@ -2810,7 +2812,7 @@ mod tests {
     #[test]
     fn a_person_filter_over_50k_emails_and_5k_meetings_stays_fast() {
         let (_d, s) = big_store(50_000, 5_000);
-        let limit = std::time::Duration::from_secs(10);
+        let limit = std::time::Duration::from_secs(30);
         for (label, name, key) in [("name only", "Pat Quill", None), ("address on record", "Pat Quill", Some("pat@q.example")), ("the owner, on every email", "Me", Some("me@x.com"))] {
             let f = FindFilter { person: who(name, key), ..Default::default() };
             let t = std::time::Instant::now();

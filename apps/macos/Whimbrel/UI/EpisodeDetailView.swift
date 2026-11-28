@@ -56,7 +56,7 @@ struct EpisodeDetailView: View {
             .padding(Spacing.md)
         }
         .onAppear { loadEpisodeIfNeeded() }
-        .restyledScreen(redesign: appState.redesignEnabled)
+        .restyledScreen()
     }
 
     private func loadEpisodeIfNeeded() {

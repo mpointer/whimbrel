@@ -253,17 +253,6 @@ export function timeline(
   return entries;
 }
 
-/** Where the Now marker goes in a start-ascending timeline: before the first item that hasn't ended (so a
- *  running meeting is after it). 0 when everything is ahead, `ends.length` when everything is behind. */
-export function nowMarkerIndex(ends: number[], now: number): number {
-  const i = ends.findIndex((end) => end > now);
-  return i === -1 ? ends.length : i;
-}
-
-export function nowLabel(now: number, locale: string): string {
-  return t("Now · {time}", { time: timeLabel(now, locale) });
-}
-
 // --- the Meetings list --------------------------------------------------------------------------
 
 function startOfDay(ms: number): number {

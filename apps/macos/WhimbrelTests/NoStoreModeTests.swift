@@ -11,14 +11,9 @@ final class NoStoreModeTests: XCTestCase {
     func testWithoutAStoreEveryRecordingStartIsRefusedAndTheUserIsTold() {
         var told: [String] = []
         let gate = RecordingStartGate(storeOpen: false) { told.append($0) }
-        for source in RecordingStartGate.Source.allCases {
-            XCTAssertFalse(gate.allow(source, redesign: false), "\(source)")
-        }
-        // Every refused start says why (prompt accept, Away Mode, Today, menu bar).
-        XCTAssertEqual(told, Array(repeating: EncryptionCopy.recordingBlockedNoStore, count: RecordingStartGate.Source.allCases.count))
-        // Redesigned: the "your library" sentence, looked up the way the code looks it up (never an English literal).
-        told = []
-        for source in RecordingStartGate.Source.allCases { XCTAssertFalse(gate.allow(source, redesign: true), "\(source)") }
+        // Every refused start says why (prompt accept, Away Mode, Today, menu bar), in the "your library" sentence, looked up
+        // the way the code looks it up (never an English literal).
+        for source in RecordingStartGate.Source.allCases { XCTAssertFalse(gate.allow(source), "\(source)") }
         XCTAssertEqual(told, Array(repeating: LibraryCopyRedesign.map(EncryptionCopy.recordingBlockedNoStore), count: RecordingStartGate.Source.allCases.count))
         XCTAssertNotEqual(LibraryCopyRedesign.map(EncryptionCopy.recordingBlockedNoStore), EncryptionCopy.recordingBlockedNoStore)
         XCTAssertFalse(gate.allowsBackgroundCapture)
@@ -77,14 +72,11 @@ final class NoStoreModeTests: XCTestCase {
             notified.append(message)
         }
         XCTAssertNil(refusal.message)
-        XCTAssertFalse(gate.allow(.calendarOrPrompt, redesign: false))
-        XCTAssertEqual(refusal.message, EncryptionCopy.recordingBlockedNoStore)
+        XCTAssertFalse(gate.allow(.calendarOrPrompt))
+        XCTAssertEqual(refusal.message, LibraryCopyRedesign.map(EncryptionCopy.recordingBlockedNoStore))
         XCTAssertEqual(notified.count, 1)
         refusal.dismiss()
         XCTAssertNil(refusal.message)
-        XCTAssertFalse(gate.allow(.calendarOrPrompt, redesign: true))
-        XCTAssertEqual(refusal.message, LibraryCopyRedesign.map(EncryptionCopy.recordingBlockedNoStore))
-        refusal.dismiss()
     }
 
     private func source(_ rel: String) throws -> String {
@@ -94,15 +86,11 @@ final class NoStoreModeTests: XCTestCase {
     }
 
     /// Every Start control on screen carries `recordingControl()` (disabled, with a caption or
-    /// a tooltip, without a store): the menu bar, the timeline header and every Today skin.
-    /// The redesigned menu (`MenuBarRedesign.swift`) gates two controls: the memory control, whose menu turns capture
+    /// a tooltip, without a store).
+    /// The menu (`MenuBarRedesign.swift`) gates two controls: the memory control, whose menu turns capture
     /// back on or resumes it, and the Start Meeting row. Its Quit, Settings and Open Whimbrel rows stay on.
     func testEveryStartControlIsARecordingControl() throws {
-        let sites = ["UI/MenuBarContentView.swift": 3, "UI/Redesign/MenuBarRedesign.swift": 2, "UI/TimelineView+Header.swift": 2, "UI/Today/TodaySlots.swift": 1,
-                     "UI/Today/Archetypes/TerminalTodayLayout.swift": 1, "UI/Today/Archetypes/FieldTodayLayout.swift": 3,
-                     "UI/Today/Archetypes/GlassTodayLayout.swift": 1, "UI/Today/Archetypes/ReferenceTodayLayout.swift": 2,
-                     "UI/Today/Archetypes/AlmanacTodayLayout.swift": 1, "UI/Today/TodayChrome.swift": 2,
-                     "UI/Today/TodayTimeline.swift": 1]
+        let sites = ["UI/Redesign/MenuBarRedesign.swift": 2]
         for (file, count) in sites {
             let text = try source(file)
             XCTAssertEqual(text.components(separatedBy: ".recordingControl()").count - 1, count, file)
@@ -175,15 +163,12 @@ final class NoStoreModeTests: XCTestCase {
 
     func testAStartWhoseInsertFailedRefusesWithTheNotSavedMessage() {
         XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: 42), .proceed(meetingId: 42))
-        XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: false), .refuse(message: EncryptionCopy.recordingNotSaved))
-        XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: true), .refuse(message: LibraryCopyRedesign.map(EncryptionCopy.recordingNotSaved)))
+        XCTAssertEqual(RecordingStartInsert.outcome(insertedMeetingId: nil), .refuse(message: LibraryCopyRedesign.map(EncryptionCopy.recordingNotSaved)))
         // It goes through the same refusal UI as a start with no store.
         let refusal = RecordingRefusal()
         let gate = RecordingStartGate(storeOpen: true) { refusal.show($0) }
-        if case let .refuse(message) = RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: false) { gate.notify(message) }
-        XCTAssertEqual(refusal.message, EncryptionCopy.recordingNotSaved)
-        if case let .refuse(message) = RecordingStartInsert.outcome(insertedMeetingId: nil, redesign: true) { gate.notify(message) }
-        XCTAssertEqual(refusal.message, LibraryCopyRedesign.forSkin(EncryptionCopy.recordingNotSaved, redesign: true))
+        if case let .refuse(message) = RecordingStartInsert.outcome(insertedMeetingId: nil) { gate.notify(message) }
+        XCTAssertEqual(refusal.message, LibraryCopyRedesign.map(EncryptionCopy.recordingNotSaved))
     }
 
     func testQuittingWaitsForAStartWhoseInsertIsStillQueued() {
@@ -306,24 +291,34 @@ final class NoStoreModeTests: XCTestCase {
     /// client it can rescan); the picked model is named only once it says the question is not excluded.
     func testAskChecksExclusionOnItsOwnLaneBeforeNamingAModel() throws {
         let ask = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Whimbrel/UI/TimelineView+Ask.swift"), encoding: .utf8)
-        XCTAssertFalse(try tightBody(ask, "private func askNow(").contains("askNamesExcludedClient"), "not on accessQueue")
-        let blocking = try tightBody(ask, "func askBlocking(")
+            .appendingPathComponent("Whimbrel/Support/AskRunner.swift"), encoding: .utf8)
+        // Every check runs inside a slow-lane block (never `accessQueue`, where an excluded client can make it rescan).
+        var searchFrom = ask.startIndex
+        var checks = 0
+        while let hit = ask.range(of: "askNamesExcludedClient", range: searchFrom..<ask.endIndex) {
+            let from = ask.index(hit.lowerBound, offsetBy: -400, limitedBy: ask.startIndex) ?? ask.startIndex
+            let before: String = String(ask[from..<hit.lowerBound])
+            XCTAssertTrue(before.contains("CoreMemoryStore.slowLaneQueue.async"), "the check is on the slow lane")
+            checks += 1
+            searchFrom = hit.upperBound
+        }
+        XCTAssertEqual(checks, 2, "the blocking ask and the sourced ask")
+        // The blocking ask checks first, then asks; it never reads context on its own first.
+        let blocking = try tightBody(ask, "private func answerBlocking(")
         let check = try XCTUnwrap(blocking.range(of: "askNamesExcludedClient"))
-        let context = try XCTUnwrap(blocking.range(of: "fetchContextItems"))
-        XCTAssertTrue(check.lowerBound < context.lowerBound, "the check is the first thing on the lane")
-        XCTAssertTrue(blocking.contains("askModelConfirmed = true"))
-        XCTAssertTrue(try tightBody(ask, "func askStreaming(").contains("askModelConfirmed = true"))
+        let question = try XCTUnwrap(blocking.range(of: "askQuestionDetailed"))
+        XCTAssertTrue(check.lowerBound < question.lowerBound, "the check is the first thing on the lane")
+        // The picked model is named only once the check says the question is not excluded.
+        XCTAssertTrue(ask.contains("if namesExcluded { self.progress.routedLocally = true } else { self.progress.modelConfirmed = true }"))
     }
 
-    /// The user gate is held for every question, first of a conversation included, through one helper.
-    func testAskHoldsTheUserGateThroughSetAskingOnly() throws {
+    /// The user gate is held for every question, first of a conversation included, through one runner.
+    func testAskHoldsTheUserGateThroughOneRunnerOnly() throws {
         let ask = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Whimbrel/UI/TimelineView+Ask.swift"), encoding: .utf8)
-        let assignments = ask.components(separatedBy: "\n").filter { $0.contains("isAsking = ") && !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-        XCTAssertEqual(assignments.count, 1, "only setAsking assigns isAsking: \(assignments)")
-        let helper = try tightBody(ask, "func setAsking(")
-        XCTAssertTrue(helper.contains("UserModelGate.shared.enter()"))
-        XCTAssertTrue(ask.contains(".onDisappear { releaseAskGate() }"))
+            .appendingPathComponent("Whimbrel/Support/AskRunner.swift"), encoding: .utf8)
+        let enters = ask.components(separatedBy: "\n").filter { $0.contains("UserModelGate.shared.enter()") && !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+        XCTAssertEqual(enters.count, 1, "only one place takes the gate: \(enters)")
+        XCTAssertTrue(enters[0].contains("if gateToken == nil"), "taken once per run, first of a conversation included")
+        XCTAssertEqual(ask.components(separatedBy: "UserModelGate.shared.leave(gateToken)").count - 1, 1, "one place gives it back")
     }
 }

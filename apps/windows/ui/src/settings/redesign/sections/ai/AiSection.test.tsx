@@ -47,7 +47,6 @@ const h = vi.hoisted(() => {
     state: make(),
     aiSettings: vi.fn(),
     keyCheck: vi.fn(),
-    keyFormatHint: vi.fn(),
     localModelRemove: vi.fn(),
     openExternal: vi.fn(),
     providerModels: vi.fn(),

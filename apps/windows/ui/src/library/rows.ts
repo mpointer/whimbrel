@@ -1,6 +1,5 @@
-import type { EpisodeRow, LibraryRow } from "../generated/types";
+import type { EpisodeRow } from "../generated/types";
 import { t } from "../l10n";
-import { meetingTitleLabel, speakerLabel } from "../meetings/sentinels";
 
 /**
  * An episode's summary, or why it has none. Episode summaries come only from Ollama on
@@ -13,15 +12,6 @@ export function episodeSummaryText(e: Pick<EpisodeRow, "summary" | "status">): s
       "Not summarized. Episode summaries are written by Ollama on this PC, whichever AI provider you chose for Ask. Ollama isn't running, or it doesn't have the model set in Settings → AI & routing.",
     );
   return t("Not summarized yet. Episode summaries are written by Ollama on this PC, whichever AI provider you chose for Ask.");
-}
-
-export function rowKey(row: LibraryRow): string {
-  return `${row.kind}-${row.id}`;
-}
-
-/** When the row happened; transcript and slide hits have no time of their own. */
-export function rowTs(row: LibraryRow): number | null {
-  return row.kind === "transcript" || row.kind === "snapshot" ? null : row.tsUnixMs;
 }
 
 function startOfDay(d: Date): number {
@@ -107,86 +97,4 @@ export function spanLabel(
     ? `${date(start)} · ${tidy(new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }).formatRange(start, end))}`
     : `${date(start)} · ${timeLabel(start, locale)} – ${date(end)} · ${timeLabel(end, locale)}`;
   return `${range} (${durationLabel(end - start)})`;
-}
-
-/** When a Library row happened, dated; transcript and slide hits have no time of their own. */
-export function rowWhen(row: LibraryRow, now: Date = new Date(), locale?: string): string | null {
-  switch (row.kind) {
-    case "capture":
-      return dateTimeLabel(row.tsUnixMs, now, locale);
-    case "meeting":
-      return spanLabel(row.tsUnixMs, row.endUnixMs, { now, locale });
-    case "episode":
-      return spanLabel(row.tsUnixMs, row.endTsUnixMs, { now, locale });
-    case "transcript":
-    case "snapshot":
-      return null;
-  }
-}
-
-/** A transcript offset in centiseconds as m:ss or h:mm:ss. */
-export function formatOffset(cs: number): string {
-  const total = Math.max(0, Math.floor(cs / 100));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = String(total % 60).padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
-}
-
-export interface Headline {
-  title: string;
-  meta: string;
-}
-
-/** `pausedId` is the meeting whose recording is paused (`pausedMeetingId`): its stored "recording" reads "paused". */
-export function headline(row: LibraryRow, pausedId: number | null = null): Headline {
-  switch (row.kind) {
-    case "capture":
-      return { title: row.title || row.app, meta: row.source === "ocr" ? t("{app} · OCR", { app: row.app }) : row.app };
-    case "meeting": {
-      // The status is core's value ("completed", "recording"), shown as stored, except that a paused meeting is still
-      // stored as "recording" and reads "paused".
-      const status = row.status === "recording" && pausedId != null && row.id === pausedId ? "paused" : row.status;
-      return {
-        title: row.title ? meetingTitleLabel(row.title) : t("Untitled meeting"),
-        meta: row.hasSummary
-          ? t("Meeting · {status} · summary", { status })
-          : t("Meeting · {status}", { status }),
-      };
-    }
-    case "episode":
-      return {
-        title: row.title || row.app,
-        meta:
-          row.hidden || row.appHidden
-            ? t("{app} · {count} captures · hidden", { app: row.app, count: row.itemCount })
-            : t("{app} · {count} captures", { app: row.app, count: row.itemCount }),
-      };
-    case "transcript":
-      return {
-        title: row.meetingTitle ? meetingTitleLabel(row.meetingTitle) : t("Meeting transcript"),
-        meta: `${speakerLabel(row.speaker)} · ${formatOffset(row.startCs)}`,
-      };
-    case "snapshot":
-      return { title: row.meetingTitle ? meetingTitleLabel(row.meetingTitle) : t("Meeting slide"), meta: t("Slide") };
-  }
-}
-
-export interface DayGroup {
-  day: string;
-  rows: LibraryRow[];
-}
-
-/** Consecutive rows grouped under a day heading, keeping their order. Transcript and
- *  slide hits, which have no time, go under "Transcript matches" and "Slide matches". */
-export function groupByDay(rows: LibraryRow[], now: Date = new Date(), locale?: string): DayGroup[] {
-  const groups: DayGroup[] = [];
-  for (const row of rows) {
-    const ts = rowTs(row);
-    const day = ts !== null ? dayLabel(ts, now, locale) : row.kind === "snapshot" ? t("Slide matches") : t("Transcript matches");
-    const last = groups[groups.length - 1];
-    if (last && last.day === day) last.rows.push(row);
-    else groups.push({ day, rows: [row] });
-  }
-  return groups;
 }

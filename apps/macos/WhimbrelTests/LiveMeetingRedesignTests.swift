@@ -2,7 +2,7 @@ import WhimbrelUI
 import XCTest
 @testable import Whimbrel
 
-/// The live meeting adapter and the recording notice default, flag on and off. Nothing here records or reads real audio.
+/// The live meeting adapter and the recording notice default. Nothing here records or reads real audio.
 final class LiveMeetingRedesignTests: XCTestCase {
     private func defaults() -> UserDefaults {
         let d = UserDefaults(suiteName: "LiveMeetingRedesignTests")!
@@ -12,28 +12,26 @@ final class LiveMeetingRedesignTests: XCTestCase {
 
     // MARK: Notice default
 
-    func testWithTheFlagOnAnAbsentSettingMeansOn() {
-        XCTAssertTrue(RecordingNoticeSettings(defaults: defaults(), redesign: true).enabled)
+    func testAnAbsentSettingMeansOn() {
+        XCTAssertTrue(RecordingNoticeSettings(defaults: defaults()).enabled)
+        XCTAssertTrue(RecordingNoticeSettings.defaultEnabled(stored: nil))
     }
 
     func testTheAppsOwnValueIsOnWithNothingStoredAndAStoredOffStays() {
         let d = defaults()
-        XCTAssertTrue(RecordingNoticeSettings(defaults: d, redesign: RedesignFlag.isOn()).enabled)
-        RecordingNoticeSettings(defaults: d, redesign: RedesignFlag.isOn()).enabled = false
-        XCTAssertFalse(RecordingNoticeSettings(defaults: d, redesign: RedesignFlag.isOn()).enabled)
+        XCTAssertTrue(RecordingNoticeSettings(defaults: d).enabled)
+        RecordingNoticeSettings(defaults: d).enabled = false
+        XCTAssertFalse(RecordingNoticeSettings(defaults: d).enabled)
     }
 
-    func testWithTheFlagOffAnAbsentSettingStaysOff() {
-        XCTAssertFalse(RecordingNoticeSettings(defaults: defaults(), redesign: false).enabled)
-    }
-
-    func testAStoredOffWinsWithTheFlagOn() {
+    func testAStoredChoiceWinsOverTheDefault() {
         let d = defaults()
-        let settings = RecordingNoticeSettings(defaults: d, redesign: true)
+        let settings = RecordingNoticeSettings(defaults: d)
         settings.enabled = false
-        XCTAssertFalse(RecordingNoticeSettings(defaults: d, redesign: true).enabled)
+        XCTAssertFalse(RecordingNoticeSettings.defaultEnabled(stored: false))
+        XCTAssertFalse(RecordingNoticeSettings(defaults: d).enabled)
         settings.enabled = true
-        XCTAssertTrue(RecordingNoticeSettings(defaults: d, redesign: false).enabled)
+        XCTAssertTrue(RecordingNoticeSettings(defaults: d).enabled)
     }
 
     // MARK: State, time and text

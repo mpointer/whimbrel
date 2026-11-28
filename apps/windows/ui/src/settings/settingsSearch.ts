@@ -10,10 +10,6 @@ export interface SettingsSearchEntry {
   title: string;
   section: Exclude<SettingsSectionId, "status">;
   keywords: string[];
-  /** A card the classic cards do not have: no `data-settings-anchor` there, and a card
-   *  `id` under the new sections folder instead (the new Settings turns that id into the anchor). The search test checks each
-   *  kind where it lives, so a classic entry still needs its tag. */
-  noClassicCard?: true;
 }
 
 const e = (id: string, title: string, section: SettingsSearchEntry["section"], keywords: string[] = []): SettingsSearchEntry => ({
@@ -21,11 +17,6 @@ const e = (id: string, title: string, section: SettingsSearchEntry["section"], k
   title,
   section,
   keywords,
-});
-
-const noClassicCard = (id: string, title: string, section: SettingsSearchEntry["section"], keywords: string[] = []): SettingsSearchEntry => ({
-  ...e(id, title, section, keywords),
-  noClassicCard: true,
 });
 
 /** Only what exists on Windows: no Automations or Diagnostics cards. */
@@ -67,7 +58,7 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
   e("topics.names", "Names I go by", "topics", ["my name", "nicknames", "steps"]),
   // Sync & Devices
   e("devices.phone", "Whimbrel on your phone", "devices", ["iphone", "android", "mobile", "phone", "beta", "qr"]),
-  noClassicCard("devices.tellAFriend", "Tell a friend", "devices", ["share", "recommend", "invite", "link", "copy message", "friend"]),
+  e("devices.tellAFriend", "Tell a friend", "devices", ["share", "recommend", "invite", "link", "copy message", "friend"]),
   e("devices.sync", "Sync", "devices", ["sign in", "google", "account", "approve", "turn on sync"]),
   e("devices.list", "Devices on this account", "devices", ["devices", "rename", "device name", "revoke", "approve"]),
   // Connectors
@@ -80,22 +71,4 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
 /** Lower case with accents removed, so "Résumé" finds "resume" and the other way round. */
 export function fold(s: string): string {
   return s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-}
-
-/**
- * Entries matching `query` in the title, a keyword or the section's title: case- and accent-
- * insensitive, plain substring (the query is never a regular expression). Title matches come first.
- * An empty or blank query matches nothing (the normal section list shows then).
- */
-export function searchSettings(query: string, sectionTitle: (id: SettingsSearchEntry["section"]) => string): SettingsSearchEntry[] {
-  const q = fold(query.trim());
-  if (!q) return [];
-  const titleHits: SettingsSearchEntry[] = [];
-  const otherHits: SettingsSearchEntry[] = [];
-  // The classic cards have no anchor for a card it does not have, so a result for it would jump nowhere.
-  for (const entry of SETTINGS_SEARCH_ENTRIES.filter((e) => !e.noClassicCard)) {
-    if (fold(entry.title).includes(q)) titleHits.push(entry);
-    else if (entry.keywords.some((k) => fold(k).includes(q)) || fold(sectionTitle(entry.section)).includes(q)) otherHits.push(entry);
-  }
-  return [...titleHits, ...otherHits];
 }

@@ -34,6 +34,48 @@ pub fn markdown_to_plain(markdown: &str) -> String {
     out.join("\n")
 }
 
+/// The first line of `markdown` worth showing alone, as plain text: a heading-only line ("## Answer")
+/// is skipped for the first line of text after it, and is used only when nothing else has words.
+/// `None` when there are no words at all.
+pub fn first_plain_line(markdown: &str) -> Option<String> {
+    let mut heading: Option<String> = None;
+    let mut in_fence = false;
+    for raw in markdown.lines() {
+        let line = raw.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        let text = if in_fence {
+            collapse(line)
+        } else {
+            let Some(text) = block(line) else { continue };
+            let text = collapse(&inline(&text));
+            if is_heading(line) {
+                if heading.is_none() && !text.is_empty() {
+                    heading = Some(text);
+                }
+                continue;
+            }
+            text
+        };
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+    heading
+}
+
+/// An ATX heading (`#` to `######` and a space), quoted or not.
+fn is_heading(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(r) = rest.strip_prefix('>') {
+        rest = r.trim_start();
+    }
+    let hashes = rest.chars().take_while(|c| *c == '#').count();
+    (1..=6).contains(&hashes) && rest[hashes..].starts_with(' ')
+}
+
 /// Keeps one blank line at most, and none for an empty line produced by dropped markup.
 fn push_line(out: &mut Vec<String>, line: String) {
     if line.is_empty() && out.last().is_none_or(|l| l.is_empty()) {
@@ -244,6 +286,19 @@ mod tests {
         assert_eq!(plain("Ship it **Friday**, _maybe_ *Monday*, ~~never~~ at `noon`."), "Ship it Friday, maybe Monday, never at noon.");
         assert_eq!(plain("***Really*** so"), "Really so");
         assert_eq!(plain("a __b__ c"), "a b c");
+    }
+
+    #[test]
+    fn the_first_line_skips_a_heading_only_line() {
+        use super::first_plain_line as first;
+        assert_eq!(first("## Answer\n- **Yes**, see [the deck](https://x.io/d)").as_deref(), Some("Yes, see the deck"));
+        assert_eq!(first("# Q3\n\n## Numbers\n\nRevenue is up.").as_deref(), Some("Revenue is up."));
+        assert_eq!(first("> ### Quoted\n> words").as_deref(), Some("words"));
+        assert_eq!(first("**Yes**, by Friday.\nMore").as_deref(), Some("Yes, by Friday."));
+        assert_eq!(first("```\ncode here\n```\nDone").as_deref(), Some("code here"));
+        assert_eq!(first("#hashtag first").as_deref(), Some("#hashtag first"), "no space: not a heading");
+        assert_eq!(first("## Only a heading\n---").as_deref(), Some("Only a heading"), "nothing else: the heading");
+        assert_eq!(first("\n\n"), None);
     }
 
     #[test]

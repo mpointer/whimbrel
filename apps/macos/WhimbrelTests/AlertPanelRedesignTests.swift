@@ -258,14 +258,12 @@ final class AlertPanelRedesignTests: XCTestCase {
     }
 
     @MainActor
-    func testTheHotkeyPanelAsksToBeLeftOutOfScreenSharingOnlyBySwitch() throws {
+    func testTheHotkeyPanelAsksToBeLeftOutOfScreenSharing() throws {
         XCTAssertTrue(HotkeyPanelController.hidesFromScreenSharing)
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Whimbrel/Support/HotkeyPanelController.swift")
         let text = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(text.contains("panel.sharingType = RedesignFlag.isOn() && Self.hidesFromScreenSharing ? .none : .readOnly"))
-        // The panel is rebuilt when the switch changes, so its look and its sharing request agree.
-        XCTAssertTrue(text.contains("panelIsRedesign == redesign"))
+        XCTAssertTrue(text.contains("panel.sharingType = Self.hidesFromScreenSharing ? .none : .readOnly"))
         // Nothing promises the window is hidden: it is a request, and some sharing apps ignore it.
         XCTAssertTrue(text.contains("Some sharing apps ignore the request"))
     }

@@ -3155,7 +3155,6 @@ const COVERED: &[(&str, &str, usize, &str)] = &[
     ("core/api/src/ask.rs", "gather_findings(", 2, "meeting_ask_map_step_never_sends_excluded_text"),
     ("core/api/src/ask.rs", "streamed_link(", 1, "meeting_ask_map_step_never_sends_excluded_text"),
     ("core/ffi/src/lib.rs", "summarize_meeting_preferred(", 2, "forced_resummary_never_sends_excluded_text"),
-    ("apps/windows/src-tauri/src/meetings/pipeline.rs", "summarize_meeting_preferred(", 1, "forced_resummary_never_sends_excluded_text"),
     ("core/ffi/src/lib.rs", "summarize_meeting_options(", 1, "a_summary_asked_for_sources_never_sends_excluded_text"),
     ("apps/windows/src-tauri/src/meetings/pipeline.rs", "summarize_meeting_options(", 2, "a_summary_asked_for_sources_never_sends_excluded_text"),
     // The cloud runner: routines and meeting prep on a scratch store it filed after its pull.

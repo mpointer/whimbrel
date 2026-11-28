@@ -81,37 +81,14 @@ final class SkinChatViewTests: XCTestCase {
         let ordered = SkinGallery.orderedCards(skins: [
             skin("whimbrel", "Whimbrel"), skin("user-zed-1", "Zed"), skin("retro-terminal", "Retro Terminal"),
             skin("user-alpha-1", "Alpha"), skin("almanac", "Almanac"),
-        ], redesign: false)
+        ])
         XCTAssertEqual(ordered.map(\.id), ["whimbrel", "retro-terminal", "almanac", "user-alpha-1", "user-zed-1"],
                        "built-ins keep their order; yours follow, by name")
     }
 
-    func testThreadIsListedOnlyWithTheRedesignFlagOn() {
-        let all = [skin("whimbrel", "Whimbrel"), skin("almanac", "Almanac"), skin("thread", "Thread"), skin("user-alpha-1", "Alpha")]
-        XCTAssertEqual(SkinGallery.orderedCards(skins: all, redesign: false).map(\.id), ["whimbrel", "almanac", "user-alpha-1"])
-        XCTAssertEqual(SkinGallery.orderedCards(skins: all, redesign: true).map(\.id), ["whimbrel", "almanac", "thread", "user-alpha-1"])
-    }
-
-    func testThreadIsListedForEveryoneBecauseTheSwitchIsOn() {
+    func testThreadIsListedForEveryone() {
         let all = [skin("whimbrel", "Classic"), skin("thread", "Thread"), skin("user-alpha-1", "Alpha")]
-        XCTAssertEqual(SkinGallery.orderedCards(skins: all, redesign: RedesignFlag.isOn()).map(\.id), ["whimbrel", "thread", "user-alpha-1"])
-    }
-
-    func testTheRedesignSwitchIsOnForEveryoneAndTheStoredValueIsNotRead() {
-        let suite = "redesign-flag-tests-\(UUID().uuidString)"
-        let d = UserDefaults(suiteName: suite)!
-        d.removePersistentDomain(forName: suite)
-        addTeardownBlock {
-            d.removePersistentDomain(forName: suite)
-            try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences/\(suite).plist"))
-        }
-        XCTAssertEqual(RedesignFlag.key, "com.mpointer.whimbrel.redesign.enabled")
-        XCTAssertTrue(RedesignFlag.isOn(d), "on with nothing stored")
-        d.set(false, forKey: RedesignFlag.key)
-        XCTAssertTrue(RedesignFlag.isOn(d), "a stored false is ignored")
-        d.set(true, forKey: RedesignFlag.key)
-        XCTAssertTrue(RedesignFlag.isOn(d))
-        XCTAssertTrue(EnvironmentValues().redesignEnabled, "a root that never sets the environment value comes out on")
+        XCTAssertEqual(SkinGallery.orderedCards(skins: all).map(\.id), ["whimbrel", "thread", "user-alpha-1"])
     }
 
     func testIsUserSkin() {

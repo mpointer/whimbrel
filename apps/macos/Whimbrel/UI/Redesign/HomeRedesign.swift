@@ -2,8 +2,7 @@ import AppKit
 import SwiftUI
 import WhimbrelUI
 
-/// What the redesign Home reads that the old Today does not: today's memory blocks. Loaded by `TodayView` only
-/// when the redesign flag is on.
+/// What Home reads besides `TodayContent`: today's memory blocks. Loaded by `TodayView`.
 struct HomeRedesignData: Equatable {
     var blocks: [CoreDayBlock] = []
 
@@ -160,13 +159,13 @@ enum HomeRedesignAdapter {
 
     // MARK: Model
 
-    /// The header search: a field when Ask can run, else a button into setup (the same rule as `TodayComposer`).
+    /// The header search: a field when Ask can run, else a button into setup (the rule in `AskAvailability`).
     @MainActor
     static func ask(_ appState: AppState) -> WHomeAsk {
         let routing = appState.routing
         let provider = routing.defaultSelection().provider
         let hasKey = routing.hasKey(for: provider) && (provider != .openrouter || !routing.openrouterDefaultModel.isEmpty)
-        if TodayComposer.askAvailable(provider: provider, localOnly: routing.localOnlyMode, hasKey: hasKey) {
+        if AskAvailability.askAvailable(provider: provider, localOnly: routing.localOnlyMode, hasKey: hasKey) {
             return .available(placeholder: SkinStore.shared.selected.voice.text(.askPlaceholder, name: ""))
         }
         return .needsSetup(title: String(localized: "Set up an AI provider"))
@@ -377,7 +376,7 @@ struct TodayHomeRedesignView: View {
                 elapsedSeconds: appState.activeMeetingStartedAt.map { max(0, Int(context.date.timeIntervalSince($0))) },
                 now: context.date, voice: skin.voice, elements: WHomeElements.resolve(options: skin.archetypeOptions, archetype: skin.archetype.rawValue))
             let thread = model.thread(todayTitle: String(localized: "Today"), nowTime: MeetingRowText.time(context.date))
-            // While a meeting records, the live meeting screen takes Home's place (redesign flag only).
+            // While a meeting records, the live meeting screen takes Home's place.
             VStack(spacing: 0) {
                 // The skin's header image and badge (not while a meeting records: the live screen takes Home's place).
                 if live == nil { SkinHomeImagesView() }

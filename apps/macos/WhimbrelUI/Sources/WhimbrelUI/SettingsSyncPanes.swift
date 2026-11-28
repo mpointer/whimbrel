@@ -112,6 +112,8 @@ public struct WSyncDevicesSettingsView: View {
             }
             .wSettingsAnchored(model.anchors.phone, highlighted: highlighted)
             .wAnchor(model.anchors.phone)
+        case .loading:
+            EmptyView()
         case .connected:
             WSettingsCard { wNote(l.phoneConnected) }
                 .wSettingsAnchored(model.anchors.phone, highlighted: highlighted)

@@ -180,6 +180,9 @@ struct Service {
     changes: ChangeFilter,
     gate: SessionGate,
     own_pid: u32,
+    /// Whether the last pass found capture paused (off, a timed pause, idle, locked). A paused
+    /// loop sleeps a full second between checks instead of chasing read deadlines it will not take.
+    paused: bool,
 }
 
 impl Service {
@@ -207,13 +210,14 @@ impl Service {
             changes: ChangeFilter::default(),
             gate: SessionGate::default(),
             own_pid: std::process::id(),
+            paused: false,
         })
     }
 
     fn run(&mut self, rx: mpsc::Receiver<Msg>) {
         tracing::info!(enabled = self.enabled, "capture service running");
         loop {
-            match rx.recv_timeout(self.scheduler.next_wake(Instant::now())) {
+            match rx.recv_timeout(self.scheduler.next_wake(Instant::now(), self.paused)) {
                 Ok(msg) => {
                     self.handle(msg);
                     while let Ok(msg) = rx.try_recv() {
@@ -243,7 +247,8 @@ impl Service {
                 self.gate.pause_reason(idle_duration())
             };
             self.status.lock().unwrap().paused = pause.map(|p| p.describe().to_string());
-            if pause.is_some() {
+            self.paused = pause.is_some();
+            if self.paused {
                 continue;
             }
             let now = Instant::now();

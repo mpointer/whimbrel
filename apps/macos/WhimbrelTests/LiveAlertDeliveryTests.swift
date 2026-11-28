@@ -133,7 +133,11 @@ final class LiveAlertDeliveryTests: XCTestCase {
     func testNotificationBodyIsPlainTextNotMarkdown() {
         let cases: [(String, String?)] = [
             ("**Yes**, see [the deck](https://x.io/d) and `notes`.\nMore", "Yes, see the deck and notes."),
-            ("## Answer\n- one", "Answer"),
+            ("## Answer\n- one", "one"),
+            ("# Q3\n\n## Numbers\n\nRevenue is up.", "Revenue is up."),
+            ("> ### Quoted\n> words", "words"),
+            ("#hashtag first", "#hashtag first"),
+            ("## Only a heading\n---", "Only a heading"),
             ("- **Ship** it\n- later", "Ship it"),
             ("```\ncode here\n```\nDone", "code here"),
             ("---\n> *quoted*  text", "quoted text"),

@@ -9,8 +9,6 @@ import {
   forRecorded,
   groupByDay,
   latestOnly,
-  nowLabel,
-  nowMarkerIndex,
   peopleText,
   spokenLabel,
   statusLine,
@@ -210,21 +208,6 @@ describe("Today's timeline", () => {
   it("counts a held meeting with no end as ended at its start", () => {
     const entries = timeline([], [meeting({ endUnixMs: null })], null, none, NOW, L);
     expect(entries[0].endMs).toBe(START);
-  });
-});
-
-describe("the Now marker", () => {
-  const ago = (m: number) => NOW - m * MIN;
-  it("sits before the first meeting that hasn't ended", () => {
-    expect(nowMarkerIndex([], NOW)).toBe(0);
-    expect(nowMarkerIndex([ago(60), ago(30)], NOW)).toBe(2);
-    expect(nowMarkerIndex([ago(-60), ago(-120)], NOW)).toBe(0);
-    expect(nowMarkerIndex([NOW, ago(-60)], NOW)).toBe(1);
-    expect(nowMarkerIndex([ago(60), ago(-60), ago(30)], NOW)).toBe(1);
-  });
-
-  it("says the time", () => {
-    expect(nowLabel(NOW, L)).toBe(`Now · ${timeLabel(NOW, L)}`);
   });
 });
 

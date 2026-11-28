@@ -70,7 +70,10 @@ jobs:
         run: |
           base="${{ github.event.pull_request.base.sha || github.event.before }}"
           head="${{ github.event.pull_request.head.sha || github.sha }}"
-          changed="$(git diff --name-only "$base" "$head")" || changed=""
+          # Three dots: the files this branch changed since it left main. Two dots compared against main's
+          # current tip, so a PR cut before main moved on picked up everyone else's files (PR #1062, a
+          # one-line website change, ran the Mac, Windows and Android jobs).
+          changed="$(git diff --name-only "$base...$head")" || changed=""
           allowed='^(VERSION|CHANGELOG\.md|apps/macos/project\.yml|apps/macos/Whimbrel\.xcodeproj/project\.pbxproj|apps/mobile/ios/project\.yml|apps/mobile/ios/Whimbrel\.xcodeproj/project\.pbxproj|apps/windows/package\.json|apps/windows/package-lock\.json|apps/windows/ui/package\.json|apps/windows/ui/package-lock\.json|apps/windows/src-tauri/Cargo\.toml|apps/windows/src-tauri/Cargo\.lock|apps/windows/src-tauri/tauri\.conf\.json|core/Cargo\.toml|core/Cargo\.lock)$'
           if [ -n "$changed" ] && ! grep -vqE "$allowed" <<<"$changed"; then
             version_only=true
@@ -98,7 +101,7 @@ jobs:
           # windows-app: apps/windows path-depends on core/, and its build and tests also read
           # skins/, themes/, l10n/languages.json, VERSION, mcp-servers/ (the bundled connectors),
           # server/src/aiProxy.ts (the price table), the Mac Today layouts and the Mac benchmark clip.
-          windows_app_paths='^(apps/windows/|core/|skins/|themes/|l10n/|mcp-servers/|VERSION$|server/src/aiProxy\.ts$|apps/macos/Whimbrel/UI/Today/Archetypes/|apps/macos/Whimbrel/Support/engine-benchmark\.wav$|\.github/workflows/rust-tests\.yml$)'
+          windows_app_paths='^(apps/windows/|core/|skins/|themes/|l10n/|mcp-servers/|VERSION$|server/src/aiProxy\.ts$|apps/macos/Whimbrel/Support/engine-benchmark\.wav$|\.github/workflows/rust-tests\.yml$)'
           if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE "$windows_app_paths" <<<"$changed"; }; then
             echo "run_windows_app=true" >> "$GITHUB_OUTPUT"
           else
@@ -505,9 +508,12 @@ jobs:
     needs: [changes, windows]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.run_windows_app == 'true' && github.repository == 'mpointer/kestrel' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'workflow_dispatch') }}
     runs-on: ${{ fromJSON(vars.WINDOWS_HEAVY == 'on' && '["self-hosted","Windows","X64","kestrel-windows","kestrel-windows-heavy"]' || '["self-hosted","Windows","X64","kestrel-windows"]') }}
-    # 60. Measured over the last 25 runs (2026-11-22..23, every attempt): 13-26 min alone,
-    # up to 34 min beside another Windows job. 60 is almost 2x the worst case seen.
-    timeout-minutes: 60
+    # 90. Measured over the last 25 runs (2026-11-22..23, every attempt): 13-26 min alone,
+    # up to 34 min beside another Windows job. But when the persistent build directory goes
+    # cold (another branch's dependencies built in between), the Tauri tests rebuild from
+    # scratch: on 2026-11-27 they took 42 min instead of 6, and the job was cut off at 60
+    # during the MCP server's release build, which needed a rerun from the back of the queue.
+    timeout-minutes: 90
     steps:
       # The runner's own directory is the parent of _work (RUNNER_TEMP is _work\_temp). The skin
       # matrix's preview server gets a free port, so a second instance's job doesn't collide on 4180.
@@ -554,12 +560,8 @@ jobs:
       - name: UI install
         working-directory: apps/windows/ui
         run: npm ci
-      - name: UI tests
-        working-directory: apps/windows/ui
-        run: npm test
-      - name: Generated TS types are current
-        working-directory: apps/windows/ui
-        run: npm run check:types
+      # The UI's vitest suite and the generated-types check run in windows-ui, on a hosted Linux
+      # runner, so they report within minutes of a push instead of after this job's queue.
       - name: UI build (tsc + vite, produces ui/dist)
         working-directory: apps/windows/ui
         run: npm run build
@@ -585,6 +587,31 @@ jobs:
         working-directory: apps/windows/src-tauri
         shell: powershell
         run: ..\scripts\check-no-libsql-core.ps1
+
+  # The Windows app's UI tests (vitest) and the generated-types check. Plain Node, so they run
+  # on a hosted Linux runner beside the queue for FEYNMAN, the one Windows runner, and a
+  # failure shows up minutes after a push rather than after the Windows jobs ahead of it.
+  windows-ui:
+    needs: changes
+    if: needs.changes.outputs.run_windows_app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/windows/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: apps/windows/ui/package-lock.json
+      - name: UI install
+        run: npm ci
+      - name: UI tests
+        run: npm test
+      - name: Generated TS types are current
+        run: npm run check:types
 
   android:
     needs: changes

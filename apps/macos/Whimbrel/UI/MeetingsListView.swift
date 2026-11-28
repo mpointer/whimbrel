@@ -60,6 +60,9 @@ final class LoadGeneration {
 /// synchronously from the view body.
 struct MeetingsListView: View {
     private static let log = Logger(subsystem: "com.mpointer.kestrel", category: "meetings-list-diag")
+    /// Extra space above each group title (and the footer), on top of the stack's row spacing: together they
+    /// make the `Spacing.lg` gap the groups had when each was one child of a stack spaced `Spacing.lg`.
+    static let sectionGap = Spacing.lg - Spacing.xs
     @EnvironmentObject var appState: AppState
     @State private var meetings: [CoreMeeting] = []
     /// False until the first fetch returns, so a slow fetch (it queues behind a content sync)
@@ -191,7 +194,10 @@ struct MeetingsListView: View {
 
     private var meetingList: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: Spacing.lg, pinnedViews: []) {
+            // One flat lazy stack: every group title and meeting row is its own child, so only the rows on screen
+            // are built. Each group used to be one VStack child holding all its rows, which built a whole group
+            // (100+ rows for "Earlier") in one layout pass. The gap between groups is the title's top padding.
+            LazyVStack(alignment: .leading, spacing: Spacing.xs, pinnedViews: []) {
                 HStack {
                     if let importMessage {
                         Text(importMessage)
@@ -207,23 +213,23 @@ struct MeetingsListView: View {
                 }
                 .padding(.horizontal, Spacing.md)
                 ForEach(groups, id: \.title) { group in
-                    VStack(alignment: .leading, spacing: Spacing.xs) {
-                        Text(group.title)
-                            .restyledFont(.calloutStrong)
-                            .foregroundStyle(Color.whimbrelTextSecondary)
-                            .padding(.horizontal, Spacing.md)
-                        ForEach(group.ids, id: \.self) { id in
-                            if let meeting = meetings.first(where: { $0.id == id }) {
-                                meetingRow(meeting)
-                            }
+                    Text(group.title)
+                        .restyledFont(.calloutStrong)
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                        .padding(.horizontal, Spacing.md)
+                        .padding(.top, Self.sectionGap)
+                    ForEach(group.ids, id: \.self) { id in
+                        if let meeting = meetings.first(where: { $0.id == id }) {
+                            meetingRow(meeting)
                         }
                     }
                 }
-                if hasLoaded, !meetings.isEmpty { listFooter }
+                if hasLoaded, !meetings.isEmpty { listFooter.padding(.top, Self.sectionGap) }
                 if groups.isEmpty, !hasLoaded {
-                    RestyledProgress().frame(maxWidth: .infinity, minHeight: 240)
+                    RestyledProgress().frame(maxWidth: .infinity, minHeight: 240).padding(.top, Self.sectionGap)
                 } else if groups.isEmpty {
                     WhimbrelEmptyState(systemImage: SkinStore.shared.selected.icons[.meetings], title: searchText.isEmpty ? String(localized: "No meetings yet") : String(localized: "No matches"), message: searchText.isEmpty ? String(localized: "Recorded meetings appear here. You can also bring in transcripts from Granola, Otter or files.") : String(localized: "Try a different search."), actionTitle: searchText.isEmpty ? String(localized: "Import Transcripts…") : nil, action: searchText.isEmpty ? importTranscripts : nil)
+                        .padding(.top, Self.sectionGap)
                 }
             }
             .padding(.vertical, Spacing.lg)
@@ -231,7 +237,7 @@ struct MeetingsListView: View {
             .frame(maxWidth: .infinity)
         }
         .searchable(text: $searchText, prompt: "Search meetings")
-        .restyledScreen(redesign: appState.redesignEnabled)
+        .restyledScreen()
     }
 
     private var hasMore: Bool {
@@ -288,38 +294,18 @@ struct MeetingsListView: View {
     @ViewBuilder
     private func meetingPage(_ meeting: CoreMeeting, id: Int64) -> some View {
         if loadedMeetingId == id {
-            RedesignSwitch(enabled: appState.redesignEnabled) {
-                // The redesigned page has the back control and the options menu in its own header.
-                VStack(alignment: .leading, spacing: 0) {
-                    if let copies = meeting.alsoRecorded, !copies.isEmpty {
-                        AlsoRecordedRow(copies: copies, ownDeviceId: appState.deviceId).padding(.horizontal, Spacing.md).padding(.top, Spacing.md)
-                    }
-                    MeetingDetailContentView(
-                        meeting: meeting, initialDraft: selectedDraft, initialActionItems: selectedActionItems, topic: selectedTopic,
-                        onBack: { selectedMeetingId = nil },
-                        onForgotten: {
-                            self.selectedMeetingId = nil
-                            refresh()
-                        })
+            // The page has the back control and the options menu in its own header.
+            VStack(alignment: .leading, spacing: 0) {
+                if let copies = meeting.alsoRecorded, !copies.isEmpty {
+                    AlsoRecordedRow(copies: copies, ownDeviceId: appState.deviceId).padding(.horizontal, Spacing.md).padding(.top, Spacing.md)
                 }
-            } old: {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        Button { selectedMeetingId = nil } label: { Label("Meetings", systemImage: "chevron.left") }
-                            .restyledButton(.quiet)
-                            .keyboardShortcut("[", modifiers: .command)
-                        Spacer()
-                        MeetingOptionsMenu(meeting: meeting, appState: appState, onForgotten: {
-                            self.selectedMeetingId = nil
-                            refresh()
-                        })
-                    }
-                    .padding([.horizontal, .top], Spacing.md)
-                    if let copies = meeting.alsoRecorded, !copies.isEmpty {
-                        AlsoRecordedRow(copies: copies, ownDeviceId: appState.deviceId).padding(.horizontal, Spacing.md)
-                    }
-                    MeetingDetailContentView(meeting: meeting, initialDraft: selectedDraft, initialActionItems: selectedActionItems, topic: selectedTopic)
-                }
+                MeetingDetailContentView(
+                    meeting: meeting, initialDraft: selectedDraft, initialActionItems: selectedActionItems, topic: selectedTopic,
+                    onBack: { selectedMeetingId = nil },
+                    onForgotten: {
+                        self.selectedMeetingId = nil
+                        refresh()
+                    })
             }
             .id(id)
         } else {
